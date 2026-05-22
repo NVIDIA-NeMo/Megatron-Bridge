@@ -138,7 +138,7 @@ class TestSliceBatchForContextParallelBSHD:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -179,7 +179,7 @@ class TestSliceBatchForContextParallelBSHD:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -369,7 +369,7 @@ class TestSliceBatchForContextParallelTranspose:
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             slice_batch_for_context_parallel(
@@ -409,7 +409,7 @@ class TestSliceBatchForContextParallelTranspose:
             return result
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -439,7 +439,7 @@ class TestSliceBatchForContextParallelEdgeCases:
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             result = slice_batch_for_context_parallel(
@@ -478,7 +478,7 @@ class TestSliceBatchForContextParallelEdgeCases:
             return batch_dict
 
         with patch(
-            "megatron.core.utils.get_batch_on_this_cp_rank",
+            "megatron.bridge.utils.common_utils.get_batch_on_this_cp_rank",
             side_effect=mock_get_batch,
         ):
             slice_batch_for_context_parallel(
