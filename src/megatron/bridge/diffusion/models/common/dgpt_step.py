@@ -98,7 +98,7 @@ def get_batch(
         use_mtp,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
     )
-    batch = get_batch_on_this_cp_rank(batch)
+    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=parallel_state.get_context_parallel_group())
 
     return (
         batch["tokens"],

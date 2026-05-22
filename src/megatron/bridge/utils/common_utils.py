@@ -377,6 +377,7 @@ def slice_batch_for_context_parallel(
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             },
+            is_hybrid_cp=False,
             cp_group=cp_group,
         )
 
