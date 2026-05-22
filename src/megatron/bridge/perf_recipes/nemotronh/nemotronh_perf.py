@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Flat performance benchmark recipes for NemotronH 56B and Nemotron 3 Nano.
+"""Flat performance benchmark recipes for NemotronH and Nemotron 3 models.
 
 Each function is self-contained: call library recipe, override fields, call
 ``_benchmark_common()``, return.  No dispatch, no layers.
@@ -28,10 +28,68 @@ Precision short-names:
     nvfp4  = NVFP4
 """
 
+from pathlib import Path
+
+from megatron.core.quantization.utils import load_quantization_recipe
+
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
+from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.recipes.nemotronh.nemotronh import nemotronh_56b_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
+
+
+def _nemotron_3_super_precision(compute_dtype: str) -> MixedPrecisionConfig:
+    """Return the precision config used by Nemotron 3 Super perf recipes."""
+    if compute_dtype == "nvfp4":
+        cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
+        # Disabled until MCore PR 4358 lands.
+        cfg.fp4_param_gather = False
+        return cfg
+    return _perf_precision(compute_dtype)
+
+
+def _finalize_nemotron_3_super_perf(cfg: ConfigContainer, compute_dtype: str) -> None:
+    """Apply Nemotron 3 Super perf defaults after recipe-specific overrides."""
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.checkpoint.async_save = False
+
+    if compute_dtype in {"fp8_mx", "nvfp4"}:
+        cfg.model.moe_router_padding_for_quantization = True
+    if compute_dtype == "nvfp4":
+        cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
+
+    _benchmark_common(cfg)
+
+
+def _nemotron_3_super_pretrain_64gpu_gb300_config(compute_dtype: str) -> ConfigContainer:
+    """Build a Nemotron 3 Super pretrain config for 64x GB300."""
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_super_precision(compute_dtype)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _finalize_nemotron_3_super_perf(cfg, compute_dtype)
+    return cfg
 
 
 # =============================================================================
@@ -157,6 +215,26 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
+
+# =============================================================================
+# Nemotron 3 Super pretrain — 64 GPU, GB300
+# =============================================================================
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, BF16."""
+    return _nemotron_3_super_pretrain_64gpu_gb300_config("bf16")
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
+    return _nemotron_3_super_pretrain_64gpu_gb300_config("fp8_mx")
+
+
+def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB300, NVFP4."""
+    return _nemotron_3_super_pretrain_64gpu_gb300_config("nvfp4")
 
 
 # =============================================================================
