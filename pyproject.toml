@@ -120,6 +120,7 @@ no-build-isolation-package = [
     "nv-grouped-gemm",
     "flash_mla",
     "flash-linear-attention",
+    "fast-hadamard-transform",
 ]
 prerelease = "allow"
 override-dependencies = [
