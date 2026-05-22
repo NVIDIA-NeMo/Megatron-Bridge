@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Formula-based theoretical memory estimates for model training."""
+"""Formula-based theoretical memory estimates for model training.
+
+The estimator logic is adapted for Megatron Bridge from the public ISEEKYAN
+Megatron memory estimator implementation:
+https://github.com/ISEEKYAN/mbridge/tree/main/memory_estimator
+"""
 
 import math
 from dataclasses import dataclass
@@ -125,6 +130,9 @@ def estimate_training_memory(
     issue #1673. The returned structure separates dense/embedding model state,
     routed expert model state, and activation memory so callers can display or
     post-process the breakdown.
+
+    The estimator logic is adapted from the public ISEEKYAN Megatron memory
+    estimator implementation.
 
     Args:
         config: Bridge training configuration container.
