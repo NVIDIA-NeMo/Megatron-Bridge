@@ -24,8 +24,7 @@ import torch
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.qwen.qwen3_5_bridge import Qwen3_5Bridge
-from megatron.bridge.models.qwen.qwen3_5_moe_bridge import Qwen3_5MoEBridge
+from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
 
 
 _NULL_ATTRS = (
@@ -42,7 +41,7 @@ _NULL_ATTRS = (
 
 
 class TestQwen35DenseBridge:
-    """Test cases for Qwen3_5Bridge (dense) class."""
+    """Test cases for Qwen35Bridge (dense) class."""
 
     @pytest.fixture
     def qwen3_5_27b_config_dict(self):
@@ -97,12 +96,12 @@ class TestQwen35DenseBridge:
         return mock_pretrained
 
     def test_bridge_registration(self):
-        """Test that Qwen3_5Bridge is properly registered."""
-        assert issubclass(Qwen3_5Bridge, MegatronModelBridge)
+        """Test that Qwen35Bridge is properly registered."""
+        assert issubclass(Qwen35Bridge, MegatronModelBridge)
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test basic provider_bridge functionality."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -115,7 +114,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test vocabulary size mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -124,7 +123,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test attention configuration mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -136,7 +135,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_linear_attention_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test linear attention (GDN) configuration mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -158,7 +157,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MLP configuration mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -167,7 +166,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test normalization configuration."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -176,7 +175,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_position_embedding(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test position embedding configuration."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -187,7 +186,7 @@ class TestQwen35DenseBridge:
 
     def test_provider_bridge_mtp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MTP configuration mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
@@ -206,7 +205,7 @@ class TestQwen35DenseBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
 
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.bf16 is True
@@ -227,7 +226,7 @@ class TestQwen35DenseBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_5_config
 
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.share_embeddings_and_output_weights is True
@@ -239,7 +238,7 @@ class TestQwen35DenseBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_5_config
 
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.share_embeddings_and_output_weights is False
@@ -255,7 +254,7 @@ class TestQwen35DenseBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
 
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.num_layers == 64
@@ -266,7 +265,7 @@ class TestQwen35DenseBridge:
 
     def test_mapping_registry(self):
         """Test mapping_registry returns valid mappings."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -284,7 +283,7 @@ class TestQwen35DenseBridge:
 
     def test_mapping_registry_parameter_mappings(self):
         """Test that mapping_registry contains expected parameter mappings."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -296,7 +295,7 @@ class TestQwen35DenseBridge:
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]
 
         # Should have embedding mappings
-        assert "model.language_model.embed_tokens.weight" in hf_params
+        assert "model.embed_tokens.weight" in hf_params
         assert "embedding.word_embeddings.weight" in megatron_params
 
         # Should have output layer mappings
@@ -304,12 +303,12 @@ class TestQwen35DenseBridge:
         assert "output_layer.weight" in megatron_params
 
         # Should have layer norm mappings
-        assert "model.language_model.norm.weight" in hf_params
+        assert "model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -336,7 +335,7 @@ class TestQwen35DenseBridge:
 
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -357,7 +356,7 @@ class TestQwen35DenseBridge:
 
     def test_mapping_registry_gdn_linear_mapping(self):
         """Test that mapping_registry contains GDN linear mapping."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -377,7 +376,7 @@ class TestQwen35DenseBridge:
 
     def test_mapping_registry_no_moe_mappings(self):
         """Test that dense bridge does not contain MoE-specific mappings."""
-        bridge = Qwen3_5Bridge()
+        bridge = Qwen35Bridge()
 
         registry = bridge.mapping_registry()
 
@@ -454,11 +453,11 @@ class TestQwen35MoEBridge:
 
     def test_bridge_registration(self):
         """Test that Qwen3_5MoEBridge is properly registered."""
-        assert issubclass(Qwen3_5MoEBridge, MegatronModelBridge)
+        assert issubclass(Qwen35MoEBridge, MegatronModelBridge)
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test basic provider_bridge functionality."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -471,7 +470,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test vocabulary size mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -480,7 +479,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test attention configuration mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -492,7 +491,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_linear_attention_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test linear attention (GDN) configuration mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -509,7 +508,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_moe_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MoE-specific configuration mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -522,7 +521,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_normalization(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test normalization configuration."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -531,7 +530,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_position_embedding(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test position embedding configuration."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -541,7 +540,7 @@ class TestQwen35MoEBridge:
 
     def test_provider_bridge_mtp_config(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test MTP configuration mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
@@ -559,7 +558,7 @@ class TestQwen35MoEBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
 
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.bf16 is True
@@ -580,7 +579,7 @@ class TestQwen35MoEBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_5_moe_config
 
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.share_embeddings_and_output_weights is True
@@ -592,7 +591,7 @@ class TestQwen35MoEBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = mock_qwen3_5_moe_config
 
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.share_embeddings_and_output_weights is False
@@ -608,7 +607,7 @@ class TestQwen35MoEBridge:
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = config
 
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
         assert result.num_layers == 60
@@ -619,7 +618,7 @@ class TestQwen35MoEBridge:
 
     def test_mapping_registry(self):
         """Test mapping_registry returns valid mappings."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -638,7 +637,7 @@ class TestQwen35MoEBridge:
 
     def test_mapping_registry_parameter_mappings(self):
         """Test that mapping_registry contains expected parameter mappings."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -647,18 +646,18 @@ class TestQwen35MoEBridge:
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]
 
-        assert "model.language_model.embed_tokens.weight" in hf_params
+        assert "model.embed_tokens.weight" in hf_params
         assert "embedding.word_embeddings.weight" in megatron_params
 
         assert "lm_head.weight" in hf_params
         assert "output_layer.weight" in megatron_params
 
-        assert "model.language_model.norm.weight" in hf_params
+        assert "model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -685,7 +684,7 @@ class TestQwen35MoEBridge:
 
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -706,7 +705,7 @@ class TestQwen35MoEBridge:
 
     def test_mapping_registry_gdn_linear_mapping(self):
         """Test that mapping_registry contains GDN linear mapping."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -726,7 +725,7 @@ class TestQwen35MoEBridge:
 
     def test_mapping_registry_moe_mappings(self):
         """Test that mapping_registry contains MoE-specific mappings."""
-        bridge = Qwen3_5MoEBridge()
+        bridge = Qwen35MoEBridge()
 
         registry = bridge.mapping_registry()
 
@@ -736,10 +735,10 @@ class TestQwen35MoEBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.language_model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.layers.*.mlp.gate.weight" in hf_params
         # shared_expert_gate is represented via ReplicatedMapping in bridge
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
-        assert "model.language_model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
+        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Check for fused expert mappings
         fused_gated_expert_mappings = [m for m in registry.mappings if type(m).__name__ == "FusedGatedExpertMapping"]
