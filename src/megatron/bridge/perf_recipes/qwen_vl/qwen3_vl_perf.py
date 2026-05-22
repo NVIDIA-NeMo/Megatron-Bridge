@@ -31,6 +31,28 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
+def _finalize_qwen3_vl_perf(cfg: ConfigContainer) -> None:
+    """Apply Qwen3-VL perf defaults that must override generic benchmark defaults."""
+    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
+    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
+    cfg.model.apply_rope_fusion = False
+
+    # Keep flat recipes aligned with the legacy Qwen3-VL performance path:
+    # attn scope is not compatible with Qwen3VLModel CUDA graph capture.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+
+    cfg.model.expert_tensor_parallel_size = 1
+
+    cfg.comm_overlap.overlap_param_gather = False
+    cfg.comm_overlap.overlap_grad_reduce = False
+
+    if getattr(cfg.model, "moe_a2a_overlap", False):
+        cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+        cfg.comm_overlap.delay_wgrad_compute = True
+        cfg.model.moe_shared_expert_overlap = False
+
+
 # =============================================================================
 # Qwen3-VL 235B-A22B pretrain — 64 GPU, GB300
 # =============================================================================
@@ -70,9 +92,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -110,9 +130,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -150,9 +168,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -195,9 +211,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -235,9 +249,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -275,9 +287,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -311,14 +321,12 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_a2a_overlap = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -347,14 +355,12 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_a2a_overlap = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -383,15 +389,13 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.moe_a2a_overlap = False
     cfg.ddp.overlap_param_gather = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -430,9 +434,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -466,9 +468,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -511,9 +511,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -551,9 +549,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -591,9 +587,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -636,9 +630,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -676,9 +668,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -716,9 +706,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -758,9 +746,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -795,9 +781,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -832,9 +816,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -876,9 +858,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
 
 
@@ -912,7 +892,5 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
-    # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
-    cfg.model.apply_rope_fusion = False
+    _finalize_qwen3_vl_perf(cfg)
     return cfg
