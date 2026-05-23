@@ -386,6 +386,17 @@ class TestGPTModelProvider:
 
         assert mtp_block_spec(provider) is None
 
+    def test_mtp_checkpointed_forward_accepts_padding_mask(self):
+        """Bridge MCore compatibility patch keeps MTP recompute aligned with MCore forward."""
+        import inspect
+
+        from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionLayer
+
+        params = inspect.signature(MultiTokenPredictionLayer._checkpointed_forward).parameters
+        assert "padding_mask" in params or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
+        )
+
     @patch("megatron.core.models.gpt.gpt_layer_specs.get_gpt_mtp_block_spec")
     def test_mtp_block_spec_uses_callable_spec_directly_when_layer_specs_nonempty(self, mock_get_mtp):
         """When the callable spec returns a non-empty block spec, use it as-is."""
