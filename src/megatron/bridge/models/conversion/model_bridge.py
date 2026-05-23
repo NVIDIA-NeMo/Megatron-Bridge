@@ -280,26 +280,40 @@ def _megatron_local_name_to_global(
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
     # For now adapters are not sharded across EP ranks.
-    is_expert_param = ".mlp.experts.linear_fc" in param_name and not ".adapter." in param_name
+    is_grouped_expert_param = ".mlp.experts.linear_fc" in param_name
+    is_local_expert_param = ".mlp.experts.local_experts." in param_name
+    is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
         num_experts = config.num_moe_experts
         num_experts_per_rank = num_experts // ep_group.size()
 
-        def _update_expert_number(param_name: str, param_type: str) -> str:
+        def _update_grouped_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
-            local_expert_number = int(param_name.split(f".{param_type}")[-1])
+            expert_match = re.search(rf"\.{param_type}(\d+)(?=$|\.)", param_name)
+            if expert_match is None:
+                return param_name
+            local_expert_number = int(expert_match.group(1))
             global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
-            return param_name.replace(
-                f".{param_type}{local_expert_number}",
-                f".{param_type}{global_expert_number}",
-            )
+            return f"{param_name[: expert_match.start(1)]}{global_expert_number}{param_name[expert_match.end(1) :]}"
 
-        # Handle weight and bias parameters
-        if ".weight" in param_name:
-            param_name = _update_expert_number(param_name, "weight")
-        elif ".bias" in param_name:
-            param_name = _update_expert_number(param_name, "bias")
+        if is_local_expert_param:
+            local_experts_match = re.search(r"\.local_experts\.(\d+)\.", param_name)
+            if local_experts_match:
+                local_expert_number = int(local_experts_match.group(1))
+                global_expert_number = num_experts_per_rank * ep_group.rank() + local_expert_number
+                param_name = param_name.replace(
+                    f".local_experts.{local_expert_number}.",
+                    f".local_experts.{global_expert_number}.",
+                    1,
+                )
+        # Grouped MoE uses numeric suffixes for per-expert weight and bias
+        # parameters, e.g. .weight0 and .bias1. Shared quantizer buffers such
+        # as .weight_quantizer._amax must not go through EP renumbering.
+        elif re.search(r"\.weight\d+(?=$|\.)", param_name):
+            param_name = _update_grouped_expert_number(param_name, "weight")
+        elif re.search(r"\.bias\d+(?=$|\.)", param_name):
+            param_name = _update_grouped_expert_number(param_name, "bias")
     return param_name
 
 
@@ -884,10 +898,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
-        group_key = task.mapping.group_key
-        if group_key not in grouped_buffers:
-            grouped_buffers[group_key] = {}
-
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         num_experts = model_config.num_moe_experts
         experts_per_rank = num_experts // ep_size
@@ -897,7 +907,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         except ValueError:
             return None
 
-        for _, value in converted_weights_dict.items():
+        merged_result: Dict[str, torch.Tensor] = {}
+        for group_key, value in converted_weights_dict.items():
+            if group_key not in grouped_buffers:
+                grouped_buffers[group_key] = {}
+
             if ep_size == 1:
                 grouped_buffers[group_key][local_expert_number] = value
             else:
@@ -908,7 +922,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 else:
                     grouped_buffers[group_key][local_expert_number] = value
 
-        if len(grouped_buffers[group_key]) == num_experts:
+            if len(grouped_buffers[group_key]) != num_experts:
+                continue
+
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
@@ -925,9 +941,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
-            return {group_key: merged}
+            merged_result[group_key] = merged
 
-        return None
+        return merged_result or None
 
     def load_weights_hf_to_megatron(
         self,
@@ -1232,12 +1248,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
-        # Pre-compute expected expert counts for grouped export mappings
-        _grouped_task_counts: Dict[str, int] = {}
-        for task in megatron_to_hf_tasks:
-            if task is not None and getattr(task.mapping, "is_grouped_export", False):
-                gk = task.mapping.group_key
-                _grouped_task_counts[gk] = _grouped_task_counts.get(gk, 0) + 1
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
@@ -1945,11 +1955,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
 
         return create_bridge_decorator(source=source, target=target, provider=provider, model_type=model_type)
-
-
-def is_tensor_parallel(param) -> bool:
-    """Check if a parameter is tensor parallel distributed."""
-    return hasattr(param, "tensor_model_parallel") and param.tensor_model_parallel
 
 
 # Core dispatch functions

@@ -26,7 +26,11 @@ import torch
 
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
+    LinearForLastLayer,
     calc_params_l2_norm,
+    create_value_head_hook,
+    freeze_moe_router,
+    make_value_model,
     maybe_inject_state,
     needs_global_state_injection,
     param_is_not_shared,
@@ -3422,3 +3426,117 @@ class TestMoeMetricFanoutWriter:
             ({"moe/load_balancing_loss_layer_1": 0.2}, 200),
             ({"moe/load_balancing_loss_layer_2": 0.3}, 200),
         ]
+
+
+def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+    with torch.no_grad():
+        head.weight.fill_(2.0)
+
+    logits, bias = head(torch.ones(3, 2))
+
+    assert torch.equal(logits, torch.full((3, 1), 4.0))
+    assert logits.dtype == torch.float32
+    assert bias is None
+
+
+def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True)
+    with torch.no_grad():
+        head.weight.fill_(1.0)
+
+    calls = {}
+
+    def fake_gather(tensor, tensor_parallel_output_grad):
+        calls["tensor"] = tensor
+        calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
+        return tensor + 1
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.utils.train_utils.tensor_parallel.gather_from_sequence_parallel_region",
+        fake_gather,
+    )
+
+    logits, bias = head(torch.ones(2, 2))
+
+    assert torch.equal(logits, torch.full((2, 1), 3.0))
+    assert torch.equal(calls["tensor"], torch.full((2, 1), 2.0))
+    assert calls["tensor_parallel_output_grad"] is False
+    assert bias is None
+
+
+def _patch_virtual_pipeline_last_stage(monkeypatch, last_vp_stage: int) -> None:
+    from megatron.core import parallel_state
+
+    def fake_is_pipeline_last_stage(ignore_virtual=False, vp_stage=None) -> bool:
+        del ignore_virtual
+        return vp_stage == last_vp_stage
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", fake_is_pipeline_last_stage)
+
+
+def _patch_single_pipeline_last_stage(monkeypatch) -> None:
+    from megatron.core import parallel_state
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: None)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: True)
+
+
+def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch) -> None:
+    _patch_virtual_pipeline_last_stage(monkeypatch, 1)
+
+    model_chunks = [torch.nn.Module(), torch.nn.Module()]
+    hook = create_value_head_hook(hidden_size=4, output_size=2, sequence_parallel=True)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert not hasattr(model_chunks[0], "output_layer")
+    output_layer = model_chunks[1].output_layer
+    assert isinstance(output_layer, LinearForLastLayer)
+    assert output_layer.in_features == 4
+    assert output_layer.out_features == 2
+    assert output_layer.sequence_parallel is True
+
+
+def test_create_value_head_hook_requires_chunk_count_to_match_pipeline_flags(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    hook = create_value_head_hook(hidden_size=4, sequence_parallel=False)
+
+    with pytest.raises(ValueError, match="Model list length"):
+        hook([torch.nn.Module(), torch.nn.Module()])
+
+
+def test_make_value_model_alias_creates_value_head_hook(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    model_chunks = [torch.nn.Module()]
+    hook = make_value_model(hidden_size=8, sequence_parallel=False)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert isinstance(model_chunks[0].output_layer, LinearForLastLayer)
+    assert model_chunks[0].output_layer.in_features == 8
+
+
+def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
+    router = torch.nn.Linear(2, 2)
+    shared_experts = SimpleNamespace(
+        gate_weight=torch.nn.Parameter(torch.ones(2, 2)),
+        gate_bias=torch.nn.Parameter(torch.ones(2)),
+    )
+    layer = SimpleNamespace(mlp=SimpleNamespace(router=router, shared_experts=shared_experts))
+    model = SimpleNamespace(decoder=SimpleNamespace(layers=[layer]))
+
+    result = freeze_moe_router([model])
+
+    assert result == [model]
+    assert router.weight.requires_grad is False
+    assert router.bias.requires_grad is False
+    assert shared_experts.gate_weight.requires_grad is False
+    assert shared_experts.gate_bias.requires_grad is False

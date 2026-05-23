@@ -131,7 +131,7 @@ class TestGemma4VLModelProviderDefaults:
 class TestInstallTiedKV:
     """Tests for _install_tied_kv layer marking behavior."""
 
-    def test_install_tied_kv_skips_dense_model(self):
+    def test_install_tied_kv_skips_with_flag(self):
         """_install_tied_kv does nothing when num_moe_experts is None."""
         from megatron.bridge.models.gemma.gemma4_provider import (
             Gemma4ModelProvider,
@@ -142,6 +142,7 @@ class TestInstallTiedKV:
             num_layers=6,
             hidden_size=64,
             num_attention_heads=4,
+            attention_k_eq_v=False,
         )
         provider.num_moe_experts = None  # Dense model
 
@@ -153,7 +154,7 @@ class TestInstallTiedKV:
                 layers = [FakeLayer()]
 
         _install_tied_kv(FakeModel(), provider)
-        # No _tied_kv flag should be set since it's a dense model
+        # No _tied_kv flag should be set since attention_k_eq_v is False
         assert not getattr(FakeLayer, "_tied_kv", False)
 
     def test_install_tied_kv_marks_global_layers(self):
@@ -173,6 +174,7 @@ class TestInstallTiedKV:
             global_head_dim=16,
             interleaved_attn_pattern=(5, 1),  # layers 1-5 sliding, layer 6 global
             num_moe_experts=4,
+            attention_k_eq_v=True,
         )
 
         class FakeLinear(nn.Module):

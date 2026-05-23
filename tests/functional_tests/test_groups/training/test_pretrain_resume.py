@@ -45,7 +45,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(GPTModelProvider):
+class Llama3TinyModelProvider(GPTModelProvider):
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -104,7 +104,7 @@ class TestPretrainResume:
 
             # First training run - train for 10 iterations and save checkpoint
             cfg_first = ConfigContainer(
-                model=Llama3ModelProvider145M(seq_length=seq_length),
+                model=Llama3TinyModelProvider(seq_length=seq_length),
                 train=TrainingConfig(
                     train_iters=checkpoint_iters,
                     global_batch_size=global_batch_size,
@@ -193,7 +193,7 @@ class TestPretrainResume:
 
             # Second training run - resume from checkpoint and train for remaining 10 iterations
             cfg_second = ConfigContainer(
-                model=Llama3ModelProvider145M(seq_length=seq_length),
+                model=Llama3TinyModelProvider(seq_length=seq_length),
                 train=TrainingConfig(
                     train_iters=total_iters,
                     global_batch_size=global_batch_size,

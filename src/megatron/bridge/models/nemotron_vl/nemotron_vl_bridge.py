@@ -26,13 +26,13 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_VL_V2",
     target=NemotronVLModel,
-    provider=NemotronNano12Bv2VLModelProvider,
+    provider=NemotronVLModelProvider,
     model_type="nemotron_vl",
 )
 class NemotronVLBridge(MegatronModelBridge):
@@ -48,7 +48,7 @@ class NemotronVLBridge(MegatronModelBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronNano12Bv2VLModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronVLModelProvider:  # type: ignore[override]
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
 
@@ -61,10 +61,10 @@ class NemotronVLBridge(MegatronModelBridge):
         # Handle vocab size divisibility
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
 
-        provider = NemotronNano12Bv2VLModelProvider(**provider_kwargs)
+        provider = NemotronVLModelProvider(**provider_kwargs)
 
         # Nemotron VL-specific settings
-        # Note: Most defaults come from the provider class hierarchy (NemotronNano12Bv2VLModelProvider)
+        # Note: Most defaults come from the provider class hierarchy (NemotronVLModelProvider)
         provider.scatter_embedding_sequence_parallel = False
         provider.attention_softmax_in_fp32 = True
 
