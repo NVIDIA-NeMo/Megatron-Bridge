@@ -197,7 +197,7 @@ class TestDoRAFinetune:
     def _create_squad_dataset_config(self, seq_length, seed=5678):
         """Create a SQuAD dataset configuration."""
         return HFDatasetConfig(
-            dataset_name="squad",
+            dataset_name="rajpurkar/squad",
             process_example_fn=process_squad_example,
             seq_length=seq_length,
             seed=seed,
