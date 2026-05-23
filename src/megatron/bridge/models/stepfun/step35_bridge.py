@@ -205,9 +205,6 @@ class Step35Bridge(MegatronModelBridge):
 
         hf_config = hf_pretrained.config
 
-        if provider.head_wise_attn_gate:
-            provider.attention_output_gate = True
-
         provider.layer_types = list(provider.layer_types or [])
         provider.rotary_percent = 0.5
         provider.sliding_attention_setting = None
@@ -232,14 +229,22 @@ class Step35Bridge(MegatronModelBridge):
             provider.rotary_base = rope_theta
 
         provider.normalization = "RMSNorm"
-        provider.layernorm_zero_centered_gamma = True  # HF weights store γ-1; TE norm applies (1+w)
+        provider.layernorm_zero_centered_gamma = hf_config.zero_centered
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
-        provider.add_qkv_bias = False  # Step3.5 does NOT have QKV bias
+        provider.add_qkv_bias = False
         provider.hidden_dropout = 0.0
         provider.attention_dropout = 0.0
-        provider.qk_layernorm = True  # Step3.5 uses QK layernorm
-        provider.autocast_dtype = torch.bfloat16
+        provider.qk_layernorm = hf_config.use_qk_norm
+        provider.autocast_dtype = hf_config.torch_dtype
+
+        provider.moe_router_enable_expert_bias = hf_config.use_moe_router_bias
+        provider.moe_router_score_function = hf_config.moe_router_activation
+        provider.moe_router_topk_scaling_factor = hf_config.moe_router_scaling_factor
+        provider.swiglu_limits = hf_config.swiglu_limits
+        provider.swiglu_limits_shared = hf_config.swiglu_limits_shared
+        if hf_config.need_fp32_gate:
+            provider.moe_router_dtype = "fp32"
 
         provider.moe_grouped_gemm = True
         provider.moe_router_load_balancing_type = "aux_loss"

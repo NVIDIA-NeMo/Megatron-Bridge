@@ -103,7 +103,9 @@ class Step35DecoderLayer(TransformerLayer):
         else:
             layer_idx = layer_number - 1
         layer_types = getattr(config, "layer_types", None) or []
-
+        config.activation_func_clamp_value = config.swiglu_limits[layer_idx]
+        # TODO: use separate swiglu limit for shared expert with MCore
+        config.activation_func_clamp_value_shared = config.swiglu_limits_shared[layer_idx]
         is_sliding = (
             layer_types is not None
             and 0 <= layer_idx < len(layer_types)
