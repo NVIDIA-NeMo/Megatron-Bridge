@@ -195,7 +195,6 @@ class Step35Bridge(MegatronModelBridge):
         ("share_expert_dim", "moe_shared_expert_intermediate_size"),
         ("share_expert_dims", "moe_shared_expert_intermediate_size"),
         ("use_head_wise_attn_gate", "head_wise_attn_gate"),
-        ("attention_other_setting", "attention_other_setting"),
         ("layer_types", "layer_types"),
     ]
 
@@ -205,21 +204,26 @@ class Step35Bridge(MegatronModelBridge):
 
         hf_config = hf_pretrained.config
 
-        provider.layer_types = list(provider.layer_types or [])
-        provider.rotary_percent = 0.5
-        provider.sliding_attention_setting = None
-        if provider.attention_other_setting:
-            attention_other_setting = provider.attention_other_setting
-            provider.sliding_attention_setting = {
-                "rotary_percent": 1.0,
-                "num_attention_heads": attention_other_setting["num_attention_heads"],
-                "num_query_groups": attention_other_setting.get(
-                    "num_query_groups", attention_other_setting.get("num_attention_groups", provider.num_query_groups)
-                ),
-                "head_dim": attention_other_setting.get(
-                    "head_dim", attention_other_setting.get("true_head_dim", provider.kv_channels)
-                ),
-            }
+        provider.rotary_percents = hf_config.partial_rotary_factors
+        provider.sliding_attention_setting = {
+            "window_size": [512, 0],
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "kv_channels": 128,
+        }
+        if hf_config.sliding_window is not None:
+            provider.sliding_attention_setting["window_size"] = [hf_config.sliding_window, 0]
+        if (
+            hf_config.attention_other_setting
+            and hf_config.attention_other_setting.get("attention_type", None) == "sliding_attention"
+        ):
+            provider.sliding_attention_setting["num_attention_heads"] = hf_config.attention_other_setting[
+                "num_attention_heads"
+            ]
+            provider.sliding_attention_setting["num_query_groups"] = hf_config.attention_other_setting[
+                "num_attention_groups"
+            ]
+            provider.sliding_attention_setting["kv_channels"] = hf_config.attention_other_setting["head_dim"]
 
         rope_theta = hf_config.rope_theta
         if isinstance(rope_theta, list):

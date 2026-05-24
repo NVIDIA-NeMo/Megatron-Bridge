@@ -49,38 +49,31 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 class Step35DecoderLayer(TransformerLayer):
     """Hybrid full/sliding attention decoder layer for Step-3.5-Flash.
 
-    On construction the layer resolves a global 0-indexed ``layer_idx``:
+    Resolves a global 0-indexed ``layer_idx`` (MTP layers are offset past
+    the main decoder; otherwise ``layer_number + pp_offset - 1``, or
+    ``layer_number - 1`` when ``add_layer_offset=False``) and uses it to
+    perform three per-layer config lookups before delegating to
+    ``TransformerLayer.__init__``:
 
-    * For MTP layers, ``layer_idx`` is offset after the main decoder layers so
-      per-layer RoPE and attention-type lists can include MTP entries.
-    * When ``add_layer_offset=False``, ``layer_idx = layer_number - 1``.
-    * Otherwise ``layer_idx = layer_number + get_transformer_layer_offset(
-      config, vp_stage, pp_rank) - 1``, so PP>1 still maps correctly.
+    1. **RoPE percentage** — ``rotary_percents[layer_idx]`` overrides
+       ``config.rotary_percent`` (Step-3.5 alternates 0.5 / 1.0). Out of
+       range → reset to ``1.0`` (the sliding-layer default), so MTP /
+       unconfigured layers don't inherit the previous layer's value.
+    2. **Attention type** — when ``layer_types[layer_idx] ==
+       "sliding_attention"`` and ``attention_other_setting`` is truthy, the
+       config is deep-copied and ``window_size`` / ``num_attention_heads`` /
+       ``num_query_groups`` / ``kv_channels`` are overridden from
+       ``sliding_attention_setting`` (already in Megatron-facing names; the
+       HF→mcore renaming happens in ``Step35Bridge.provider_bridge``).
+       ``rotary_percent`` is **not** touched here.
+    3. **SwiGLU clamp** — ``swiglu_limits[layer_idx]`` /
+       ``swiglu_limits_shared[layer_idx]`` overwrite
+       ``activation_func_clamp_value`` / ``activation_func_clamp_value_shared``.
+       Out of range → skipped, keeping the global value.
 
-    It then looks up ``config.layer_types[layer_idx]``. If the entry is
-    ``"sliding_attention"`` (and ``config.attention_other_setting`` is set as
-    the enable flag), the config is deep-copied and the shape-related fields
-    are overridden from ``config.sliding_attention_setting`` before delegating
-    to ``TransformerLayer.__init__``. The overridden config is what every
-    downstream sub-module (``self_attention``, ``linear_qkv`` with the
-    per-head ``g_proj`` gate expanded into Megatron-Core's gated-attention
-    layout, and ``linear_proj``) ends up reading, so each layer is sized
-    correctly without changing Megatron-LM core.
-
-    Fields read from ``config.sliding_attention_setting`` (HF key on the left,
-    ``TransformerConfig`` attribute on the right):
-
-    * ``rotary_percent``        -> ``rotary_percent``
-    * ``num_attention_heads``   -> ``num_attention_heads``
-    * ``num_query_groups``      -> ``num_query_groups``
-    * ``head_dim``              -> ``kv_channels``
-
-    Implementation notes:
-
-    * The spec-builder must keep ``layer_types`` indexed by the global
-      0-indexed layer id (same constraint as ``rotary_base_per_layer``).
-    * Layers whose resolved ``layer_idx`` falls outside ``layer_types`` fall
-      through to the global config.
+    All lookups are bounds-checked rather than raising. The spec-builder
+    must keep these lists (and ``rotary_base_per_layer``) indexed by the
+    global 0-indexed layer id.
     """
 
     def __init__(
@@ -102,28 +95,38 @@ class Step35DecoderLayer(TransformerLayer):
             layer_idx = layer_number + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
         else:
             layer_idx = layer_number - 1
+
+        rotary_percents = getattr(config, "rotary_percents", None) or []
+        if 0 <= layer_idx < len(rotary_percents):
+            config.rotary_percent = rotary_percents[layer_idx]
+        else:
+            config.rotary_percent = 1.0
+
         layer_types = getattr(config, "layer_types", None) or []
-        config.activation_func_clamp_value = config.swiglu_limits[layer_idx]
-        # TODO: use separate swiglu limit for shared expert with MCore
-        config.activation_func_clamp_value_shared = config.swiglu_limits_shared[layer_idx]
         is_sliding = (
             layer_types is not None
             and 0 <= layer_idx < len(layer_types)
             and layer_types[layer_idx] == "sliding_attention"
-            and getattr(config, "attention_other_setting", None)
             and getattr(config, "sliding_attention_setting", None)
         )
         if is_sliding:
             config = copy.deepcopy(config)
-            # Override the Q/KV shape fields on the deep-copied config so the
-            # sub-modules built by super().__init__ see sliding-layer shapes.
-            # Source dict is ``config.sliding_attention_setting``; HF -> mcore
-            # attribute mapping: num_attention_groups -> num_query_groups,
-            # head_dim -> kv_channels.
-            config.rotary_percent = config.sliding_attention_setting["rotary_percent"]
+            # Override window/Q/KV shape on the deep-copy so sub-modules built
+            # by super().__init__ see sliding-layer shapes. Keys are already
+            # Megatron-facing — HF→mcore renaming happens upstream in
+            # ``Step35Bridge.provider_bridge``.
+            config.window_size = config.sliding_attention_setting["window_size"]
             config.num_attention_heads = config.sliding_attention_setting["num_attention_heads"]
             config.num_query_groups = config.sliding_attention_setting["num_query_groups"]
-            config.kv_channels = config.sliding_attention_setting["head_dim"]
+            config.kv_channels = config.sliding_attention_setting["kv_channels"]
+
+        swiglu_limits = getattr(config, "swiglu_limits", None) or []
+        swiglu_limits_shared = getattr(config, "swiglu_limits_shared", None) or []
+        if 0 <= layer_idx < len(swiglu_limits):
+            config.activation_func_clamp_value = swiglu_limits[layer_idx]
+        if 0 <= layer_idx < len(swiglu_limits_shared):
+            # TODO: use separate swiglu limit for shared expert with MCore
+            config.activation_func_clamp_value_shared = swiglu_limits_shared[layer_idx]
 
         super().__init__(
             config=config,
