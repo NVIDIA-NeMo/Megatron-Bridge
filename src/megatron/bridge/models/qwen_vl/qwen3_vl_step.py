@@ -258,7 +258,7 @@ def forward_step(
         position_ids,
         this_pg_collection,
         use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
+        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
     forward_args = {
@@ -270,7 +270,11 @@ def forward_step(
     }
 
     original_tokens = tokens.clone()
-    forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
+    forward_args = get_batch_on_this_cp_rank(
+        forward_args,
+        is_hybrid_cp=False,
+        cp_group=this_pg_collection.cp,
+    )
     forward_args["packed_seq_params"] = None
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward

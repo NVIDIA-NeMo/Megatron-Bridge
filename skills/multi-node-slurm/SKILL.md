@@ -1,6 +1,7 @@
 ---
 name: multi-node-slurm
-description: Convert single-node scripts to multi-node Slurm sbatch jobs and debug common multi-node failures. Covers srun-native vs uv run torch.distributed approaches, container setup, NCCL timeouts, OOM sizing for MoE models, and interactive allocation. Use when creating Slurm scripts, scaling to multi-node, or debugging multi-node job failures.
+description: Convert single-node scripts to multi-node Slurm sbatch jobs and debug common multi-node failures. Covers srun-native vs uv run torch.distributed approaches, container setup, NCCL timeouts, OOM sizing for MoE models, and interactive allocation.
+when_to_use: Writing or converting Slurm sbatch scripts, scaling to multiple nodes, debugging NCCL/launch failures, or investigating a commit that caused multi-node training failures; 'run on multiple nodes', 'sbatch script', 'NCCL timeout', 'multi-node OOM'.
 ---
 
 # Multi-Node Slurm
@@ -101,7 +102,7 @@ srun --mpi=pmix \
 - Phase 2's `uv sync` is a fast no-op (everything is cached) — safe to run on all ranks without sleep guards
 - `initialize.py` + `common_utils.py` auto-set `RANK`, `WORLD_SIZE`, `LOCAL_RANK`, `MASTER_ADDR`, `MASTER_PORT` from SLURM env vars
 - Env vars like `HF_TOKEN`, `HF_HOME`, `UV_CACHE_DIR` exported at sbatch level are inherited by srun tasks
-- Reference: `examples/models/vlm/glm_45v/slurm_sft.sh`, `examples/models/minimax_m2/slurm_conversion.sh`
+- Reference: `examples/models/glm/glm_45v/slurm_sft.sh`, `examples/models/minimax/minimax_m2/slurm_conversion.sh`
 
 ---
 

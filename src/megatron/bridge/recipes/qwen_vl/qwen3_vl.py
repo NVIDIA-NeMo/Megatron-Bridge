@@ -20,6 +20,7 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
@@ -28,6 +29,7 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
+from megatron.bridge.data.utils import DatasetBuildContext
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
@@ -251,7 +253,7 @@ def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonK
     See `_qwen3_vl_common` for the full list of parameters.
     """
     recommended_kwargs: Qwen3VLCommonKwargs = {
-        "hf_path": "Qwen/Qwen3-VL-235B-A22B",
+        "hf_path": "Qwen/Qwen3-VL-235B-A22B-Instruct",
         "tensor_model_parallel_size": 4,
         "pipeline_model_parallel_size": 16,
         "expert_model_parallel_size": 8,
@@ -265,10 +267,36 @@ def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonK
     return _qwen3_vl_common(**combined_kwargs)
 
 
+@dataclass(kw_only=True)
+class QwenVLEnergonProvider(EnergonProvider):
+    """EnergonProvider subclass that exposes task-encoder knobs as CLI-overridable fields.
+
+    The task encoder is constructed eagerly (same as before), but build_datasets
+    syncs these fields onto it after CLI overrides have been applied.
+    """
+
+    min_pixels: int = 200704
+    max_pixels: int = 1003520
+    max_num_images: int | None = 10
+    max_num_frames: int | None = 60
+    max_visual_tokens: int | None = 16384
+
+    def build_datasets(self, context: DatasetBuildContext):
+        if self.task_encoder is not None:
+            self.task_encoder.seq_len = self.seq_length
+            self.task_encoder.seq_length = self.seq_length
+            self.task_encoder.min_pixels = self.min_pixels
+            self.task_encoder.max_pixels = self.max_pixels
+            self.task_encoder.max_num_images = self.max_num_images
+            self.task_encoder.max_num_frames = self.max_num_frames
+            self.task_encoder.max_visual_tokens = self.max_visual_tokens
+        return super().build_datasets(context)
+
+
 def _make_energon_dataset(
     hf_path: str, seq_length: int, micro_batch_size: int, global_batch_size: int
-) -> EnergonProvider:
-    """Create an EnergonProvider dataset config for Qwen3-VL recipes."""
+) -> QwenVLEnergonProvider:
+    """Create a QwenVLEnergonProvider dataset config for Qwen3-VL recipes."""
     tokenizer = AutoTokenizer.from_pretrained(hf_path)
     # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
     # This processor accepts both images and videos kwargs.
@@ -278,7 +306,7 @@ def _make_energon_dataset(
         image_processor=image_processor,
         max_padding_length=seq_length,
     )
-    return EnergonProvider(
+    return QwenVLEnergonProvider(
         path="",  # Must be set via CLI override: dataset.path=<path>
         seq_length=seq_length,
         micro_batch_size=micro_batch_size,
@@ -573,7 +601,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -649,7 +677,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=5e-6,
-        min_lr=3e-5,
+        min_lr=1e-6,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -793,7 +821,7 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -938,7 +966,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCont
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -1007,7 +1035,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "Qwen/Qwen3-VL-235B-A22B"
+    hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -1083,7 +1111,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=1e-4,
-        min_lr=3e-5,
+        min_lr=1e-5,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -1140,5 +1168,7 @@ def qwen3_vl_8b_peft_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigC
     """
     cfg = qwen3_vl_8b_peft_config(peft_scheme=peft_scheme)
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.dataset = _make_energon_dataset(hf_path, 4096, cfg.train.micro_batch_size, cfg.train.global_batch_size)
+    cfg.dataset = _make_energon_dataset(
+        hf_path, cfg.model.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
+    )
     return cfg

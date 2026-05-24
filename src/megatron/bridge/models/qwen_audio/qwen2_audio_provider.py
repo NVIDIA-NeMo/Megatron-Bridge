@@ -61,6 +61,9 @@ class Qwen2AudioModelProvider(GPTModelProvider):
     - Multi-turn conversation with audio context
     """
 
+    # Qwen2-Audio uses RoPE, not learned position embeddings
+    position_embedding_type: str = "rope"
+
     # Audio-Language models shouldn't scatter embeddings across sequence parallel regions
     # because audio embeddings are inserted into language embeddings
     scatter_embedding_sequence_parallel: bool = False
@@ -80,6 +83,7 @@ class Qwen2AudioModelProvider(GPTModelProvider):
     freeze_language_model: bool = False
     freeze_audio_model: bool = False
     freeze_audio_projection: bool = False
+    gradient_accumulation_fusion: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "Qwen2AudioModel":
         """

@@ -225,12 +225,11 @@ class EnergonMultiModalDataModule:
         Returns:
         EVAL_DATALOADERS: The DataLoader for the validation dataset.
         """
-        if self.val_dataloader_object:
-            return self.val_dataloader_object
-        worker_config = self._build_worker_config(self.num_val_workers, split="val")
-        val_dataset = self.datasets_provider(worker_config, split="val")
-        energon_loader = get_savable_loader(val_dataset, worker_config=worker_config)
-        self.val_dataloader_object = energon_loader
+        if self.val_dataloader_object is None:
+            worker_config = self._build_worker_config(self.num_val_workers, split="val")
+            val_dataset = self.datasets_provider(worker_config, split="val")
+            energon_loader = get_savable_loader(val_dataset, worker_config=worker_config)
+            self.val_dataloader_object = energon_loader
         return EnergonDataloader(self.val_dataloader_object)
 
     def test_dataloader(self) -> None:

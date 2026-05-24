@@ -25,14 +25,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.quantization_utils import (
+    dequantize_int4,
+    quantize_to_int4,
+)
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
-from megatron.bridge.models.kimi_vl.utils import (
-    dequantize_int4,
-    quantize_to_int4,
-)
 
 
 try:
@@ -186,8 +186,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         result = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):
-                packed, scale, shape = quantize_to_int4(tensor)
                 base = fqn[:-7] if fqn.endswith(".weight") else fqn
+                # Preserve the original scale dtype from the HF checkpoint
+                orig_scale_key = f"{base}.weight_scale"
+                scale_dtype = (
+                    hf_state_dict[orig_scale_key].dtype if orig_scale_key in hf_state_dict else torch.bfloat16
+                )
+                packed, scale, shape = quantize_to_int4(tensor, scale_dtype=scale_dtype)
                 result[f"{base}.weight_packed"] = packed
                 result[f"{base}.weight_scale"] = scale
                 result[f"{base}.weight_shape"] = shape

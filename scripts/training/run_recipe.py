@@ -52,13 +52,13 @@ Usage:
 
     Diffusion pretrain:
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_pretrain_config \
+            --recipe wan_1_3b_pretrain_config \
             --step_func wan_step \
             dataset.path=/data/energon
 
     Diffusion SFT (full finetuning):
         uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3B_sft_config \
+            --recipe wan_1_3b_sft_config \
             --step_func wan_step
             dataset.path=/data/energon
 
@@ -112,26 +112,32 @@ import megatron.bridge.recipes as recipes
 # Diffusion forward steps: use class instances so they can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
+from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.dataset_utils import (
     DATASET_TYPES,
     apply_dataset_override,
     infer_mode_from_dataset,
 )
+from megatron.bridge.training.audio_lm_step import forward_step as audio_lm_forward_step
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
 from megatron.bridge.training.llava_step import forward_step as llava_forward_step
+from megatron.bridge.training.nemotron_omni_step import forward_step as nemotron_omni_forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
 
 
 STEP_FUNCTIONS: dict[str, Callable] = {
+    "audio_lm_step": audio_lm_forward_step,
     "gpt_step": gpt_forward_step,
     "vlm_step": vlm_forward_step,
+    "qwen3_omni_step": qwen3_omni_forward_step,
     "qwen3_vl_step": qwen3_vl_forward_step,
     "llava_step": llava_forward_step,
+    "nemotron_omni_step": nemotron_omni_forward_step,
     "flux_step": FluxForwardStep,
     "wan_step": WanForwardStep,
 }

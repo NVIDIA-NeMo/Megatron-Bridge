@@ -204,31 +204,31 @@ class TestFp8ParamExport:
         mock_mb = Mock()
         fp8_tasks = [Mock(name="fp8_w"), Mock(name="fp8_scale")]
         mock_mb.build_export_fp8_tasks.return_value = fp8_tasks
+        mock_mb.stream_weights_megatron_to_hf.return_value = iter(
+            [("model.layers.0.self_attn.q_proj.weight", torch.ones(1))]
+        )
 
         with patch.object(AutoBridge, "_model_bridge", mock_mb):
-            with patch(
-                "megatron.bridge.models.conversion.auto_bridge.model_bridge.stream_weights_megatron_to_hf"
-            ) as stream:
-                stream.return_value = iter([("model.layers.0.self_attn.q_proj.weight", torch.ones(1))])
-                with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as tf:
-                    tf.LlamaForCausalLM = arch = Mock()
-                    bridge = AutoBridge(mock_hf)
-                    bridge.export_weight_dtype = export_dtype
-                    with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as arch_prop:
-                        arch_prop.return_value = arch
-                        if expect_raise:
-                            with pytest.raises(ValueError, match="only supports blockwise FP8 parameter export"):
-                                list(bridge.export_hf_weights(megatron, cpu=True))
-                        else:
+            with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as tf:
+                tf.LlamaForCausalLM = arch = Mock()
+                bridge = AutoBridge(mock_hf)
+                bridge.export_weight_dtype = export_dtype
+                with patch.object(AutoBridge, "_causal_lm_architecture", new_callable=PropertyMock) as arch_prop:
+                    arch_prop.return_value = arch
+                    if expect_raise:
+                        with pytest.raises(ValueError, match="only supports blockwise FP8 parameter export"):
                             list(bridge.export_hf_weights(megatron, cpu=True))
+                    else:
+                        list(bridge.export_hf_weights(megatron, cpu=True))
         assert mock_mb.build_export_fp8_tasks.call_count == n_fp8_build_calls
         if export_dtype == "fp8" and not expect_raise:
             mock_mb.build_export_fp8_tasks.assert_called_once_with(mock_hf, megatron)
-            assert stream.call_args.kwargs["conversion_tasks"] == fp8_tasks
+            assert mock_mb.stream_weights_megatron_to_hf.call_args.kwargs["conversion_tasks"] == fp8_tasks
         elif expect_raise:
             mock_mb.build_export_fp8_tasks.assert_not_called()
+            mock_mb.stream_weights_megatron_to_hf.assert_not_called()
         else:
-            assert stream.call_args.kwargs["conversion_tasks"] is None
+            assert mock_mb.stream_weights_megatron_to_hf.call_args.kwargs["conversion_tasks"] is None
 
     @pytest.mark.parametrize(
         "scale_shape, quantizer, is_2d, warn_trim, expect_shape",

@@ -183,7 +183,7 @@ def get_batch(
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],
@@ -254,6 +254,11 @@ def _forward_step_common(
             "cu_seqlens_unpadded": cu_seqlens_unpadded,
             "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
         }
+        # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
+        # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
+        # transformer models to avoid per-step CUDA overhead.
+        if getattr(config, "is_hybrid_model", False):
+            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:

@@ -335,7 +335,9 @@ def _fuse_moe_expert_weights(model_dir: Path, num_experts: int) -> None:
     if not keys_to_remove:
         return
 
-    new_state_dict = {k: v for k, v in state_dict.items() if k not in keys_to_remove}
+    # Clone kept tensors so they are no longer backed by the mmap of weights_path,
+    # which will be overwritten by save_file below.
+    new_state_dict = {k: v.clone() for k, v in state_dict.items() if k not in keys_to_remove}
 
     for prefix, experts in layers.items():
         gate_up = torch.stack(
@@ -400,7 +402,14 @@ class TestQwen35VLMoEConversion:
         assert "text_config" in config_data
         text_cfg = config_data["text_config"]
         assert text_cfg["num_experts"] == 4
-        assert text_cfg["full_attention_interval"] == 4
+        # transformers <5.5 saved `full_attention_interval` directly; >=5.5 stores
+        # the equivalent pattern under `layer_types` instead. Accept either layout.
+        if "full_attention_interval" in text_cfg:
+            assert text_cfg["full_attention_interval"] == 4
+        else:
+            layer_types = text_cfg["layer_types"]
+            full_idx = layer_types.index("full_attention")
+            assert full_idx + 1 == 4
 
         _ = Qwen3_5MoeForConditionalGeneration.from_pretrained(
             qwen35_vl_moe_toy_model_path,

@@ -25,7 +25,8 @@ import sys
 from pathlib import Path
 
 
-# Add the performance scripts to the path for testing
+# Add the performance scripts to the path for testing.
+# parents: [0]=recipes  [1]=test_groups  [2]=functional_tests  [3]=tests  [4]=repo root
 SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
@@ -112,6 +113,28 @@ class TestPerfConfigIntegration:
         assert cfg is not None
         assert cfg.model is not None
         assert cfg.mixed_precision is not None
+
+    def test_nemotron_3_super_perf_config_instantiation(self):
+        """Test that Nemotron 3 Super perf configs can be instantiated correctly."""
+        from configs.nemotronh.nemotron_3_llm_pretrain import nemotron_3_super_pretrain_config_gb300
+
+        cfg = nemotron_3_super_pretrain_config_gb300(precision="bf16", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.mixed_precision is not None
+
+    def test_nemotron_3_super_perf_config_nvfp4(self):
+        """Test that Nemotron 3 Super NVFP4 perf config uses the NT3-Super-specific recipe."""
+        from configs.nemotronh.nemotron_3_llm_pretrain import nemotron_3_super_pretrain_config_gb300
+
+        cfg = nemotron_3_super_pretrain_config_gb300(precision="nvfp4", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.mixed_precision is not None
+        assert cfg.mixed_precision.first_last_layers_bf16 is True
+        assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 14
 
     def test_gpt_oss_120b_perf_config_instantiation(self):
         """Test that GPT-OSS 120B perf configs can be instantiated correctly."""
