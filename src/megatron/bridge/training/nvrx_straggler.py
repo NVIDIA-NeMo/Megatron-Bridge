@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import logging
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 
@@ -22,19 +23,28 @@ from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.utils.import_utils import MISSING_NVRX_MSG
 
 
-try:
-    # Try the newer version first (nvidia-resiliency-ext >= 0.4)
-    import nvidia_resiliency_ext.attribution.straggler as straggler
+_NVRX_STRAGGLER_MODULES = (
+    "nvidia_resiliency_ext.attribution.straggler",
+    "nvidia_resiliency_ext.straggler",
+)
 
-    HAVE_NVRX = True
-except (ImportError, ModuleNotFoundError):
-    try:
-        # Fall back to the older version (nvidia-resiliency-ext < 0.4)
-        import nvidia_resiliency_ext.straggler as straggler
 
-        HAVE_NVRX = True
-    except (ImportError, ModuleNotFoundError):
-        HAVE_NVRX = False
+def _import_nvrx_straggler() -> tuple[Any | None, bool, Exception | None]:
+    """Import the NVRx straggler module across supported NVRx layouts."""
+    last_error: Exception | None = None
+    for module_name in _NVRX_STRAGGLER_MODULES:
+        try:
+            return importlib.import_module(module_name), True, None
+        except Exception as exc:
+            # TODO: remove this guard when nvidia-resiliency-ext 0.6.0.dev33 no longer imports
+            # LangChain log-analyzer dependencies while importing the straggler detector.
+            last_error = exc
+
+    return None, False, last_error
+
+
+straggler: Any
+straggler, HAVE_NVRX, _NVRX_IMPORT_ERROR = _import_nvrx_straggler()
 
 
 class NVRxStragglerDetectionManager:
@@ -52,7 +62,9 @@ class NVRxStragglerDetectionManager:
             ValueError: If invalid configuration is provided.
         """
         if not HAVE_NVRX:
-            raise ImportError(MISSING_NVRX_MSG)
+            if _NVRX_IMPORT_ERROR is None:
+                raise ImportError(MISSING_NVRX_MSG)
+            raise ImportError(MISSING_NVRX_MSG) from _NVRX_IMPORT_ERROR
         self.config = config
         self.logger = logging.getLogger(config.logger_name)
         self.initialized = False

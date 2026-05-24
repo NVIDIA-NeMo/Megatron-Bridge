@@ -69,6 +69,7 @@ def mock_nvidia_resiliency_ext():
 
 
 # Import after mocking is set up
+from megatron.bridge.training import nvrx_straggler as nvrx_straggler_module
 from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.training.nvrx_straggler import (
     NVRxStragglerDetectionManager,
@@ -168,6 +169,44 @@ class TestSafeShutdownFunction:
             safe_shutdown_nvrx_straggler_manager(mock_manager, "test_logger")
 
         assert "Error shutting down NVRx straggler detection: Shutdown failed" in caplog.text
+
+
+class TestNVRxImportGuard:
+    """Test NVRx straggler import compatibility handling."""
+
+    def test_import_falls_back_when_attribution_import_raises(self, monkeypatch):
+        """Test fallback to the legacy straggler module after a transitive import error."""
+        fallback_module = MagicMock()
+
+        def import_module(module_name):
+            if module_name == "nvidia_resiliency_ext.attribution.straggler":
+                raise RuntimeError("langchain validation failed")
+            if module_name == "nvidia_resiliency_ext.straggler":
+                return fallback_module
+            raise AssertionError(f"Unexpected module import: {module_name}")
+
+        monkeypatch.setattr(nvrx_straggler_module.importlib, "import_module", import_module)
+
+        module, have_nvrx, import_error = nvrx_straggler_module._import_nvrx_straggler()
+
+        assert module is fallback_module
+        assert have_nvrx is True
+        assert import_error is None
+
+    def test_import_marks_nvrx_unavailable_when_all_layouts_raise(self, monkeypatch):
+        """Test transitive import failures do not fail module import."""
+
+        def import_module(module_name):
+            raise RuntimeError(f"broken import for {module_name}")
+
+        monkeypatch.setattr(nvrx_straggler_module.importlib, "import_module", import_module)
+
+        module, have_nvrx, import_error = nvrx_straggler_module._import_nvrx_straggler()
+
+        assert module is None
+        assert have_nvrx is False
+        assert isinstance(import_error, RuntimeError)
+        assert "nvidia_resiliency_ext.straggler" in str(import_error)
 
 
 class TestNVRxStragglerDetectionManager:
@@ -569,6 +608,19 @@ class TestNVRxNotAvailable:
             # Should raise ImportError during instantiation with the expected message
             with pytest.raises(ImportError, match="nvidia-resiliency-ext is not available"):
                 NVRxStragglerDetectionManager(config)
+
+    def test_init_raises_import_error_from_import_failure(self, config):
+        """Test unavailable NVRx preserves the original import failure as the cause."""
+        import_error = RuntimeError("langchain validation failed")
+
+        with (
+            patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", False),
+            patch("megatron.bridge.training.nvrx_straggler._NVRX_IMPORT_ERROR", import_error),
+        ):
+            with pytest.raises(ImportError, match="nvidia-resiliency-ext is not available") as exc_info:
+                NVRxStragglerDetectionManager(config)
+
+        assert exc_info.value.__cause__ is import_error
 
 
 class TestIntegration:
