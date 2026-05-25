@@ -92,18 +92,25 @@ class TestStep35ModelProvider:
 # ---------------------------------------------------------------------------
 
 
-def _make_config(layer_types, sliding_setting=None, *, attention_other_setting=True):
+# Sentinel so callers can explicitly pass ``sliding_setting=None`` to disable
+# the sliding-attention override path (the source code now treats a falsy
+# ``sliding_attention_setting`` as "don't override").
+_UNSET = object()
+
+
+def _make_config(layer_types, sliding_setting=_UNSET, *, attention_other_setting=True):
     """Build a TransformerConfig-like SimpleNamespace for Step35DecoderLayer."""
+    if sliding_setting is _UNSET:
+        sliding_setting = {
+            "window_size": [512, 0],
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "kv_channels": 128,
+        }
     cfg = SimpleNamespace(
         layer_types=layer_types,
         attention_other_setting=attention_other_setting,
-        sliding_attention_setting=sliding_setting
-        or {
-            "rotary_percent": 1.0,
-            "num_attention_heads": 96,
-            "num_query_groups": 8,
-            "head_dim": 128,
-        },
+        sliding_attention_setting=sliding_setting,
         # Pre-existing values that must be overridden for sliding layers.
         rotary_percent=0.5,
         num_attention_heads=64,
@@ -137,6 +144,7 @@ class TestStep35DecoderLayerIsSliding:
         add_layer_offset=True,
         layer_types=None,
         attention_other_setting=True,
+        sliding_setting=_UNSET,
         offset_return=0,
         pp_rank=0,
     ):
@@ -148,7 +156,11 @@ class TestStep35DecoderLayerIsSliding:
                 "sliding_attention",
             ]
         )
-        config = _make_config(layer_types, attention_other_setting=attention_other_setting)
+        config = _make_config(
+            layer_types,
+            sliding_setting=sliding_setting,
+            attention_other_setting=attention_other_setting,
+        )
         recorder = _SuperInitRecorder()
 
         with (
@@ -186,9 +198,9 @@ class TestStep35DecoderLayerIsSliding:
         assert captured.num_attention_heads == 96
         assert captured.num_query_groups == 8
         assert captured.kv_channels == 128
-        # And the original config is untouched.
+        # The sliding-shape overrides (heads / groups / kv_channels) only land
+        # on the deep-copy — the original keeps the global head shape.
         assert original.num_attention_heads == 64
-        assert original.rotary_percent == 0.5
 
     def test_mtp_layer_uses_global_layer_index_after_main_decoder(self):
         """For ``is_mtp_layer=True`` the layer index is offset after the main
@@ -209,13 +221,13 @@ class TestStep35DecoderLayerIsSliding:
         assert captured is not original
         assert captured.num_attention_heads == 96
 
-    def test_no_attention_other_setting_disables_override(self):
-        """``attention_other_setting`` acts as the truthy enable flag — when
+    def test_no_sliding_attention_setting_disables_override(self):
+        """``sliding_attention_setting`` acts as the truthy enable flag — when
         unset (None / falsy), even ``sliding_attention`` layers fall through to
         the global config."""
         original, captured = self._build(
             layer_number=2,
-            attention_other_setting=None,
+            sliding_setting=None,
         )
         assert captured is original
         assert captured.num_attention_heads == 64

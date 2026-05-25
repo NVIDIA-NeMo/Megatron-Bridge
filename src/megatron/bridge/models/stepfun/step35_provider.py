@@ -107,27 +107,26 @@ class Step35DecoderLayer(TransformerLayer):
             layer_types is not None
             and 0 <= layer_idx < len(layer_types)
             and layer_types[layer_idx] == "sliding_attention"
-            and getattr(config, "sliding_attention_setting", None)
         )
         if is_sliding:
-            config = copy.deepcopy(config)
-            # Override window/Q/KV shape on the deep-copy so sub-modules built
-            # by super().__init__ see sliding-layer shapes. Keys are already
-            # Megatron-facing — HF→mcore renaming happens upstream in
-            # ``Step35Bridge.provider_bridge``.
-            config.window_size = config.sliding_attention_setting["window_size"]
-            config.num_attention_heads = config.sliding_attention_setting["num_attention_heads"]
-            config.num_query_groups = config.sliding_attention_setting["num_query_groups"]
-            config.kv_channels = config.sliding_attention_setting["kv_channels"]
+            if getattr(config, "sliding_attention_setting", None):
+                config = copy.deepcopy(config)
+                config.window_size = config.sliding_attention_setting["window_size"]
+                config.num_attention_heads = config.sliding_attention_setting["num_attention_heads"]
+                config.num_query_groups = config.sliding_attention_setting["num_query_groups"]
+                config.kv_channels = config.sliding_attention_setting["kv_channels"]
+        else:
+            config.window_size = None
 
         swiglu_limits = getattr(config, "swiglu_limits", None) or []
         swiglu_limits_shared = getattr(config, "swiglu_limits_shared", None) or []
         if 0 <= layer_idx < len(swiglu_limits):
-            config.activation_func_clamp_value = swiglu_limits[layer_idx]
+            v = swiglu_limits[layer_idx]
+            config.activation_func_clamp_value = None if (v is None or float(v) == 0.0) else float(v)
+        # use separate swiglu limit for shared expert with MCore
         if 0 <= layer_idx < len(swiglu_limits_shared):
-            # TODO: use separate swiglu limit for shared expert with MCore
-            config.activation_func_clamp_value_shared = swiglu_limits_shared[layer_idx]
-
+            v = swiglu_limits_shared[layer_idx]
+            config.activation_func_clamp_value_shared_expert = None if (v is None or float(v) == 0.0) else float(v)
         super().__init__(
             config=config,
             submodules=submodules,

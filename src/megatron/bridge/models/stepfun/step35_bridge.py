@@ -205,12 +205,14 @@ class Step35Bridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
 
         provider.rotary_percents = hf_config.partial_rotary_factors
+        # initialize the sliding_attention_setting with default values
         provider.sliding_attention_setting = {
             "window_size": [512, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
             "kv_channels": 128,
         }
+        # update the sliding_attention_setting with the values from the hf_config
         if hf_config.sliding_window is not None:
             provider.sliding_attention_setting["window_size"] = [hf_config.sliding_window, 0]
         if (
