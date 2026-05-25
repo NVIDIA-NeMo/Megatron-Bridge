@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Gemma 3 VL vision-language models.
 
-For model introduction and architecture details, see the [Gemma 3 VL documentation](../../../../docs/models/vlm/gemma3-vl.md).
+For model introduction and architecture details, see the [Gemma 3 VL documentation](../../../../docs/models/gemma/gemma3-vl.md).
 
 ## Workspace Configuration
 

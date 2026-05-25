@@ -89,6 +89,7 @@ from megatron.bridge.training.tensor_inspect import (
 )
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
+from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
 from megatron.bridge.training.utils.train_utils import (
     calc_params_l2_norm,
     logical_and_across_model_parallel_group,
@@ -1381,6 +1382,7 @@ def checkpoint_and_decide_exit(
                     callback_manager=callback_manager,
                     module_name=module_name,
                 )
+            end_active_mlflow_run("KILLED")
             barrier_and_log("exiting program after receiving SIGTERM.")
 
             return True
