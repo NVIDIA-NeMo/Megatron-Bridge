@@ -1309,10 +1309,11 @@ class TestTrainingLog:
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
         mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
 
-        # Set iteration (snapshot itself is not gated by tensorboard log interval anymore)
+        # Set iteration to the configured snapshot dump step.
         mock_global_state.train_state.step = 10
 
         training_log(
@@ -1337,6 +1338,79 @@ class TestTrainingLog:
         mock_open.assert_called_once_with("/tmp/memory_snapshot_7.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
         mock_print_rank_0.assert_any_call("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("torch.cuda.memory._snapshot")
+    @mock.patch("builtins.open")
+    @mock.patch("pickle.dump")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_profiling_memory_snapshot_skips_non_stop_step(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_pickle_dump,
+        mock_open,
+        mock_memory_snapshot,
+        mock_print_rank_last,
+        mock_print_rank_0,
+        mock_get_rank_safe,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory snapshot is not dumped before the profiling stop step."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank_safe.return_value = 7
+
+        mock_profiling_config = mock.MagicMock()
+        mock_profiling_config.record_memory_history = True
+        mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
+        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_step_end = 10
+        mock_config.profiling = mock_profiling_config
+        mock_config.logger.tensorboard_dir = "/tmp/tb"
+        mock_global_state.train_state.step = 9
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_get_rank_safe.assert_not_called()
+        mock_memory_snapshot.assert_not_called()
+        mock_open.assert_not_called()
+        mock_pickle_dump.assert_not_called()
+        mock_print_rank_0.assert_not_called()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
