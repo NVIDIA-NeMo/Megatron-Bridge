@@ -1353,9 +1353,9 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
     def test_profiling_memory_snapshot_skips_non_stop_step(
         self,
-        mock_report_runtime,
-        mock_report_throughput,
         mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
         mock_pickle_dump,
         mock_open,
         mock_memory_snapshot,
