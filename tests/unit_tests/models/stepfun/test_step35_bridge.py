@@ -75,6 +75,9 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         rope_theta=10000.0,
         moe_layers_enum="2,3",
         num_nextn_predict_layers=2,
+        swiglu_limits=[None, None, None, None],
+        swiglu_limits_shared=[None, None, None, None],
+        partial_rotary_factors=[0.5, 0.5, 0.5, 0.5],
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -119,6 +122,9 @@ class _FakeProvider:
         self.moe_permute_fusion = None
         self.moe_layer_freq = None
         self.transformer_layer_spec = None
+        self.swiglu_limits = [None, None, None, None]
+        self.swiglu_limits_shared = [None, None, None, None]
+        self.partial_rotary_factors = [0.5, 0.5, 0.5, 0.5]
 
 
 class _FakeHFPretrained:

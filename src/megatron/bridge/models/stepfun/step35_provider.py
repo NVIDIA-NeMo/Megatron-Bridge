@@ -34,7 +34,9 @@ import copy
 from dataclasses import dataclass
 from typing import Any, Optional
 
+import torch
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import (
     TransformerLayer,
@@ -138,6 +140,42 @@ class Step35DecoderLayer(TransformerLayer):
             add_layer_offset=add_layer_offset,
             pp_layer_offset=pp_layer_offset,
         )
+
+
+class Step35SharedExpertMLP(SharedExpertMLP):
+    """Shared-expert MLP for Step-3.5 honoring a per-shared-expert SwiGLU clamp.
+
+    ``SharedExpertMLP.__init__`` private-deepcopies its config so the shared
+    expert can mutate ``ffn_hidden_size`` without affecting the routed experts.
+    Step-3.5 sets a separate per-layer ``activation_func_clamp_value_shared_expert``
+    field on the config in ``Step35DecoderLayer.__init__`` (with documented
+    fallback to ``activation_func_clamp_value`` when it is ``None``). This
+    subclass surfaces that field to ``MLP.forward`` — which only reads
+    ``self.config.activation_func_clamp_value`` for SwiGLU clamping — by
+    swapping the value on the private config for the duration of the forward
+    pass.
+    """
+
+    def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        """Forward function"""
+        # ``MLP.forward`` (called via ``super().forward``) reads
+        # ``self.config.activation_func_clamp_value``. To honor
+        # ``activation_func_clamp_value_shared_expert`` for the shared expert (and
+        # the documented fallback to ``activation_func_clamp_value`` when it is
+        # None), temporarily override the field on this instance's config (which
+        # is a private deepcopy and is not shared with routed experts) and
+        # restore it after ``super().forward`` returns.
+        shared_clamp = getattr(self.config, "activation_func_clamp_value_shared_expert", None)
+        if shared_clamp is not None:
+            original_clamp = self.config.activation_func_clamp_value
+            self.config.activation_func_clamp_value = shared_clamp
+            try:
+                output = super().forward(hidden_states)
+            finally:
+                self.config.activation_func_clamp_value = original_clamp
+        else:
+            output = super().forward(hidden_states)
+        return output
 
 
 @dataclass

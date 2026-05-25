@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from functools import partial
 from typing import Dict
 
 import torch
@@ -36,6 +37,7 @@ from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
 from megatron.bridge.models.stepfun.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
+    Step35SharedExpertMLP,
 )
 
 
@@ -150,6 +152,14 @@ def _build_step35_layer_spec(cfg, **kw):
     # when the last main decoder layer is MoE.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
+        # Re-bind the shared-expert builder on MoE layers so the shared expert
+        # honors ``activation_func_clamp_value_shared_expert``. Dense layers
+        # have a plain MLP submodule (no ``shared_experts`` attribute) and are
+        # skipped by the ``getattr`` guard.
+        mlp_submodules = getattr(spec.submodules.mlp, "submodules", None)
+        shared = getattr(mlp_submodules, "shared_experts", None)
+        if shared is not None:
+            mlp_submodules.shared_experts = partial(Step35SharedExpertMLP, **shared.keywords)
     dense_mtp_spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=None,
         moe_grouped_gemm=False,
