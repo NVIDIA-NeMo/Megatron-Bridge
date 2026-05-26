@@ -215,7 +215,11 @@ class TestNVRxStragglerDetectionManager:
     @pytest.fixture
     def mock_straggler_module(self):
         """Mock the nvidia_resiliency_ext.straggler module."""
-        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
+        with (
+            patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler,
+            patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", True),
+            patch("megatron.bridge.training.nvrx_straggler._NVRX_IMPORT_ERROR", None),
+        ):
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()
             yield mock_straggler
@@ -645,7 +649,11 @@ class TestIntegration:
     def test_full_workflow(self, full_config):
         """Test the complete workflow from initialization to shutdown."""
         # Use the same mocking pattern as other tests for consistency
-        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
+        with (
+            patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler,
+            patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", True),
+            patch("megatron.bridge.training.nvrx_straggler._NVRX_IMPORT_ERROR", None),
+        ):
             # Setup mocks
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()
