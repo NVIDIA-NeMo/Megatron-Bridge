@@ -733,6 +733,8 @@ class SafeTensorsStateSource(StateSource):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
+                source sharding map when saving.
 
         """
         if distributed_save:
