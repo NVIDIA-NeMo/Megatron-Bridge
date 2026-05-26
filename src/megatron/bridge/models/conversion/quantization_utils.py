@@ -139,6 +139,7 @@ def dequantize_fp8_e4m3fn_with_scale(
             scale_exp = scale_f32.unsqueeze(1)
         else:
             scale_exp = scale_f32.repeat_interleave(block_size)[: weight_f32.shape[0]].unsqueeze(1)
+        scale_exp = scale_exp.expand_as(weight_f32)
     elif scale_f32.dim() != 2:
         label = f" for {name!r}" if name else ""
         raise RuntimeError(f"Unsupported FP8 scale rank{label}: scale={tuple(scale.shape)}")
