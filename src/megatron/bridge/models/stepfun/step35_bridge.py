@@ -205,6 +205,7 @@ class Step35Bridge(MegatronModelBridge):
         ("share_expert_dim", "moe_shared_expert_intermediate_size"),
         ("share_expert_dims", "moe_shared_expert_intermediate_size"),
         ("use_head_wise_attn_gate", "head_wise_attn_gate"),
+        ("attention_output_gate", "attention_output_gate"),
         ("layer_types", "layer_types"),
     ]
 
