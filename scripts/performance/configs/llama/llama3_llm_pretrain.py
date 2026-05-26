@@ -43,9 +43,6 @@ def set_llama3_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.optimizer.optimizer_cuda_graph = True
-    cfg.checkpoint.save = None
-
 
 # Llama3 70B configs ---------------------------------------------------------
 
