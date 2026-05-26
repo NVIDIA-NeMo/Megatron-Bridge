@@ -37,27 +37,13 @@ Note: The GB200/B200 results were measured using Nemo container version 25.11 (`
 
 ## Megatron-Core Pre-Training Performance
 
-#### System: DGX-GB200
+### Wan 2.1 14B
 
-| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
-|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-------------------------|
-|Wan 2.1 14B|32|64|1|37440|1|1|0|1|2|0|0|899.62|
+| System     | GPUs | GBS | Seq Len | Parallelism (TP/SP/PP/CP) | FSDP | TFLOP/s/GPU |
+|:-----------|-----:|----:|--------:|:--------------------------|-----:|-------------:|
+| DGX-GB300  |   32 |  64 |   37440 | 1 / 0 / 1 / 2            | 0    | 1,030.67 |
+| DGX-GB200  |   32 |  64 |   37440 | 1 / 0 / 1 / 2            | 1    | 899.62       |
+| DGX-B200   |   32 |  64 |   37440 | 1 / 0 / 1 / 2            | 1    | 804.02       |
+| DGX-H100   |  128 | 128 |   37440 | 2 / 1 / 1 / 4            | 0    | 325.77       |
 
-
-#### System: DGX-GB300
-
-| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
-|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-------------------------|
-|Wan 2.1 14B|32|64|1|37440|0|1|0|1|2|0|0|1,030.67|
-
-#### System: DGX-B200
-
-| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
-|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-------------------------|
-|Wan 2.1 14B|32|64|1|37440|1|1|0|1|2|0|0|804.02|
-
-#### System: DGX-H100
-
-| Model | #-GPUs | GBS | MBS | Sequence Length | FSDP | TP | SP | PP | CP | VP | EP | Model TFLOP / sec / GPU |
-|-------|--------|-----|-----|-----------------|------|----|----|----|----|----|----|-------------------------|
-|Wan 2.1 14B|128|128|1|37440|0|2|1|1|4|0|0|325.77|
+> TP = Tensor Parallelism, SP = Sequence Parallelism, PP = Pipeline Parallelism, CP = Context Parallelism
