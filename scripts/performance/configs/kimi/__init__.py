@@ -22,6 +22,7 @@ except ModuleNotFoundError:
 if HAVE_MEGATRON_BRIDGE:
     from .kimi_llm_pretrain import (
         kimi_k2_pretrain_config_b200,
+        kimi_k2_pretrain_config_b300,
         kimi_k2_pretrain_config_gb200,
         kimi_k2_pretrain_config_gb300,
         kimi_k2_pretrain_config_h100,
@@ -29,6 +30,9 @@ if HAVE_MEGATRON_BRIDGE:
     )
 
 from .kimi_workload_base_configs import (
+    KIMI_K2_PRETRAIN_CONFIG_B300_BF16,
+    KIMI_K2_PRETRAIN_CONFIG_B300_FP8_CS,
+    KIMI_K2_PRETRAIN_CONFIG_B300_FP8_MX,
     KIMI_K2_PRETRAIN_CONFIG_B200_BF16,
     KIMI_K2_PRETRAIN_CONFIG_B200_FP8_CS,
     KIMI_K2_PRETRAIN_CONFIG_B200_FP8_MX,
@@ -48,6 +52,9 @@ from .kimi_workload_base_configs import (
 
 
 __all__ = [
+    "KIMI_K2_PRETRAIN_CONFIG_B300_BF16",
+    "KIMI_K2_PRETRAIN_CONFIG_B300_FP8_CS",
+    "KIMI_K2_PRETRAIN_CONFIG_B300_FP8_MX",
     "KIMI_K2_PRETRAIN_CONFIG_B200_BF16",
     "KIMI_K2_PRETRAIN_CONFIG_B200_FP8_CS",
     "KIMI_K2_PRETRAIN_CONFIG_B200_FP8_MX",
@@ -70,6 +77,7 @@ if HAVE_MEGATRON_BRIDGE:
         [
             "kimi_k2_pretrain_config_gb300",
             "kimi_k2_pretrain_config_gb200",
+            "kimi_k2_pretrain_config_b300",
             "kimi_k2_pretrain_config_b200",
             "kimi_k2_pretrain_config_h100",
             "kimi_k2_pretrain_config_vr200",
