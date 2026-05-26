@@ -198,7 +198,7 @@ def quantize_to_int4(
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Quantize bfloat16/float16 weights to Kimi INT4 packed format."""
     out_features, in_features = weight.shape
-    weight_shape = torch.tensor([out_features, in_features], dtype=torch.int32)
+    weight_shape = torch.tensor([out_features, in_features], dtype=torch.int32, device=weight.device)
 
     w = weight.float()
 

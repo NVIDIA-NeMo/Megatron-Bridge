@@ -305,6 +305,29 @@ class TestFusedFc1NameHelpers:
         assert bridge._is_fused_fc1_up_proj("model.layers.0.block_sparse_moe.experts.0.w3.weight")
         assert not bridge._is_fused_fc1_up_proj("model.layers.0.mlp.gate_proj.weight")
 
+    def test_strip_hf_expert_index(self):
+        bridge = MegatronPeftBridge()
+
+        # The shared side of a shared-outer adapter drops the experts.<idx> index
+        # so it maps to the expert-agnostic name the serving loader expects.
+        assert (
+            bridge._strip_hf_expert_index("model.layers.0.mlp.experts.0.gate_proj.weight")
+            == "model.layers.0.mlp.experts.gate_proj.weight"
+        )
+        assert (
+            bridge._strip_hf_expert_index("model.layers.10.mlp.experts.123.down_proj.weight")
+            == "model.layers.10.mlp.experts.down_proj.weight"
+        )
+        # Already expert-agnostic or no experts segment: returned unchanged.
+        assert (
+            bridge._strip_hf_expert_index("model.layers.0.mlp.experts.gate_proj.weight")
+            == "model.layers.0.mlp.experts.gate_proj.weight"
+        )
+        assert (
+            bridge._strip_hf_expert_index("model.layers.0.self_attn.q_proj.weight")
+            == "model.layers.0.self_attn.q_proj.weight"
+        )
+
 
 # ---------------------------------------------------------------------------
 # AutoBridge.save_hf_adapter
