@@ -25,6 +25,7 @@ from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
 from megatron.bridge.models.stepfun.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
+    Step35SharedExpertMLP,
 )
 
 
@@ -245,3 +246,124 @@ class TestStep35DecoderLayerIsSliding:
         original, captured = self._build(layer_number=2)
         captured.sliding_attention_setting["num_attention_heads"] = 999
         assert original.sliding_attention_setting["num_attention_heads"] == 96
+
+
+# ---------------------------------------------------------------------------
+# Step35SharedExpertMLP.forward
+# ---------------------------------------------------------------------------
+
+
+class TestStep35SharedExpertMLPForward:
+    """``Step35SharedExpertMLP.forward`` temporarily swaps
+    ``config.activation_func_clamp_value`` so the parent ``SharedExpertMLP.forward``
+    (and the underlying ``MLP.forward`` SwiGLU clamp) uses the shared-expert
+    value during the call, and restores it after — even on exception.
+
+    Tests bypass ``Step35SharedExpertMLP.__init__`` via ``object.__new__`` because
+    the parent constructor wires Megatron-Core MLP machinery (GroupedGEMM, TE
+    parallel linears) that we don't need to exercise the forward override.
+    """
+
+    def _make_instance(self, *, shared_clamp, base_clamp=7.0):
+        instance = object.__new__(Step35SharedExpertMLP)
+        cfg = SimpleNamespace(activation_func_clamp_value=base_clamp)
+        if shared_clamp is not _UNSET:
+            cfg.activation_func_clamp_value_shared_expert = shared_clamp
+        instance.config = cfg
+        return instance
+
+    @staticmethod
+    def _patch_super_forward(fake):
+        """Patch the *parent* class so ``super().forward(...)`` resolves to `fake`."""
+        from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
+
+        return patch.object(SharedExpertMLP, "forward", fake)
+
+    def test_shared_clamp_overrides_config_only_during_super_forward(self):
+        instance = self._make_instance(shared_clamp=2.5, base_clamp=7.0)
+        captured = {}
+
+        def fake_super_forward(self, hidden_states):
+            captured["clamp_during_call"] = self.config.activation_func_clamp_value
+            captured["hidden_states"] = hidden_states
+            return "sentinel-out"
+
+        with self._patch_super_forward(fake_super_forward):
+            output = instance.forward(hidden_states="x")
+
+        # Parent forward saw the shared-expert clamp.
+        assert captured["clamp_during_call"] == 2.5
+        assert captured["hidden_states"] == "x"
+        # The override is reverted on the same config instance after return.
+        assert instance.config.activation_func_clamp_value == 7.0
+        # Output is forwarded back from super().
+        assert output == "sentinel-out"
+
+    def test_no_shared_clamp_passes_through_to_super(self):
+        """``activation_func_clamp_value_shared_expert=None`` -> fall through to
+        the ``else`` branch: no override, no try/finally."""
+        instance = self._make_instance(shared_clamp=None, base_clamp=7.0)
+        captured = {}
+
+        def fake_super_forward(self, hidden_states):
+            captured["clamp_during_call"] = self.config.activation_func_clamp_value
+            return "passthrough"
+
+        with self._patch_super_forward(fake_super_forward):
+            output = instance.forward(hidden_states="x")
+
+        assert captured["clamp_during_call"] == 7.0
+        assert instance.config.activation_func_clamp_value == 7.0
+        assert output == "passthrough"
+
+    def test_missing_shared_clamp_attribute_passes_through(self):
+        """When the config has no ``activation_func_clamp_value_shared_expert``
+        attribute at all, ``getattr(..., None)`` returns None and the bridge
+        must not plant the attribute on the config."""
+        instance = self._make_instance(shared_clamp=_UNSET, base_clamp=7.0)
+        captured = {}
+
+        def fake_super_forward(self, hidden_states):
+            captured["clamp_during_call"] = self.config.activation_func_clamp_value
+            return "ok"
+
+        with self._patch_super_forward(fake_super_forward):
+            instance.forward(hidden_states="x")
+
+        assert captured["clamp_during_call"] == 7.0
+        assert instance.config.activation_func_clamp_value == 7.0
+        assert not hasattr(instance.config, "activation_func_clamp_value_shared_expert")
+
+    def test_clamp_restored_when_super_forward_raises(self):
+        """The ``try/finally`` must restore the original clamp even if
+        ``super().forward`` raises mid-pass."""
+        import pytest
+
+        instance = self._make_instance(shared_clamp=2.5, base_clamp=7.0)
+
+        def boom(self, hidden_states):
+            # The override must be active for the duration of super().forward.
+            assert self.config.activation_func_clamp_value == 2.5
+            raise RuntimeError("boom")
+
+        with self._patch_super_forward(boom):
+            with pytest.raises(RuntimeError, match="boom"):
+                instance.forward(hidden_states="x")
+
+        assert instance.config.activation_func_clamp_value == 7.0
+
+    def test_shared_clamp_zero_overrides(self):
+        """``shared_clamp=0.0`` is falsy but not None — the bridge keys off
+        ``is not None`` so the override branch must still fire."""
+        instance = self._make_instance(shared_clamp=0.0, base_clamp=7.0)
+        captured = {}
+
+        def fake_super_forward(self, hidden_states):
+            captured["clamp_during_call"] = self.config.activation_func_clamp_value
+            return "ok"
+
+        with self._patch_super_forward(fake_super_forward):
+            instance.forward(hidden_states="x")
+
+        assert captured["clamp_during_call"] == 0.0
+        assert instance.config.activation_func_clamp_value == 7.0

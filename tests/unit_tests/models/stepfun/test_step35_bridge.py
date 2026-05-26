@@ -14,6 +14,7 @@
 
 """Unit tests for Step35Bridge (Step-3.5-Flash)."""
 
+from functools import partial
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -27,10 +28,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     merge_qkvg_weights,
     split_qkvg_weights,
 )
+from megatron.bridge.models.stepfun import step35_bridge as _step35_bridge_mod
 from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
     Step35Bridge,
+    Step35DecoderLayer,
+    Step35SharedExpertMLP,
+    _build_step35_layer_spec,
     _MTPDenseLayerSpecsList,
 )
 
@@ -224,6 +229,20 @@ class TestStep35BridgeProviderBridge:
         assert kwargs["head_wise_attn_gate"] is True
         assert kwargs["layer_types"] == hf_config.layer_types
 
+    def test_attention_output_gate_mapped_by_base_bridge_path(self):
+        # HF Step-3.5-Flash carries ``attention_output_gate`` verbatim into the
+        # Megatron provider (same field name on both sides). It's the MCore
+        # switch that drives ``merge_qkvg_weights`` to splice g_proj into linear_qkv.
+        hf_config = _make_hf_config(attention_output_gate=True)
+        kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
+        assert kwargs["attention_output_gate"] is True
+
+    def test_attention_output_gate_entry_in_config_mapping(self):
+        # Regression guard: removing this CONFIG_MAPPING entry silently breaks
+        # ckpt conversion because the provider's ``attention_output_gate`` then
+        # defaults to False and QKVG fusion drops the g_proj rows.
+        assert ("attention_output_gate", "attention_output_gate") in Step35Bridge.CONFIG_MAPPING
+
     def test_head_wise_attn_gate_preserved_through_step35_provider_bridge(self):
         """The Step35-specific provider_bridge must not overwrite ``head_wise_attn_gate``.
 
@@ -373,10 +392,109 @@ class TestStep35BridgeProviderBridge:
         assert p.moe_router_dtype is None
 
     def test_transformer_layer_spec_uses_custom_builder(self):
-        from megatron.bridge.models.stepfun.step35_bridge import _build_step35_layer_spec
-
         _, p = self._run()
         assert p.transformer_layer_spec is _build_step35_layer_spec
+
+
+# ---------------------------------------------------------------------------
+# _build_step35_layer_spec
+# ---------------------------------------------------------------------------
+
+
+class TestBuildStep35LayerSpec:
+    """Cover the per-spec rewrite loop in ``_build_step35_layer_spec``.
+
+    Mocks out the two Megatron-Core spec builders so the test can run without
+    a real backend, and feeds them a hand-rolled mix of MoE and dense layer
+    specs to exercise both branches of the ``shared_experts`` rebind guard.
+    """
+
+    class _OriginalSharedExpert:
+        """Sentinel class for the *pre-rebind* shared-expert builder."""
+
+    def _moe_spec(self):
+        """Layer spec shaped like an MoE main-decoder layer: mlp.submodules has
+        a ``shared_experts`` partial that the bridge must replace."""
+        original = partial(self._OriginalSharedExpert, clamp=2.5, gated=True)
+        mlp_submods = SimpleNamespace(shared_experts=original)
+        return SimpleNamespace(
+            module="placeholder",
+            submodules=SimpleNamespace(mlp=SimpleNamespace(submodules=mlp_submods)),
+        ), original
+
+    def _dense_spec(self):
+        """Layer spec shaped like a dense main-decoder layer: mlp has no
+        ``submodules`` attribute, so the ``getattr(..., None)`` guard must
+        short-circuit without raising."""
+        return SimpleNamespace(
+            module="placeholder",
+            submodules=SimpleNamespace(mlp=SimpleNamespace()),
+        )
+
+    def _build(self, layer_specs):
+        fake_block = SimpleNamespace(layer_specs=layer_specs)
+        fake_dense_mtp = SimpleNamespace(module="placeholder")
+        cfg = SimpleNamespace(qk_layernorm=True)
+        with (
+            patch.object(_step35_bridge_mod, "get_gpt_decoder_block_spec", return_value=fake_block) as mock_block,
+            patch.object(
+                _step35_bridge_mod,
+                "get_gpt_layer_with_transformer_engine_spec",
+                return_value=fake_dense_mtp,
+            ) as mock_dense,
+        ):
+            out = _build_step35_layer_spec(cfg)
+        return out, fake_dense_mtp, mock_block, mock_dense, cfg
+
+    def test_moe_shared_experts_rebound_to_step35_shared_expert_mlp(self):
+        moe_spec, original_partial = self._moe_spec()
+        out, fake_dense_mtp, mock_block, mock_dense, cfg = self._build([moe_spec])
+
+        # Builders were invoked with the Step35-specific kwargs.
+        mock_block.assert_called_once_with(cfg, use_transformer_engine=True, normalization="RMSNorm")
+        mock_dense.assert_called_once_with(num_experts=None, moe_grouped_gemm=False, qk_layernorm=True)
+
+        # The MoE spec's ``shared_experts`` was rebound to ``Step35SharedExpertMLP``
+        # while preserving the original partial's keyword arguments verbatim.
+        new_shared = moe_spec.submodules.mlp.submodules.shared_experts
+        assert new_shared is not original_partial
+        assert isinstance(new_shared, partial)
+        assert new_shared.func is Step35SharedExpertMLP
+        assert new_shared.keywords == original_partial.keywords
+
+        # Module class rewritten on both the main-decoder spec and the dense MTP spec.
+        assert moe_spec.module is Step35DecoderLayer
+        assert fake_dense_mtp.module is Step35DecoderLayer
+
+        # ``layer_specs`` is wrapped so MTP layers resolve to the dense spec on -1.
+        assert isinstance(out.layer_specs, _MTPDenseLayerSpecsList)
+        assert out.layer_specs[-1] is fake_dense_mtp
+
+    def test_dense_layer_short_circuits_without_mutation(self):
+        """A dense layer (no ``mlp.submodules``) must skip the rebind branch
+        without raising and without growing a ``submodules`` attribute."""
+        dense_spec = self._dense_spec()
+        out, *_ = self._build([dense_spec])
+
+        assert dense_spec.module is Step35DecoderLayer
+        assert not hasattr(dense_spec.submodules.mlp, "submodules")
+        # The dense spec is still the first (and only) entry under forward iteration.
+        assert list(out.layer_specs) == [dense_spec]
+
+    def test_mixed_moe_and_dense_layers_both_handled(self):
+        """Both branches of the guard exercised in a single pass — order of
+        appearance in ``layer_specs`` must not affect the per-spec decision."""
+        dense_spec = self._dense_spec()
+        moe_spec, original_partial = self._moe_spec()
+        out, *_ = self._build([dense_spec, moe_spec])
+
+        assert dense_spec.module is Step35DecoderLayer
+        assert moe_spec.module is Step35DecoderLayer
+        assert not hasattr(dense_spec.submodules.mlp, "submodules")
+        new_shared = moe_spec.submodules.mlp.submodules.shared_experts
+        assert new_shared.func is Step35SharedExpertMLP
+        assert new_shared.keywords == original_partial.keywords
+        assert list(out.layer_specs) == [dense_spec, moe_spec]
 
 
 # ---------------------------------------------------------------------------
