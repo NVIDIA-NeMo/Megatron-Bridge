@@ -41,7 +41,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Optimizer & Scheduler](optimizer-scheduler.md)** | Optimizer and learning rate scheduler configuration | Setting up optimization |
 | **[Mixed Precision](mixed-precision.md)** | Mixed precision training for memory efficiency | Reducing memory usage |
 | **[Communication Overlap](communication-overlap.md)** | Overlapping communication with computation | Optimizing distributed training |
-| **[Hybrid Context Parallel](hybrid-context-parallel.md)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
+| **[Hierarchical Context Parallel](hierarchical-context-parallel.md)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
 | **[Attention Optimizations](attention-optimizations.md)** | Optimizing attention mechanisms | Improving training speed |
 | **[Activation Recomputation](activation-recomputation.md)** | Gradient checkpointing strategies | Reducing memory footprint |
 | **[CPU Offloading](cpu-offloading.md)** | Offloading to CPU for memory management | Working with limited GPU memory |

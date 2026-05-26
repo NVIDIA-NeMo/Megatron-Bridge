@@ -63,6 +63,25 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
+def _filter_run_script_args(argv: List[str]) -> List[str]:
+    """Drop launcher-only args before forwarding argv to the rank-local script."""
+    filtered_args = []
+    skip_next = False
+
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--additional_slurm_params":
+            skip_next = True
+            continue
+        if arg.startswith("--additional_slurm_params="):
+            continue
+        filtered_args.append(arg)
+
+    return filtered_args
+
+
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
     """Check if training is finished.
 
@@ -268,6 +287,7 @@ def main(
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
     kubeflow_image_pull_secrets: List[str],
+    deterministic: bool = False,
     config_variant: str = "v1",
     gres: Optional[str] = None,
     packager: str = "git",
@@ -440,6 +460,7 @@ def main(
                 compute_dtype=compute_dtype,
                 train_task=task,
                 config_variant=config_variant,
+                deterministic=deterministic,
             )
         )
 
@@ -486,7 +507,7 @@ def main(
         path=str(run_script_path),
         entrypoint="python",
         env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
-        args=list(sys.argv[1:]),
+        args=_filter_run_script_args(sys.argv[1:]),
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
@@ -758,6 +779,7 @@ if __name__ == "__main__":
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
+        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

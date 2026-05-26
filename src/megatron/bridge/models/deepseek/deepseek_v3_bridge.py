@@ -13,12 +13,13 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Union
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
@@ -34,6 +35,12 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
+
+
+__all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
+
+
+_dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
 
 
 @MegatronModelBridge.register_bridge(
@@ -129,6 +136,42 @@ class DeepSeekV3Bridge(MegatronModelBridge):
             )
         )
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        DeepSeek-V3 ships linear weights as ``float8_e4m3fn`` with per-block scale
+        factors stored in ``<key>_scale_inv`` (128x128 blocks). The true bf16 weight is::
+
+            w_bf16 = fp8_weight.float() * scale_inv_block
+
+        Without this override the bridge would do a bare ``.to(bf16)`` cast in
+        ``ColumnParallelMapping.hf_to_megatron`` (param_mapping.py:905), discarding the
+        per-block scales — the resulting model produces random-looking logits.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually.
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))
 
     def maybe_modify_converted_hf_weight(
         self,

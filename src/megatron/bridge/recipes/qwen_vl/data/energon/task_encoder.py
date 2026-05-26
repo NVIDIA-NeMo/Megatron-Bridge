@@ -21,7 +21,7 @@ from typing import Dict, List
 
 import numpy as np
 import torch
-from megatron.energon import Batch, DefaultTaskEncoder
+from megatron.energon import Batch, DefaultTaskEncoder, SkipSample
 from transformers import BatchEncoding
 
 from megatron.bridge.data.energon.task_encoder_utils import (
@@ -56,7 +56,10 @@ def process_vision(
         image_grid_thw = None
 
     if videos is not None:
-        videos_inputs = processor(images=None, text="", videos=videos, return_tensors="pt")
+        # Pre-decoded frames from WDS are already at the desired sampling rate.
+        # do_sample_frames=False prevents the processor from re-sampling them under
+        # a spurious 24 fps assumption, which would reduce most clips to T=2.
+        videos_inputs = processor.video_processor(videos=videos, return_tensors="pt", do_sample_frames=False)
         video_grid_thw = videos_inputs.get("video_grid_thw", None)
     else:
         videos_inputs = {}
@@ -168,6 +171,9 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         max_padding_length: int = 4096,
         min_pixels: int = 200704,
         max_pixels: int = 1003520,
+        max_num_images: int | None = 10,
+        max_num_frames: int | None = 60,
+        max_visual_tokens: int | None = 16384,
     ):
         super().__init__()
 
@@ -176,6 +182,9 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.seq_length = max_padding_length
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
+        self.max_num_images = max_num_images
+        self.max_num_frames = max_num_frames
+        self.max_visual_tokens = max_visual_tokens
 
         self.temporal_patch_size = temporal_patch_size
         self.merge_size = spatial_merge_size
@@ -202,6 +211,32 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         videos_for_processing = (
             _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
         )
+
+        if self.max_num_images is not None and imgs_for_processing is not None:
+            if len(imgs_for_processing) > self.max_num_images:
+                logging.warning(
+                    "Skipping sample %s: %d images exceeds max_num_images=%d",
+                    sample.__key__,
+                    len(imgs_for_processing),
+                    self.max_num_images,
+                )
+                raise SkipSample()
+
+        if self.max_num_frames is not None and videos_for_processing is not None:
+            clipped = []
+            for v in videos_for_processing:
+                if len(v) > self.max_num_frames:
+                    logging.warning(
+                        "Truncating %d frames to max_num_frames=%d for sample %s",
+                        len(v),
+                        self.max_num_frames,
+                        sample.__key__,
+                    )
+                    clipped.append(v[: self.max_num_frames])
+                else:
+                    clipped.append(v)
+            videos_for_processing = clipped
+
         processed_vision = process_vision(
             self.image_processor,
             imgs_for_processing,
@@ -213,6 +248,20 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         video_thw_grids = processed_vision["video_grid_thw"]
         flattened_imgs = processed_vision["image_inputs"]
         flattened_videos = processed_vision["video_inputs"]
+
+        merge_length = self.merge_size**2
+        image_tokens = int(image_thw_grids.prod(-1).sum()) // merge_length if image_thw_grids is not None else 0
+        video_tokens = int(video_thw_grids.prod(-1).sum()) // merge_length if video_thw_grids is not None else 0
+        total_visual_tokens = image_tokens + video_tokens
+        if self.max_visual_tokens is not None:
+            if total_visual_tokens > self.max_visual_tokens:
+                logging.warning(
+                    "Skipping sample %s: %d visual tokens exceeds max_visual_tokens=%d",
+                    sample.__key__,
+                    total_visual_tokens,
+                    self.max_visual_tokens,
+                )
+                raise SkipSample()
 
         # Normalize conversation to [{"role": ..., "content": ...}, ...]
         conversation = cook_chatml_sample(sample.conversation)
@@ -287,7 +336,22 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             target_length = input_ids.shape[0]
 
         if target_length > self.seq_len:
-            logging.warning(f"Long sequence with length {target_length} found, dropped...")
+            if total_visual_tokens > self.seq_len:
+                logging.warning(
+                    "Sample %s: target_length=%d with visual_tokens=%d exceeds seq_len=%d; "
+                    "truncation would corrupt visual tokens, dropping sample.",
+                    sample.__key__,
+                    target_length,
+                    total_visual_tokens,
+                    self.seq_len,
+                )
+                raise SkipSample()
+            logging.warning(
+                "Sample %s: target_length=%d exceeds seq_len=%d; text will be truncated.",
+                sample.__key__,
+                target_length,
+                self.seq_len,
+            )
         final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
         final_input_masks = final_input_ids.copy()
 
@@ -435,7 +499,9 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         raw["visual_inputs"] = Qwen2_5_VLVisualInputs(
             pixel_values=batch.pixel_values,
+            pixel_values_videos=batch.pixel_values_videos,
             image_grid_thw=batch.image_grid_thw,
+            video_grid_thw=batch.video_grid_thw,
         )
 
         return raw

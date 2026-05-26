@@ -434,7 +434,7 @@ def main(args) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Omni-Language Generation from HuggingFace Qwen3-Omni Models")
+    parser = argparse.ArgumentParser(description="Omni-Language Generation from HuggingFace Qwen3-Omni")
     parser.add_argument(
         "--hf_model_path",
         type=str,

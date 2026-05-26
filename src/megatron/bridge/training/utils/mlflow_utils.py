@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import re
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -97,3 +98,58 @@ def _sanitize_mlflow_metrics(metrics: dict[str, Any]) -> dict[str, Any]:
         return sanitized
 
     return {_sanitize_key(key): value for key, value in metrics.items()}
+
+
+def end_active_mlflow_run(status: str) -> None:
+    """End the active MLFlow run with the given status.
+
+    Used by the SIGTERM exit path (``status="KILLED"``) and the failure
+    excepthook (``status="FAILED"``) to override MLFlow's default
+    ``FINISHED`` status so the UI distinguishes interrupted and crashed
+    runs from successful ones. Clean exits rely on MLFlow's own atexit
+    handler, which already ends the run as ``FINISHED``.
+
+    No-op if MLFlow is not installed or no run is active. Exceptions
+    raised inside ``mlflow.end_run`` are caught and logged.
+
+    Args:
+        status: An MLFlow ``RunStatus`` string, typically ``"KILLED"`` or
+                ``"FAILED"``.
+    """
+    try:
+        import mlflow
+    except ImportError:
+        return
+
+    if mlflow.active_run() is None:
+        return
+
+    try:
+        mlflow.end_run(status=status)
+    except Exception as exc:
+        print_rank_last(f"Failed to end MLFlow run with status={status}: {exc}")
+
+
+def install_mlflow_failure_hook() -> None:
+    """Mark the active MLFlow run as ``FAILED`` on uncaught Python exceptions.
+
+    MLFlow's own atexit handler ends the run with the default status
+    ``FINISHED`` on process exit, making a crashed run indistinguishable
+    from a clean one in the UI. We chain a ``sys.excepthook`` that fires
+    before atexit and explicitly sets ``FAILED`` first; the previous
+    excepthook is preserved so default traceback printing still happens.
+
+    Idempotent: a second call after a previous install is a no-op.
+    """
+    prev_excepthook = sys.excepthook
+
+    # Idempotent: avoid wrapping our own hook in chains across repeated installs.
+    if getattr(prev_excepthook, "_mlflow_failure_hook", False):
+        return
+
+    def hook(exc_type: type[BaseException], exc_val: BaseException, exc_tb: Any) -> None:
+        end_active_mlflow_run("FAILED")
+        prev_excepthook(exc_type, exc_val, exc_tb)
+
+    hook._mlflow_failure_hook = True  # type: ignore[attr-defined]
+    sys.excepthook = hook

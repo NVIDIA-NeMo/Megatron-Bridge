@@ -60,7 +60,9 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
     "NemotronH_Nano_VL_V2",
+    "NemotronH_Nano_Omni_Reasoning_V3",
     "Qwen2_5OmniModel",
+    "MinistralDiffEncoderModel",  # required for NemotronLabsDiffusion
 )
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.
@@ -127,6 +129,8 @@ class AutoBridge(Generic[MegatronModelT]):
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
+        trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
+        self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -232,6 +236,7 @@ class AutoBridge(Generic[MegatronModelT]):
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
         bridge = cls.from_hf_config(synthesized_config)
         bridge.hf_model_id = hf_model_id
+        bridge.trust_remote_code = trust_remote_code
 
         return bridge
 
@@ -697,15 +702,17 @@ class AutoBridge(Generic[MegatronModelT]):
             if is_config_only:
                 import json
 
-                # Config-only path: write config.json and download modeling files from Hub.
+                # Config-only path: write config.json and optionally download modeling files from Hub.
                 Path(path).mkdir(parents=True, exist_ok=True)
                 config_dict = self.hf_pretrained.to_dict()
+                if not self.trust_remote_code:
+                    config_dict.pop("auto_map", None)
                 with open(Path(path) / "config.json", "w") as _f:
                     json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
 
-                # Download custom modeling files so the output is loadable with from_pretrained().
+                # Download custom modeling files only when the export is meant to preserve remote code.
                 hub_repo = self.hf_model_id
-                if hub_repo:
+                if hub_repo and self.trust_remote_code:
                     try:
                         from huggingface_hub import hf_hub_download, list_repo_files
 
@@ -1487,7 +1494,7 @@ class AutoBridge(Generic[MegatronModelT]):
             return self.hf_pretrained
         return self._config_only_pretrained
 
-    @cached_property
+    @property
     def _causal_lm_architecture(self):
         """Resolve the model's CausalLM architecture for dispatch.
 
