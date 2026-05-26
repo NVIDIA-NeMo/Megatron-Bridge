@@ -183,6 +183,25 @@ class TestDeepSeekV4QuantizedExport:
         restored = quantization_utils.dequantize_mxfp4_e2m1_packed(result[hf_param], result[scale_key])
         assert torch.equal(restored.float(), weight.float())
 
+    @pytest.mark.parametrize(
+        "hf_param",
+        [
+            "layers.0.ffn.shared_experts.w1.weight",
+            "layers.0.ffn.experts.0.w1.weight",
+        ],
+    )
+    def test_export_uses_fp8_for_non_mxfp4_expert_scale_geometry(self, hf_param):
+        bridge = DeepSeekV4Bridge()
+        scale_key = hf_param.removesuffix(".weight") + ".scale"
+        weight = torch.full((4, 4), 2.0, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            _dummy_task(), {hf_param: weight}, {scale_key: torch.ones(1, 1)}
+        )
+
+        assert result[hf_param].dtype == torch.float8_e4m3fn
+        assert result[scale_key].shape == (1, 1)
+
     def test_export_leaves_unscaled_weight_unchanged(self):
         bridge = DeepSeekV4Bridge()
         weight = torch.ones(4, 4, dtype=torch.bfloat16)

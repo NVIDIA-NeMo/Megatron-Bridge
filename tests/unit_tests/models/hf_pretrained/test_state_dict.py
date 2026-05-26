@@ -467,6 +467,57 @@ class TestSafeTensorsStateSourceSave:
             output_index = json.load(f)
         assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
 
+    def test_ignore_source_key_prefixes_filters_expected_map(self):
+        source_map = {
+            "model.weight": "model.safetensors",
+            "mtp.0.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
+
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(None, ("mtp.",)) == {}
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, None) == source_map
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, ("mtp.",)) == {
+            "model.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
+
+    def test_distributed_save_generator_ignores_source_key_prefixes_without_initialized_dist(self, tmp_path):
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            distributed_save=True,
+            ignored_source_key_prefixes=("mtp.",),
+        )
+
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
+
 
 class TestStateDictCachingAndOptimization:
     """Test caching and optimization features."""
