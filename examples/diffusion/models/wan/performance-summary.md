@@ -31,7 +31,7 @@ The performance data includes:
 - **Pre-training Performance**: Throughput metrics for various model sizes and architectures
 - **System Configurations**: Results across different GPU systems (DGX-GB200, DGX-GB300, DGX-H100)
 
-Note: The GB200/B200 results were measured using Nemo container version 25.11. The H100/GB300 results were measured using Nemo container version 25.09.
+Note: The GB200/B200 results were measured using Nemo container version 25.11 (`nvcr.io/nvidia/nemo:25.11`). The H100/GB300 results were measured using Nemo container version 25.09 (`nvcr.io/nvidia/nemo:25.09.00`).
 
 ---
 
