@@ -2,7 +2,7 @@
 
 This directory contains example scripts for GLM-4.5V vision-language model.
 
-For model introduction and architecture details, see the [GLM-4.5V documentation](../../../../docs/models/vlm/glm-45v.md).
+For model introduction and architecture details, see the [GLM-4.5V documentation](../../../../docs/models/glm/glm-45v.md).
 
 ## Workspace Configuration
 

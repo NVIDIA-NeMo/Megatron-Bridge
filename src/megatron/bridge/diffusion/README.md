@@ -40,5 +40,6 @@ diffusion/
 
 ## Examples
 
-Training examples and configuration files are in `examples/diffusion/`.
-
+Model examples for FLUX and WAN are in `examples/models/flux/` and
+`examples/models/wan/`. Diffusion language model recipe examples remain in
+`examples/diffusion/recipes/`.
