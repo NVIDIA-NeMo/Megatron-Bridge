@@ -424,6 +424,50 @@ class TestStateDictConvenienceMethods:
         assert all(key.startswith("transformer") and key.endswith("weight") for key in tensors)
 
 
+class TestSafeTensorsStateSourceSave:
+    """Test streaming safetensors save behavior."""
+
+    def test_save_generator_ignores_source_key_prefixes(self, tmp_path, capsys):
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            ignored_source_key_prefixes=("mtp.",),
+        )
+
+        output = capsys.readouterr().out
+        assert "Error:" not in output
+        assert "Success: All tensors from the original checkpoint were written." in output
+
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
+
+
 class TestStateDictCachingAndOptimization:
     """Test caching and optimization features."""
 

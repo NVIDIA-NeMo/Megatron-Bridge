@@ -16,11 +16,16 @@ import torch
 
 from megatron.bridge.models.conversion.quantization_utils import (
     dequantize_fp8_blockwise,
+    dequantize_fp8_e4m3fn_with_scale,
     dequantize_int4,
     dequantize_mxfp4,
+    dequantize_mxfp4_e2m1_packed,
     maybe_dequantize_fp8,
     maybe_dequantize_fp8_blockwise,
+    quantize_fp8_e4m3fn_like_scale,
+    quantize_mxfp4_e2m1_like_scale,
     quantize_to_int4,
+    requantize_hf_weight_scale_pairs,
 )
 
 
@@ -66,6 +71,72 @@ def test_dequantize_mxfp4_uses_low_then_high_nibbles():
 
     assert result.shape == (1, 2)
     assert torch.equal(result, torch.tensor([[0.5, 1.0]]))
+
+
+def test_quantize_fp8_e4m3fn_like_scale_roundtrips_scaled_weight():
+    weight = torch.full((4, 4), 2.0, dtype=torch.bfloat16)
+    source_scale = torch.ones((1, 1), dtype=torch.float32)
+
+    q_weight, q_scale = quantize_fp8_e4m3fn_like_scale(weight, source_scale)
+    result = dequantize_fp8_e4m3fn_with_scale(q_weight, q_scale)
+
+    assert q_weight.dtype == torch.float8_e4m3fn
+    assert q_scale.shape == source_scale.shape
+    assert q_scale.dtype == source_scale.dtype
+    assert torch.allclose(result.float(), weight.float())
+
+
+def test_quantize_dequantize_mxfp4_e2m1_packed_roundtrips_representable_values():
+    values = torch.tensor(
+        [
+            0.0,
+            0.5,
+            1.0,
+            1.5,
+            2.0,
+            3.0,
+            4.0,
+            6.0,
+            -0.0,
+            -0.5,
+            -1.0,
+            -1.5,
+            -2.0,
+            -3.0,
+            -4.0,
+            -6.0,
+        ],
+        dtype=torch.float32,
+    ).repeat(2)
+    weight = values.reshape(1, 32).to(torch.bfloat16)
+    source_scale = torch.ones((1, 1), dtype=torch.float32)
+
+    packed, scale = quantize_mxfp4_e2m1_like_scale(weight, source_scale)
+    result = dequantize_mxfp4_e2m1_packed(packed, scale)
+
+    assert packed.dtype == torch.int8
+    assert packed.shape == (1, 16)
+    assert scale.shape == source_scale.shape
+    assert torch.equal(result.float(), weight.float())
+
+
+def test_requantize_hf_weight_scale_pairs_emits_scale_siblings():
+    weight_key = "layers.0.ffn.experts.0.w1.weight"
+    scale_key = "layers.0.ffn.experts.0.w1.scale"
+    weight = torch.ones((1, 32), dtype=torch.bfloat16)
+    source_scale = torch.ones((1, 1), dtype=torch.float32)
+    stale_scale = torch.full((1, 1), 9.0, dtype=torch.float32)
+
+    result = requantize_hf_weight_scale_pairs(
+        {weight_key: weight, scale_key: stale_scale},
+        {scale_key: source_scale},
+        use_mxfp4=lambda *_: True,
+    )
+
+    assert set(result) == {weight_key, scale_key}
+    assert result[weight_key].dtype == torch.int8
+    assert result[scale_key].shape == source_scale.shape
+    assert not torch.equal(result[scale_key], stale_scale)
 
 
 def test_quantize_dequantize_int4_preserves_shape_and_dtype():

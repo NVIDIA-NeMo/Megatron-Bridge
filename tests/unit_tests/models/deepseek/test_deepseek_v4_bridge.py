@@ -21,7 +21,9 @@ and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 from types import SimpleNamespace
 
 import pytest
+import torch
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     DeepSeekV4Bridge,
@@ -50,6 +52,10 @@ def bridge_without_mtp():
 def _by_megatron(registry):
     """Index mappings by megatron_param for quick lookup in assertions."""
     return {m.megatron_param: m for m in registry.mappings}
+
+
+def _dummy_task():
+    return SimpleNamespace(param_name="", global_param_name="", mapping=None)
 
 
 class TestNativeDeepSeekV4ConfigTranslation:
@@ -94,6 +100,97 @@ class TestNativeDeepSeekV4ConfigTranslation:
 
         with pytest.raises(ValueError, match="contiguous prefix"):
             _dsv4_num_hash_layers(hf_config)
+
+
+class TestDeepSeekV4QuantizedExport:
+    """DSv4 export must regenerate quantized weights and scale tensors."""
+
+    def test_export_quantizes_fp8_weight_and_emits_scale(self):
+        bridge = DeepSeekV4Bridge()
+        hf_param = "layers.0.attn.wq_a.weight"
+        scale_key = "layers.0.attn.wq_a.scale"
+        weight = torch.full((4, 4), 2.0, dtype=torch.bfloat16)
+        source_state = {scale_key: torch.ones((1, 1), dtype=torch.float32)}
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {hf_param: weight}, source_state)
+
+        assert set(result) == {hf_param, scale_key}
+        assert result[hf_param].dtype == torch.float8_e4m3fn
+        assert result[scale_key].shape == source_state[scale_key].shape
+        assert result[scale_key].dtype == source_state[scale_key].dtype
+
+        restored = bridge.maybe_modify_loaded_hf_weight(hf_param, result)
+        assert restored.dtype == torch.bfloat16
+        assert torch.allclose(restored.float(), weight.float())
+
+    def test_export_preserves_e8m0_scale_dtype(self):
+        e8m0_dtype = getattr(torch, "float8_e8m0fnu", None)
+        if e8m0_dtype is None:
+            pytest.skip("torch.float8_e8m0fnu is unavailable")
+        try:
+            source_scale = torch.ones((1, 1), dtype=e8m0_dtype)
+        except RuntimeError as exc:
+            pytest.skip(f"torch.float8_e8m0fnu tensor creation is unavailable: {exc}")
+
+        bridge = DeepSeekV4Bridge()
+        hf_param = "layers.0.attn.wq_a.weight"
+        scale_key = "layers.0.attn.wq_a.scale"
+        weight = torch.full((4, 4), 2.0, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {hf_param: weight}, {scale_key: source_scale})
+
+        assert result[hf_param].dtype == torch.float8_e4m3fn
+        assert result[scale_key].dtype == e8m0_dtype
+        restored = bridge.maybe_modify_loaded_hf_weight(hf_param, result)
+        assert torch.allclose(restored.float(), weight.float())
+
+    def test_export_quantizes_routed_expert_to_mxfp4_and_emits_scale(self):
+        bridge = DeepSeekV4Bridge()
+        hf_param = "layers.0.ffn.experts.0.w1.weight"
+        scale_key = "layers.0.ffn.experts.0.w1.scale"
+        values = torch.tensor(
+            [
+                0.0,
+                0.5,
+                1.0,
+                1.5,
+                2.0,
+                3.0,
+                4.0,
+                6.0,
+                -0.0,
+                -0.5,
+                -1.0,
+                -1.5,
+                -2.0,
+                -3.0,
+                -4.0,
+                -6.0,
+            ],
+            dtype=torch.float32,
+        ).repeat(2)
+        weight = values.reshape(1, 32).to(torch.bfloat16)
+        source_state = {scale_key: torch.ones((1, 1), dtype=torch.float32)}
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {hf_param: weight}, source_state)
+
+        assert set(result) == {hf_param, scale_key}
+        assert result[hf_param].dtype == torch.int8
+        assert result[hf_param].shape == (1, 16)
+        assert result[scale_key].shape == source_state[scale_key].shape
+        assert result[scale_key].dtype == source_state[scale_key].dtype
+
+        restored = quantization_utils.dequantize_mxfp4_e2m1_packed(result[hf_param], result[scale_key])
+        assert torch.equal(restored.float(), weight.float())
+
+    def test_export_leaves_unscaled_weight_unchanged(self):
+        bridge = DeepSeekV4Bridge()
+        weight = torch.ones(4, 4, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {"norm.weight": weight}, {})
+
+        assert set(result) == {"norm.weight"}
+        assert result["norm.weight"] is weight
 
 
 class TestDecoderHCHeadMappings:

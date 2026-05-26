@@ -25,7 +25,7 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge, _config_disables_mtp, _saved_config_disables_mtp
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -137,6 +137,17 @@ class TestAutoBridge:
 
             assert "Failed to load configuration" in str(exc_info.value)
             assert "Config not found" in str(exc_info.value)
+
+    def test_mtp_disabled_helpers(self, tmp_path):
+        """Detect disabled MTP in object, nested, and saved HF configs."""
+        assert _config_disables_mtp(Mock(num_nextn_predict_layers=0)) is True
+        assert _config_disables_mtp({"text_config": {"mtp_num_hidden_layers": 0}}) is True
+        assert _config_disables_mtp(Mock(num_nextn_predict_layers=1)) is False
+
+        with open(tmp_path / "config.json", "w") as f:
+            json.dump({"num_nextn_predict_layers": 0}, f)
+
+        assert _saved_config_disables_mtp(tmp_path) is True
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
