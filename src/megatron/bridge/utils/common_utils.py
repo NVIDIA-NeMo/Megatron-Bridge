@@ -22,6 +22,7 @@ import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_local_rank,
@@ -328,8 +329,6 @@ def slice_batch_for_context_parallel(
         Tuple of (inputs_embeds, labels, loss_mask, position_ids, attention_mask)
         with all tensors sliced for this CP rank. inputs_embeds remains in (T, B, D) format.
     """
-    from megatron.core.utils import get_batch_on_this_cp_rank
-
     cp_size = pg_collection.cp.size()
     if cp_size <= 1:
         return inputs_embeds, labels, loss_mask, position_ids, attention_mask
@@ -377,6 +376,7 @@ def slice_batch_for_context_parallel(
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             },
+            is_hybrid_cp=False,
             cp_group=cp_group,
         )
 
