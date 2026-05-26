@@ -72,6 +72,18 @@ class PreTrainedBase(ABC):
         """Get the artifacts dictionary mapping artifact names to their attribute names."""
         return {artifact: f"_{artifact}" for artifact in self.ARTIFACTS}
 
+    @staticmethod
+    def _cleanup_hf_local_dir_cache(target_path: Path) -> None:
+        """Remove Hugging Face Hub metadata created by hf_hub_download(local_dir=...)."""
+        huggingface_cache = target_path / ".cache" / "huggingface"
+        if huggingface_cache.exists():
+            shutil.rmtree(huggingface_cache, ignore_errors=True)
+
+        try:
+            (target_path / ".cache").rmdir()
+        except OSError:
+            pass
+
     def _copy_custom_modeling_files(
         self,
         source_path: Union[str, Path],
@@ -138,6 +150,7 @@ class PreTrainedBase(ABC):
                         except Exception:
                             # Silently skip files that can't be downloaded
                             pass
+                self._cleanup_hf_local_dir_cache(target_path)
 
             except Exception:
                 # If HuggingFace Hub operations fail, silently continue
@@ -174,7 +187,16 @@ class PreTrainedBase(ABC):
             if hasattr(self._config, "quantization_config"):
                 # quantized export is not supported currently
                 del self._config.quantization_config
-            self._config.save_pretrained(save_path)
+            auto_map_missing = object()
+            auto_map = vars(self._config).get("auto_map", auto_map_missing)
+            strip_auto_map = auto_map is not auto_map_missing and getattr(self, "trust_remote_code", False) is not True
+            if strip_auto_map:
+                delattr(self._config, "auto_map")
+            try:
+                self._config.save_pretrained(save_path)
+            finally:
+                if strip_auto_map:
+                    self._config.auto_map = auto_map
 
         # Iterate over required artifacts to save them in a predictable order
         for name in self.ARTIFACTS:

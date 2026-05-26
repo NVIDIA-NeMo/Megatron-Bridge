@@ -31,7 +31,12 @@ dynamic = ["version"]
 license = {file = "LICENSE"}
 requires-python = ">=3.12,<3.13"
 authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
-maintainers = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
+maintainers = [
+    { name = "Ananth Subramaniam", email = "ansubramania@nvidia.com" },
+    { name = "Chen Cui", email = "chcui@nvidia.com" },
+    { name = "Yu Yao", email = "yuya@nvidia.com" },
+    { name = "NVIDIA", email = "nemo-toolkit@nvidia.com" },
+]
 keywords = [
     "NLP",
     "NeMo",
@@ -66,7 +71,8 @@ classifiers = [
     "Topic :: Utilities",
 ]
 dependencies = [
-    "transformers>=5.0.0,<=5.3.0",
+    "transformers>=5.8.1,<5.9.0",
+    "mistral-common>=1.10.0",
     "peft>=0.18.1",
     "datasets>=2.20.0",
     "accelerate",
@@ -87,16 +93,15 @@ dependencies = [
     "hydra-core>1.3,<=1.3.2",
     "megatron-core[dev,mlm]",
     "qwen-vl-utils",
-    "transformer-engine[pytorch,core_cu13]",
-    "mamba-ssm",
     "nvidia-resiliency-ext",
-    "causal-conv1d",
     "flash-linear-attention",
     "timm",
     "open-clip-torch>=3.2.0",
     "mlflow>=3.9.0",    # To address CVE-2025-15031
     "comet-ml>=3.50.0",
     "torch>=2.6.0",
+    "flashinfer-python==0.6.8.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.6.8.post1",   # the runtime version-match check fails otherwise
 ]
 
 
@@ -104,7 +109,9 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
-# Currently, TE must be built with no build-isolation b/c it requires torch
+# Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
+# mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
+# but kept here so they build correctly when installed.
 no-build-isolation-package = [
     "transformer-engine",
     "transformer-engine-torch",
@@ -113,21 +120,25 @@ no-build-isolation-package = [
     "nv-grouped-gemm",
     "flash_mla",
     "flash-linear-attention",
+    "fast-hadamard-transform",
 ]
 prerelease = "allow"
 override-dependencies = [
+    "av; sys_platform == 'never'",                          # Optional and addresses CVE from transitive dependency
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@f031cf87bd054c7558b887df7bed93975456667f",
-    "mlflow>=3.9.0",    # To address CVE-2025-15031
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.15",
+    "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
-    "nvidia-modelopt>=0.42.0a0",
-    "urllib3>=2.6.3",    # To address CVE-2026-21441
-    "langchain>=0.3.28",       # To address CVE-2025-65106
-    "langchain-core>=0.3.80",  # To address CVE-2025-65106
-    "onnx>=1.21.0; python_version < '3.13'",  # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
+    "nvidia-modelopt==0.44.0rc5",
+    "urllib3>=2.6.3",                                       # To address CVE-2026-21441
+    "langchain>=0.3.28",                                    # To address CVE-2025-65106
+    "langchain-core>=0.3.80",                               # To address CVE-2025-65106
+    "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
+    "nvidia-cudnn-frontend==1.23.0",
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
 ]
 
 [[tool.uv.index]]
@@ -147,6 +158,16 @@ parquet = [
 ]
 tensor-inspect = [
     "nvdlfw-inspect==0.2.1",
+]
+te = [
+    "transformer-engine[pytorch,core_cu13]",
+]
+ssm = [
+    "mamba-ssm",
+    "causal-conv1d",
+]
+audio = [
+    "librosa",
 ]
 
 [dependency-groups]

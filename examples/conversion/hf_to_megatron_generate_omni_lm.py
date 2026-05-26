@@ -266,6 +266,7 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.gradient_accumulation_fusion = False
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
 
@@ -292,6 +293,7 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.gradient_accumulation_fusion = False
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
@@ -432,7 +434,7 @@ def main(args) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Omni-Language Generation from HuggingFace Qwen3-Omni Models")
+    parser = argparse.ArgumentParser(description="Omni-Language Generation from HuggingFace Qwen3-Omni")
     parser.add_argument(
         "--hf_model_path",
         type=str,

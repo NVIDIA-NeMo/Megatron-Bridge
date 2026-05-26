@@ -36,6 +36,7 @@ from megatron.bridge.data.datasets.utils import (
     _tokenize,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.utils.safe_pickle import safe_load_npy
 
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -61,6 +62,24 @@ __idx_version__ = "0.2"  # index file version
 __idx_suffix__ = "idx"  # index file suffix
 
 
+def _safe_load_packed_npy(file_path: str | Path) -> np.ndarray:
+    """Load a packed ``.npy`` dataset without enabling unrestricted pickle.
+
+    Reads the raw file bytes (with MSC support) and delegates to
+    :func:`~megatron.bridge.utils.safe_pickle.safe_load_npy` which uses a
+    restricted unpickler for object arrays.
+    """
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        with msc.open(str(file_path), "rb") as f:
+            data = f.read()
+    else:
+        with open(file_path, "rb") as f:
+            data = f.read()
+
+    return safe_load_npy(data)
+
+
 def get_dataset_root(name: str) -> Path:
     """
     Returns the root directory for NeMo datasets, creating it if it doesn't exist.
@@ -72,7 +91,11 @@ def get_dataset_root(name: str) -> Path:
         Path: The path to the dataset's root directory.
     """
     output = Path(NEMO_DATASETS_CACHE) / name
-    output.mkdir(parents=True, exist_ok=True)
+    try:
+        # Shared filesystems can expose stale parent-dir state despite exist_ok=True.
+        output.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, FileNotFoundError):
+        pass
 
     return output
 
@@ -829,19 +852,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
     def _load_dataset(self):
         try:
-            # SECURITY: allow_pickle=True is required here because packed datasets store object
-            # arrays (dicts with variable-length lists). This enables arbitrary code execution via
-            # pickle deserialization -- only load datasets from trusted sources. Consider migrating
-            # to a safer serialization format (e.g. safetensors, Arrow/Parquet) in the future.
-            logger.warning(
-                "Loading packed dataset with allow_pickle=True from '%s'. Only load datasets from trusted sources.",
-                self.file_path,
-            )
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                self.indexed_dataset = msc.numpy.load(self.file_path, allow_pickle=True)
-            else:
-                self.indexed_dataset = np.load(self.file_path, allow_pickle=True)
+            self.indexed_dataset = _safe_load_packed_npy(self.file_path)
         except Exception as e:
             logger.error(
                 f"Failed to load packed dataset. The dataset should be a `.npy` file. "

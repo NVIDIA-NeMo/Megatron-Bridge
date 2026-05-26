@@ -1,6 +1,7 @@
 ---
 name: adding-model-support
-description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples. Use when the user asks to add, support, onboard, or integrate a new model, or when creating bridges, providers, or recipes for a new model family.
+description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples.
+when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
 ---
 
 # Adding New Model Support in Megatron-Bridge
@@ -59,7 +60,7 @@ grad norms) instead of raising an error.
 
 1. **Standalone script** (recommended for user-facing models) — Write a
    `dequant_fp8_for_bridge.py` in the model's examples folder.
-   Reference: `examples/models/vlm/ministral3/dequant_fp8_for_bridge.py`.
+   Reference: `examples/models/mistral/ministral3/dequant_fp8_for_bridge.py`.
    The pattern is: `w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv`.
 
 2. **In-bridge hook** — Override `maybe_modify_loaded_hf_weight()` in the bridge class to
@@ -129,6 +130,13 @@ directory — keep them namespaced under the `modeling_<model>` prefix.
    then sets model-specific attributes on it. **Do not create a provider file** — the stock
    provider returned by `super().provider_bridge()` is usually sufficient for LLMs
    (e.g., `GPTModelProvider`, or another base provider selected via `PROVIDER_CLASS`).
+   **Do not add size-specific provider classes** whose names combine
+   `ModelProvider` with a model-size suffix. Examples of forbidden suffixes
+   include `7B`, `200M`, and `A3B`. Model size and architecture fields should
+   come from the Hugging Face config through `AutoBridge` /
+   `MegatronModelBridge` config mapping. If a recipe needs a fixed
+   architecture, configure the base provider inside the recipe function instead
+   of exporting a provider subclass.
 
 **VLM:**
 1. **Bridge** — Register bridge, implement config and weight mappings.
@@ -138,8 +146,8 @@ directory — keep them namespaced under the `modeling_<model>` prefix.
 3. **Model class** — Combine vision encoder + language decoder.
 
 For detailed patterns, see:
-- VLM: [vlm-patterns.md](vlm-patterns.md)
-- LLM: [llm-patterns.md](llm-patterns.md)
+- VLM: @skills/adding-model-support/vlm-patterns.md
+- LLM: @skills/adding-model-support/llm-patterns.md
 
 ### Critical: `tie_word_embeddings` for VLMs
 
@@ -308,7 +316,13 @@ Each recipe file defines functions for each model size + training mode:
 - `<model>_<size>_peft_config()` — LoRA/DoRA parameter-efficient fine-tuning
 - `<model>_<size>_pretrain_config()` — Pretraining (LLM only, usually)
 
-For detailed recipe patterns, see [recipe-patterns.md](recipe-patterns.md).
+For detailed recipe patterns, see @skills/adding-model-support/recipe-patterns.md.
+
+Recipes are the right API surface for model-size presets. Do not create or
+export size-specific provider subclasses for recipes; either call
+`AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)` to
+derive the provider from HF config, or instantiate the base provider class with
+explicit architecture fields inside the recipe function.
 
 ### Export checklist
 
@@ -336,18 +350,16 @@ tests/functional_tests/models/<model>/
 └── test_<model>_provider.py    # compare_provider_configs (optional)
 ```
 
-For detailed test patterns, see [tests-and-examples.md](tests-and-examples.md).
+For detailed test patterns, see @skills/adding-model-support/tests-and-examples.md.
 
 ## Phase 5: Docs and Examples
 
 ### Examples
 
-LLM examples: `examples/models/<model>/`
-VLM examples: `examples/models/vlm/<model>/`
+Model examples: `examples/models/<family>/<model>/`
 
 ```text
-examples/models/<model>/          # LLM
-examples/models/vlm/<model>/      # VLM
+examples/models/<family>/<model>/
 ├── README.md
 ├── conversion.sh        # HF↔Megatron conversion commands (real model)
 ├── inference.sh         # Generation commands (real model, reasonable output)

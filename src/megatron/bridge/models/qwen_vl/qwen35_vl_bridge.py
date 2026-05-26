@@ -47,6 +47,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -131,7 +132,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         provider.experimental_attention_variant = "gated_delta_net"
         # full_attention_interval defines how often standard attention appears:
         # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
-        provider.linear_attention_freq = getattr(text_config, "full_attention_interval", 4)
+        provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
         provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
 
         # --- MoE specific parameters ---
@@ -404,15 +405,6 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                     v="mtp.layers.*.self_attn.v_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
-                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
-                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-                GatedMLPMapping(
                     megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
                     gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
                     up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
@@ -427,6 +419,48 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
                 ),
             ]
         )
+
+        # Detect MTP MoE expert weight format: Qwen3.5 stores per-expert
+        # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
+        # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
+        # different storage — must inspect HF keys.
+        mtp_experts_packed = False
+        hf_pretrained = getattr(self, "hf_pretrained", None)
+        if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
+            hf_keys = set(hf_pretrained.state.source.get_all_keys())
+            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
+                mtp_experts_packed = True
+
+        if mtp_experts_packed:
+            # Qwen3.6: packed format (same as main decoder)
+            mapping_list.extend(
+                [
+                    FusedGatedExpertMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.gate_up_proj",
+                    ),
+                    FusedExpertMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.down_proj",
+                        transpose_on_export=True,
+                    ),
+                ]
+            )
+        else:
+            # Qwen3.5: per-expert format (current behavior)
+            mapping_list.extend(
+                [
+                    GatedMLPMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
+                        gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                        up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param="language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
+                        hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)
 
@@ -488,7 +522,7 @@ class Qwen35VLBridge(MegatronModelBridge):
         provider.layernorm_zero_centered_gamma = True
         provider.attention_output_gate = True
         provider.experimental_attention_variant = "gated_delta_net"
-        provider.linear_attention_freq = getattr(text_config, "full_attention_interval", 4)
+        provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
         provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
 
         # --- GDN (Gated DeltaNet) specific parameters ---

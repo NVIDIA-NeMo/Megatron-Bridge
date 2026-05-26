@@ -48,7 +48,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(GPTModelProvider):
+class Llama3TinyModelProvider(GPTModelProvider):
     """Minimal Llama-3 config for fast functional tests (single GPU)."""
 
     normalization: str = "RMSNorm"
@@ -132,7 +132,7 @@ def _make_config(
     seq_length = 512
 
     return ConfigContainer(
-        model=Llama3ModelProvider145M(seq_length=seq_length),
+        model=Llama3TinyModelProvider(seq_length=seq_length),
         train=TrainingConfig(
             train_iters=train_iters,
             global_batch_size=8,

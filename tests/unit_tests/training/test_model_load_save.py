@@ -15,6 +15,7 @@
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -629,6 +630,73 @@ class TestLoadMegatronModel:
 
     @patch("megatron.bridge.training.model_load_save.build_and_load_model")
     @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_disables_cuda_graphs_for_hybrid_configs(
+        self, mock_load_model_config, mock_build_and_load
+    ):
+        """Verify hybrid single-rank loads disable training-only CUDA graph settings."""
+        cfg = SimpleNamespace(
+            tensor_model_parallel_size=8,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+            sequence_parallel=True,
+            virtual_pipeline_model_parallel_size=None,
+            hierarchical_context_parallel_sizes=None,
+            is_hybrid_model=True,
+            hybrid_layer_pattern="MEME|ME",
+            cuda_graph_impl="transformer_engine",
+            cuda_graph_scope=["attn", "mamba"],
+            enable_cuda_graph=True,
+            external_cuda_graph=True,
+        )
+
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = Mock()
+
+        load_megatron_model("/ckpt")
+
+        assert cfg.hybrid_layer_pattern == "MEMEME"
+        assert cfg.cuda_graph_impl == "none"
+        assert cfg.cuda_graph_scope == []
+        assert cfg.enable_cuda_graph is False
+        assert cfg.external_cuda_graph is False
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_load_megatron_model_preserves_cuda_graphs_for_non_hybrid_configs(
+        self, mock_load_model_config, mock_build_and_load
+    ):
+        """Verify non-hybrid configs keep their CUDA graph settings."""
+        cfg = SimpleNamespace(
+            tensor_model_parallel_size=8,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=1,
+            sequence_parallel=True,
+            virtual_pipeline_model_parallel_size=None,
+            hierarchical_context_parallel_sizes=None,
+            is_hybrid_model=False,
+            hybrid_layer_pattern=None,
+            cuda_graph_impl="transformer_engine",
+            cuda_graph_scope=["attn"],
+            enable_cuda_graph=False,
+            external_cuda_graph=False,
+        )
+
+        mock_load_model_config.return_value = (cfg, None)
+        mock_build_and_load.return_value = Mock()
+
+        load_megatron_model("/ckpt")
+
+        assert cfg.cuda_graph_impl == "transformer_engine"
+        assert cfg.cuda_graph_scope == ["attn"]
+        assert cfg.enable_cuda_graph is False
+        assert cfg.external_cuda_graph is False
+
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
     def test_load_megatron_model_applies_overrides(self, mock_load_model_config, mock_build_and_load):
         """Verify mp_overrides entries are applied to the config."""
         cfg = Mock()
@@ -698,6 +766,9 @@ class TestSaveMegatronModel:
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
 
+            def finalize(self) -> None:
+                pass
+
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
 
@@ -750,6 +821,9 @@ class TestSaveMegatronModel:
         class MockModelConfig(ModelProviderMixin, Mock):
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
+
+            def finalize(self) -> None:
+                pass
 
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
@@ -829,6 +903,9 @@ class TestSaveMegatronModel:
         class MockModelConfig(ModelProviderMixin, Mock):
             def provide(self, pre_process=None, post_process=None, vp_stage=None):
                 return Mock()
+
+            def finalize(self) -> None:
+                pass
 
         mock_model_config = MockModelConfig()
         mock_get_model_config.return_value = mock_model_config
