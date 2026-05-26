@@ -32,6 +32,7 @@ from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import split_data_cp_rank
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -175,18 +176,32 @@ class Qwen3VLGPTModel(GPTModel):
             **(extra_block_kwargs or {}),
         )
 
-        # MTP calls self.embedding directly (bypassing the manual SP scatter that
-        # model.py does for the combined VL embeddings). Temporarily wrap the embedding
-        # to apply the SP scatter so its output shape matches hidden_states.
+        # MTP calls self.embedding directly (bypassing the manual CP shard + SP scatter
+        # that model.py applies to the combined VL embeddings before passing them into
+        # the decoder). When CP > 1 or SP is on, the MTP embedding output therefore has
+        # a different shape than hidden_states and downstream concatenation in
+        # MultiTokenPredictionLayer fails. Mirror model.py's pre-decoder shape
+        # transformations on this implicit MTP embedding path.
+        #
         # We write to self.__dict__ directly to bypass nn.Module.__setattr__'s type
         # check, which rejects non-Module values for registered child modules.
+        cp_size = self.pg_collection.cp.size()
         _shadow_embedding = False
-        if self.mtp_process and self.config.sequence_parallel:
+        if self.mtp_process and (self.config.sequence_parallel or cp_size > 1):
             _original_embedding = self.embedding
+            _cp_rank = self.pg_collection.cp.rank()
+            _apply_cp_shard = cp_size > 1 and packed_seq_params is None
+            _apply_sp_scatter = self.config.sequence_parallel
 
             def _sp_scatter_embedding(input_ids, position_ids):
                 out = _original_embedding(input_ids=input_ids, position_ids=position_ids)
-                return tensor_parallel.scatter_to_sequence_parallel_region(out)
+                if _apply_cp_shard:
+                    # Embedding output is [S, B, H]; seq_dim=0. Mirrors the
+                    # split_data_cp_rank call in model.py for the combined embeddings.
+                    out = split_data_cp_rank(out, cp_size, 0, _cp_rank)
+                if _apply_sp_scatter:
+                    out = tensor_parallel.scatter_to_sequence_parallel_region(out)
+                return out
 
             _sp_scatter_embedding.word_embeddings = _original_embedding.word_embeddings
             self.__dict__["embedding"] = _sp_scatter_embedding
