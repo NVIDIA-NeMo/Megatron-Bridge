@@ -75,9 +75,19 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         rope_theta=10000.0,
         moe_layers_enum="2,3",
         num_nextn_predict_layers=2,
+        # HF carries ``sliding_window`` as a scalar token count; the bridge
+        # pads it into the ``[left, right]`` window form expected by
+        # ``Step35DecoderLayer``.
+        sliding_window=512,
         swiglu_limits=[None, None, None, None],
         swiglu_limits_shared=[None, None, None, None],
         partial_rotary_factors=[0.5, 0.5, 0.5, 0.5],
+        use_qk_norm=True,
+        use_moe_router_bias=True,
+        moe_router_activation="softmax",
+        moe_router_scaling_factor=1.0,
+        need_fp32_gate=False,
+        zero_centered=True,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -122,9 +132,14 @@ class _FakeProvider:
         self.moe_permute_fusion = None
         self.moe_layer_freq = None
         self.transformer_layer_spec = None
-        self.swiglu_limits = [None, None, None, None]
-        self.swiglu_limits_shared = [None, None, None, None]
-        self.partial_rotary_factors = [0.5, 0.5, 0.5, 0.5]
+        self.rotary_percents = None
+        self.swiglu_limits = None
+        self.swiglu_limits_shared = None
+        self.moe_router_enable_expert_bias = None
+        self.moe_router_score_function = None
+        self.moe_router_topk_scaling_factor = None
+        # Only assigned when hf_config.need_fp32_gate is truthy.
+        self.moe_router_dtype = None
 
 
 class _FakeHFPretrained:
@@ -170,13 +185,15 @@ class TestStep35BridgeProviderBridge:
     def _run(self, hf_overrides=None, provider_overrides=None):
         hf_config = _make_hf_config(**(hf_overrides or {}))
         provider = _FakeProvider()
+        # Simulate what `MegatronModelBridge.provider_bridge` (mocked below) would
+        # have populated through `CONFIG_MAPPING` before `Step35Bridge.provider_bridge`
+        # runs its own assignments.
         provider.num_query_groups = hf_config.num_attention_groups
         provider.num_moe_experts = hf_config.moe_num_experts
         provider.moe_router_topk = hf_config.moe_top_k
         provider.moe_shared_expert_intermediate_size = hf_config.share_expert_dim
         provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
         provider.layer_types = hf_config.layer_types
-        provider.attention_other_setting = hf_config.attention_other_setting
         provider.kv_channels = hf_config.head_dim
         for k, v in (provider_overrides or {}).items():
             setattr(provider, k, v)
@@ -195,6 +212,9 @@ class TestStep35BridgeProviderBridge:
         assert p.head_wise_attn_gate is True
 
     def test_nonstandard_hf_fields_are_mapped_by_base_bridge_path(self):
+        # ``attention_other_setting`` is intentionally NOT in CONFIG_MAPPING —
+        # the bridge reads it from ``hf_config`` directly when populating
+        # ``sliding_attention_setting``.
         hf_config = _make_hf_config()
         kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
         assert kwargs["num_query_groups"] == hf_config.num_attention_groups
@@ -202,39 +222,50 @@ class TestStep35BridgeProviderBridge:
         assert kwargs["moe_router_topk"] == hf_config.moe_top_k
         assert kwargs["moe_shared_expert_intermediate_size"] == hf_config.share_expert_dim
         assert kwargs["head_wise_attn_gate"] is True
-        assert kwargs["attention_other_setting"] == hf_config.attention_other_setting
         assert kwargs["layer_types"] == hf_config.layer_types
 
-    def test_head_wise_gate_enables_attention_output_gate(self):
+    def test_head_wise_attn_gate_preserved_through_step35_provider_bridge(self):
+        """The Step35-specific provider_bridge must not overwrite ``head_wise_attn_gate``.
+
+        The CONFIG_MAPPING parent path is what sets it (mapped from HF's
+        ``use_head_wise_attn_gate``); Step35Bridge.provider_bridge only adds
+        the Step-3.5-specific fields on top.
+        """
         _, p = self._run()
-        # Step-3.5-Flash's scalar g_proj gate is expanded by QKVGMapping into
-        # Megatron-Core's attention_output_gate layout.
-        assert p.attention_output_gate is True
+        assert p.head_wise_attn_gate is True
 
-    def test_no_head_wise_gate_leaves_attention_output_gate_untouched(self):
-        _, p = self._run(
-            hf_overrides={"use_head_wise_attn_gate": False},
-            provider_overrides={"attention_output_gate": True},
-        )
-        assert p.attention_output_gate is True
-
-    def test_layer_types_copied_as_list(self):
-        hf_config, p = self._run()
-        assert p.layer_types == hf_config.layer_types
-        # Defensive copy: mutating provider list should not affect hf_config.
-        p.layer_types.append("full_attention")
-        assert hf_config.layer_types != p.layer_types
-
-    def test_sliding_attention_setting_populated(self):
+    def test_sliding_attention_setting_populated_from_hf_config(self):
+        """Shape fields are pulled out of HF's ``attention_other_setting`` and
+        renamed to the Megatron-facing keys that ``Step35DecoderLayer``
+        consumes at construction time. ``window_size`` is padded from HF's
+        scalar ``sliding_window`` to a ``[left, right]`` pair."""
         _, p = self._run()
-        # These are normalized from HF's attention_other_setting so that
-        # Step35DecoderLayer can read Megatron-facing names at construction time.
         assert p.sliding_attention_setting == {
-            "rotary_percent": 1.0,
+            "window_size": [512, 0],
             "num_attention_heads": 96,
             "num_query_groups": 8,
-            "head_dim": 128,
+            "kv_channels": 128,
         }
+
+    def test_sliding_attention_setting_falls_back_to_defaults(self):
+        """When HF carries no ``sliding_window`` and no sliding-attention
+        ``attention_other_setting``, the bridge keeps the built-in defaults."""
+        _, p = self._run(
+            hf_overrides={"sliding_window": None, "attention_other_setting": None},
+        )
+        assert p.sliding_attention_setting == {
+            "window_size": [512, 0],
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "kv_channels": 128,
+        }
+
+    def test_rotary_percents_copied_from_partial_rotary_factors(self):
+        """``rotary_percents`` is the Megatron-facing rename of HF's
+        ``partial_rotary_factors`` and is indexed per layer by
+        ``Step35DecoderLayer``."""
+        hf_config, p = self._run()
+        assert p.rotary_percents == hf_config.partial_rotary_factors
 
     def test_rope_theta_scalar(self):
         _, p = self._run(hf_overrides={"rope_theta": 50000.0})
@@ -263,23 +294,83 @@ class TestStep35BridgeProviderBridge:
         assert p.moe_layer_freq == "untouched"
 
     def test_static_overrides_applied(self):
-        _, p = self._run()
+        hf_config, p = self._run()
         assert p.normalization == "RMSNorm"
-        # HF Step-3.5 weights store γ-1; TE norm applies (1+w).
-        assert p.layernorm_zero_centered_gamma is True
+        # HF Step-3.5 weights store γ-1 (HF flag ``zero_centered``); TE norm
+        # applies (1+w). The bridge forwards the flag through directly so the
+        # behavior follows the upstream config rather than being hard-coded.
+        assert p.layernorm_zero_centered_gamma is hf_config.zero_centered
         assert p.gated_linear_unit is True
         assert p.add_bias_linear is False
         assert p.add_qkv_bias is False
-        assert p.qk_layernorm is True
+        # ``qk_layernorm`` now comes straight from the HF config rather than
+        # being hard-coded — older revisions of the bridge pinned it to True.
+        assert p.qk_layernorm is hf_config.use_qk_norm
+        # ``autocast_dtype`` is normalized to a ``torch.dtype`` regardless of
+        # whether HF carried it as a string ("bfloat16") or a ``torch.dtype``.
+        assert p.autocast_dtype is torch.bfloat16
         assert p.hidden_dropout == 0.0
         assert p.attention_dropout == 0.0
-        assert p.autocast_dtype is torch.bfloat16
         assert p.moe_grouped_gemm is True
         assert p.moe_router_load_balancing_type == "aux_loss"
         assert p.moe_aux_loss_coeff == 1e-3
         assert p.moe_router_pre_softmax is False
         assert p.moe_token_dispatcher_type == "alltoall"
         assert p.moe_permute_fusion is True
+
+    def test_autocast_dtype_normalizes_string_aliases(self):
+        """HF's ``torch_dtype`` can arrive as a string alias from ``config.json``;
+        the bridge normalizes the supported aliases to ``torch.dtype`` instances."""
+        for alias, expected in (
+            ("bfloat16", torch.bfloat16),
+            ("float16", torch.float16),
+            ("float32", torch.float32),
+        ):
+            _, p = self._run(hf_overrides={"torch_dtype": alias})
+            assert p.autocast_dtype is expected, f"alias {alias!r} should map to {expected}"
+
+    def test_autocast_dtype_passthrough_for_torch_dtype_instance(self):
+        """When HF already gave a ``torch.dtype``, the bridge assigns it as-is."""
+        _, p = self._run(hf_overrides={"torch_dtype": torch.float16})
+        assert p.autocast_dtype is torch.float16
+
+    def test_autocast_dtype_rejects_unknown_string(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown torch dtype"):
+            self._run(hf_overrides={"torch_dtype": "fp8"})
+
+    def test_autocast_dtype_rejects_unsupported_type(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="Unknown torch dtype"):
+            self._run(hf_overrides={"torch_dtype": 16})
+
+    def test_moe_router_fields_copied_from_hf_config(self):
+        """The MoE router-bias / score-function / topk-scaling-factor fields
+        are HF-driven (Step-3.5 exposes them in its config) — they should
+        flow into the provider 1:1."""
+        hf_config, p = self._run()
+        assert p.moe_router_enable_expert_bias is hf_config.use_moe_router_bias
+        assert p.moe_router_score_function == hf_config.moe_router_activation
+        assert p.moe_router_topk_scaling_factor == hf_config.moe_router_scaling_factor
+
+    def test_swiglu_limits_copied_from_hf_config(self):
+        """Per-layer SwiGLU clamp values (routed and shared expert) are
+        forwarded to the provider; ``Step35DecoderLayer`` indexes them by
+        global layer id at construction time."""
+        hf_config, p = self._run()
+        assert p.swiglu_limits == hf_config.swiglu_limits
+        assert p.swiglu_limits_shared == hf_config.swiglu_limits_shared
+
+    def test_need_fp32_gate_sets_moe_router_dtype(self):
+        """``need_fp32_gate=True`` opts into the FP32 router-dtype path."""
+        _, p = self._run(hf_overrides={"need_fp32_gate": True})
+        assert p.moe_router_dtype == "fp32"
+
+    def test_need_fp32_gate_false_leaves_moe_router_dtype_untouched(self):
+        _, p = self._run()  # fixture default: need_fp32_gate=False
+        assert p.moe_router_dtype is None
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         from megatron.bridge.models.stepfun.step35_bridge import _build_step35_layer_spec

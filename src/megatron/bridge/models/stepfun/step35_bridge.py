@@ -252,7 +252,19 @@ class Step35Bridge(MegatronModelBridge):
         provider.hidden_dropout = 0.0
         provider.attention_dropout = 0.0
         provider.qk_layernorm = hf_config.use_qk_norm
-        provider.autocast_dtype = hf_config.torch_dtype
+        if isinstance(hf_config.torch_dtype, str):
+            if hf_config.torch_dtype == "bfloat16":
+                provider.autocast_dtype = torch.bfloat16
+            elif hf_config.torch_dtype == "float16":
+                provider.autocast_dtype = torch.float16
+            elif hf_config.torch_dtype == "float32":
+                provider.autocast_dtype = torch.float32
+            else:
+                raise ValueError(f"Unknown torch dtype: {hf_config.torch_dtype}")
+        elif isinstance(hf_config.torch_dtype, torch.dtype):
+            provider.autocast_dtype = hf_config.torch_dtype
+        else:
+            raise ValueError(f"Unknown torch dtype: {hf_config.torch_dtype}")
 
         provider.moe_router_enable_expert_bias = hf_config.use_moe_router_bias
         provider.moe_router_score_function = hf_config.moe_router_activation
