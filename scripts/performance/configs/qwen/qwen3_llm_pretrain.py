@@ -44,9 +44,6 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
-    cfg.optimizer.optimizer_cuda_graph = True
-    cfg.checkpoint.save = None
-
 
 def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     """Apply MoE defaults required by full-iteration CUDA graph capture."""
