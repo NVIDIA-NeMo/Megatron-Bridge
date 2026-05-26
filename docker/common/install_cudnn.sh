@@ -53,6 +53,7 @@ apt-get install -y --no-install-recommends \
 
 if [ "$DEVEL" = "1" ]; then
     apt-get install -y --no-install-recommends \
+        "libcudnn${CUDNN_MAJOR}-headers-cuda-13=${CUDNN_VERSION}" \
         "libcudnn${CUDNN_MAJOR}-dev-cuda-13=${CUDNN_VERSION}"
 fi
 

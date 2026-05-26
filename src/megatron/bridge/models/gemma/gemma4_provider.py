@@ -94,6 +94,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     attention_backend: AttnBackend = AttnBackend.auto
     softmax_scale: float = 1.0  # Gemma 4 uses QK norm; no 1/sqrt(d) scaling
     qk_layernorm: bool = True
+    attention_k_eq_v: bool = False
 
     # Global attention overrides (applied per-layer in custom SelfAttention)
     global_head_dim: int = 512
@@ -345,8 +346,8 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
     :meth:`Gemma4SelfAttention.get_query_key_value_tensors` can enforce V=K in
     the forward pass.
 
-    Skips dense models (``provider.num_moe_experts is None``) where K=V sharing
-    has not been verified.  Must be called after model construction so that the
+    K-V sharing is decided based on attention_k_eq_v field.
+    Must be called after model construction so that the
     attention modules are already built.
 
     Note on gradient routing for LoRA: since V-rows = K-rows in the loaded
@@ -354,8 +355,7 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
     modification.  Full gradient routing (accumulating dL/dV into K-rows) is
     left as a future improvement.
     """
-    # Only confirmed for MoE models (26B-A4B family); skip dense variants
-    if getattr(provider, "num_moe_experts", None) is None:
+    if not getattr(provider, "attention_k_eq_v", False):
         return
 
     num_global_kv_heads = getattr(provider, "num_global_key_value_heads", None)
