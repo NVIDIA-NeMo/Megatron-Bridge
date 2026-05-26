@@ -24,9 +24,6 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-DEEPSEEK_V3_NUM_DECODER_LAYERS = 61
-
-
 def _build_standalone_mtp_layout(num_decoder_layers: int, total_stages: int, mtp_layers: int) -> list[list[str]]:
     if mtp_layers <= 0:
         raise ValueError("standalone MTP layout requires mtp_num_layers > 0")
@@ -60,13 +57,14 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         mtp_standalone: Place MTP layers in a standalone penultimate PP/VPP stage and loss in the
             final stage. Defaults to colocating MTP with loss, matching existing recipes.
     """
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
+        return
+
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
     last_layer = ["mtp"] * mtp_layers + ["loss"]
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     vp_size = model_cfg.virtual_pipeline_model_parallel_size or 1
-    num_decoder_layers = getattr(model_cfg, "num_layers", DEEPSEEK_V3_NUM_DECODER_LAYERS)
-    if num_decoder_layers is None:
-        num_decoder_layers = DEEPSEEK_V3_NUM_DECODER_LAYERS
     layout_map = {
         (1, 1): None,
         (4, 1): [["embedding"] + ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 16, ["decoder"] * 13 + last_layer],
@@ -76,9 +74,10 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
     }
-    if layout is not None:
-        model_cfg.pipeline_model_parallel_layout = layout
-    elif mtp_standalone:
+    if mtp_standalone:
+        num_decoder_layers = getattr(model_cfg, "num_layers", None)
+        if not isinstance(num_decoder_layers, int) or isinstance(num_decoder_layers, bool) or num_decoder_layers <= 0:
+            raise ValueError("standalone MTP layout requires model config num_layers to be a positive integer")
         model_cfg.pipeline_model_parallel_layout = _build_standalone_mtp_layout(
             num_decoder_layers=num_decoder_layers,
             total_stages=pp_size * vp_size,

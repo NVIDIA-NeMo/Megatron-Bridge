@@ -29,18 +29,22 @@ from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.recipes.deepseek import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
-_DEEPSEEK_RECIPE_NAMES = (
-    "deepseek_v2_pretrain_config",
-    "deepseek_v2_lite_pretrain_config",
-    "deepseek_v3_pretrain_config",
-    "deepseek_v3_pretrain_config_32nodes",
+_DEEPSEEK_RECIPE_NAMES = frozenset(
+    {
+        "deepseek_v2_pretrain_config",
+        "deepseek_v2_lite_pretrain_config",
+        "deepseek_v3_pretrain_config",
+        "deepseek_v3_pretrain_config_32nodes",
+    }
 )
-_DEEPSEEK_RECIPE_FUNCS = [
-    getattr(_deepseek_module, name) for name in _DEEPSEEK_RECIPE_NAMES if callable(getattr(_deepseek_module, name))
-]
+_DEEPSEEK_EXPORTED_NAMES = set(getattr(_deepseek_module, "__all__", ()))
+assert _DEEPSEEK_RECIPE_NAMES <= _DEEPSEEK_EXPORTED_NAMES
+_DEEPSEEK_RECIPE_FUNCS = [getattr(_deepseek_module, name) for name in sorted(_DEEPSEEK_RECIPE_NAMES)]
+assert all(callable(recipe_func) for recipe_func in _DEEPSEEK_RECIPE_FUNCS)
 
 
 class _FakeModelCfg:
@@ -128,6 +132,54 @@ def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():
     assert parsed_layout.validate_layer_layout(model_cfg.num_layers, model_cfg.mtp_num_layers)
     assert parsed_layout.layout[6][1] == [LayerType.mtp]
     assert parsed_layout.layout[7][1] == [LayerType.loss]
+
+
+def test_build_standalone_mtp_layout_rejects_too_few_total_stages():
+    with pytest.raises(ValueError, match="at least three"):
+        _build_standalone_mtp_layout(num_decoder_layers=61, total_stages=2, mtp_layers=1)
+
+
+def test_build_standalone_mtp_layout_rejects_zero_mtp_layers():
+    with pytest.raises(ValueError, match="mtp_num_layers > 0"):
+        _build_standalone_mtp_layout(num_decoder_layers=61, total_stages=4, mtp_layers=0)
+
+
+def test_deepseek_v3_pipeline_layout_can_place_multiple_mtp_layers_in_standalone_stage():
+    model_cfg = _FakeModelCfg()
+    model_cfg.num_layers = 61
+    model_cfg.mtp_num_layers = 2
+    model_cfg.pipeline_model_parallel_size = 4
+    model_cfg.virtual_pipeline_model_parallel_size = None
+
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, mtp_standalone=True)
+
+    layout = model_cfg.pipeline_model_parallel_layout
+    assert layout[-2] == ["mtp", "mtp"]
+    assert layout[-1] == ["loss"]
+    assert sum(stage.count("decoder") for stage in layout) == model_cfg.num_layers
+
+    parsed_layout = PipelineParallelLayerLayout(layout, pipeline_model_parallel_size=4)
+    assert parsed_layout.validate_layer_layout(model_cfg.num_layers, model_cfg.mtp_num_layers)
+
+
+def test_deepseek_v3_pipeline_layout_prefers_explicit_layout_over_standalone_mtp():
+    model_cfg = _FakeModelCfg()
+    model_cfg.mtp_num_layers = 0
+    explicit_layout = [["embedding", "decoder", "loss"]]
+
+    set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, explicit_layout, mtp_standalone=True)
+
+    assert model_cfg.pipeline_model_parallel_layout is explicit_layout
+
+
+def test_deepseek_v3_pipeline_layout_requires_num_layers_for_standalone_mtp():
+    model_cfg = _FakeModelCfg()
+    model_cfg.mtp_num_layers = 1
+    model_cfg.pipeline_model_parallel_size = 4
+    model_cfg.virtual_pipeline_model_parallel_size = None
+
+    with pytest.raises(ValueError, match="num_layers"):
+        set_deepseek_v3_pipeline_model_parallel_layout(model_cfg, mtp_standalone=True)
 
 
 def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
