@@ -295,10 +295,7 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
-        if workload_base_config.cuda_graph_impl == "full_iteration" or (
-            workload_base_config.cuda_graph_impl == "local"
-            and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
-        ):
+        if is_full_iteration_cuda_graph(workload_base_config):
             cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
             if "graph_capture_record_stream_reuse" not in cur:
                 sep = "," if cur else ""
