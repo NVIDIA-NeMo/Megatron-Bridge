@@ -19,8 +19,10 @@ documents what is currently supported for that model and what is not.
 
 Current example coverage:
 
-- LLaVA: MegatronMIMO training, conversion, and checkpoint/resume workflows.
-- Qwen3.5-VL: coming soon.
+| Model | Scope |
+|---|---|
+| Qwen3.5-VL | HF to MegatronMIMO conversion and non-colocated HF-data SFT. |
+| LLaVA | MegatronMIMO training, conversion, and checkpoint/resume workflows. |
 
 Model-specific READMEs and scripts document supported layouts, data paths,
 conversion commands, training launchers, and known limitations.

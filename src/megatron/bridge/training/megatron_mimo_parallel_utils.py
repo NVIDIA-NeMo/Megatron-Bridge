@@ -278,33 +278,35 @@ def validate_data_loader_contract(
     """Validate data loading constraints for multimodule training.
 
     Checks:
+    - MIMO micro-batch size divisible by all module DP sizes
     - Global batch size divisible by all module DP sizes
-    - Micro-batch size consistent with per-module sharding
-    - num_microbatches * micro_batch_size == global_batch_size / DP_size (per module)
+    - num_microbatches * micro_batch_size == global_batch_size
 
     Args:
         infra: MegatronMIMOInfra with module_to_grid_map.
-        global_batch_size: Total batch size across all data parallel ranks.
-        micro_batch_size: Batch size per microbatch.
+        global_batch_size: Total MIMO batch size per optimizer step.
+        micro_batch_size: Global MIMO batch size per microbatch before module-local DP slicing.
         num_microbatches: Number of microbatches per iteration.
 
     Raises:
         ValueError: If any constraint is violated.
     """
+    expected = num_microbatches * micro_batch_size
+    if expected != global_batch_size:
+        raise ValueError(
+            f"Microbatch mismatch: {num_microbatches} * {micro_batch_size} = {expected} "
+            f"!= global_batch_size ({global_batch_size})"
+        )
+
     for module_name, grid in infra.module_to_grid_map.items():
         # Get DP size from grid
         dp_size = grid.get_pg_size(["dp"])
 
+        if micro_batch_size % dp_size != 0:
+            raise ValueError(
+                f"Micro batch size {micro_batch_size} not divisible by {module_name} DP size {dp_size}"
+            )
+
         # Check global batch divisibility
         if global_batch_size % dp_size != 0:
             raise ValueError(f"Global batch size {global_batch_size} not divisible by {module_name} DP size {dp_size}")
-
-        # Check micro-batch alignment
-        per_dp_batch = global_batch_size // dp_size
-        expected = num_microbatches * micro_batch_size
-        if per_dp_batch != expected:
-            raise ValueError(
-                f"Microbatch mismatch for {module_name}: "
-                f"{num_microbatches} * {micro_batch_size} = {expected} != {per_dp_batch} "
-                f"(global_batch / DP_size)"
-            )

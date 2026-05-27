@@ -133,13 +133,13 @@ class TestValidateDataLoaderContract:
         mock_infra = MagicMock()
         mock_infra.module_to_grid_map = {"language": mock_grid}
 
-        # global_batch=16, dp=2, per_dp_batch=8, microbatches=4, micro_batch_size=2
-        # 4 * 2 = 8 == 16 / 2 ✓
+        # global_batch=8, dp=2, microbatches=2, global micro_batch_size=4.
+        # Each module-local DP rank sees 4 / 2 = 2 samples per microbatch.
         validate_data_loader_contract(
             infra=mock_infra,
-            global_batch_size=16,
-            micro_batch_size=2,
-            num_microbatches=4,
+            global_batch_size=8,
+            micro_batch_size=4,
+            num_microbatches=2,
         )
 
     def test_batch_not_divisible_by_dp(self):
@@ -155,9 +155,27 @@ class TestValidateDataLoaderContract:
         with pytest.raises(ValueError, match="not divisible"):
             validate_data_loader_contract(
                 infra=mock_infra,
+                global_batch_size=8,
+                micro_batch_size=4,
+                num_microbatches=2,
+            )
+
+    def test_microbatch_count_mismatch(self):
+        """Test validation fails when accumulation does not match global batch."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import validate_data_loader_contract
+
+        mock_grid = MagicMock()
+        mock_grid.get_pg_size.return_value = 2
+
+        mock_infra = MagicMock()
+        mock_infra.module_to_grid_map = {"language": mock_grid}
+
+        with pytest.raises(ValueError, match="Microbatch mismatch"):
+            validate_data_loader_contract(
+                infra=mock_infra,
                 global_batch_size=16,
-                micro_batch_size=2,
-                num_microbatches=4,
+                micro_batch_size=4,
+                num_microbatches=2,
             )
 
 

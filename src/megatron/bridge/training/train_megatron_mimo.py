@@ -282,6 +282,7 @@ def train_megatron_mimo(
     # Profiler setup (mirrors train.py behavior)
     prof = None
     nsys_nvtx_context = None
+    profiling_stopped = False
     prof_config = cfg.profiling
     if prof_config and should_profile_rank(prof_config, dist.get_rank()):
         if prof_config.use_pytorch_profiler:
@@ -420,17 +421,26 @@ def train_megatron_mimo(
             pg_collection=local_pg_collection,
             module_name=active_module_name,
         )
+        if not profiling_stopped:
+            handle_profiling_stop(
+                prof_config,
+                train_state.step,
+                dist.get_rank(),
+                prof,
+                nsys_nvtx_context,
+            )
+            profiling_stopped = prof_config is not None and train_state.step == prof_config.profile_step_end
         if should_exit:
             break
 
-    # Stop profiling
-    handle_profiling_stop(
-        prof_config,
-        train_state.step,
-        dist.get_rank(),
-        prof,
-        nsys_nvtx_context,
-    )
+    if not profiling_stopped:
+        handle_profiling_stop(
+            prof_config,
+            train_state.step,
+            dist.get_rank(),
+            prof,
+            nsys_nvtx_context,
+        )
 
     timers("interval-time").stop()
 
