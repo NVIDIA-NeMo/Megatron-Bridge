@@ -112,8 +112,6 @@ def _set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:  # this condition ensures we unset in case of user override to "none" from default
-            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
@@ -126,6 +124,9 @@ def _set_cuda_graph_overrides(
         assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
+    elif recipe.model.cuda_graph_impl == "none":
+        recipe.model.cuda_graph_scope = []
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False

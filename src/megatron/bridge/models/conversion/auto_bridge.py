@@ -44,6 +44,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
@@ -732,6 +733,8 @@ class AutoBridge(Generic[MegatronModelT]):
                             hub_repo,
                             exc,
                         )
+                    finally:
+                        PreTrainedBase._cleanup_hf_local_dir_cache(Path(path))
 
             else:
                 # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured

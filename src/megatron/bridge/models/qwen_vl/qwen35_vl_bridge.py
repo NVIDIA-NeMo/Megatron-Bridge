@@ -494,6 +494,8 @@ class Qwen35VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
+
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen35VLModelProvider:
         """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
         hf_config = hf_pretrained.config
