@@ -60,12 +60,7 @@ class WorkloadBaseConfig:
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
     moe_a2a_overlap: Optional[bool] = False
-    # Opt-in to TE cuTeDSL fused-grouped-MLP (forward + backward). Currently
-    # validated on DSV3 + MXFP8 + GB300; cudnn-fe >= 1.23 and cutlass-dsl 4.4.x
-    # required in the container. See cutedsl_fusion_requirements.md.
     cutedsl_fused_grouped_mlp: Optional[bool] = False
-    # Opt-in to FP8 dot-product attention (FP8 SDPA via TE). Propagated to
-    # cfg.mixed_precision.fp8_dot_product_attention.
     fp8_dot_product_attention: Optional[bool] = None
     peft: Optional[str] = None
 

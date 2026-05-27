@@ -127,9 +127,6 @@ def _set_cuda_graph_overrides(
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
 
-    # full_iteration capture cannot inspect intermediate loss values, so the rerun
-    # state machine's NaN-in-loss check is incompatible. Auto-disable instead of
-    # forcing the user to remember the override.
     if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False
 
@@ -236,8 +233,6 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_mlp_glu_interleave_size = 32
         if settings.moe_a2a_overlap:
-            # MCore PR #4694 — high-priority A2A stream + reduced hybridep
-            # preprocessing SM budget so A2A NCCL overlaps with cuTeDSL wgrad gemm.
             cfg.model.high_priority_a2a_comm_stream = True
             cfg.model.moe_hybridep_num_sms_preprocessing = 32
     if getattr(settings, "fp8_dot_product_attention", None) is not None:
