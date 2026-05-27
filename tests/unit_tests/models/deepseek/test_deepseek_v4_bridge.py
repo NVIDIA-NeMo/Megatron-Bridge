@@ -211,6 +211,70 @@ class TestDeepSeekV4QuantizedExport:
         assert set(result) == {"norm.weight"}
         assert result["norm.weight"] is weight
 
+    def test_export_roundtrips_mixed_quantized_hf_state(self):
+        bridge = DeepSeekV4Bridge()
+        fp8_param = "layers.0.attn.wq_a.weight"
+        fp8_scale = "layers.0.attn.wq_a.scale"
+        mxfp4_param = "layers.0.ffn.experts.0.w1.weight"
+        mxfp4_scale = "layers.0.ffn.experts.0.w1.scale"
+        norm_param = "layers.0.attn_norm.weight"
+
+        fp8_weight = torch.full((4, 4), 2.0, dtype=torch.bfloat16)
+        mxfp4_values = torch.tensor(
+            [
+                0.0,
+                0.5,
+                1.0,
+                1.5,
+                2.0,
+                3.0,
+                4.0,
+                6.0,
+                -0.0,
+                -0.5,
+                -1.0,
+                -1.5,
+                -2.0,
+                -3.0,
+                -4.0,
+                -6.0,
+            ],
+            dtype=torch.float32,
+        ).repeat(2)
+        mxfp4_weight = mxfp4_values.reshape(1, 32).to(torch.bfloat16)
+        norm_weight = torch.arange(4, dtype=torch.float32).to(torch.bfloat16)
+
+        stale_scale = torch.full((1, 1), 9.0, dtype=torch.float32)
+        result = bridge.maybe_modify_converted_hf_weight(
+            _dummy_task(),
+            {
+                fp8_param: fp8_weight,
+                fp8_scale: stale_scale,
+                mxfp4_param: mxfp4_weight,
+                mxfp4_scale: stale_scale,
+                norm_param: norm_weight,
+            },
+            {
+                fp8_scale: torch.ones((1, 1), dtype=torch.float32),
+                mxfp4_scale: torch.ones((1, 1), dtype=torch.float32),
+            },
+        )
+
+        assert set(result) == {fp8_param, fp8_scale, mxfp4_param, mxfp4_scale, norm_param}
+        assert result[fp8_param].dtype == torch.float8_e4m3fn
+        assert result[mxfp4_param].dtype == torch.int8
+        assert result[mxfp4_param].shape == (1, 16)
+        assert result[fp8_scale].shape == (1, 1)
+        assert result[mxfp4_scale].shape == (1, 1)
+        assert not torch.equal(result[fp8_scale], stale_scale)
+        assert not torch.equal(result[mxfp4_scale], stale_scale)
+        assert result[norm_param] is norm_weight
+
+        restored_fp8 = bridge.maybe_modify_loaded_hf_weight(fp8_param, result)
+        restored_mxfp4 = bridge.maybe_modify_loaded_hf_weight(mxfp4_param, result)
+        assert torch.allclose(restored_fp8.float(), fp8_weight.float())
+        assert torch.equal(restored_mxfp4.float(), mxfp4_weight.float())
+
 
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
