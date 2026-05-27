@@ -163,8 +163,8 @@ class TestWan1_3BText2ImageText2VideoConfigs:
         config = wan_1_3b_text2image_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert config.model.seq_length == 8192
-        assert config.dataset.seq_length == 8192
+        assert config.model.seq_length == 4096
+        assert config.dataset.seq_length == 4096
         assert config.model.context_parallel_size == 1
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-4
@@ -174,8 +174,8 @@ class TestWan1_3BText2ImageText2VideoConfigs:
         config = wan_1_3b_text2video_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert config.model.seq_length == 86016
-        assert config.dataset.seq_length == 86016
+        assert config.model.seq_length == 43008
+        assert config.dataset.seq_length == 43008
         assert config.model.context_parallel_size == 4
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-4
