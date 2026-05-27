@@ -281,12 +281,15 @@ def wan_1_3b_text2image_pretrain_config() -> ConfigContainer:
     """Return a Wan 1.3B pretraining configuration tuned for text-to-image data.
 
     Wraps wan_1_3b_pretrain_config and overrides sequence length on both the
-    model and the dataset for spatial-only inputs. The dataset path is still
-    overridden at runtime via --diffusion_dataset_path.
+    model and the dataset for spatial-only inputs.
     """
     cfg = wan_1_3b_pretrain_config()
-    cfg.model.seq_length = 12240
-    cfg.dataset.seq_length = 12240
+    cfg.model.seq_length = 8192
+    cfg.dataset.seq_length = 8192
+    cfg.model.context_parallel_size = 1
+    cfg.optimizer.lr=1e-4
+    cfg.optimizer.min_lr=1e-4
+    cfg.optimizer.weight_decay=0.001
     return cfg
 
 
@@ -295,11 +298,13 @@ def wan_1_3b_text2video_pretrain_config() -> ConfigContainer:
 
     Wraps wan_1_3b_pretrain_config and overrides sequence length on both the
     model and the dataset for spatio-temporal inputs, with context parallelism
-    reduced to 4 to fit the longer sequence. The dataset path is still
-    overridden at runtime via --diffusion_dataset_path.
+    reduced to 4 to fit the longer sequence.
     """
     cfg = wan_1_3b_pretrain_config()
-    cfg.model.seq_length = 40000
-    cfg.dataset.seq_length = 40000
-    cfg.model.context_parallel_size = 8
+    cfg.model.seq_length = 86016
+    cfg.dataset.seq_length = 86016
+    cfg.model.context_parallel_size = 4
+    cfg.optimizer.lr=1e-4
+    cfg.optimizer.min_lr=1e-4
+    cfg.optimizer.weight_decay=0.001
     return cfg

@@ -146,8 +146,7 @@ def set_user_overrides(config, args):
     else:
         # Diffusion recipes (FLUX, WAN) keep their own dataset object (Wan/FluxDatasetConfig).
         # Override only the path; None → recipe-default mock data.
-        if args.diffusion_dataset_path:
-            config.dataset.path = args.diffusion_dataset_path
+        config.dataset.path = args.dataset_paths
 
     # Model configuration
     # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
