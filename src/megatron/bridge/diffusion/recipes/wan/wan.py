@@ -301,9 +301,9 @@ def wan_1_3b_text2image_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
     cfg.model.context_parallel_size = 1
-    cfg.optimizer.lr=1e-4
-    cfg.optimizer.min_lr=1e-4
-    cfg.optimizer.weight_decay=0.001
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 1e-4
+    cfg.optimizer.weight_decay = 0.001
     return cfg
 
 
@@ -318,7 +318,7 @@ def wan_1_3b_text2video_pretrain_config() -> ConfigContainer:
     cfg.model.seq_length = 86016
     cfg.dataset.seq_length = 86016
     cfg.model.context_parallel_size = 4
-    cfg.optimizer.lr=1e-4
-    cfg.optimizer.min_lr=1e-4
-    cfg.optimizer.weight_decay=0.001
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 1e-4
+    cfg.optimizer.weight_decay = 0.001
     return cfg
