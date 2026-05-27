@@ -17,11 +17,15 @@ from typing import List, Optional
 
 import torch
 import torch.nn as nn
+from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.common.embeddings.rope_utils import (
     _apply_rotary_pos_emb_bshd,
     get_pos_emb_on_this_cp_rank,
 )
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.transformer_block import TransformerBlock
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -135,6 +139,44 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             emb = get_pos_emb_on_this_cp_rank(emb, 0, self.cp_group)
         return emb
 
+    def get_rotary_seq_len(
+        self,
+        inference_context: BaseInferenceContext,
+        transformer: TransformerBlock,
+        transformer_input: Tensor,
+        transformer_config: TransformerConfig,
+        packed_seq_params: Optional[PackedSeqParams] = None,
+        *,
+        inference_params: Optional[BaseInferenceContext] = None,
+    ) -> int:
+        """Compatibility shim for newer MCore GPT preprocessing.
+
+        Qwen3-VL/Qwen3-Omni mRoPE uses explicit multimodal `position_ids`, but the upstream
+        GPT preprocess path still queries a rotary sequence length helper when preparing inputs.
+        """
+        inference_context = deprecate_inference_params(inference_context, inference_params)
+
+        if packed_seq_params is not None:
+            return max(packed_seq_params.max_seqlen_q, packed_seq_params.max_seqlen_kv)
+        if inference_context is not None:
+            context_max_seq_len = inference_context.max_sequence_length
+            input_seq_len = 0
+            if transformer_input is not None:
+                input_seq_len = transformer_input.size(0)
+            elif transformer is not None and transformer.input_tensor is not None:
+                input_seq_len = transformer.input_tensor.size(0)
+            return max(context_max_seq_len, input_seq_len)
+
+        if transformer is not None and transformer.input_tensor is not None:
+            rotary_seq_len = transformer.input_tensor.size(0)
+        else:
+            rotary_seq_len = transformer_input.size(0)
+
+        if transformer_config.sequence_parallel:
+            rotary_seq_len *= transformer_config.tensor_model_parallel_size
+
+        return rotary_seq_len
+
 
 # Slightly modified from Qwen3VLModel.get_rope_index
 def get_rope_index(
@@ -150,7 +192,7 @@ def get_rope_index(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Different from the original implementation, Qwen3VL use timestamps rather than absolute time position ids."""
 
-    # Since we use timestamps to seperate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split
+    # Since we use timestamps to separate videos, like <t1> <vision_start> <frame1> <vision_end> <t2> <vision_start> <frame2> <vision_end>, the video_grid_thw should also be split
     if video_grid_thw is not None:
         video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
         video_grid_thw[:, 0] = 1

@@ -71,16 +71,27 @@ def pad_or_truncate_pos_to_len(pos: torch.Tensor | None, target_len: int, max_ca
 
 
 def pad_or_truncate_attn_to_len(mask: torch.Tensor | None, target_len: int, max_cap: int) -> torch.Tensor | None:
-    """Pad or truncate a 4D attention mask to the target length with an upper cap.
+    """Pad or truncate a 2D or 4D attention mask to the target length with an upper cap.
 
-    Expects input of shape (batch, heads, seq_len, seq_len). Pads the last two dims.
+    Supports either:
+    - (batch, seq_len), padding/truncating the last dimension
+    - (batch, heads, seq_len, seq_len), padding/truncating the last two dims
     """
     if mask is None:
         return None
-    _, _, s1, s2 = mask.shape
     pad_value = False if mask.dtype == torch.bool else 0
-    if s1 < target_len:
-        return F.pad(mask, (0, target_len - s2, 0, target_len - s1), value=pad_value)
-    if s1 > max_cap:
-        return mask[:, :, :max_cap, :max_cap]
-    return mask
+    if mask.dim() == 2:
+        seq_len = mask.size(1)
+        if seq_len < target_len:
+            return F.pad(mask, (0, target_len - seq_len), value=pad_value)
+        if seq_len > max_cap:
+            return mask[:, :max_cap]
+        return mask
+    if mask.dim() == 4:
+        _, _, s1, s2 = mask.shape
+        if s1 < target_len:
+            return F.pad(mask, (0, target_len - s2, 0, target_len - s1), value=pad_value)
+        if s1 > max_cap:
+            return mask[:, :, :max_cap, :max_cap]
+        return mask
+    raise ValueError(f"attention mask must be 2D or 4D, got shape {tuple(mask.shape)}")

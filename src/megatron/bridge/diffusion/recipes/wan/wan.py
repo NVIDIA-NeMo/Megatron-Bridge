@@ -18,7 +18,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
-from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider1_3B, WanModelProvider14B
+from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -49,7 +49,14 @@ def wan_1_3b_pretrain_config() -> ConfigContainer:
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Model configuration
-    model_cfg = WanModelProvider1_3B()
+    model_cfg = WanModelProvider(
+        num_layers=30,
+        hidden_size=1536,
+        ffn_hidden_size=8960,
+        num_attention_heads=12,
+        crossattn_emb_size=1536,
+        seq_length=1024,
+    )
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16
@@ -148,7 +155,14 @@ def wan_14b_pretrain_config() -> ConfigContainer:
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Model configuration
-    model_cfg = WanModelProvider14B()
+    model_cfg = WanModelProvider(
+        num_layers=40,
+        hidden_size=5120,
+        ffn_hidden_size=13824,
+        num_attention_heads=40,
+        crossattn_emb_size=5120,
+        seq_length=1024,
+    )
     model_cfg.tensor_model_parallel_size = 2
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16

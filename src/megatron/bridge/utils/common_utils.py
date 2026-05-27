@@ -22,6 +22,7 @@ import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import get_batch_on_this_cp_rank
 
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_local_rank,
@@ -253,18 +254,26 @@ def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn
 
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
+
     Args:
         param_name: The parameter name to extract the expert number from.
+
     Returns:
         The expert number.
     """
-    pattern = r"(?:experts\.|weight|bias)(\d+)"
-    match = re.search(pattern, param_name)
-    if not match:
-        raise ValueError(
-            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
-        )
-    return int(match.group(1))
+    patterns = (
+        r"local_experts\.(\d+)",
+        r"(?:weight|bias)(\d+)",
+        r"experts\.(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, param_name)
+        if match:
+            return int(match.group(1))
+    raise ValueError(
+        f"No expert number found in parameter name: {param_name}. "
+        f"Please update the regex patterns {patterns} if necessary."
+    )
 
 
 def disable_mtp_for_inference(m: torch.nn.Module) -> None:
@@ -320,8 +329,6 @@ def slice_batch_for_context_parallel(
         Tuple of (inputs_embeds, labels, loss_mask, position_ids, attention_mask)
         with all tensors sliced for this CP rank. inputs_embeds remains in (T, B, D) format.
     """
-    from megatron.core.utils import get_batch_on_this_cp_rank
-
     cp_size = pg_collection.cp.size()
     if cp_size <= 1:
         return inputs_embeds, labels, loss_mask, position_ids, attention_mask
@@ -369,6 +376,7 @@ def slice_batch_for_context_parallel(
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             },
+            is_hybrid_cp=False,
             cp_group=cp_group,
         )
 

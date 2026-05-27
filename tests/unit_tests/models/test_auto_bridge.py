@@ -16,6 +16,8 @@
 Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
+import json
+from pathlib import Path
 from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
@@ -659,6 +661,69 @@ class TestAutoBridge:
         assert (tmp_path / "config.json").exists()
         mock_download.assert_not_called()
         mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_strips_auto_map_without_remote_code(
+        self, _mock_dist_avail, _mock_dist_init, tmp_path
+    ):
+        """Config-only save omits stale remote-code metadata when remote code is not preserved."""
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        bridge = AutoBridge(config)
+        bridge.hf_model_id = "some-org/some-model"
+
+        with patch.object(AutoBridge, "save_hf_weights"):
+            with patch("huggingface_hub.list_repo_files") as mock_list_repo_files:
+                bridge.save_hf_pretrained([Mock()], str(tmp_path))
+
+        saved_config = json.loads((tmp_path / "config.json").read_text())
+        assert "auto_map" not in saved_config
+        mock_list_repo_files.assert_not_called()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_preserves_auto_map_with_remote_code(
+        self, _mock_dist_avail, _mock_dist_init, tmp_path
+    ):
+        """Config-only save keeps auto_map and copies code when remote code is preserved."""
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        bridge = AutoBridge(config)
+        bridge.hf_model_id = "some-org/some-model"
+        bridge.trust_remote_code = True
+
+        def fake_hf_hub_download(repo_id, filename, local_dir):
+            del repo_id
+            local_dir = Path(local_dir)
+            (local_dir / filename).write_text("# custom modeling code")
+            metadata_dir = local_dir / ".cache" / "huggingface" / "download"
+            metadata_dir.mkdir(parents=True)
+            (metadata_dir / f"{filename}.metadata").write_text("metadata")
+
+        with patch.object(AutoBridge, "save_hf_weights"):
+            with patch("huggingface_hub.list_repo_files", return_value=["modeling_custom.py", "README.md"]):
+                with patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download) as mock_download:
+                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
+
+        saved_config = json.loads((tmp_path / "config.json").read_text())
+        assert saved_config["auto_map"] == {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        assert (tmp_path / "modeling_custom.py").exists()
+        assert not (tmp_path / ".cache").exists()
+        mock_download.assert_called_once_with(
+            repo_id="some-org/some-model",
+            filename="modeling_custom.py",
+            local_dir=str(tmp_path),
+        )
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)

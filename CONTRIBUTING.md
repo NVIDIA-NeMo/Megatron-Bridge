@@ -217,8 +217,8 @@ Properly labeled PRs get faster reviews and avoid sitting in the triage queue.
 Megatron Bridge uses a small governance taxonomy so maintainers, oncall, and automation can reason about issues and PRs consistently:
 
 - New issues should start with `needs-triage` and leave triage with one `type` label plus one `area` label.
-- PRs should use one primary `area:*` value in the PR template. State labels such as `needs-author`, `blocked`, and `ready-to-merge` are for routing active work, not for replacing review status or CI details.
-- Release labels such as `r0.3.0`, community labels, and `needs-follow-up` are still valid, but they are orthogonal to the main governance taxonomy.
+- PRs should use one primary `area:*` value in the PR template. State labels such as `waiting-on-customer`, `blocked`, and `ready-to-merge` are for routing active work, not for replacing review status or CI details.
+- Release labels such as `r0.3.0`, community labels, and `waiting-on-maintainers` are still valid, but they are orthogonal to the main governance taxonomy.
 
 ### Type Labels
 
@@ -234,18 +234,16 @@ Use exactly one type label per issue or PR after triage:
 
 ### State Labels
 
-Use at most one primary state label from this set at a time (see exceptions below):
+Use at most one primary state label from this set at a time:
 
 | Label | Meaning |
 | --- | --- |
 | `needs-triage` | New item needs classification and ownership |
 | `needs-review` | PR is ready for code review and waiting on a reviewer |
-| `needs-author` | Author action is required before review or merge can continue |
-| `needs-follow-up` | Issue or PR has finished initial triage/review and needs further follow-up |
+| `waiting-on-customer` | Author action is required before review or merge can continue |
+| `waiting-on-maintainers` | Issue or PR has finished initial triage/review and needs further follow-up |
 | `blocked` | Work cannot move forward until an external dependency is cleared |
 | `ready-to-merge` | PR is approved, current, and only waiting for CI to pass before merge |
-
-**Allowed combinations:** `needs-author` + `needs-follow-up` and `needs-follow-up` + `blocked` can co-exist (e.g., waiting on the author but oncall should keep tracking, or a blocked item that oncall should keep watching across handoffs).
 
 ### Risk Labels
 
@@ -284,7 +282,7 @@ This taxonomy does not replace every existing label:
 
 - Keep release labels such as `r0.3.0` as independent scheduling signals.
 - Keep `community-request` and other community-related labels as independent intake signals.
-- Use `needs-follow-up` when an issue or PR should stay explicitly visible to the oncaller across handoffs.
+- Use `waiting-on-maintainers` when an issue or PR should stay explicitly visible to the oncaller across handoffs.
 - Avoid creating new status synonyms when an existing label in this taxonomy already fits.
 
 ### Label Application Rules
@@ -292,12 +290,11 @@ This taxonomy does not replace every existing label:
 - New issues should start with `needs-triage`.
 - Issues should leave triage with one `type` label and one `area` label.
 - An issue keeps `needs-triage` until a maintainer has responded or assigned it. Adding type and area labels is classification; the issue leaves `needs-triage` only when a maintainer engages (responds, assigns, or explicitly routes it).
-- After a maintainer engages, transition to `needs-follow-up` (deferred work oncall should track), `needs-author` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
-- PRs should not use `needs-triage`. Use `needs-review`, `needs-author`, `blocked`, or `ready-to-merge` only when they help route work.
+- After a maintainer engages, transition to `waiting-on-maintainers` (deferred work oncall should track), `waiting-on-customer` (waiting on reporter for more info), `blocked` (external dependency), or no state label (actively being worked on).
+- PRs should not use `needs-triage`. Use `needs-review`, `waiting-on-customer`, `blocked`, or `ready-to-merge` only when they help route work.
 - `high-complexity` starts as a manual maintainer label, not an automated heuristic.
-- `needs-follow-up` should usually point to a linked issue instead of staying on a merged PR.
-- `needs-follow-up` is the visibility label for deferred work that should stay on the oncall radar.
-- `needs-follow-up` can be combined with `blocked` when the oncaller should keep watching a blocked item.
+- `waiting-on-maintainers` should usually point to a linked issue instead of staying on a merged PR.
+- `waiting-on-maintainers` is the visibility label for deferred work that should stay on the oncall radar.
 - If a PR is marked `breaking-change`, do not treat it as auto-mergeable even if CI is green.
 
 ### Daily Views
@@ -316,11 +313,11 @@ These four views are the core daily queues maintainers and oncall should watch.
 - Goal: surface PRs that should merge without rereading every CI detail
 - Suggested query: `is:pr is:open label:"ready-to-merge" draft:false sort:updated-asc`
 
-#### Blocked Or Needs Follow-Up
+#### Blocked Or Waiting On Maintainers
 
-- Scope: open issues and PRs labeled `blocked` or `needs-follow-up`
+- Scope: open issues and PRs labeled `blocked` or `waiting-on-maintainers`
 - Goal: make blockers and deferred work visible across handoffs
-- Suggested query: `is:open (label:"blocked" OR label:"needs-follow-up") sort:updated-asc`
+- Suggested query: `is:open (label:"blocked" OR label:"waiting-on-maintainers") sort:updated-asc`
 
 #### High Complexity
 

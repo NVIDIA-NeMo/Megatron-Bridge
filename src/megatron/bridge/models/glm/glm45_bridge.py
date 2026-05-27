@@ -23,12 +23,10 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
-)
-from megatron.bridge.models.glm.glm_moe_mappings import (
-    GLMExpertDownProjMapping,
-    GLMExpertGateUpProjMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -168,11 +166,11 @@ class GLM45Bridge(MegatronModelBridge):
         if use_fused_experts:
             mapping_list.extend(
                 [
-                    GLMExpertGateUpProjMapping(
+                    FusedGatedExpertMapping(
                         megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
                         hf_param=f"model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
                     ),
-                    GLMExpertDownProjMapping(
+                    FusedExpertMapping(
                         megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
                         hf_param=f"model.layers.*.mlp.experts.down_proj{down_suffix}",
                     ),
@@ -240,7 +238,7 @@ class GLM45Bridge(MegatronModelBridge):
                 if use_fused_experts:
                     mapping_list.extend(
                         [
-                            GLMExpertGateUpProjMapping(
+                            FusedGatedExpertMapping(
                                 megatron_param=(
                                     f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.linear_fc1.weight*"
                                 ),
@@ -249,7 +247,7 @@ class GLM45Bridge(MegatronModelBridge):
                                     f"{gate_up_suffix}"
                                 ),
                             ),
-                            GLMExpertDownProjMapping(
+                            FusedExpertMapping(
                                 megatron_param=(
                                     f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.linear_fc2.weight*"
                                 ),
