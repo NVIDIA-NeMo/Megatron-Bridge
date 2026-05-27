@@ -295,10 +295,6 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
-        # Inline check (no `from megatron.bridge.utils.cuda_graph import
-        # is_full_iteration_cuda_graph`): nemo-ci runs this module on the
-        # launch host before any container starts, where `megatron` is not
-        # installed. See module docstring.
         if workload_base_config.cuda_graph_impl == "full_iteration" or (
             workload_base_config.cuda_graph_impl == "local"
             and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
