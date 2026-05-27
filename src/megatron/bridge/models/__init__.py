@@ -38,8 +38,6 @@ from megatron.bridge.models.falcon_h1 import (
 )
 from megatron.bridge.models.exaone import (
     Exaone4Bridge,
-    Exaone4ModelProvider,
-    Exaone4ModelProvider1P2B,
 )
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,
@@ -231,8 +229,6 @@ __all__ = [
     "OlMoEBridge",
     "OlMoEModelProvider",
     "Exaone4Bridge",
-    "Exaone4ModelProvider",
-    "Exaone4ModelProvider1P2B",
     "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",

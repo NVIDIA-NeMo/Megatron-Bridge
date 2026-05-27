@@ -30,16 +30,10 @@ The Post-LN implementation reuses the TERowParallelLinearLayerNorm pattern
 established by Gemma2 bridge.
 """
 
-from dataclasses import dataclass
-from typing import Callable
-
-import torch
-import torch.nn.functional as F
 from megatron.core.extensions.transformer_engine import TEColumnParallelLinear
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.transformer import (
     ModuleSpec,
-    TransformerConfig,
     TransformerLayer,
     TransformerLayerSubmodules,
 )
@@ -97,81 +91,3 @@ def exaone4_layer_spec(config: "GPTModelProvider") -> ModuleSpec:  # noqa: ARG00
             mlp_bda=get_bias_dropout_add,
         ),
     )
-
-
-# =============================================================================
-# EXAONE 4.0 Model Providers
-# =============================================================================
-
-
-@dataclass
-class Exaone4ModelProvider(GPTModelProvider):
-    """Base configuration for EXAONE 4.0 models (LG AI Research).
-
-    Architecture features:
-    - Pure Post-LayerNorm (no input_layernorm / pre_feedforward_layernorm)
-    - QK RMSNorm after Q/K projection
-    - GQA (Grouped Query Attention)
-    - SwiGLU activation
-    - RoPE with llama3-style scaling
-    - Tied word embeddings (inherits share_embeddings_and_output_weights=True from GPTModelProvider)
-    """
-
-    # Architecture defaults common across EXAONE 4.0 model sizes
-    normalization: str = "RMSNorm"
-    activation_func: Callable = F.silu
-    gated_linear_unit: bool = True
-    position_embedding_type: str = "rope"
-    add_bias_linear: bool = False
-    add_qkv_bias: bool = False
-    qk_layernorm: bool = True  # EXAONE 4.0 uses QK RMSNorm
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-
-    # Custom layer spec for Post-LN architecture
-    transformer_layer_spec: ModuleSpec | Callable[["GPTModelProvider"], ModuleSpec] = exaone4_layer_spec
-
-    # Dtype defaults
-    autocast_dtype: torch.dtype = torch.bfloat16
-    params_dtype: torch.dtype = torch.bfloat16
-    bf16: bool = True
-
-
-@dataclass
-class Exaone4ModelProvider1P2B(Exaone4ModelProvider):
-    """Configuration for EXAONE 4.0 1.2B.
-
-    Model: LGAI-EXAONE/EXAONE-4.0-1.2B
-    - 30 layers, 2048 hidden, 32 attention heads, 8 KV heads
-    - Full attention only (no sliding window / hybrid attention)
-    - RoPE: theta=1M, llama3 scaling factor=16, original_max_pos=8192
-    - Vocab: 102,400 tokens, Context: 65,536 tokens
-    """
-
-    num_layers: int = 30
-    hidden_size: int = 2048
-    ffn_hidden_size: int = 4096
-    num_attention_heads: int = 32
-    num_query_groups: int = 8
-    kv_channels: int = 64
-    seq_length: int = 65536
-    vocab_size: int = 102400
-    rotary_base: float = 1000000.0
-    layernorm_epsilon: float = 1e-5
-    init_method_std: float = 0.02
-
-    # RoPE scaling (llama3-style)
-    rope_scaling: bool = True
-    rope_scaling_factor: float = 16.0
-    rope_scaling_low_freq_factor: float = 1.0
-    rope_scaling_high_freq_factor: float = 4.0
-    rope_scaling_original_max_position_embeddings: int = 8192
-
-
-# TODO: Add Exaone4ModelProvider32B when 32B model details are confirmed
-# The 32B model introduces hybrid attention (LLLG pattern: 3 local + 1 global)
-# with sliding_window_pattern and layer_types configuration.
-# This will require:
-# - Layer-wise attention type branching (local vs global)
-# - RoPE disable for global attention layers
-# - Sliding window size configuration per layer

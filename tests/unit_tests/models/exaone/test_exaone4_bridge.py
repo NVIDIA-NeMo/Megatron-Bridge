@@ -16,10 +16,12 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import torch
+import torch.nn.functional as F
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.exaone.exaone4_bridge import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone4_provider import Exaone4ModelProvider
+from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -68,7 +70,7 @@ class TestExaone4Bridge:
         config = make_exaone4_config()
         provider = Exaone4Bridge().provider_bridge(make_pretrained(config))
 
-        assert isinstance(provider, Exaone4ModelProvider)
+        assert isinstance(provider, GPTModelProvider)
         assert provider.num_layers == config.num_hidden_layers
         assert provider.hidden_size == config.hidden_size
         assert provider.ffn_hidden_size == config.intermediate_size
@@ -81,6 +83,17 @@ class TestExaone4Bridge:
         assert provider.kv_channels == config.head_dim
         assert provider.vocab_size == config.vocab_size
         assert provider.share_embeddings_and_output_weights is True
+        assert provider.normalization == "RMSNorm"
+        assert provider.activation_func == F.silu
+        assert provider.gated_linear_unit is True
+        assert provider.position_embedding_type == "rope"
+        assert provider.add_bias_linear is False
+        assert provider.add_qkv_bias is False
+        assert provider.qk_layernorm is True
+        assert provider.hidden_dropout == 0.0
+        assert provider.attention_dropout == 0.0
+        assert provider.transformer_layer_spec == exaone4_layer_spec
+        assert provider.autocast_dtype == torch.bfloat16
 
     def test_provider_bridge_rope_scaling_mapping(self):
         rope_scaling = {
@@ -96,9 +109,9 @@ class TestExaone4Bridge:
         assert provider.rope_scaling_factor == rope_scaling["factor"]
         assert provider.rope_scaling_low_freq_factor == rope_scaling["low_freq_factor"]
         assert provider.rope_scaling_high_freq_factor == rope_scaling["high_freq_factor"]
-        assert provider.rope_scaling_original_max_position_embeddings == rope_scaling[
-            "original_max_position_embeddings"
-        ]
+        assert (
+            provider.rope_scaling_original_max_position_embeddings == rope_scaling["original_max_position_embeddings"]
+        )
 
     def test_provider_bridge_dtype_handling(self):
         provider = Exaone4Bridge().provider_bridge(make_pretrained(make_exaone4_config(torch_dtype=torch.float16)))
@@ -108,7 +121,7 @@ class TestExaone4Bridge:
         assert provider.bf16 is False
 
     def test_megatron_to_hf_config_preserves_rope_scaling(self):
-        provider = Exaone4ModelProvider(
+        provider = GPTModelProvider(
             num_layers=2,
             hidden_size=128,
             ffn_hidden_size=256,
@@ -139,8 +152,7 @@ class TestExaone4Bridge:
         registry = Exaone4Bridge().mapping_registry()
 
         assert (
-            registry.megatron_to_hf_lookup("embedding.word_embeddings.weight").hf_param
-            == "model.embed_tokens.weight"
+            registry.megatron_to_hf_lookup("embedding.word_embeddings.weight").hf_param == "model.embed_tokens.weight"
         )
         assert registry.megatron_to_hf_lookup("decoder.final_layernorm.weight").hf_param == "model.norm.weight"
         assert (
@@ -157,8 +169,7 @@ class TestExaone4Bridge:
         )
         post_attn_key = "decoder.layers.0.self_attention.linear_proj.post_layernorm.weight"
         assert (
-            registry.megatron_to_hf_lookup(post_attn_key).hf_param
-            == "model.layers.0.post_attention_layernorm.weight"
+            registry.megatron_to_hf_lookup(post_attn_key).hf_param == "model.layers.0.post_attention_layernorm.weight"
         )
         assert (
             registry.megatron_to_hf_lookup("decoder.layers.0.mlp.linear_fc2.post_layernorm.weight").hf_param

@@ -35,6 +35,7 @@ References:
 """
 
 import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -44,7 +45,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.exaone.exaone4_provider import Exaone4ModelProvider
+from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -57,7 +59,6 @@ AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
 @MegatronModelBridge.register_bridge(
     source="Exaone4ForCausalLM",  # HF architecture string (auto_map / trust_remote_code)
     target=GPTModel,
-    provider=Exaone4ModelProvider,
     model_type="exaone4",
 )
 class Exaone4Bridge(MegatronModelBridge):
@@ -84,8 +85,8 @@ class Exaone4Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Exaone4ModelProvider:
-        """Convert HuggingFace EXAONE 4.0 config to Megatron Exaone4ModelProvider.
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+        """Convert HuggingFace EXAONE 4.0 config to Megatron GPTModelProvider.
 
         Maps HF config fields to Megatron TransformerConfig parameters and sets
         EXAONE-specific options including Post-LN, QK norm, and RoPE scaling.
@@ -94,28 +95,25 @@ class Exaone4Bridge(MegatronModelBridge):
             hf_pretrained: HuggingFace PreTrainedCausalLM containing the EXAONE config
 
         Returns:
-            Exaone4ModelProvider configured for EXAONE 4.0 architecture
+            GPTModelProvider configured for EXAONE 4.0 architecture
         """
         hf_config = hf_pretrained.config
 
-        provider = Exaone4ModelProvider(
-            num_layers=hf_config.num_hidden_layers,
-            hidden_size=hf_config.hidden_size,
-            ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
-            seq_length=hf_config.max_position_embeddings,
-            init_method_std=hf_config.initializer_range,
-            layernorm_epsilon=hf_config.rms_norm_eps,
-            rotary_base=getattr(hf_config, "rope_theta", getattr(hf_config, "rotary_base", 1000000.0)),
-            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(hf_config.vocab_size),
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", True),
-            kv_channels=getattr(hf_config, "head_dim", None),
-            fp16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.float16),
-            bf16=(self.dtype_from_hf(hf_config, default=torch.float32) == torch.bfloat16),
-            params_dtype=self.dtype_from_hf(hf_config, default=torch.float32),
-            vocab_size=hf_config.vocab_size,
-        )
+        provider = super().provider_bridge(hf_pretrained)
+
+        # EXAONE-specific architecture settings. Size-dependent fields are
+        # populated by the shared HF config mapping in the base bridge.
+        provider.normalization = "RMSNorm"
+        provider.activation_func = F.silu
+        provider.gated_linear_unit = True
+        provider.position_embedding_type = "rope"
+        provider.add_bias_linear = False
+        provider.add_qkv_bias = False
+        provider.qk_layernorm = True
+        provider.hidden_dropout = 0.0
+        provider.attention_dropout = 0.0
+        provider.transformer_layer_spec = exaone4_layer_spec
+        provider.autocast_dtype = torch.bfloat16
 
         # RoPE scaling for EXAONE 4.0 (llama3-style)
         hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
@@ -131,11 +129,11 @@ class Exaone4Bridge(MegatronModelBridge):
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: Exaone4ModelProvider) -> dict:
-        """Convert Megatron Exaone4ModelProvider config to HuggingFace config dict.
+    def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
+        """Convert Megatron GPTModelProvider config to HuggingFace config dict.
 
         Args:
-            provider: Exaone4ModelProvider with EXAONE configuration
+            provider: GPTModelProvider with EXAONE configuration
 
         Returns:
             Dictionary of HuggingFace Exaone4Config parameters
@@ -202,22 +200,20 @@ class Exaone4Bridge(MegatronModelBridge):
         # =====================================================================
         # Composite Mappings (require concatenation/splitting)
         # =====================================================================
-        mapping_list.extend(
-            [
-                # QKV: Merge separate Q, K, V projections into single QKV matrix
-                QKVMapping(
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="model.layers.*.self_attn.q_proj.weight",
-                    k="model.layers.*.self_attn.k_proj.weight",
-                    v="model.layers.*.self_attn.v_proj.weight",
-                ),
-                # Gated MLP: Merge gate and up projections into single FC1 matrix
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                    gate="model.layers.*.mlp.gate_proj.weight",
-                    up="model.layers.*.mlp.up_proj.weight",
-                ),
-            ]
-        )
+        mapping_list.extend([
+            # QKV: Merge separate Q, K, V projections into single QKV matrix
+            QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                q="model.layers.*.self_attn.q_proj.weight",
+                k="model.layers.*.self_attn.k_proj.weight",
+                v="model.layers.*.self_attn.v_proj.weight",
+            ),
+            # Gated MLP: Merge gate and up projections into single FC1 matrix
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                gate="model.layers.*.mlp.gate_proj.weight",
+                up="model.layers.*.mlp.up_proj.weight",
+            ),
+        ])
 
         return MegatronMappingRegistry(*mapping_list)
