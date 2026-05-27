@@ -27,9 +27,12 @@ import numpy as np
 def _check_zstd_available() -> None:
     """Verify the ``zstd`` binary is on PATH before launching the worker pool.
 
-    Without this check, each worker fails inside ``subprocess.run`` with a
-    cryptic ``FileNotFoundError`` and the error is easy to miss when many
-    workers crash in parallel.
+    Without this check, worker ``FileNotFoundError`` exceptions from
+    ``subprocess.run`` are stored in the futures returned by
+    ``ProcessPoolExecutor.map()`` but never re-raised because the iterator is
+    discarded. The script then prints
+    ``"Files were successfully decompressed in 0.0 minutes."`` and exits 0 —
+    a silent failure that looks like success.
     """
     if shutil.which("zstd") is None:
         print("ERROR: 'zstd' binary not found on PATH.", file=sys.stderr)
