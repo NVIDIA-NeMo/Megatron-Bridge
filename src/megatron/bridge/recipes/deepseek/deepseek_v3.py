@@ -146,7 +146,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    cfg.model.offload_modules = []  # [] (not None) — required by Mcore moe_paged_stash validator (PR #4247)
 
     # Mixed precision - DeepSeek V3 uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
     cfg.mixed_precision = MixedPrecisionConfig(
@@ -296,7 +296,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg.model.recompute_num_layers = 1
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    cfg.model.offload_modules = []  # [] (not None) — required by Mcore moe_paged_stash validator (PR #4247)
 
     # Mixed precision - DeepSeek V3 uses custom MixedPrecisionConfig
     cfg.mixed_precision = MixedPrecisionConfig(

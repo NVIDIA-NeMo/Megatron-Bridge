@@ -61,8 +61,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
     if hasattr(recipe.model, "apply_rope_fusion"):
         recipe.model.apply_rope_fusion = True
     if hasattr(recipe.model, "cross_entropy_fusion_impl"):
@@ -127,6 +125,14 @@ def _set_cuda_graph_overrides(
         assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
+
+    # full_iteration capture cannot inspect intermediate loss values, so the rerun
+    # state machine's NaN-in-loss check is incompatible. Auto-disable instead of
+    # forcing the user to remember the override.
+    if recipe.model.cuda_graph_impl == "local" and "full_iteration" in (
+        getattr(recipe.model, "cuda_graph_scope", None) or []
+    ):
+        recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
 
@@ -227,6 +233,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
+    if getattr(settings, "cutedsl_fused_grouped_mlp", False):
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        if settings.moe_a2a_overlap:
+            # MCore PR #4694 — high-priority A2A stream + reduced hybridep
+            # preprocessing SM budget so A2A NCCL overlaps with cuTeDSL wgrad gemm.
+            cfg.model.high_priority_a2a_comm_stream = True
+            cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    if getattr(settings, "fp8_dot_product_attention", None) is not None:
+        cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,

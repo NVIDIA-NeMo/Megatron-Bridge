@@ -295,6 +295,30 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
+        # Full-iteration CUDA graph capture interacts with the PyTorch CUDA
+        # caching allocator and NCCL: enable record-stream reuse during capture
+        # to recover memory, and flip NCCL back to record_stream-based lifetime
+        # tracking (capturable) instead of the Work-object event mechanism.
+        if workload_base_config.cuda_graph_impl == "local" and "full_iteration" in (
+            workload_base_config.cuda_graph_scope or []
+        ):
+            cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
+            if "graph_capture_record_stream_reuse" not in cur:
+                sep = "," if cur else ""
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = f"{cur}{sep}graph_capture_record_stream_reuse:True"
+            executor.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "0"
+
+        if getattr(workload_base_config, "cutedsl_fused_grouped_mlp", False):
+            executor.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = "1"
+
+        # When cuTeDSL fused-grouped-MLP is paired with MoE A2A overlap, carve
+        # out 16 SMs (2 per cluster across 8 clusters) from the cuTeDSL fused
+        # gemm so the A2A NCCL kernels have room to land alongside. The paired
+        # high-priority A2A stream is set as a model config field by
+        # set_workload_base_configs (MCore PR #4694).
+        if getattr(workload_base_config, "cutedsl_fused_grouped_mlp", False) and workload_base_config.moe_a2a_overlap:
+            executor.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] = "8"
+
         remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
             model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
         )
