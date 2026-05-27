@@ -45,20 +45,6 @@ logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
 
 
-def is_full_iteration_cuda_graph(config) -> bool:
-    """Local mirror of `megatron.bridge.utils.cuda_graph.is_full_iteration_cuda_graph`.
-
-    Kept here so this file remains importable without `megatron.bridge` per the
-    module docstring above.
-    """
-    impl = getattr(config, "cuda_graph_impl", "none")
-    if impl == "full_iteration":
-        return True
-    if impl != "local":
-        return False
-    return "full_iteration" in (getattr(config, "cuda_graph_scope", None) or [])
-
-
 def _format_list_for_override(values: List | int):
     """Render a Python list into a Hydra/CLI-safe list string without spaces.
 
@@ -309,7 +295,10 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
-        if is_full_iteration_cuda_graph(workload_base_config):
+        if workload_base_config.cuda_graph_impl == "full_iteration" or (
+            workload_base_config.cuda_graph_impl == "local"
+            and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
+        ):
             cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
             if "graph_capture_record_stream_reuse" not in cur:
                 sep = "," if cur else ""
