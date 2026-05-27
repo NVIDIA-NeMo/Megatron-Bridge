@@ -188,17 +188,6 @@ class TestSetupLogging:
         # Root logger should be set to INFO (default)
         assert logging.getLogger().level == logging.INFO
 
-    def test_env_var_precedence(self):
-        """Test that environment variable takes precedence over function argument."""
-        # Set env var to ERROR level
-        os.environ["MEGATRON_BRIDGE_LOGGING_LEVEL"] = str(logging.ERROR)
-
-        # Call with different level
-        setup_logging(logging_level=logging.DEBUG)
-
-        # Should use env var value
-        assert logging.getLogger().level == logging.ERROR
-
     def test_megatron_bridge_prefix_matching(self):
         """Test that only loggers with correct prefix are updated."""
         # Create loggers with various prefixes

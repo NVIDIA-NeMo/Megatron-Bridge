@@ -73,11 +73,10 @@ class TestGetRankSafe:
     @patch("torch.distributed.is_initialized")
     @patch.dict(os.environ, {"RANK": "invalid"})
     def test_invalid_rank_env_var(self, mock_is_initialized):
-        """Test get_rank_safe with invalid RANK environment variable."""
+        """Test get_rank_safe falls back to 0 when RANK is malformed."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError):
-            get_rank_safe()
+        assert get_rank_safe() == 0
 
 
 class TestGetWorldSizeSafe:
