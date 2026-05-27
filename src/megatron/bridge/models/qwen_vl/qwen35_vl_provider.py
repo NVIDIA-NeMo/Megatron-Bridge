@@ -32,7 +32,7 @@ This module provides two model providers:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, ClassVar, List, Optional
 
 import transformers
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -59,9 +59,24 @@ except ImportError:
     _TRANSFORMERS_HAS_QWEN3_5 = False
     Qwen3_5VisionConfig = None  # type: ignore[assignment,misc]
 
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TENorm,
+    TERowParallelLinear,
+)
+from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+
+
+_QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
+_IMAGES_MODALITY_KEY = "images"
 
 
 def _check_qwen3_5_available() -> None:
@@ -101,6 +116,8 @@ class Qwen35VLModelProvider(GPTModelProvider):
     - mRoPE with sections [11, 11, 10], rope_theta=10,000,000
     - partial_rotary_factor=0.25
     """
+
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -175,6 +192,11 @@ class Qwen35VLModelProvider(GPTModelProvider):
 
     mtp_num_layers: Optional[int] = None
 
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
     def __post_init__(self):
         _check_qwen3_5_available()
         if self.vision_config is None:
@@ -186,21 +208,32 @@ class Qwen35VLModelProvider(GPTModelProvider):
             self.calculate_per_token_loss = True
         super().finalize()
 
+    def build_language_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> TransformerBlockSubmodules | ModuleSpec:
+        """Build the language transformer-block spec."""
+        return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
+
+    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+        """Build the MTP block spec."""
+        return _qwen35_build_mtp_block_spec(self, vp_stage)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build the vision encoder spec."""
+        return _qwen35_build_vision_encoder_spec(self)
+
+    def build_language_model_spec(self, pp_rank: Optional[int] = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
         """Provide a Qwen3.5 VL dense model instance with vision and language components."""
-        from megatron.bridge.models.gpt_provider import mtp_block_spec
-
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
 
-        block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-            language_transformer_config,
-            vp_stage=vp_stage,
-        )
-        _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
-        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
-        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+        block_spec = self.build_language_spec(vp_stage=vp_stage)
+        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -248,6 +281,8 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     Note: num_query_groups corresponds to num_key_value_heads in HF config (for
     standard Gated Attention layers). GDN layers have separate head counts.
     """
+
+    modality_keys: ClassVar[dict[str, str]] = {_IMAGES_MODALITY_KEY: _QWEN_VISUAL_ENCODER_KEY}
 
     # =========================================================================
     # Hybrid Architecture (Qwen3-Next style)
@@ -347,6 +382,11 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
 
     mtp_num_layers: Optional[int] = None
 
+    @property
+    def special_token_ids(self) -> dict[str, int]:
+        """Return modality token ids."""
+        return {_IMAGES_MODALITY_KEY: self.image_token_id}
+
     def __post_init__(self):
         _check_qwen3_5_moe_available()
         if self.vision_config is None:
@@ -358,44 +398,32 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
             self.calculate_per_token_loss = True
         super().finalize()
 
+    def build_language_spec(
+        self, vp_stage: Optional[int] = None, pp_rank: Optional[int] = None
+    ) -> TransformerBlockSubmodules | ModuleSpec:
+        """Build the language transformer-block spec."""
+        return _qwen35_build_language_block_spec(self, vp_stage, pp_rank)
+
+    def build_mtp_spec(self, vp_stage: Optional[int] = None) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+        """Build the MTP block spec (or ``None`` when MTP is disabled)."""
+        return _qwen35_build_mtp_block_spec(self, vp_stage)
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        """Build the vision encoder spec."""
+        return _qwen35_build_vision_encoder_spec(self)
+
+    def build_language_model_spec(self, pp_rank: Optional[int] = 0) -> ModuleSpec:
+        """Build the language model spec."""
+        return _qwen35_build_language_model_spec(self, pp_rank=pp_rank)
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLModel:
-        """Provide a Qwen3.5 VL model instance with vision and language components.
-
-        Qwen3.5 uses a hybrid architecture (GDN + standard attention). The key
-        challenge is that Qwen3VLModel.__init__ does::
-
-            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-
-        which assumes a single ModuleSpec and patches ALL layers uniformly.
-        For Qwen3.5, only the standard attention layers (every 4th layer) should
-        get the Qwen3VLSelfAttention override; GDN layers must be left alone.
-
-        Solution: build the hybrid TransformerBlockSubmodules spec, selectively
-        patch only the standard attention layer specs, then pass it to
-        Qwen3VLModel. Because GPTModel → TransformerBlock already accepts
-        TransformerBlockSubmodules, we just need to bypass the uniform patch
-        in Qwen3VLModel.__init__ by calling MegatronModule.__init__ directly
-        and constructing the internals ourselves.
-        """
-        from megatron.bridge.models.gpt_provider import mtp_block_spec
-
+        """Provide a Qwen3.5 VL model instance with vision and language components."""
         language_transformer_config = self
         hf_vision_config = self.vision_config
         hf_vision_config.torch_dtype = self.params_dtype
 
-        # Build hybrid block spec: produces TransformerBlockSubmodules with
-        # per-layer specs (GDN layers get GatedDeltaNet, attention layers get
-        # standard SelfAttention + MoE).
-        block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-            language_transformer_config,
-            vp_stage=vp_stage,
-        )
-
-        # Selectively patch only the standard (full) attention layer specs
-        # with Qwen3VLSelfAttention for mRoPE support. GDN layers are left as-is.
-        _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
-        mtp_spec = mtp_block_spec(self, vp_stage=vp_stage)
-        _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+        block_spec = self.build_language_spec(vp_stage=vp_stage)
+        mtp_spec = self.build_mtp_spec(vp_stage=vp_stage)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -421,6 +449,82 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
     def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Provide just the language model component without vision."""
         return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+def _qwen35_build_language_block_spec(
+    provider: GPTModelProvider,
+    vp_stage: Optional[int],
+    pp_rank: Optional[int] = None,
+) -> TransformerBlockSubmodules | ModuleSpec:
+    """Build the language transformer-block spec."""
+    block_spec = get_transformer_block_with_experimental_attention_variant_spec(
+        provider,
+        vp_stage=vp_stage,
+        pp_rank=pp_rank,
+    )
+    _patch_standard_attention_specs(block_spec, Qwen3VLSelfAttention)
+    return block_spec
+
+
+def _qwen35_build_mtp_block_spec(
+    provider: GPTModelProvider,
+    vp_stage: Optional[int],
+) -> Optional[TransformerBlockSubmodules | ModuleSpec]:
+    """Build the MTP block spec."""
+    from megatron.bridge.models.gpt_provider import mtp_block_spec
+
+    mtp_spec = mtp_block_spec(provider, vp_stage=vp_stage)
+    _patch_standard_attention_specs(mtp_spec, Qwen3VLSelfAttention)
+    return mtp_spec
+
+
+def _qwen35_build_language_model_spec(provider: GPTModelProvider, pp_rank: Optional[int] = 0) -> ModuleSpec:
+    """Build the Qwen3VL language model spec."""
+    return ModuleSpec(
+        module=Qwen3VLGPTModel,
+        params={
+            "config": provider,
+            "transformer_layer_spec": provider.build_language_spec(pp_rank=pp_rank),
+            "vocab_size": provider.vocab_size,
+            "max_sequence_length": provider.language_max_sequence_length,
+            "fp16_lm_cross_entropy": provider.fp16_lm_cross_entropy,
+            "parallel_output": True,
+            "share_embeddings_and_output_weights": provider.share_embeddings_and_output_weights,
+            "position_embedding_type": "mrope",
+            "rotary_percent": provider.rotary_percent,
+            "rotary_base": provider.rotary_base,
+            "scatter_embedding_sequence_parallel": False,
+            "mtp_block_spec": None,
+        },
+    )
+
+
+def _qwen35_build_vision_encoder_spec(provider: GPTModelProvider) -> ModuleSpec:
+    """Build the Qwen3VL vision encoder spec."""
+    if getattr(provider, "use_hf_vision_model", False):
+        raise ValueError("use_hf_vision_model is not supported for Qwen3VLVisionModel")
+
+    vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
+    vision_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+
+    megatron_vision_transformer_config = get_vision_model_config(provider.vision_config, megatron_config=provider)
+    megatron_vision_transformer_config.pipeline_model_parallel_size = 1
+    megatron_vision_transformer_config.first_pipeline_num_layers = None
+
+    return ModuleSpec(
+        module=Qwen3VLVisionModel,
+        params={
+            "transformer_config": megatron_vision_transformer_config,
+            "transformer_layer_spec": vision_transformer_layer_spec,
+            "patch_merger_spec": PatchMergerSubmodules(
+                patch_norm=TENorm,
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
+            "pre_process": True,
+            "post_process": True,
+        },
+    )
 
 
 def _patch_standard_attention_specs(

@@ -126,7 +126,7 @@ def get_batch(
     images = batch.get("pixel_values")
 
     # slice batch along sequence dimension for context parallelism
-    batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
+    batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
     if images is not None:
         batch["images"] = images
 
