@@ -15,8 +15,8 @@
 from unittest.mock import MagicMock
 
 from megatron.core.inference.contexts import StaticInferenceContext
-from megatron.core.inference.utils import InferenceMode
 
+from megatron.bridge.inference.vlm._mcore_compat import InferenceMode
 from megatron.bridge.inference.vlm.vlm_engine import VLMEngine
 
 

@@ -113,8 +113,6 @@ def _set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:  # this condition ensures we unset in case of user override to "none" from default
-            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
@@ -127,6 +125,9 @@ def _set_cuda_graph_overrides(
         assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
+    elif recipe.model.cuda_graph_impl == "none":
+        recipe.model.cuda_graph_scope = []
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     return recipe
 
@@ -160,6 +161,9 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
+        if recipe.comm_overlap is None:
+            tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
+            recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False

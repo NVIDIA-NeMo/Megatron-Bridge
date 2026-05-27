@@ -178,7 +178,7 @@ After 100 SFT iterations on CORD-v2, expected teacher-forced token accuracy is ~
 
 ## LoRA Merge
 
-After LoRA training, merge adapter weights back into the base Megatron checkpoint. The script reads the base checkpoint path from `run_config.yaml` inside the LoRA checkpoint directory, so `--pretrained` is usually not required. Match `--tp` and `--ep` to the parallelism used during training.
+After LoRA training, export Hugging Face weights with the adapter weights merged into the base model. The script reads the base checkpoint path from `run_config.yaml` inside the LoRA checkpoint directory, so `--pretrained` is usually not required. Match `--tp` and `--ep` to the parallelism used during training.
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 \
@@ -189,9 +189,9 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
     --tp 2 --pp 1 --ep 4
 ```
 
-The merged checkpoint is a standard Megatron checkpoint that can be used for inference or re-exported to HF format using the export step in [conversion.sh](conversion.sh).
+The output is a merged Hugging Face checkpoint that can be used for downstream inference or serving.
 
-If the node does not have enough GPU memory, add `--cpu` to load and merge entirely on CPU (no GPU required, but slower).
+If the node does not have enough GPU memory, add `--cpu` to load and export entirely on CPU (no GPU required, but slower).
 
 ## LoRA Adapter Export
 
@@ -223,4 +223,3 @@ K rows into the V rows of Megatron's fused QKV weight.
 During fine-tuning, K=V tying must be enforced in every forward pass to keep the model
 architecturally consistent. This is handled in `Gemma4SelfAttention.get_query_key_value_tensors`
 by setting `value = key` after the parent class returns the split Q/K/V tensors.
-

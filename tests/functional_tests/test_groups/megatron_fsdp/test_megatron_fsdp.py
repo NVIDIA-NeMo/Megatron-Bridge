@@ -50,7 +50,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProviderFSDP145M(GPTModelProvider):
+class Llama3FSDPTestModelProvider(GPTModelProvider):
     """Small Llama3 model configuration for FSDP testing."""
 
     normalization: str = "RMSNorm"
@@ -80,7 +80,7 @@ class Llama3ModelProviderFSDP145M(GPTModelProvider):
     gradient_accumulation_fusion: bool = False
 
 
-def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3ModelProviderFSDP145M:
+def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Llama3FSDPTestModelProvider:
     """Create a standardized FSDP model configuration."""
     base_config = {
         "seq_length": seq_length,
@@ -100,7 +100,7 @@ def create_fsdp_model_config(seq_length: int, bf16: bool = True, **kwargs) -> Ll
             }
         )
     base_config.update(kwargs)
-    return Llama3ModelProviderFSDP145M(**base_config)
+    return Llama3FSDPTestModelProvider(**base_config)
 
 
 def create_base_training_config(

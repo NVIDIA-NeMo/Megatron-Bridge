@@ -28,7 +28,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.models.common import Serializable
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
@@ -1316,3 +1316,37 @@ class TestConfigContainerBackwardCompat:
 
         assert result.name == "test_from_dict"
         assert result.value == 42
+
+
+def test_create_ddp_config_builds_and_finalizes(monkeypatch) -> None:
+    class _FakeDDPConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.finalized = False
+
+        def finalize(self):
+            self.finalized = True
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.config.DistributedDataParallelConfig",
+        _FakeDDPConfig,
+    )
+
+    ddp_config = create_ddp_config(
+        use_distributed_optimizer=False,
+        use_megatron_fsdp=True,
+        overrides={"overlap_grad_reduce": False},
+    )
+
+    assert ddp_config.kwargs == {
+        "use_distributed_optimizer": True,
+        "check_for_nan_in_grad": True,
+        "use_megatron_fsdp": True,
+        "data_parallel_sharding_strategy": "optim_grads_params",
+        "overlap_grad_reduce": False,
+    }
+    assert ddp_config.finalized is True
+
+
+def test_create_ddp_config_returns_none_when_not_wrapping() -> None:
+    assert create_ddp_config(wrap_with_ddp=False) is None

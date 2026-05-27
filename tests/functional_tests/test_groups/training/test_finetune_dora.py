@@ -50,7 +50,7 @@ from tests.functional_tests.utils import (
 
 
 @dataclass
-class Llama3ModelProvider145M(GPTModelProvider):
+class Llama3TinyModelProvider(GPTModelProvider):
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -125,7 +125,7 @@ class TestDoRAFinetune:
 
     def _create_model_provider(self, seq_length=512):
         """Create a model provider with specified configuration."""
-        return Llama3ModelProvider145M(seq_length=seq_length, context_parallel_size=1)
+        return Llama3TinyModelProvider(seq_length=seq_length, context_parallel_size=1)
 
     def _create_training_config(self, train_iters, global_batch_size=8, micro_batch_size=1):
         """Create a training configuration."""
