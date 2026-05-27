@@ -80,6 +80,8 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
 
+    cfg.model.apply_rope_fusion = False
+
 
 def qwen3_vl_235b_a22b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
