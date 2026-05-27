@@ -117,7 +117,7 @@ class TestGetBatch:
         _set_middle_pp_stage(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, cp_group: batch,
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
         )
 
         tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]))
