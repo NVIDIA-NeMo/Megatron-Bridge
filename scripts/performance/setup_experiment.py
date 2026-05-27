@@ -569,7 +569,11 @@ def main(
 
             # Raise on terminal failures only if training didn't actually complete —
             # a job can time out due to hanging on teardown after all steps finished.
-            if terminal_failure and not is_finished_experiment:
+            # Long-convergence runs are intentionally split across walltime slices
+            # (slurm cancels at TIME_LIMIT, we resume from the saved checkpoint on
+            # the next outer-loop iteration), so the walltime-cap path is expected
+            # and must not raise.
+            if terminal_failure and not is_finished_experiment and not is_long_convergence_run:
                 raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
