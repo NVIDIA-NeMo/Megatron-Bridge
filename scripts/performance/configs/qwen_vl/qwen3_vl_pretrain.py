@@ -76,6 +76,10 @@ def set_qwen3_vl_common_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_param_gather = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
+    # Unfreeze language and vision models for full pretraining
+    cfg.model.freeze_language_model = False
+    cfg.model.freeze_vision_model = False
+
 
 def qwen3_vl_235b_a22b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
@@ -98,6 +102,9 @@ def qwen3_vl_235b_a22b_pretrain_config_gb300(
     )
     set_workload_base_configs(cfg, base_cfg)
     set_qwen3_vl_common_configs(cfg)
+
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 12
 
     return cfg
 
