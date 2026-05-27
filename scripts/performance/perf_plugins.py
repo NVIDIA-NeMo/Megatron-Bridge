@@ -295,8 +295,9 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
-        if workload_base_config.cuda_graph_impl == "local" and "full_iteration" in (
-            workload_base_config.cuda_graph_scope or []
+        if workload_base_config.cuda_graph_impl == "full_iteration" or (
+            workload_base_config.cuda_graph_impl == "local"
+            and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
         ):
             cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
             if "graph_capture_record_stream_reuse" not in cur:
@@ -304,10 +305,10 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = f"{cur}{sep}graph_capture_record_stream_reuse:True"
             executor.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "0"
 
-        if getattr(workload_base_config, "cutedsl_fused_grouped_mlp", False):
+        if workload_base_config.cutedsl_fused_grouped_mlp:
             executor.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = "1"
 
-        if getattr(workload_base_config, "cutedsl_fused_grouped_mlp", False) and workload_base_config.moe_a2a_overlap:
+        if workload_base_config.cutedsl_fused_grouped_mlp and workload_base_config.moe_a2a_overlap:
             executor.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] = "8"
 
         remove_allocator_env_vars = workload_base_config.nccl_ub is True or (

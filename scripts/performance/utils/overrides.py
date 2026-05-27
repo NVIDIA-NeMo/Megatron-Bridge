@@ -229,13 +229,13 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
-    if getattr(settings, "cutedsl_fused_grouped_mlp", False):
+    if settings.cutedsl_fused_grouped_mlp:
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_mlp_glu_interleave_size = 32
         if settings.moe_a2a_overlap:
             cfg.model.high_priority_a2a_comm_stream = True
             cfg.model.moe_hybridep_num_sms_preprocessing = 32
-    if getattr(settings, "fp8_dot_product_attention", None) is not None:
+    if settings.fp8_dot_product_attention is not None:
         cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
