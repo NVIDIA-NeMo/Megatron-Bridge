@@ -21,6 +21,7 @@ import pytest
 import torch
 
 from megatron.bridge.training.checkpointing import _process_state_dict_for_glu_interleaving
+from megatron.bridge.training.checkpointing import _process_state_dict_for_model_glu_interleaving
 
 
 _CKPT_MOD = "megatron.bridge.training.checkpointing"
@@ -29,6 +30,8 @@ MOE_FC1_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
 MOE_FC1_BIAS_KEY = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.bias"
 DENSE_FC1_KEY = "decoder.layers.0.mlp.linear_fc1.weight"
 DENSE_FC1_BIAS_KEY = "decoder.layers.0.mlp.linear_fc1.bias"
+SHARED_FC1_KEY = "decoder.layers.0.mlp.shared_experts.linear_fc1.weight"
+SHARED_FC1_BIAS_KEY = "decoder.layers.0.mlp.shared_experts.linear_fc1.bias"
 
 
 @pytest.fixture
@@ -137,6 +140,41 @@ class TestCheckpointLoadSaveRoundTrip:
         after_save = _process_state_dict_for_glu_interleaving(after_load, interleave_size, interleave=False)
         assert torch.equal(after_save[DENSE_FC1_KEY], original[DENSE_FC1_KEY])
         assert torch.equal(after_save[DENSE_FC1_BIAS_KEY], original[DENSE_FC1_BIAS_KEY])
+
+    def test_shared_expert_state_dict_round_trip_recover_contiguous(self, patch_print_rank_0):
+        """Shared expert fc1 uses its own interleave size and leaves routed/dense tensors untouched."""
+        shared_interleave_size = 32
+        routed_interleave_size = 8
+        shared_w = torch.randn(2 * shared_interleave_size * 2, 16)
+        shared_b = torch.randn(2 * shared_interleave_size * 2)
+        routed_w = torch.randn(2 * routed_interleave_size * 2, 16)
+        dense_w = torch.randn(2 * shared_interleave_size * 2, 16)
+        original = {
+            SHARED_FC1_KEY: shared_w.clone(),
+            SHARED_FC1_BIAS_KEY: shared_b.clone(),
+            MOE_FC1_KEY: routed_w.clone(),
+            DENSE_FC1_KEY: dense_w.clone(),
+        }
+        after_load = _process_state_dict_for_model_glu_interleaving(
+            {k: v.clone() for k, v in original.items()},
+            routed_interleave_size=None,
+            shared_interleave_size=shared_interleave_size,
+            interleave=True,
+        )
+        assert not torch.equal(after_load[SHARED_FC1_KEY], original[SHARED_FC1_KEY])
+        assert torch.equal(after_load[MOE_FC1_KEY], original[MOE_FC1_KEY])
+        assert torch.equal(after_load[DENSE_FC1_KEY], original[DENSE_FC1_KEY])
+
+        after_save = _process_state_dict_for_model_glu_interleaving(
+            after_load,
+            routed_interleave_size=None,
+            shared_interleave_size=shared_interleave_size,
+            interleave=False,
+        )
+        assert torch.equal(after_save[SHARED_FC1_KEY], original[SHARED_FC1_KEY])
+        assert torch.equal(after_save[SHARED_FC1_BIAS_KEY], original[SHARED_FC1_BIAS_KEY])
+        assert torch.equal(after_save[MOE_FC1_KEY], original[MOE_FC1_KEY])
+        assert torch.equal(after_save[DENSE_FC1_KEY], original[DENSE_FC1_KEY])
 
 
 class TestMegatronFSDPCheckpointRoundTrip:
