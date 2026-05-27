@@ -64,9 +64,46 @@ def mock_hf_config():
 
 
 @pytest.fixture
+def mock_hf_dense_config():
+    """Flat Gemma4 CausalLM config (26B-A4B)."""
+    cfg = Mock(spec=[])
+    cfg.num_hidden_layers = 62
+    cfg.hidden_size = 2816
+    cfg.intermediate_size = 2112  # shared expert FFN
+    cfg.moe_intermediate_size = 704  # routed expert FFN
+    cfg.num_attention_heads = 8
+    cfg.num_key_value_heads = 4
+    cfg.head_dim = 256
+    cfg.global_head_dim = 512
+    cfg.num_global_key_value_heads = 2
+    cfg.initializer_range = 0.02
+    cfg.rms_norm_eps = 1e-6
+    cfg.vocab_size = 262144
+    cfg.max_position_embeddings = 131072
+    cfg.sliding_window = 1024
+    cfg.rope_theta = 1000000.0
+    cfg.rope_local_base_freq = 10000.0
+    cfg.rope_parameters = {"full_attention": {"partial_rotary_factor": 0.25}}
+    cfg.query_pre_attn_scalar = 1.0
+    cfg.hidden_act = "gelu_pytorch_tanh"
+    cfg.torch_dtype = "bfloat16"
+    cfg.enable_moe_block = False
+    cfg.layer_types = ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    cfg.final_logit_softcapping = 30.0
+    return cfg
+
+
+@pytest.fixture
 def mock_pretrained(mock_hf_config):
     pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
+    return pretrained
+
+
+@pytest.fixture
+def mock_dense_pretrained(mock_hf_dense_config):
+    pretrained = Mock(spec=PreTrainedCausalLM)
+    pretrained.config = mock_hf_dense_config
     return pretrained
 
 
@@ -130,6 +167,19 @@ class TestGemma4BridgeProviderBridge:
         assert provider.moe_layer_freq == 1
         assert provider.moe_shared_expert_overlap is False
         assert provider.moe_shared_expert_gate is False
+
+    def tense_dense_config(self, bridge, mock_dense_pretrained):
+        provider = bridge.provider_bridge(mock_dense_pretrained)
+        assert provider.num_layers == 62
+        assert provider.hidden_size == 2816
+        assert provider.num_attention_heads == 8
+        assert provider.num_query_groups == 4
+        assert provider.kv_channels == 256
+        assert provider.vocab_size == 262144
+        assert provider.seq_length == 131072
+        assert provider.init_method_std == 0.02
+        assert provider.layernorm_epsilon == 1e-6
+        assert provider.num_moe_experts is None
 
     def test_window_size(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
