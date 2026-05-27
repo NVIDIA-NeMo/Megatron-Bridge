@@ -45,6 +45,20 @@ logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
 
 
+def is_full_iteration_cuda_graph(config) -> bool:
+    """Local mirror of `megatron.bridge.utils.cuda_graph.is_full_iteration_cuda_graph`.
+
+    Kept here so this file remains importable without `megatron.bridge` per the
+    module docstring above.
+    """
+    impl = getattr(config, "cuda_graph_impl", "none")
+    if impl == "full_iteration":
+        return True
+    if impl != "local":
+        return False
+    return "full_iteration" in (getattr(config, "cuda_graph_scope", None) or [])
+
+
 def _format_list_for_override(values: List | int):
     """Render a Python list into a Hydra/CLI-safe list string without spaces.
 
