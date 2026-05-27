@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from functools import partial
 from typing import Dict
 
 import torch
@@ -36,6 +37,7 @@ from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
 from megatron.bridge.models.stepfun.step35_provider import (
     Step35DecoderLayer,
     Step35ModelProvider,
+    Step35SharedExpertMLP,
 )
 
 
@@ -150,6 +152,14 @@ def _build_step35_layer_spec(cfg, **kw):
     # when the last main decoder layer is MoE.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
+        # Re-bind the shared-expert builder on MoE layers so the shared expert
+        # honors ``activation_func_clamp_value_shared_expert``. Dense layers
+        # have a plain MLP submodule (no ``shared_experts`` attribute) and are
+        # skipped by the ``getattr`` guard.
+        mlp_submodules = getattr(spec.submodules.mlp, "submodules", None)
+        shared = getattr(mlp_submodules, "shared_experts", None)
+        if shared is not None:
+            mlp_submodules.shared_experts = partial(Step35SharedExpertMLP, **shared.keywords)
     dense_mtp_spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=None,
         moe_grouped_gemm=False,
@@ -195,7 +205,7 @@ class Step35Bridge(MegatronModelBridge):
         ("share_expert_dim", "moe_shared_expert_intermediate_size"),
         ("share_expert_dims", "moe_shared_expert_intermediate_size"),
         ("use_head_wise_attn_gate", "head_wise_attn_gate"),
-        ("attention_other_setting", "attention_other_setting"),
+        ("attention_output_gate", "attention_output_gate"),
         ("layer_types", "layer_types"),
     ]
 
@@ -205,24 +215,28 @@ class Step35Bridge(MegatronModelBridge):
 
         hf_config = hf_pretrained.config
 
-        if provider.head_wise_attn_gate:
-            provider.attention_output_gate = True
-
-        provider.layer_types = list(provider.layer_types or [])
-        provider.rotary_percent = 0.5
-        provider.sliding_attention_setting = None
-        if provider.attention_other_setting:
-            attention_other_setting = provider.attention_other_setting
-            provider.sliding_attention_setting = {
-                "rotary_percent": 1.0,
-                "num_attention_heads": attention_other_setting["num_attention_heads"],
-                "num_query_groups": attention_other_setting.get(
-                    "num_query_groups", attention_other_setting.get("num_attention_groups", provider.num_query_groups)
-                ),
-                "head_dim": attention_other_setting.get(
-                    "head_dim", attention_other_setting.get("true_head_dim", provider.kv_channels)
-                ),
-            }
+        provider.rotary_percents = hf_config.partial_rotary_factors
+        # initialize the sliding_attention_setting with default values
+        provider.sliding_attention_setting = {
+            "window_size": [512, 0],
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "kv_channels": 128,
+        }
+        # update the sliding_attention_setting with the values from the hf_config
+        if hf_config.sliding_window is not None:
+            provider.sliding_attention_setting["window_size"] = [hf_config.sliding_window, 0]
+        if (
+            hf_config.attention_other_setting
+            and hf_config.attention_other_setting.get("attention_type", None) == "sliding_attention"
+        ):
+            provider.sliding_attention_setting["num_attention_heads"] = hf_config.attention_other_setting[
+                "num_attention_heads"
+            ]
+            provider.sliding_attention_setting["num_query_groups"] = hf_config.attention_other_setting[
+                "num_attention_groups"
+            ]
+            provider.sliding_attention_setting["kv_channels"] = hf_config.attention_other_setting["head_dim"]
 
         rope_theta = hf_config.rope_theta
         if isinstance(rope_theta, list):
@@ -232,14 +246,34 @@ class Step35Bridge(MegatronModelBridge):
             provider.rotary_base = rope_theta
 
         provider.normalization = "RMSNorm"
-        provider.layernorm_zero_centered_gamma = True  # HF weights store γ-1; TE norm applies (1+w)
+        provider.layernorm_zero_centered_gamma = hf_config.zero_centered
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
-        provider.add_qkv_bias = False  # Step3.5 does NOT have QKV bias
+        provider.add_qkv_bias = False
         provider.hidden_dropout = 0.0
         provider.attention_dropout = 0.0
-        provider.qk_layernorm = True  # Step3.5 uses QK layernorm
-        provider.autocast_dtype = torch.bfloat16
+        provider.qk_layernorm = hf_config.use_qk_norm
+        if isinstance(hf_config.torch_dtype, str):
+            if hf_config.torch_dtype == "bfloat16":
+                provider.autocast_dtype = torch.bfloat16
+            elif hf_config.torch_dtype == "float16":
+                provider.autocast_dtype = torch.float16
+            elif hf_config.torch_dtype == "float32":
+                provider.autocast_dtype = torch.float32
+            else:
+                raise ValueError(f"Unknown torch dtype: {hf_config.torch_dtype}")
+        elif isinstance(hf_config.torch_dtype, torch.dtype):
+            provider.autocast_dtype = hf_config.torch_dtype
+        else:
+            raise ValueError(f"Unknown torch dtype: {hf_config.torch_dtype}")
+
+        provider.moe_router_enable_expert_bias = hf_config.use_moe_router_bias
+        provider.moe_router_score_function = hf_config.moe_router_activation
+        provider.moe_router_topk_scaling_factor = hf_config.moe_router_scaling_factor
+        provider.swiglu_limits = hf_config.swiglu_limits
+        provider.swiglu_limits_shared = hf_config.swiglu_limits_shared
+        if hf_config.need_fp32_gate:
+            provider.moe_router_dtype = "fp32"
 
         provider.moe_grouped_gemm = True
         provider.moe_router_load_balancing_type = "aux_loss"
