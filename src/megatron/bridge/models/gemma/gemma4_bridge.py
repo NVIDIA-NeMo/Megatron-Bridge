@@ -377,7 +377,7 @@ class Gemma4Bridge(MegatronModelBridge):
             # MCore's router also receives the normed input.
             "decoder.layers.*.pre_mlp_layernorm.weight": ("model.layers.*.pre_feedforward_layernorm_2.weight"),
             # === Dense MLP → Shared Expert ===
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
             # Post-dense-MLP RMSNorm (Gemma 4: post_feedforward_layernorm_1)
             "decoder.layers.*.mlp.shared_experts.linear_fc2.post_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm_1.weight"
@@ -388,6 +388,8 @@ class Gemma4Bridge(MegatronModelBridge):
             # router.scale is fused into router.weight on import; stored as an inert buffer
             # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
             # reference HF checkpoint.  Mapped via ReplicatedMapping below.
+            "decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
         }
 
         mapping_list = []
@@ -409,6 +411,12 @@ class Gemma4Bridge(MegatronModelBridge):
                 # === Dense MLP → Shared Expert gated FC1 ===
                 GatedMLPMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+                # === Dense MLP ===
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.layers.*.mlp.gate_proj.weight",
                     up="model.layers.*.mlp.up_proj.weight",
                 ),

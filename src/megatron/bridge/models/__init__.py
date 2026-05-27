@@ -157,6 +157,9 @@ from megatron.bridge.models.sarvam import (
     SarvamMLABridge,
     SarvamMoEBridge,
 )
+from megatron.bridge.models.stepfun import (
+    Step35Bridge,
+)
 from megatron.bridge.models.t5_provider import T5ModelProvider
 
 
@@ -246,7 +249,7 @@ __all__ = [
     "Qwen3ASRBridge",
     "Qwen3ASRModel",
     "Qwen3ASRModelProvider",
-    # Omni Models
+    # Qwen Omni registrations
     "Qwen25OmniModel",
     "Qwen25OmniBridge",
     "Qwen25OmniModelProvider",
@@ -255,4 +258,5 @@ __all__ = [
     "Qwen3OmniModelProvider",
     "SarvamMLABridge",
     "SarvamMoEBridge",
+    "Step35Bridge",
 ]

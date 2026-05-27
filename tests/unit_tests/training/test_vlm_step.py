@@ -131,7 +131,7 @@ def test_get_batch_padding_paths(monkeypatch):
     # Disable context parallel slicing effects
     monkeypatch.setattr(
         "megatron.core.utils.get_batch_on_this_cp_rank",
-        lambda x: x,
+        lambda x, **kwargs: x,
         raising=True,
     )
 
@@ -185,7 +185,7 @@ def test_get_batch_enable_packing_path(monkeypatch):
     # Disable context parallel slicing effects
     monkeypatch.setattr(
         "megatron.core.utils.get_batch_on_this_cp_rank",
-        lambda x: x,
+        lambda x, **kwargs: x,
         raising=True,
     )
 
@@ -286,7 +286,7 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
         "megatron.core.utils.get_batch_on_this_cp_rank",
-        lambda x: x,
+        lambda x, **kwargs: x,
         raising=True,
     )
 
@@ -351,7 +351,7 @@ def test_forward_step_schedule_plan(monkeypatch):
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
 
     # No-op CUDA and CP functions
-    monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x: x, raising=True)
+    monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x, **kwargs: x, raising=True)
 
     # Create a proper mock process group with rank/size methods
     class _MockProcessGroup:

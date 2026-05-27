@@ -800,13 +800,14 @@ def training_log(
         if hasattr(timers, "write_to_comet"):
             timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
 
-    if config.profiling and config.profiling.record_memory_history:
-        if get_rank_safe() in config.profiling.profile_ranks:
+    if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
+        rank = get_rank_safe()
+        if rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
             filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
-            filename = f"{filename}_{get_rank_safe()}{ext}"
+            filename = f"{filename}_{rank}{ext}"
             with open(filename, "wb") as f:
                 dump(snapshot, f)
                 print_rank_0(f"Saved memory snapshot to {filename}")

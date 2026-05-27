@@ -75,10 +75,12 @@ class Gemma4VLBridge(MegatronModelBridge):
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
 
-        if not getattr(text_config, "enable_moe_block", False):
+        if not getattr(text_config, "enable_moe_block", False) and getattr(
+            text_config, "hidden_size_per_layer_input", 0
+        ):
             raise ValueError(
-                f"Gemma4VLBridge only supports MoE models (enable_moe_block=True). "
-                f"Model '{getattr(hf_config, '_name_or_path', 'unknown')}' has enable_moe_block=False. "
+                f"Gemma4VLBridge only supports MoE models (enable_moe_block=True) or dense model withouts per-layer hidden sizes. "
+                f"Model '{getattr(hf_config, '_name_or_path', 'unknown')}' has enable_moe_block=False and hidden_size_per_layer_input={getattr(text_config, 'hidden_size_per_layer_input')}. "
                 f"Dense Gemma 4 models require per-layer ffn_hidden_size support in MCore, "
                 f"which is not yet implemented."
             )
@@ -106,6 +108,8 @@ class Gemma4VLBridge(MegatronModelBridge):
         provider.global_head_dim = getattr(text_config, "global_head_dim", 512)
         provider.num_global_key_value_heads = getattr(text_config, "num_global_key_value_heads", 2)
 
+        provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
+
         # Parse partial_rotary_factor
         rope_params = getattr(text_config, "rope_parameters", {})
         if isinstance(rope_params, dict):
@@ -118,13 +122,15 @@ class Gemma4VLBridge(MegatronModelBridge):
             provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
 
         # MoE MLP configuration
-        provider.num_moe_experts = getattr(text_config, "num_experts", None) or 128
-        provider.moe_router_topk = getattr(text_config, "top_k_experts", None) or 8
-        provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", None) or 704
-        provider.moe_shared_expert_intermediate_size = getattr(text_config, "intermediate_size", 2112)
-        provider.moe_shared_expert_overlap = False
-        provider.moe_shared_expert_gate = False
-        provider.moe_layer_freq = 1
+        is_moe = getattr(text_config, "enable_moe_block", False)
+        if is_moe:
+            provider.num_moe_experts = getattr(text_config, "num_experts", None) or 128
+            provider.moe_router_topk = getattr(text_config, "top_k_experts", None) or 8
+            provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", None) or 704
+            provider.moe_shared_expert_intermediate_size = getattr(text_config, "intermediate_size", 2112)
+            provider.moe_shared_expert_overlap = False
+            provider.moe_shared_expert_gate = False
+            provider.moe_layer_freq = 1
 
         # Logit softcapping
         provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
@@ -352,6 +358,10 @@ class Gemma4VLBridge(MegatronModelBridge):
             ),
             # MoE Router
             "language_model.decoder.layers.*.mlp.router.weight": ("model.language_model.layers.*.router.proj.weight"),
+            "language_model.decoder.layers.*.mlp.linear_fc2.weight": (
+                "model.language_model.layers.*.mlp.down_proj.weight"
+            ),
+            "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.language_model.layers.*.post_attention_layernorm.weight",
         }
 
         mapping_list = []
@@ -373,6 +383,12 @@ class Gemma4VLBridge(MegatronModelBridge):
                 # === Dense MLP → Shared Expert gated FC1 ===
                 GatedMLPMapping(
                     megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                # === Dense MLP ===
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.language_model.layers.*.mlp.gate_proj.weight",
                     up="model.language_model.layers.*.mlp.up_proj.weight",
                 ),

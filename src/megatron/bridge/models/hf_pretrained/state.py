@@ -821,7 +821,13 @@ class SafeTensorsStateSource(StateSource):
                     for key in tensors_to_save.keys():
                         del buffered_tensors[key]
 
-                    all_saved_keys.update(keys_for_file)
+                    # Only the keys we actually wrote belong in the
+                    # post-save index. Using ``keys_for_file`` here would
+                    # claim unsaved keys as written and produce a
+                    # ``model.safetensors.index.json`` that maps keys to a
+                    # file which doesn't contain them — HF loading then
+                    # crashes when it tries to read the missing tensor.
+                    all_saved_keys.update(tensors_to_save.keys())
                     del files_to_save[filename]
 
         if buffered_tensors:
