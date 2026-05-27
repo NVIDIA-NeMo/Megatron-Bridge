@@ -30,6 +30,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from utils.datasets import (
     create_mock_dataset_config,
     create_rp2_dataset_config,
@@ -129,9 +130,7 @@ def _set_cuda_graph_overrides(
     # full_iteration capture cannot inspect intermediate loss values, so the rerun
     # state machine's NaN-in-loss check is incompatible. Auto-disable instead of
     # forcing the user to remember the override.
-    if recipe.model.cuda_graph_impl == "local" and "full_iteration" in (
-        getattr(recipe.model, "cuda_graph_scope", None) or []
-    ):
+    if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
