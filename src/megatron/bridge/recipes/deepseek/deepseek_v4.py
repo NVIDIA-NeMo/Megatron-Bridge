@@ -95,6 +95,7 @@ def _set_deepseek_v4_common_model_config(
     cfg.model.use_fused_mhc = use_fused_kernels
     cfg.model.csa_backend = csa_backend
     cfg.model.dsa_indexer_loss_coeff = 0.0
+    cfg.model.dsa_indexer_use_sparse_loss = False
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_aux_loss_coeff = 0.0
@@ -208,21 +209,28 @@ def _set_deepseek_v4_optimizer_and_precision(
             raise ValueError("DeepSeek-V4 Muon + MXFP8 is not a supported recipe yet.")
         opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
             muon_momentum=0.95,
-            muon_use_nesterov=False,
+            muon_use_nesterov=True,
             muon_scale_mode="unit_rms_norm",
             muon_fp32_matmul_prec="highest",
             muon_num_ns_steps=5,
             muon_extra_scale_factor=0.2,
             lr_warmup_iters=2000,
             lr_decay_iters=cfg.train.train_iters,
-            max_lr=1e-6,
-            min_lr=1e-7,
-            weight_decay=0.0,
+            max_lr=2.7e-4,
+            min_lr=2.7e-5,
+            weight_decay=0.1,
             clip_grad=1.0,
         )
         opt_cfg.optimizer = "muon"
+        opt_cfg.adam_beta1 = 0.9
+        opt_cfg.adam_beta2 = 0.95
+        opt_cfg.adam_eps = 1e-20
         if hasattr(opt_cfg, "muon_coefficient_type"):
             opt_cfg.muon_coefficient_type = "quintic"
+
+        scheduler_cfg.start_weight_decay = 0.1
+        scheduler_cfg.end_weight_decay = 0.1
+        scheduler_cfg.weight_decay_incr_style = "constant"
 
         cfg.ddp.use_distributed_optimizer = False
         cfg.ddp.overlap_param_gather = False
