@@ -54,39 +54,42 @@ def gpt_oss_20b_pretrain_config_b300(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
 
-
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_warmup_steps = 2
     cfg.model.fused_single_qkv_rope = True
-
-
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 128
+    cfg.model.moe_permute_fusion = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
-
+    cfg.train.skip_sync_grad_norm_across_mp = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-
     cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
-
     cfg.optimizer.adam_eps = 1e-05
-
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
-
-
     cfg.ddp.bucket_size = 768000000
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
-
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
+    cfg.scheduler.override_opt_param_scheduler = False
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
@@ -98,13 +101,13 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.5
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0005
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 256
     # 64 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -116,6 +119,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 384
         cfg.validation.eval_iters = 32
@@ -145,53 +149,56 @@ def gpt_oss_20b_pretrain_config_gb200(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
 
-
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_warmup_steps = 2
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_hybridep_num_sms = 128
     cfg.model.fused_single_qkv_rope = True
-
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 128
+    cfg.model.moe_permute_fusion = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.tp_only_amax_red = True
     cfg.optimizer.adam_eps = 1e-05
     cfg.optimizer.min_lr = 0.0004
-
     cfg.train.check_optimizer_step_success = False
-
+    cfg.train.skip_sync_grad_norm_across_mp = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-
     cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
-
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
-
-
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
-
+    cfg.scheduler.override_opt_param_scheduler = False
     cfg.ddp.bucket_size = 768000000
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
-
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
+        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.mixed_precision.fp8_param_gather = True
         cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
         cfg.model.cuda_graph_warmup_steps = 5
@@ -201,9 +208,9 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters=64
         cfg.scheduler.lr_warmup_iters = 128
+        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -215,6 +222,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 341
         cfg.validation.eval_iters=29
@@ -226,6 +234,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.00052
         cfg.validation.eval_interval = 192
         cfg.validation.eval_iters = 16
@@ -261,38 +270,39 @@ def gpt_oss_20b_pretrain_config_gb300(
 
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_warmup_steps = 2
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_hybridep_num_sms = 128
     cfg.model.fused_single_qkv_rope = True
-
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 128
+    cfg.model.moe_permute_fusion = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
-
+    cfg.train.skip_sync_grad_norm_across_mp = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-
     cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
-
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
-
     cfg.ddp.bucket_size = 768000000
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
-
-
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.optimizer.adam_eps = 1e-05
     cfg.optimizer.min_lr = 0.0005
- 
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
-
-
+    cfg.scheduler.override_opt_param_scheduler = False
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
@@ -304,6 +314,8 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.calculate_per_token_loss = False
+        cfg.model.moe_expert_rank_capacity_factor = 2
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.ddp.average_in_collective = True
         cfg.optimizer.lr = 0.0005
         cfg.validation.eval_interval = 512
@@ -312,7 +324,6 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 256
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
-        cfg.model.use_te_rng_tracker = True
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
@@ -324,6 +335,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.model.cuda_graph_scope = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0004
         cfg.validation.eval_interval = 341
         cfg.validation.eval_iters=29
@@ -335,6 +347,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.00052
         cfg.validation.eval_interval = 192
         cfg.validation.eval_iters = 16
@@ -367,33 +380,38 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
     cfg.model.cpu_offloading_num_layers = 95
-    cfg.model.use_te_rng_tracker = True
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
     cfg.model.cuda_graph_warmup_steps = 1
     cfg.model.fused_single_qkv_rope = True
-
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_permute_fusion = False
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_router_padding_for_quantization = False
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = True
-
+    cfg.train.skip_sync_grad_norm_across_mp = False
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-
     cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
-
     cfg.optimizer.adam_eps = 1e-05
-
     cfg.ddp.bucket_size = 768000000
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
-
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
-
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
-
+    cfg.scheduler.override_opt_param_scheduler = False
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
