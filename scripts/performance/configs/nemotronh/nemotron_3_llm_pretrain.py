@@ -55,6 +55,9 @@ def set_nemotron_3_super_common_configs(cfg: ConfigContainer, precision: str) ->
     if precision.lower() in ("nvfp4", "fp8_mx"):
         cfg.model.moe_router_padding_for_quantization = True
 
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.checkpoint.save = None
+
 
 def nemotron_3_super_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
