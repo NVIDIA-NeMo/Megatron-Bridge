@@ -270,7 +270,11 @@ def forward_step(
     }
 
     original_tokens = tokens.clone()
-    forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
+    forward_args = get_batch_on_this_cp_rank(
+        forward_args,
+        is_hybrid_cp=False,
+        cp_group=this_pg_collection.cp,
+    )
     forward_args["packed_seq_params"] = None
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward

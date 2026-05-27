@@ -1,15 +1,13 @@
 # Bailing
 
-Bailing model support covers Ling 2.0 (Bailing) models through the Bridge system with auto-detected configuration and weight mapping.
+Bailing model documentation is organized by model variant.
 
-## Supported Variants
+```{toctree}
+:hidden:
 
-- Ling 2.0 (Bailing)
+ling-2.md
+```
 
-## Examples
-
-For checkpoint conversion and inference commands, see the [Bailing examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/bailing/README.md).
-
-## Implementation
-
-- Model bridge: [`src/megatron/bridge/models/bailing`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/bailing)
+| Variant | Guide |
+|---------|-------|
+| Ling 2.0 | [ling-2.md](ling-2.md) |
