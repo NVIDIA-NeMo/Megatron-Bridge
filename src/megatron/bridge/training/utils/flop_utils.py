@@ -357,7 +357,9 @@ def num_floating_point_operations(
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) == "squad"
+        # Accept both the canonical Hub slug "rajpurkar/squad" (required by huggingface_hub >= 1.16)
+        # and the legacy bare "squad" so older user configs still hit this LoRA-specific fast path.
+        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("rajpurkar/squad", "squad")
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
         packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)

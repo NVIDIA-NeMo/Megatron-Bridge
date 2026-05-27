@@ -69,10 +69,15 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
 
     Note:
         Uses consistent settings across all finetuning recipes:
-        - SQuAD dataset with appropriate dataloader type
+        - SQuAD dataset (``rajpurkar/squad`` on the Hub) with appropriate dataloader type
         - 10% validation split
         - Seed 5678 (different from pretrain seed 1234)
         - Packed sequences when enabled improve training efficiency
+
+    The canonical namespaced slug ``rajpurkar/squad`` is used because
+    ``huggingface_hub >= 1.16`` rejects bare single-segment ids
+    (``HfUriError: Repository id must be 'namespace/name'``). The Hub serves the
+    same canonical SQuAD dataset under this slug.
     """
     if packed_sequence:
         # Packed sequence configuration
@@ -88,7 +93,7 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
     dataloader_type = "batch"
 
     return HFDatasetConfig(
-        dataset_name="squad",
+        dataset_name="rajpurkar/squad",
         process_example_fn=process_squad_example,
         seq_length=seq_length,
         seed=5678,  # Different from pretrain seed

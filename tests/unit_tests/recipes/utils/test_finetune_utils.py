@@ -20,9 +20,11 @@ from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
 from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
+from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
+    default_squad_config,
 )
 
 
@@ -187,6 +189,73 @@ class TestDefaultGsm8kConfig:
     def test_pad_seq_to_mult_ignored_without_packing(self):
         cfg = default_gsm8k_config(packed_sequence=False, pad_seq_to_mult=4)
         assert cfg.packed_sequence_specs is None
+
+
+@pytest.mark.unit
+class TestDefaultSquadConfig:
+    """Test cases for default_squad_config.
+
+    Regression coverage for issue #3956: the bare slug ``"squad"`` is rejected by
+    ``huggingface_hub >= 1.16`` (``HfUriError: Repository id must be 'namespace/name'``).
+    The Hub serves the canonical SQuAD dataset under ``rajpurkar/squad``.
+    """
+
+    def test_returns_hf_dataset_config(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert isinstance(cfg, HFDatasetConfig)
+
+    def test_dataset_name_is_canonical_namespaced_slug(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.dataset_name == "rajpurkar/squad"
+
+    def test_dataset_name_is_not_bare_slug(self):
+        # Bare slug "squad" is rejected by huggingface_hub >= 1.16. Belt-and-suspenders
+        # check so a future regression cannot silently re-introduce the broken slug.
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.dataset_name != "squad"
+        assert "/" in cfg.dataset_name, "dataset_name must be 'namespace/name' for huggingface_hub >= 1.16"
+
+    def test_process_fn_is_squad(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.process_example_fn is process_squad_example
+
+    def test_default_seed(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.seed == 5678
+
+    def test_dataloader_type_batch(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.dataloader_type == "batch"
+
+    def test_validation_enabled_with_default_proportion(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.do_validation is True
+        assert cfg.val_proportion == 0.1
+        assert cfg.do_test is False
+
+    def test_custom_seq_length(self):
+        cfg = default_squad_config(seq_length=8192)
+        assert cfg.seq_length == 8192
+
+    def test_packed_sequence_default_enabled(self):
+        # ``default_squad_config`` enables packed sequences by default.
+        cfg = default_squad_config(seq_length=4096)
+        assert isinstance(cfg.packed_sequence_specs, PackedSequenceSpecs)
+        assert cfg.packed_sequence_specs.packed_sequence_size == 4096
+        assert cfg.dataset_kwargs == {"pad_to_max_length": True}
+
+    def test_packed_sequence_disabled(self):
+        cfg = default_squad_config(seq_length=4096, packed_sequence=False)
+        assert cfg.packed_sequence_specs is None
+        assert cfg.dataset_kwargs == {}
+
+    def test_pad_seq_to_mult_propagates_when_packed(self):
+        cfg = default_squad_config(seq_length=4096, packed_sequence=True, pad_seq_to_mult=8)
+        assert cfg.packed_sequence_specs.pad_seq_to_mult == 8
+
+    def test_rewrite_disabled(self):
+        cfg = default_squad_config(seq_length=2048)
+        assert cfg.rewrite is False
 
 
 @pytest.mark.unit
