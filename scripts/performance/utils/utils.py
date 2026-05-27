@@ -62,8 +62,11 @@ class WorkloadBaseConfig:
     offload_modules: Optional[List[str]] = None
 
     # FP8 parameter gather settings (used with FSDP)
+    fp8_param: Optional[bool] = False
     fp8_param_gather: Optional[bool] = None
     reuse_grad_buf_for_mxfp8_param_ag: Optional[bool] = None
+    outer_dp_sharding_strategy: str = "no_shard"
+    num_distributed_optimizer_instances: int = 1
 
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None

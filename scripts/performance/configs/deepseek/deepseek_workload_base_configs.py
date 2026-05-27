@@ -65,6 +65,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     recompute_modules=["moe_act"],
 )
+
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
@@ -278,17 +279,15 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
     recompute_modules=["layernorm", "mla_up_proj", "moe_act"],
     fine_grained_activation_offloading=True,
     offload_modules=["core_attn", "attn_proj"],
-    fp8_param_gather=True,
 )
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = replace(
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
-    fp8_param_gather=None,
-    reuse_grad_buf_for_mxfp8_param_ag=None,
+    fp8_param=True,
+    fp8_param_gather=True,
+    outer_dp_sharding_strategy="optim",
+    num_distributed_optimizer_instances=2,
 )
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
-
 
 # =============================================================================
 # DeepSeek V3 Pretrain - Large Scale Proxy
@@ -377,9 +376,7 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_V2",
     # FSDP (FSDP, GBS=256 for GB300)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP",
-    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_FSDP",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP",
-    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_FSDP",
     # Large Scale Proxy
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
