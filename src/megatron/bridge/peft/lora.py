@@ -110,7 +110,13 @@ class LoRA(PEFT, ModuleMatcher):
     normalize_moe_lora: bool = False
     share_expert_adapters: bool = True
 
-    def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(
+        self,
+        module: nn.Module,
+        name: Optional[str] = None,
+        prefix: Optional[str] = None,
+        pg_collection=None,
+    ) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.
 
@@ -155,7 +161,7 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            pg_collection = _get_pg_collection_from_module(module)
+            pg_collection = _get_pg_collection_from_module(module) or pg_collection
             attrs_kwargs = {"is_expert": is_expert}
             if pg_collection is not None:
                 attrs_kwargs["pg_collection"] = pg_collection

@@ -306,7 +306,13 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
             self.register_target_alias(target, canonical_target)
             self.canonical_mapping[canonical_target].add(canonical_component)
 
-    def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(
+        self,
+        m: nn.Module,
+        name: Optional[str] = None,
+        prefix: Optional[str] = None,
+        pg_collection=None,
+    ) -> nn.Module:
         """
         Applies LoRA to a specific module within the model architecture.
 
@@ -331,7 +337,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            pg_collection = _get_pg_collection_from_module(m)
+            pg_collection = _get_pg_collection_from_module(m) or pg_collection
             attrs_kwargs = {"is_expert": is_expert}
             if pg_collection is not None:
                 attrs_kwargs["pg_collection"] = pg_collection

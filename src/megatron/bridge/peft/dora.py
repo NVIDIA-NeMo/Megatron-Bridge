@@ -72,7 +72,13 @@ class DoRA(PEFT, ModuleMatcher):
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )
 
-    def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
+    def transform(
+        self,
+        m: nn.Module,
+        name: Optional[str] = None,
+        prefix: Optional[str] = None,
+        pg_collection=None,
+    ) -> nn.Module:
         """
         Applies DoRA to a specific module within the model architecture.
 
@@ -90,7 +96,7 @@ class DoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(m, name, prefix)) is not None:
             _, full_name = ans
-            pg_collection = _get_pg_collection_from_module(m)
+            pg_collection = _get_pg_collection_from_module(m) or pg_collection
             attrs_kwargs = {"pg_collection": pg_collection} if pg_collection is not None else {}
             attrs = get_adapter_attributes_from_linear(m, **attrs_kwargs)
             logger.info(f"Adding DoRA to: {full_name}")

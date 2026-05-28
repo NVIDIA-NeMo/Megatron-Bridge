@@ -14,6 +14,7 @@
 
 import datetime
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -335,6 +336,42 @@ class TestLoRA:
         assert isinstance(adapted.adapter, GroupedExpertLinearAdapter)
         assert adapted.adapter.linear_in.weight.shape == torch.Size([2, 32, 2048])
         assert adapted.adapter.linear_out.weight.shape == torch.Size([2, 512, 32])
+
+    def test_lora_transform_uses_parent_pg_collection_for_leaf_expert_linear(self):
+        """LoRA should use the nearest parent PG collection when the matched leaf only stores TP metadata."""
+        model = GroupedExpertModel()
+        parent_pg_collection = SimpleNamespace(
+            tp=object(),
+            ep=object(),
+            expt_tp=object(),
+            expt_dp=object(),
+        )
+        model.decoder.layers[0].mlp.experts._pg_collection = parent_pg_collection
+        lora = LoRA(target_modules=["linear_fc2"])
+        seen_pg_collections = []
+
+        def mock_get_attrs(module, is_expert=False, pg_collection=None):
+            seen_pg_collections.append(pg_collection)
+            return AdapterAttributes(
+                input_is_parallel=True,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_parallel_adapter,
+        ):
+            mock_parallel_adapter.return_value = nn.Identity()
+            transformed_model = lora(model, training=True)
+
+        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
+        assert isinstance(adapted, LoRALinear)
+        assert seen_pg_collections == [parent_pg_collection]
+        assert mock_parallel_adapter.call_args.kwargs["pg_collection"] is parent_pg_collection
 
     def test_lora_wildcard_matching(self):
         """Test LoRA transformation with wildcard patterns."""
