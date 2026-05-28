@@ -239,7 +239,7 @@ markers = [
     "pleasefixme: marks tests that are broken and need fixing",
 ]
 
-[tool.coverage.report]
+[tool.coverage.run]
 concurrency = ["thread", "multiprocessing"]
 omit = [
     "/tmp/*",
@@ -247,8 +247,6 @@ omit = [
     "/opt/Megatron-Bridge/*.py",
     "*_ray.py",
 ]
-
-[tool.coverage.run]
 source = [
     ".",
     "/opt/Megatron-Bridge/",
