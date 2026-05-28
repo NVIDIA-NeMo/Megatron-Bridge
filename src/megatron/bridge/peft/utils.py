@@ -263,6 +263,11 @@ def load_peft_adapter_checkpoint(
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
         load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+        if pg_collection is None and fully_parallel_load:
+            try:
+                pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["dp_cp"])
+            except AssertionError:
+                pg_collection = None
         dp_cp_group = _get_process_group(pg_collection, "dp_cp")
         if fully_parallel_load and dp_cp_group is not None:
             load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, dp_cp_group)
