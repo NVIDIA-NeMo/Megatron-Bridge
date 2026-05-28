@@ -71,7 +71,9 @@ IGNORE_PRECISION_PARAMS = [
     "q_norm.weight",
     "k_norm.weight",
     # MoE router gate stored as fp32 in Megatron, may be bf16 in HF
-    "gate.weight",
+    "block_sparse_moe.gate.weight",
+    "mlp.gate.weight",
+    "moe.gate.weight",
 ]
 
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
