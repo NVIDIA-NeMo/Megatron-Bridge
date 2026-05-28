@@ -155,8 +155,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --pp 2 --ep 2 --etp 1 \
-    --use-coordinator \
-    --coordinator-host "${COORDINATOR_HOST:-127.0.0.1}" \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code
 ```
 

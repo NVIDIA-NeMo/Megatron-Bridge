@@ -29,6 +29,10 @@ examples/inference/run_text_generation.sh --nproc 8 \
 `--hf_model_path` may be omitted when the checkpoint `run_config.yaml` records
 `model.hf_model_id`.
 
+Use `--use-legacy-generation` to run MCore legacy static batching instead of
+the default dynamic engine. `--attention-backend` can override the provider
+attention backend before the Megatron model is constructed.
+
 ## Concurrent Async Generation
 
 `async_text_generation.py` is intentionally direct MCore-style. It does not use

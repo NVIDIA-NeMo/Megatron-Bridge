@@ -15,7 +15,6 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-COORDINATOR_HOST=${COORDINATOR_HOST:-127.0.0.1}
 
 # Inference with Hugging Face checkpoints
 uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
@@ -23,8 +22,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --pp 2 --ep 2 --etp 1 \
-    --use-coordinator \
-    --coordinator-host "${COORDINATOR_HOST}" \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code
 
 # Inference with imported Megatron checkpoints
@@ -34,8 +33,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --pp 2 --ep 2 --etp 1 \
-    --use-coordinator \
-    --coordinator-host "${COORDINATOR_HOST}" \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code
 
 # Inference with exported HF checkpoints
@@ -44,8 +43,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --pp 2 --ep 2 --etp 1 \
-    --use-coordinator \
-    --coordinator-host "${COORDINATOR_HOST}" \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code
 
 # Inference with SFT (finetuned) Megatron checkpoint
@@ -55,6 +54,6 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
     --prompt "Hello, how are you?" \
     --max_new_tokens 64 \
     --tp 2 --pp 2 --ep 2 --etp 1 \
-    --use-coordinator \
-    --coordinator-host "${COORDINATOR_HOST}" \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code

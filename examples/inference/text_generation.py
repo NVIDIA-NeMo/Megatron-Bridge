@@ -19,7 +19,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 
@@ -34,12 +36,17 @@ import torch
 import torch.distributed as dist
 from megatron.core.inference.apis import MegatronLLM, SamplingParams
 from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
+from megatron.core.inference.contexts import StaticInferenceContext
+from megatron.core.inference.engines.static_engine import StaticInferenceEngine
+from megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper import GPTInferenceWrapper
+from megatron.core.inference.text_generation_controllers.text_generation_controller import TextGenerationController
+from megatron.core.transformer.enums import AttnBackend
 from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, print_rank_0
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_local_rank_preinit, print_rank_0
 
 
 logger = logging.getLogger(__name__)
@@ -116,6 +123,12 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parallel_group.add_argument("--etp", type=int, default=1, help="Expert tensor parallel size.")
     parallel_group.add_argument("--sequence-parallel", action="store_true", help="Enable sequence parallelism.")
     parallel_group.add_argument("--seed", type=int, default=0, help="Model-parallel RNG seed.")
+    parallel_group.add_argument(
+        "--cache-mla-latents",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Cache MLA latents for dynamic inference. Defaults on for MLA models.",
+    )
 
     prompt_group = parser.add_argument_group("Prompts")
     prompt_group.add_argument(
@@ -154,7 +167,18 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         help="Stop words that terminate generation when produced.",
     )
 
-    inference_group = parser.add_argument_group("Dynamic inference")
+    inference_group = parser.add_argument_group("Inference")
+    inference_group.add_argument(
+        "--use-legacy-generation",
+        action="store_true",
+        help="Use MCore legacy static-batching generation instead of the dynamic MegatronLLM engine.",
+    )
+    inference_group.add_argument(
+        "--attention-backend",
+        choices=("auto", "flash", "fused", "unfused", "local"),
+        default=None,
+        help="Override the provider attention backend before constructing the Megatron model.",
+    )
     inference_group.add_argument(
         "--max_seq_length",
         type=int,
@@ -181,6 +205,12 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         help="GPU buffer size reserved for KV cache.",
     )
     inference_group.add_argument("--enable-chunked-prefill", action="store_true", help="Enable chunked prefill.")
+    inference_group.add_argument(
+        "--inference-moe-token-dispatcher-type",
+        choices=("nccl", "nvls"),
+        default=None,
+        help="Override the MCore MoE token dispatcher used during inference.",
+    )
 
     coordinator_group = parser.add_argument_group("Coordinator")
     coordinator_group.add_argument(
@@ -190,6 +220,14 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     )
     coordinator_group.add_argument("--coordinator-host", default=None, help="Coordinator ZMQ host.")
     coordinator_group.add_argument("--coordinator-port", type=int, default=None, help="Coordinator ZMQ port.")
+
+    distributed_group = parser.add_argument_group("Distributed")
+    distributed_group.add_argument(
+        "--distributed-timeout-minutes",
+        type=int,
+        default=60,
+        help="Process-group timeout in minutes for slow multi-node model setup.",
+    )
     return parser
 
 
@@ -204,12 +242,28 @@ def _dtype_from_name(name: str) -> torch.dtype:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
-    if args.ep > 1 and not args.use_coordinator:
+    if args.use_legacy_generation and args.use_coordinator:
+        raise ValueError("--use-coordinator is only supported by dynamic generation.")
+    if args.ep > 1 and not args.use_coordinator and not args.use_legacy_generation:
         raise ValueError("--use-coordinator is required when --ep is greater than 1.")
     if (args.coordinator_host is not None or args.coordinator_port is not None) and not args.use_coordinator:
         raise ValueError("--coordinator-host/--coordinator-port require --use-coordinator.")
     if args.top_n_logprobs > 0 and not args.return_log_probs:
         raise ValueError("--top-n-logprobs requires --return-log-probs.")
+    if args.distributed_timeout_minutes <= 0:
+        raise ValueError("--distributed-timeout-minutes must be positive.")
+
+
+def _maybe_initialize_distributed(timeout_minutes: int) -> None:
+    if not dist.is_available() or dist.is_initialized():
+        return
+
+    os.environ["RANK"] = os.environ.get("RANK", "0")
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
+    torch.cuda.set_device(get_local_rank_preinit())
+    dist.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
 
 
 def _resolve_hf_model_path(args: argparse.Namespace) -> str:
@@ -274,7 +328,25 @@ def _apply_provider_parallelism(provider: object, args: argparse.Namespace, dtyp
     setattr(provider, "expert_model_parallel_size", args.ep)
     setattr(provider, "expert_tensor_parallel_size", args.etp)
     setattr(provider, "sequence_parallel", args.sequence_parallel)
+    setattr(provider, "params_dtype", dtype)
     setattr(provider, "pipeline_dtype", dtype)
+    setattr(provider, "bf16", dtype == torch.bfloat16)
+    setattr(provider, "fp16", dtype == torch.float16)
+    if args.attention_backend is not None:
+        setattr(provider, "attention_backend", AttnBackend[args.attention_backend])
+    is_mla_model = bool(getattr(provider, "multi_latent_attention", False))
+    use_mla_latent_cache = args.cache_mla_latents
+    if use_mla_latent_cache is None:
+        use_mla_latent_cache = is_mla_model
+    if args.cache_mla_latents is not None or is_mla_model or hasattr(provider, "cache_mla_latents"):
+        setattr(provider, "cache_mla_latents", use_mla_latent_cache)
+    if args.inference_moe_token_dispatcher_type is not None:
+        if not hasattr(provider, "inference_moe_token_dispatcher_type"):
+            raise ValueError(
+                "--inference-moe-token-dispatcher-type was set, but the selected provider "
+                "does not expose inference_moe_token_dispatcher_type."
+            )
+        setattr(provider, "inference_moe_token_dispatcher_type", args.inference_moe_token_dispatcher_type)
 
 
 def _prepare_model_list(model_list: list[torch.nn.Module]) -> torch.nn.Module:
@@ -298,16 +370,24 @@ def _load_model(args: argparse.Namespace, hf_model_path: str, dtype: torch.dtype
         _apply_provider_parallelism(provider, args, dtype)
         provider.finalize()
         provider.initialize_model_parallel(seed=args.seed)
+        mp_overrides = {
+            "tensor_model_parallel_size": args.tp,
+            "pipeline_model_parallel_size": args.pp,
+            "expert_model_parallel_size": args.ep,
+            "expert_tensor_parallel_size": args.etp,
+            "sequence_parallel": args.sequence_parallel,
+            "params_dtype": dtype,
+            "pipeline_dtype": dtype,
+            "bf16": dtype == torch.bfloat16,
+            "fp16": dtype == torch.float16,
+        }
+        if hasattr(provider, "cache_mla_latents"):
+            mp_overrides["cache_mla_latents"] = bool(getattr(provider, "cache_mla_latents"))
+        if args.inference_moe_token_dispatcher_type is not None:
+            mp_overrides["inference_moe_token_dispatcher_type"] = args.inference_moe_token_dispatcher_type
         model_list = bridge.load_megatron_model(
             args.megatron_model_path,
-            mp_overrides={
-                "tensor_model_parallel_size": args.tp,
-                "pipeline_model_parallel_size": args.pp,
-                "expert_model_parallel_size": args.ep,
-                "expert_tensor_parallel_size": args.etp,
-                "sequence_parallel": args.sequence_parallel,
-                "pipeline_dtype": dtype,
-            },
+            mp_overrides=mp_overrides,
             wrap_with_ddp=False,
         )
     else:
@@ -333,12 +413,11 @@ def _build_tokenizer(hf_model_path: str, trust_remote_code: bool | None) -> Hugg
     return HuggingFaceTextTokenizer(tokenizer)
 
 
-def _build_inference_config(
+def _validate_sequence_length(
     args: argparse.Namespace,
-    model: torch.nn.Module,
     tokenizer: HuggingFaceTextTokenizer,
     prompts: list[str],
-) -> InferenceConfig:
+) -> None:
     longest_prompt = max(len(tokenizer.tokenize(prompt)) for prompt in prompts)
     required_sequence_length = longest_prompt + args.max_new_tokens
     if required_sequence_length > args.max_seq_length:
@@ -346,6 +425,21 @@ def _build_inference_config(
             f"Longest prompt plus generation needs {required_sequence_length} tokens, "
             f"but --max_seq_length is {args.max_seq_length}."
         )
+
+
+def _build_inference_config(
+    args: argparse.Namespace,
+    model: torch.nn.Module,
+    tokenizer: HuggingFaceTextTokenizer,
+    prompts: list[str],
+) -> InferenceConfig:
+    _validate_sequence_length(args, tokenizer, prompts)
+    if getattr(getattr(model, "config", None), "cache_mla_latents", False) and args.block_size_tokens != 64:
+        print_rank_0(
+            f"Using block size 64 instead of {args.block_size_tokens} because MCore dynamic inference "
+            "requires 64-token blocks when caching MLA latents."
+        )
+        args.block_size_tokens = 64
 
     max_requests = args.max_batch_size or len(prompts)
     if max_requests % args.tp != 0:
@@ -383,23 +477,14 @@ def _print_results(prompts: list[str], outputs: list[object]) -> None:
     print_rank_0("=======================================")
 
 
-def main() -> None:
-    """Run Bridge-backed synchronous offline text generation."""
-    parser = argparse.ArgumentParser(description=__doc__)
-    args = add_args(parser).parse_args()
-
-    logging.basicConfig(level=logging.INFO)
-    _validate_args(args)
-    dtype = _dtype_from_name(args.dtype)
-    hf_model_path = _resolve_hf_model_path(args)
-    prompts = _load_prompts(args)
-
-    print_rank_0(f"Loading model config/tokenizer from: {hf_model_path}")
-    tokenizer = _build_tokenizer(hf_model_path, args.trust_remote_code)
-    model = _load_model(args, hf_model_path, dtype)
+def _generate_with_dynamic_engine(
+    args: argparse.Namespace,
+    model: torch.nn.Module,
+    tokenizer: HuggingFaceTextTokenizer,
+    prompts: list[str],
+    sampling_params: SamplingParams,
+) -> None:
     inference_config = _build_inference_config(args, model, tokenizer, prompts)
-    sampling_params = _build_sampling_params(args, tokenizer)
-
     with MegatronLLM(
         model=model,
         tokenizer=tokenizer,
@@ -411,6 +496,54 @@ def main() -> None:
         if llm.is_primary_rank:
             outputs = llm.generate(prompts, sampling_params)
             _print_results(prompts, outputs)
+
+
+def _generate_with_legacy_static_engine(
+    args: argparse.Namespace,
+    model: torch.nn.Module,
+    tokenizer: HuggingFaceTextTokenizer,
+    prompts: list[str],
+    sampling_params: SamplingParams,
+) -> None:
+    _validate_sequence_length(args, tokenizer, prompts)
+    max_batch_size = args.max_batch_size or len(prompts)
+    inference_context = StaticInferenceContext(
+        max_batch_size=max_batch_size,
+        max_sequence_length=args.max_seq_length,
+    )
+    inference_wrapped_model = GPTInferenceWrapper(model, inference_context=inference_context)
+    controller = TextGenerationController(inference_wrapped_model=inference_wrapped_model, tokenizer=tokenizer)
+    engine = StaticInferenceEngine(
+        text_generation_controller=controller,
+        max_batch_size=max_batch_size,
+        random_seed=args.seed,
+        legacy=True,
+    )
+    outputs = engine.generate(prompts=prompts, sampling_params=sampling_params)
+    _print_results(prompts, outputs)
+
+
+def main() -> None:
+    """Run Bridge-backed synchronous offline text generation."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    args = add_args(parser).parse_args()
+
+    logging.basicConfig(level=logging.INFO)
+    _validate_args(args)
+    _maybe_initialize_distributed(args.distributed_timeout_minutes)
+    dtype = _dtype_from_name(args.dtype)
+    hf_model_path = _resolve_hf_model_path(args)
+    prompts = _load_prompts(args)
+
+    print_rank_0(f"Loading model config/tokenizer from: {hf_model_path}")
+    tokenizer = _build_tokenizer(hf_model_path, args.trust_remote_code)
+    model = _load_model(args, hf_model_path, dtype)
+    sampling_params = _build_sampling_params(args, tokenizer)
+
+    if args.use_legacy_generation:
+        _generate_with_legacy_static_engine(args, model, tokenizer, prompts, sampling_params)
+    else:
+        _generate_with_dynamic_engine(args, model, tokenizer, prompts, sampling_params)
 
     if dist.is_available() and dist.is_initialized():
         dist.destroy_process_group()
