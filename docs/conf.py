@@ -24,11 +24,19 @@ import sys
 
 _SKILLS_SRC = os.path.join(os.path.dirname(__file__), os.pardir, "skills")
 _SKILLS_DST = os.path.join(os.path.dirname(__file__), "skills")
+_CONTRIBUTOR_SKILLS_SRC = os.path.join(os.path.dirname(__file__), os.pardir, ".agents", "contributor-skills")
+_CONTRIBUTOR_SKILLS_DST = os.path.join(os.path.dirname(__file__), "contributor-skills")
 
-if os.path.isdir(_SKILLS_SRC):
-    if os.path.exists(_SKILLS_DST):
-        shutil.rmtree(_SKILLS_DST)
-    shutil.copytree(_SKILLS_SRC, _SKILLS_DST)
+
+def _copy_docs_tree(src: str, dst: str) -> None:
+    if os.path.isdir(src):
+        if os.path.exists(dst):
+            shutil.rmtree(dst)
+        shutil.copytree(src, dst)
+
+
+_copy_docs_tree(_SKILLS_SRC, _SKILLS_DST)
+_copy_docs_tree(_CONTRIBUTOR_SKILLS_SRC, _CONTRIBUTOR_SKILLS_DST)
 
 
 # -- Project information -----------------------------------------------------

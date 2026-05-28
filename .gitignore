@@ -92,6 +92,7 @@ instance/
 docs/_build
 docs/apidocs
 docs/skills
+docs/contributor-skills
 
 # PyBuilder
 target/

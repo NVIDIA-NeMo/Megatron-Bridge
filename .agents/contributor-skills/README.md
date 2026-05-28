@@ -6,6 +6,16 @@ These skills are intentionally outside the public `skills/` catalog sync path.
 They cover model support, local development, CI, testing, formatting, dependency
 maintenance, and downstream compatibility checks.
 
+## Discovery
+
+Contributor skills are symlinked into `.claude/skills/` next to the public
+skills, so Claude Code can discover both sets from one location. They are not
+linked from `.agents/skills/` because that path is treated as a public
+agentskills.io index surface in some tooling.
+
+The Sphinx docs expose these skills through `docs/contributor-skills-index.md`,
+separate from the public `docs/skills-index.md` catalog page.
+
 ## Available Skills
 
 | Skill | Description |

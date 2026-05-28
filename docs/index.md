@@ -116,6 +116,7 @@ releases/known-issues.md
 :hidden:
 
 skills-index
+contributor-skills-index
 ```
 
 ```{toctree}

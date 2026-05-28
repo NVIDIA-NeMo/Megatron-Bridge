@@ -7,7 +7,8 @@ pitfalls, and verification steps.
 
 Contributor-facing repo workflow skills live under
 `.agents/contributor-skills/` and are intentionally outside the public catalog
-sync path.
+sync path. See [Contributor Agent Skills](contributor-skills-index.md) for
+those development workflows.
 
 ```{toctree}
 :caption: Getting Started
