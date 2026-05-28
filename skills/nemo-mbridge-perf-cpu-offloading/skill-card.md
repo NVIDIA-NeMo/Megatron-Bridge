@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling CPU offloading to reduce GPU memory pressure during large model training, or diagnosing offloading-related configuration errors and OOM crashes. <br>
+Developers and engineers enabling CPU offload to reduce GPU memory pressure during LLM training, or investigating commits that changed CPU offloading configuration and caused OOM or crashes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -20,6 +20,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [CPU Offloading Documentation](docs/training/cpu-offloading.md) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Skill Structured Metadata](skills/nemo-mbridge-perf-cpu-offloading/card.yaml) <br>
 
 
@@ -30,7 +31,7 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Tasks: <br>
-NVSkills-Eval 3-Tier Evaluation: 9 Tier 1 static validation checks and 2 Tier 2 deduplication checks. Tier 3 live agent evaluation was not available. <br>
+Evaluated via NVSkills-Eval 3-Tier Evaluation (external profile) on 2026-05-28. Tier 1 static validation ran 9 checks with 14 findings. Tier 2 deduplication ran 2 checks with 1 finding. Tier 3 live agent evaluation was not available. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,7 +44,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-ed1d6d07 (source: git SHA, committed 2026-05-28) <br>
+b058d061 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
