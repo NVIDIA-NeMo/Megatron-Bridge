@@ -44,13 +44,9 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
 
 
 def set_llama31_405b_mlperf_parity_overrides(cfg: ConfigContainer, precision: str) -> None:
-    """Apply MLPerf v6.0 reference parity overrides to a Llama3.1 405B config (universal recipe knobs + NVFP4 FP8-attn overlay)."""
-    if hasattr(cfg.model, "use_transformer_engine_op_fuser"):
-        cfg.model.use_transformer_engine_op_fuser = True
-    if hasattr(cfg, "comm_overlap") and cfg.comm_overlap is not None:
-        cfg.comm_overlap.bucket_size = 768 * 1024 * 1024
-    if hasattr(cfg.model, "fused_single_qkv_rope"):
-        cfg.model.fused_single_qkv_rope = True
+    """Apply MLPerf v6.0 reference parity overrides to a Llama3.1 405B config (strict v5.1/v6.0 405B knob set; FP8-DPA overlay for NVFP4)."""
+    # Per v5.1/v6.0 405B reference: 405B does NOT enable use_transformer_engine_op_fuser /
+    # comm_overlap.bucket_size=768MiB / fused_single_qkv_rope (those are 8B-style parity).
     if hasattr(cfg.model, "tp_only_amax_red"):
         cfg.model.tp_only_amax_red = True
     if hasattr(cfg.model, "cpu_offloading") and cfg.model.cpu_offloading:
