@@ -252,7 +252,11 @@ def main():
     elif args.task in ["sft", "lora"]:
         logging.info("Starting finetuning")
         from megatron.bridge.training.finetune import finetune
-        from megatron.bridge.training.gpt_step import forward_step
+
+        if args.model_family_name in DIFFUSION_FAMILIES:
+            forward_step = _get_diffusion_step(args.model_family_name)
+        else:
+            from megatron.bridge.training.gpt_step import forward_step
 
         finetune(config=recipe, forward_step_func=forward_step)
     else:

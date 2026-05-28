@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen 3 vision-language models.
 
-For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/vlm/qwen3-vl.md).
+For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.md).
 
 ## Workspace Configuration
 
@@ -153,7 +153,7 @@ Below is an example for finetuning on a dataset containing multiple images in a 
 2. Run the following script to convert the data to webdataset format:
 
     ```
-    python examples/models/vlm/qwen3_vl/prepare_mantis_energon.py \
+    python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \
         --source-dir/path/to/Mantis-Instruct-LLaVA \
         --output-dir /path/to/Mantis-Instruct-LLaVA/wds \
         --max-samples-per-tar 10000
