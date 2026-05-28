@@ -105,7 +105,7 @@ dependencies = [
 ]
 
 
-[tool.setuptools.dynamic]
+[tool.hatch.version]
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
@@ -128,7 +128,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.16",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.14",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -141,7 +141,7 @@ override-dependencies = [
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
 ]
 
-[[tool.uv.index]]
+[tool.uv.pip]
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
@@ -239,7 +239,7 @@ markers = [
     "pleasefixme: marks tests that are broken and need fixing",
 ]
 
-[tool.coverage.run]
+[tool.coverage.report]
 concurrency = ["thread", "multiprocessing"]
 omit = [
     "/tmp/*",
@@ -248,7 +248,7 @@ omit = [
     "*_ray.py",
 ]
 
-[tool.coverage.paths]
+[tool.coverage.run]
 source = [
     ".",
     "/opt/Megatron-Bridge/",
