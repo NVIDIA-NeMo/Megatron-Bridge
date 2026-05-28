@@ -1345,9 +1345,7 @@ class TestGroupedExpertLinearAdapter:
         torch.testing.assert_close(merged, expected)
 
     @pytest.mark.parametrize(("ep_size", "expected_allreduce"), [(1, True), (2, False)])
-    def test_grouped_expert_linear_adapter_allreduce_flag_tracks_expert_parallelism(
-        self, ep_size, expected_allreduce
-    ):
+    def test_grouped_expert_linear_adapter_allreduce_flag_tracks_expert_parallelism(self, ep_size, expected_allreduce):
         """Per-expert grouped adapters should use expert-DP grad sync only when EP is enabled."""
         with (
             patch(
