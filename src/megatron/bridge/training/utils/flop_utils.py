@@ -15,8 +15,6 @@
 import importlib
 from pathlib import Path
 
-import torch.nn.functional as F
-
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
@@ -441,10 +439,8 @@ def num_floating_point_operations(
             if cfg.model.moe_shared_expert_intermediate_size is None
             else cfg.model.moe_shared_expert_intermediate_size
         )
-        # SwiGLU: h->2*ffn_h and ffn_h->h = 3 projections; non-SwiGLU: h->ffn_h and ffn_h->h = 2 projections.
-        ffn_expansion_factor = (
-            3 if (cfg.model.gated_linear_unit is True and cfg.model.activation_func == F.silu) else 2
-        )
+        # GLU: h->2*ffn_h and ffn_h->h = 3 projections; non-GLU: h->ffn_h and ffn_h->h = 2 projections.
+        ffn_expansion_factor = 3 if cfg.model.gated_linear_unit is True else 2
 
         if cfg.model.multi_latent_attention:
             """
@@ -522,7 +518,15 @@ def num_floating_point_operations(
                     effective_window = window_size[0] + window_size[1] + 1
                 else:
                     effective_window = window_size
-                swa_context = min(effective_window, effective_seq_length)
+                # Exact average causal SWA context:
+                # W * (W + 1) / 2 + (T - W) * W if W < T, else T * (T + 1) / 2.
+                # Both expressions are divided by T because the multiplication with T happens later.
+                if effective_window < effective_seq_length:
+                    swa_context = effective_window - effective_window * (effective_window - 1) / (
+                        2 * effective_seq_length
+                    )
+                else:
+                    swa_context = core_attn_seq_factor / 2
 
                 if window_attn_skip_freq is None:
                     num_swa_layers = num_layers
@@ -540,9 +544,8 @@ def num_floating_point_operations(
                     num_full_attn_layers = num_layers
 
                 # Full attention is quadratic in seq_len -> use core_attn_seq_factor.
-                # SWA core is bounded by window_size, so keep the averaged bound.
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
-                swa_core = query_projection_size * swa_context / 2 * 2
+                swa_core = query_projection_size * swa_context * 2
 
                 self_attn_term = (
                     3
