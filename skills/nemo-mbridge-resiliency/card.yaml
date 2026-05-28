@@ -94,7 +94,7 @@ known_limitations:
   - Not all recipes enable resiliency features by default.
   - Preemption plugin is Slurm-specific.
 evidence:
-  - docs/training/resiliency.md
+  - docs/training/mbridge-resiliency.md
   - docs/training/checkpointing.md
   - src/megatron/bridge/training/fault_tolerance.py
   - src/megatron/bridge/training/nvrx_straggler.py
@@ -103,7 +103,7 @@ evidence:
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/training/utils/sig_utils.py
   - src/megatron/bridge/recipes/run_plugins.py
-  - scripts/performance/resiliency_plugins.py
+  - scripts/performance/mbridge-resiliency_plugins.py
   - tests/unit_tests/training/test_fault_tolerance.py
   - tests/unit_tests/training/test_nvrx_straggler.py
   - tests/unit_tests/training/test_inprocess_restart.py
@@ -111,8 +111,8 @@ evidence:
   - tests/functional_tests/training/test_nvrx_straggler.py
   - tests/functional_tests/training/test_inprocess_restart.py
   - tests/functional_tests/training/test_local_checkpointing.py
-  - examples/training_features/resiliency/fault_tolerance/
-  - examples/training_features/resiliency/straggler_detection/
+  - examples/training_features/mbridge-resiliency/fault_tolerance/
+  - examples/training_features/mbridge-resiliency/straggler_detection/
 follow_up_validation:
   - Add a Slurm-based FT end-to-end test with actual hang recovery.
   - Add a checked-in recipe that enables FT + straggler detection by default.

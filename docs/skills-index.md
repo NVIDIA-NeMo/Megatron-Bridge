@@ -49,7 +49,7 @@ skills/perf-moe-hardware-configs/SKILL
 skills/perf-moe-long-context/SKILL
 skills/perf-moe-optimization-workflow/SKILL
 skills/perf-moe-vlm-training/SKILL
-skills/perf-cpu-offloading/SKILL
+skills/nemo-mbridge-perf-cpu-offloading/SKILL
 ```
 
 ```{toctree}
@@ -63,5 +63,5 @@ skills/multi-node-slurm/SKILL
 :caption: Resiliency
 :maxdepth: 1
 
-skills/resiliency/SKILL
+skills/nemo-mbridge-resiliency/SKILL
 ```
