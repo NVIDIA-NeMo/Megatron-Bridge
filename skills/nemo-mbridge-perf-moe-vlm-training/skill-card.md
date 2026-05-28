@@ -1,5 +1,5 @@
 ## Description: <br>
-Practical guidance for training MoE VLMs in Megatron Bridge, comparing FSDP and 3D-parallel approaches using rounded lessons from Qwen3-VL, Qwen3-Next, and other multimodal experiments. <br>
+Practical guidance for training MoE vision-language models in Megatron Bridge, comparing FSDP and 3D-parallel approaches using rounded lessons from Qwen3-VL, Qwen3-Next, and other multimodal experiments. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers training Mixture-of-Experts vision-language models use this skill to select between FSDP and 3D-parallel strategies, tune performance knobs, and avoid common pitfalls on NVIDIA GPU clusters. <br>
+Developers and engineers training MoE vision-language models with Megatron Bridge, selecting between FSDP and 3D-parallel approaches and tuning performance on NVIDIA GPU systems. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,8 +19,8 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [SKILL.md](skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md) <br>
-- [card.yaml](skills/nemo-mbridge-perf-moe-vlm-training/card.yaml) <br>
+- [MoE VLM Training Skill Definition](skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
@@ -29,9 +29,6 @@ Mitigation: Review and scan skill before deployment. <br>
 **Output Format:** [Markdown with inline code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
-
-## Evaluation Tasks: <br>
-Evaluated via NVSkills-Eval 3-Tier process (external profile). Tier 1 static validation (9 checks, 10 findings). Tier 2 deduplication (2 checks, 0 findings). Tier 3 live agent evaluation not available. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -44,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-gb738450a (source: git tag) <br>
+v0.2.0rc6-1467-g4644b92f (source: git describe) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
