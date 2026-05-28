@@ -53,6 +53,8 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
@@ -125,9 +127,6 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.validation.eval_iters = 32
         cfg.scheduler.lr_warmup_iters = 512
 
-    set_gpt_oss_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
-
     return cfg
 
 def gpt_oss_20b_pretrain_config_gb200(
@@ -148,6 +147,8 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
@@ -240,9 +241,6 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_iters = 16
         cfg.scheduler.lr_warmup_iters = 32
 
-    set_gpt_oss_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
-
     return cfg
 
 def gpt_oss_20b_pretrain_config_gb300(
@@ -264,10 +262,11 @@ def gpt_oss_20b_pretrain_config_gb300(
 
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+        set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
-
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_warmup_steps = 2
     cfg.model.fused_single_qkv_rope = True
@@ -353,9 +352,6 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.validation.eval_iters = 16
         cfg.scheduler.lr_warmup_iters = 32
 
-    set_gpt_oss_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
-
     return cfg
 
 def gpt_oss_20b_pretrain_config_vr200(
@@ -376,6 +372,8 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
+    set_gpt_oss_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
 
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
@@ -429,9 +427,6 @@ def gpt_oss_20b_pretrain_config_vr200(
         cfg.validation.eval_interval = 384
         cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 64
-
-    set_gpt_oss_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
 
     return cfg
 
