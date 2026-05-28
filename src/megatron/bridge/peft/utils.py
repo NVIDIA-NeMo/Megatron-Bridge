@@ -1108,8 +1108,10 @@ class ParallelLinearAdapter(nn.Module):
 
         if use_expert_axis:
             keep_extra_state = self._keep_expert_extra_state()
-            self._replace_extra_state(linear_in_sd, linear_in_sd, keep_extra_state=keep_extra_state)
-            self._replace_extra_state(linear_out_sd, linear_out_sd, keep_extra_state=keep_extra_state)
+            if not keep_extra_state:
+                for sd in (linear_in_sd, linear_out_sd):
+                    for key in [k for k in sd if "_extra_state" in k]:
+                        del sd[key]
             for key, value in list(linear_in_sd.items()):
                 if isinstance(value, ShardedTensor):
                     linear_in_sd[key] = self._apply_expert_axis_factory(value, sharded_offsets)
