@@ -532,6 +532,8 @@ def training_log(
     model: list[MegatronModule],
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
+    history_real_tokens: Optional[list] = None,
+    history_packed_tokens: Optional[list] = None,
     loaded_iteration: int = 0,
     seq_length: Optional[int] = None,
 ) -> bool:
@@ -685,6 +687,8 @@ def training_log(
                 train_config=train_config,
                 seq_length=config.dataset.seq_length,
                 history_wct=history_wct,
+                history_real_tokens=history_real_tokens,
+                history_packed_tokens=history_packed_tokens,
                 window_size=logger_config.throughput_window_size,
             )
             if writer:
@@ -1265,6 +1269,8 @@ def report_throughput(
     seq_length: int,
     history_wct: list,
     window_size: int,
+    history_real_tokens: Optional[list] = None,
+    history_packed_tokens: Optional[list] = None,
 ) -> dict:
     """
     Logs the training throughput and utilization.
@@ -1338,6 +1344,20 @@ def report_throughput(
             dev_tokens_per_sec = tokens_per_sec / world_size
             metrics.update({"throughput/tokens_per_sec": tokens_per_sec})
             metrics.update({"throughput/device/tokens_per_sec": dev_tokens_per_sec})
+        # Optional compact-packing counters. They are additive metrics, not a
+        # semantic change to the legacy nominal tokens/sec keys above.
+        if history_real_tokens is not None and len(history_real_tokens) >= window_size:
+            elapsed_real_tokens = int(history_real_tokens[-1]) - int(history_real_tokens[0])
+            if elapsed_real_tokens > 0:
+                real_tokens_per_sec = elapsed_real_tokens / elapsed_wct
+                metrics.update({"throughput/real_tokens_per_sec": real_tokens_per_sec})
+                metrics.update({"throughput/device/real_tokens_per_sec": real_tokens_per_sec / world_size})
+        if history_packed_tokens is not None and len(history_packed_tokens) >= window_size:
+            elapsed_packed_tokens = int(history_packed_tokens[-1]) - int(history_packed_tokens[0])
+            if elapsed_packed_tokens > 0:
+                packed_tokens_per_sec = elapsed_packed_tokens / elapsed_wct
+                metrics.update({"throughput/packed_tokens_per_sec": packed_tokens_per_sec})
+                metrics.update({"throughput/device/packed_tokens_per_sec": packed_tokens_per_sec / world_size})
 
         return metrics
 

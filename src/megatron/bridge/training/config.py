@@ -1154,6 +1154,11 @@ class ConfigContainer(Container):
         if getattr(self.dataset, "pack_sequences_in_batch", False):
             self.model._pack_sequences_in_batch = True
 
+            # Local THD packing does not use Megatron Core's sequence_packing_scheduler,
+            # but HybridEP still needs equal token counts inside each dispatch group.
+            if getattr(self.model, "moe_flex_dispatcher_backend", None) == "hybridep":
+                self.model.moe_hybridep_pad_variable_tokens = True
+
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
         if hasattr(self.ddp, "finalize"):

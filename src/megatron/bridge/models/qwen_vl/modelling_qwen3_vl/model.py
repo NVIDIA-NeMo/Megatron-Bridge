@@ -51,6 +51,58 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
+try:
+    import transformer_engine_torch as tex
+except ImportError:
+    tex = None
+
+
+def _compact_thd_cp_index(
+    packed_seq_params: PackedSeqParams,
+    total_tokens: int,
+    cp_size: int,
+    cp_rank: int,
+) -> torch.Tensor | None:
+    """Return the CP-local token indices for an already-packed THD stream."""
+    if cp_size <= 1:
+        return None
+    if tex is None:
+        raise RuntimeError("QWEN3VL_THD_COMPACT_PACKING with CP>1 requires transformer_engine_torch")
+    return tex.thd_get_partitioned_indices(
+        packed_seq_params.cu_seqlens_q_padded,
+        total_tokens,
+        cp_size,
+        cp_rank,
+    )
+
+
+def _pack_position_ids_to_compact_thd(
+    position_ids: torch.Tensor,
+    packed_seq_params: PackedSeqParams,
+) -> torch.Tensor:
+    """Pack BSHD MRoPE position IDs into the same compact THD layout as input_ids.
+
+    Qwen3-VL's ``get_rope_index`` understands per-sample vision placeholder
+    order best in BSHD form. Compact THD computes those BSHD position IDs first,
+    then copies each real sample span into the physical padded THD segment.
+    Alignment padding keeps the default zero position IDs and is masked later.
+    """
+    real_lengths = packed_seq_params.cu_seqlens_q[1:] - packed_seq_params.cu_seqlens_q[:-1]
+    cu_seqlens_padded = packed_seq_params.cu_seqlens_q_padded
+    total_padded_len = int(cu_seqlens_padded[-1].item())
+    packed_position_ids = torch.zeros(
+        position_ids.size(0),
+        1,
+        total_padded_len,
+        dtype=position_ids.dtype,
+        device=position_ids.device,
+    )
+    for batch_idx in range(real_lengths.numel()):
+        real_len = int(real_lengths[batch_idx].item())
+        start = int(cu_seqlens_padded[batch_idx].item())
+        packed_position_ids[:, 0, start : start + real_len] = position_ids[:, batch_idx, :real_len]
+    return packed_position_ids
+
 
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
@@ -352,6 +404,10 @@ class Qwen3VLModel(MegatronModule):
         inference_context: object | None = None,
         runtime_gather_output: bool | None = None,
         mm_token_type_ids: torch.Tensor = None,
+        moe_padding_mask: torch.Tensor = None,
+        qwen3vl_thd_compact_packing: bool = False,
+        qwen3vl_compact_input_ids_bshd: torch.Tensor = None,
+        qwen3vl_compact_attention_mask_bshd: torch.Tensor = None,
         **kwargs,
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
@@ -399,6 +455,19 @@ class Qwen3VLModel(MegatronModule):
         # so it must be a real tensor. For packed sequences we use the THD-format
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
+        # In compact THD mode qwen3_vl_step has already changed input_ids from
+        # BSHD [B, S] to THD [1, T]. Cache the full physical length before any
+        # CP-local index_select so we can avoid double-splitting labels/masks.
+        compact_total_tokens = input_ids.size(1) if qwen3vl_thd_compact_packing else None
+        compact_cp_index = None
+        if qwen3vl_thd_compact_packing:
+            assert packed_seq_params is not None, "QWEN3VL_THD_COMPACT_PACKING requires packed_seq_params"
+            compact_cp_index = _compact_thd_cp_index(
+                packed_seq_params,
+                compact_total_tokens,
+                cp_size,
+                cp_rank,
+            )
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -503,7 +572,10 @@ class Qwen3VLModel(MegatronModule):
 
             if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
-            if packed_seq_params is not None:
+            if packed_seq_params is not None and not qwen3vl_thd_compact_packing:
+                # Legacy Qwen3-VL THD path: model.forward receives padded BSHD
+                # input_ids so it can do vision/text combine first, then this
+                # helper converts BSHD -> CP-local THD.
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
                 input_ids_thd, _ = preprocess_packed_seqs(
@@ -551,7 +623,7 @@ class Qwen3VLModel(MegatronModule):
                 )
                 combined_embeddings = combined_embeddings_thd
 
-            if self.config.sequence_parallel:
+            if self.config.sequence_parallel and not qwen3vl_thd_compact_packing:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
                 combined_embeddings = combined_embeddings.contiguous()
 
@@ -559,12 +631,70 @@ class Qwen3VLModel(MegatronModule):
             combined_embeddings = None
             # On non-pre_process PP stages (e.g. the last stage where MTP runs),
             # convert lm_input_ids to THD format so it matches position_ids.
-            if packed_seq_params is not None:
+            if packed_seq_params is not None and not qwen3vl_thd_compact_packing:
+                # Same legacy conversion is needed on later PP stages because MTP
+                # reads input_ids even though embeddings were produced upstream.
                 if attention_mask is None:
                     attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
                 lm_input_ids, _ = preprocess_packed_seqs(
                     input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
                 )
+
+        if qwen3vl_thd_compact_packing:
+            # Compact path: input_ids/combined_embeddings are already global THD.
+            # Keep the old invariant "combine before CP split", but use TE's THD
+            # partition index instead of preprocess_packed_seqs' BSHD conversion.
+            if compact_cp_index is not None:
+                if self.pre_process and combined_embeddings is not None:
+                    full_vision_mask = vision_mask
+                    local_vision_mask = (
+                        full_vision_mask.index_select(1, compact_cp_index) if full_vision_mask is not None else None
+                    )
+                    if deepstack_feature_lists is not None and full_vision_mask is not None:
+                        # Deepstack features are produced only at visual token
+                        # positions. Re-materialize them in full THD layout, CP
+                        # slice, then gather back the local visual positions.
+                        full_embeddings_bsh = combined_embeddings.transpose(0, 1).contiguous()
+                        new_deepstack_feature_lists = []
+                        for deepstack_visual_embed in deepstack_feature_lists:
+                            tmp_embeddings = torch.zeros_like(full_embeddings_bsh)
+                            tmp_embeddings[full_vision_mask] = deepstack_visual_embed
+                            tmp_embeddings = tmp_embeddings.index_select(1, compact_cp_index)
+                            new_deepstack_feature_lists.append(tmp_embeddings[local_vision_mask].contiguous())
+                        deepstack_feature_lists = new_deepstack_feature_lists
+                    combined_embeddings = combined_embeddings.index_select(0, compact_cp_index)
+                    vision_mask = local_vision_mask
+
+                # input_ids is passed to language_model for MTP/future-token
+                # embedding paths; it must match the CP-local decoder_input.
+                input_ids = input_ids.index_select(1, compact_cp_index)
+                lm_input_ids = input_ids
+                if labels is not None and labels.dim() >= 2 and labels.size(1) == compact_total_tokens:
+                    labels = labels.index_select(1, compact_cp_index)
+                if loss_mask is not None and loss_mask.dim() >= 2 and loss_mask.size(1) == compact_total_tokens:
+                    loss_mask = loss_mask.index_select(1, compact_cp_index)
+                if (
+                    moe_padding_mask is not None
+                    and moe_padding_mask.dim() >= 2
+                    and moe_padding_mask.size(1) == compact_total_tokens
+                ):
+                    moe_padding_mask = moe_padding_mask.index_select(1, compact_cp_index)
+
+            if self.pre_process and self.config.sequence_parallel:
+                # Legacy path scatters after BSHD->THD conversion. Compact path
+                # skips that block, so SP scatter has to happen here instead.
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = combined_embeddings.contiguous()
+            if self.config.sequence_parallel and moe_padding_mask is not None:
+                tp_size = self.pg_collection.tp.size()
+                if tp_size > 1:
+                    tp_rank = self.pg_collection.tp.rank()
+                    assert moe_padding_mask.size(1) % tp_size == 0, (
+                        "compact THD MoE padding mask must be divisible by TP size under sequence parallelism"
+                    )
+                    seq_len_per_tp = moe_padding_mask.size(1) // tp_size
+                    start = tp_rank * seq_len_per_tp
+                    moe_padding_mask = moe_padding_mask[:, start : start + seq_len_per_tp].contiguous()
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -590,7 +720,30 @@ class Qwen3VLModel(MegatronModule):
                     sequence_parallel=self.config.sequence_parallel,
                 )
 
-        if position_ids is None:
+        if qwen3vl_thd_compact_packing:
+            if position_ids is None:
+                assert qwen3vl_compact_input_ids_bshd is not None, "compact THD packing requires original BSHD input_ids"
+                # MRoPE must see per-sample BSHD order, otherwise [1, T] would
+                # look like one long sample and image/video grids would be
+                # consumed with the wrong boundaries.
+                position_ids, _ = get_rope_index(
+                    self.config.spatial_merge_size,
+                    self.image_token_id,
+                    self.video_token_id,
+                    self.vision_start_token_id,
+                    qwen3vl_compact_input_ids_bshd,
+                    image_grid_thw=image_grid_thw,
+                    video_grid_thw=video_grid_thw,
+                    attention_mask=qwen3vl_compact_attention_mask_bshd,
+                )
+                position_ids = _pack_position_ids_to_compact_thd(position_ids, packed_seq_params)
+            if compact_cp_index is not None:
+                position_ids = position_ids.index_select(2, compact_cp_index)
+            # THD attention receives boundaries via packed_seq_params. A dense
+            # mask would describe BSHD layout and is intentionally disabled.
+            attention_mask = None
+            self.language_model.rotary_pos_emb.is_thd_format = True
+        elif position_ids is None:
             # BSHD
             # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
             # For simplicity, we set hf_attention_mask to None.
@@ -630,6 +783,7 @@ class Qwen3VLModel(MegatronModule):
             decoder_input=combined_embeddings,  # only not None in the first decoder PP stage
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
+            padding_mask=moe_padding_mask,
             inference_params=inference_params,  # currently always None
             packed_seq_params=packed_seq_params,  # currently always None
             runtime_gather_output=runtime_gather_output,

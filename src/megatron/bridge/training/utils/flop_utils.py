@@ -112,6 +112,24 @@ def accumulate_flops_metadata(
             )
 
 
+def accumulate_token_throughput_metadata(
+    state,
+    *,
+    real_tokens: int | None = None,
+    packed_tokens: int | None = None,
+) -> None:
+    """Accumulate optional token-count metadata for compact-packing throughput logging.
+
+    Existing ``throughput/tokens_per_sec`` remains the legacy nominal counter.
+    These optional counters let compact THD report useful non-padding tokens
+    separately from physical packed tokens without changing legacy metrics.
+    """
+    if real_tokens is not None:
+        state._throughput_real_tokens = getattr(state, "_throughput_real_tokens", 0) + int(real_tokens)
+    if packed_tokens is not None:
+        state._throughput_packed_tokens = getattr(state, "_throughput_packed_tokens", 0) + int(packed_tokens)
+
+
 def vit_flops(
     cfg: ConfigContainer,
     batch_size: int,

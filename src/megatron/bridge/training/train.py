@@ -291,8 +291,16 @@ def train(
                 break
     # Track train step elapsed time for throughput logging
     history_wct = None
+    history_real_tokens = None
+    history_packed_tokens = None
+    # Compact THD can distinguish useful tokens from physical packed tokens.
+    # Keep those histories separate from the legacy nominal tokens/sec counter.
+    total_real_tokens_processed = 0
+    total_packed_tokens_processed = 0
     if config.logger.log_throughput_to_tensorboard:
         history_wct = deque(maxlen=config.logger.throughput_window_size + 1)
+        history_real_tokens = deque(maxlen=config.logger.throughput_window_size + 1)
+        history_packed_tokens = deque(maxlen=config.logger.throughput_window_size + 1)
 
     # Wrap forward_backward_func for Full iteration CUDA graph
     forward_backward_func = get_forward_backward_func(
@@ -436,6 +444,10 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        # Optional per-forward-step counters. Step functions that do not know
+        # real/packed token counts simply leave these at zero.
+        global_state._throughput_real_tokens = 0
+        global_state._throughput_packed_tokens = 0
 
         (
             loss_dict,
@@ -551,6 +563,8 @@ def train(
         local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
         local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
         num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+        local_real_tokens = getattr(global_state, "_throughput_real_tokens", 0)
+        local_packed_tokens = getattr(global_state, "_throughput_packed_tokens", 0)
         # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
         # (not the default), which breaks the numeric comparisons below.
         if not isinstance(local_seqlen_sum, int):
@@ -559,6 +573,10 @@ def train(
             local_seqlen_sq_sum = 0
         if not isinstance(num_vision_patches, int):
             num_vision_patches = 0
+        if not isinstance(local_real_tokens, int):
+            local_real_tokens = 0
+        if not isinstance(local_packed_tokens, int):
+            local_packed_tokens = 0
 
         # Correct for VPP over-counting: each microbatch's seqlen is accumulated
         # once per virtual stage, but FLOPS formula already covers all stages.
@@ -567,6 +585,8 @@ def train(
             local_seqlen_sum = local_seqlen_sum // vp_size
             local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
             num_vision_patches = num_vision_patches // vp_size
+            local_real_tokens = local_real_tokens // vp_size
+            local_packed_tokens = local_packed_tokens // vp_size
 
         if local_seqlen_sum > 0:
             seqlen_sum = local_seqlen_sum * dp_size
@@ -589,6 +609,13 @@ def train(
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
+        if config.logger.log_throughput_to_tensorboard:
+            # These are rank-local counts scaled by DP, mirroring FLOPS metadata.
+            # They intentionally do not replace the existing nominal token metric.
+            total_real_tokens_processed += local_real_tokens * dp_size
+            total_packed_tokens_processed += local_packed_tokens * dp_size
+            history_real_tokens.append(total_real_tokens_processed)
+            history_packed_tokens.append(total_packed_tokens_processed)
 
         # Logging.
         if not config.logger.skip_train_metrics_log:
@@ -627,6 +654,8 @@ def train(
                 history_wct,
                 model,
                 log_max_attention_logit,
+                history_real_tokens=history_real_tokens,
+                history_packed_tokens=history_packed_tokens,
                 loaded_iteration=start_iteration,
                 seq_length=seqlen_sum // batch_size if seqlen_sum else None,
             )

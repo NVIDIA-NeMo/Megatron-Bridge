@@ -120,6 +120,9 @@ class Qwen3VLGPTModel(GPTModel):
         *,
         inference_params: Optional[BaseInferenceContext] = None,
         loss_mask: Optional[Tensor] = None,
+        # Compact THD inserts small alignment padding between samples. Thread
+        # this mask to decoder layers so MoE router losses/stats exclude it.
+        padding_mask: Optional[Tensor] = None,
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
@@ -170,6 +173,7 @@ class Qwen3VLGPTModel(GPTModel):
             # the standard components only.
             packed_seq_params=packed_seq_params,
             sequence_len_offset=sequence_len_offset,
+            padding_mask=padding_mask,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
             **(extra_block_kwargs or {}),

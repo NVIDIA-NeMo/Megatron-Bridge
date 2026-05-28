@@ -13,6 +13,7 @@
 # limitations under the License.
 import logging
 import math
+import os
 from functools import partial
 from typing import Any, Iterable
 
@@ -27,7 +28,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, accumulate_token_throughput_metadata
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -37,6 +38,11 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+try:
+    import transformer_engine_torch as tex
+except ImportError:
+    tex = None
 
 
 def get_batch_from_iterator(
@@ -95,6 +101,10 @@ def get_batch_from_iterator(
         else:
             _batch_required_keys[key] = None
 
+    raw_attn = batch.get("attention_mask")
+    if isinstance(raw_attn, torch.Tensor) and raw_attn.dim() == 2:
+        _batch_required_keys["_padding_mask"] = raw_attn.cuda(non_blocking=True)
+
     return _batch_required_keys
 
 
@@ -106,6 +116,7 @@ def get_batch(
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
 ) -> tuple[
+    torch.Tensor,
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
@@ -148,6 +159,7 @@ def get_batch(
         batch.get("loss_mask"),
         batch.get("attention_mask"),
         batch.get("position_ids"),
+        batch.get("_padding_mask"),
         multi_modal_inputs,
     )
 
@@ -208,6 +220,115 @@ def pack_or_pad_batch_sequences(
     return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
 
 
+def _get_real_sequence_lengths(
+    tokens: torch.Tensor,
+    padding_mask: torch.Tensor | None,
+) -> torch.Tensor:
+    """Return per-sample non-pad lengths. The 2D mask follows HF convention: 1/True means keep."""
+    if padding_mask is None:
+        return torch.full((tokens.size(0),), tokens.size(1), dtype=torch.int32, device=tokens.device)
+    if padding_mask.dim() != 2:
+        raise ValueError(f"QWEN3VL_THD_COMPACT_PACKING expects a 2D padding mask, got {tuple(padding_mask.shape)}")
+    real_lengths = padding_mask.to(dtype=torch.int32, device=tokens.device).sum(dim=1)
+    return real_lengths.clamp(min=1, max=tokens.size(1))
+
+
+def _build_compact_packed_seq_params(
+    real_lengths: torch.Tensor,
+    pad_to_multiple_of: int,
+) -> tuple[PackedSeqParams, torch.Tensor]:
+    """Build THD metadata where real and physical padded boundaries are both preserved.
+
+    ``cu_seqlens_q`` describes the true sample lengths used for attention/FLOPS
+    semantics. ``cu_seqlens_q_padded`` describes the physical packed layout used
+    by TransformerEngine's THD CP partitioner.
+    """
+    padded_lengths = torch.div(
+        real_lengths + pad_to_multiple_of - 1,
+        pad_to_multiple_of,
+        rounding_mode="floor",
+    ) * pad_to_multiple_of
+    cu_seqlens = torch.zeros(real_lengths.numel() + 1, dtype=torch.int32, device=real_lengths.device)
+    cu_seqlens[1:] = torch.cumsum(real_lengths.to(torch.int32), dim=0)
+    cu_seqlens_padded = torch.zeros_like(cu_seqlens)
+    cu_seqlens_padded[1:] = torch.cumsum(padded_lengths.to(torch.int32), dim=0)
+    max_seqlen = int(padded_lengths.max().item())
+    return (
+        PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            max_seqlen_q=max_seqlen,
+            cu_seqlens_kv=cu_seqlens,
+            max_seqlen_kv=max_seqlen,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+        ),
+        padded_lengths,
+    )
+
+
+def _compact_pack_batch_sequences(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    real_lengths: torch.Tensor,
+    padded_lengths: torch.Tensor,
+    pad_token_id: int = 0,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor]:
+    """Pack BSHD rows directly into one THD stream without first padding to seq_length.
+
+    The returned ``moe_padding_mask`` marks only the alignment padding inserted
+    between packed samples. It is not an attention mask; MCore MoE uses it to
+    exclude fake padding from router losses and expert-bias token statistics.
+    """
+    total_padded_len = int(padded_lengths.sum().item())
+    packed_tokens = torch.full((1, total_padded_len), pad_token_id, dtype=tokens.dtype, device=tokens.device)
+    packed_labels = (
+        torch.full((1, total_padded_len), -100, dtype=labels.dtype, device=labels.device) if labels is not None else None
+    )
+    packed_loss_mask = (
+        torch.zeros((1, total_padded_len), dtype=loss_mask.dtype, device=loss_mask.device)
+        if loss_mask is not None
+        else None
+    )
+    moe_padding_mask = torch.zeros((1, total_padded_len), dtype=torch.bool, device=tokens.device)
+
+    offset = 0
+    for batch_idx in range(tokens.size(0)):
+        real_len = int(real_lengths[batch_idx].item())
+        padded_len = int(padded_lengths[batch_idx].item())
+        packed_tokens[0, offset : offset + real_len] = tokens[batch_idx, :real_len]
+        if packed_labels is not None:
+            packed_labels[0, offset : offset + real_len] = labels[batch_idx, :real_len]
+        if packed_loss_mask is not None:
+            packed_loss_mask[0, offset : offset + real_len] = loss_mask[batch_idx, :real_len]
+        if padded_len > real_len:
+            moe_padding_mask[0, offset + real_len : offset + padded_len] = True
+        offset += padded_len
+
+    return packed_tokens, packed_labels, packed_loss_mask, moe_padding_mask
+
+
+def _get_compact_thd_cp_index(
+    packed_seq_params: PackedSeqParams,
+    total_tokens: int,
+    cp_size: int,
+    cp_rank: int,
+) -> torch.Tensor | None:
+    if cp_size <= 1:
+        return None
+    if tex is None:
+        raise RuntimeError("QWEN3VL_THD_COMPACT_PACKING with CP>1 requires transformer_engine_torch")
+    # THD CP must split each packed segment independently. TE's helper uses
+    # cu_seqlens_q_padded to apply the standard zigzag CP split per segment.
+    return tex.thd_get_partitioned_indices(
+        packed_seq_params.cu_seqlens_q_padded,
+        total_tokens,
+        cp_size,
+        cp_rank,
+    )
+
+
 def forward_step(
     state: GlobalState,
     data_iterator: Iterable,
@@ -243,6 +364,7 @@ def forward_step(
             loss_mask,
             attention_mask,
             position_ids,
+            padding_mask,
             multi_modal_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, is_first_pp_stage=is_first, is_last_pp_stage=is_last)
     timers("batch-generator").stop()
@@ -251,59 +373,132 @@ def forward_step(
     # Qwen3VL model need the original input and do cp and sp split in model.forward.
     pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
-        tokens,
-        labels,
-        loss_mask,
-        attention_mask,
-        position_ids,
-        this_pg_collection,
-        use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-        seq_length=config.seq_length,
-    )
+    compact_thd_packing = pack_sequences_in_batch and os.getenv("QWEN3VL_THD_COMPACT_PACKING", "0") == "1"
 
-    # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
-    # active, ``packed_seq_params.cu_seqlens_q`` describes the real sub-seq
-    # boundaries used by the THD attention kernel; the helper uses it to
-    # compute the THD-correct Σᵢ sᵢ² instead of pack-length² (BSHD). When not
-    # packed, the helper falls back to BSHD. train.py resets these before each
-    # step and reads accumulated values afterwards.
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
-        image_grid_thw=multi_modal_inputs.get("image_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
-        video_grid_thw=multi_modal_inputs.get("video_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
-    )
-
-    forward_args = {
-        "input_ids": tokens,
-        "labels": labels,
-        "loss_mask": loss_mask,
-        "attention_mask": attention_mask,
-        "position_ids": position_ids,
-    }
-
-    original_tokens = tokens.clone()
-    forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
-    forward_args["packed_seq_params"] = None
-    forward_args["input_ids"] = original_tokens
-    # calculate position_ids in model forward
-    forward_args["position_ids"] = None
-    if pack_sequences_in_batch:
-        if forward_args["labels"] is not None:
-            # When using pp, labels could be None
-            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
-        attention_mask = torch.ones(
-            original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
+    if compact_thd_packing:
+        # Contract with Qwen3VLModel.forward:
+        # - ``input_ids`` below becomes compact THD [1, total_padded_tokens].
+        # - Qwen3-VL still needs the original BSHD layout to compute MRoPE
+        #   and to interpret image/video placeholder order per sample.
+        compact_input_ids_bshd = tokens
+        compact_attention_mask_bshd = (
+            padding_mask
+            if padding_mask is not None
+            else torch.ones_like(compact_input_ids_bshd, dtype=torch.bool, device=compact_input_ids_bshd.device)
         )
-        forward_args["attention_mask"] = attention_mask
-        if forward_args["loss_mask"] is not None:
-            forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
-        # qwen3vl need the original input_ids and position_ids
-        # use split attention mask for calculate loss
-        forward_args["packed_seq_params"] = packed_seq_params
+        real_lengths = _get_real_sequence_lengths(tokens, compact_attention_mask_bshd)
+        cp_size = this_pg_collection.cp.size()
+        tp_size = this_pg_collection.tp.size()
+        # CP requires each packed segment to be divisible by 2*CP for zigzag
+        # splitting. Sequence parallelism further requires the CP-local chunk to
+        # be divisible across TP ranks. Keep 16 for FP8/TE-friendly alignment.
+        cp_multiple = 2 * cp_size if cp_size > 1 else 1
+        sp_multiple = cp_size * tp_size if getattr(config, "sequence_parallel", False) and tp_size > 1 else 1
+        pad_to_multiple_of = math.lcm(16, cp_multiple, sp_multiple)
+        packed_seq_params, padded_lengths = _build_compact_packed_seq_params(real_lengths, pad_to_multiple_of)
+        tokens, labels, loss_mask, moe_padding_mask = _compact_pack_batch_sequences(
+            tokens,
+            labels,
+            loss_mask,
+            real_lengths,
+            padded_lengths,
+        )
+        # Compact THD uses packed_seq_params for sequence boundaries, so there
+        # is no dense attention mask or precomputed BSHD position_ids to pass.
+        attention_mask = None
+        position_ids = None
+
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens_unpadded=packed_seq_params.cu_seqlens_q,
+            image_grid_thw=multi_modal_inputs.get("image_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+            video_grid_thw=multi_modal_inputs.get("video_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+        )
+        accumulate_token_throughput_metadata(
+            state,
+            real_tokens=int(real_lengths.sum().item()),
+            packed_tokens=int(padded_lengths.sum().item()),
+        )
+
+        cp_index = _get_compact_thd_cp_index(
+            packed_seq_params,
+            tokens.size(1),
+            this_pg_collection.cp.size(),
+            this_pg_collection.cp.rank(),
+        )
+        if cp_index is not None:
+            # The model CP-splits embeddings after vision/text combine. The
+            # loss tensors live in the step closure, so they must be split here
+            # with exactly the same THD index.
+            labels = labels.index_select(1, cp_index) if labels is not None else None
+            loss_mask = loss_mask.index_select(1, cp_index) if loss_mask is not None else None
+            moe_padding_mask = moe_padding_mask.index_select(1, cp_index)
+
+        forward_args = {
+            "input_ids": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "packed_seq_params": packed_seq_params,
+            "moe_padding_mask": moe_padding_mask,
+            "qwen3vl_thd_compact_packing": True,
+            # Extra internal metadata needed because compact THD removes the
+            # original batch dimension before model.forward runs MRoPE.
+            "qwen3vl_compact_input_ids_bshd": compact_input_ids_bshd,
+            "qwen3vl_compact_attention_mask_bshd": compact_attention_mask_bshd,
+        }
+    else:
+        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            this_pg_collection,
+            use_fp8_padding=True,
+            force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
+            seq_length=config.seq_length,
+        )
+
+        # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
+        # active, cu_seqlens_q describes the sub-seq boundaries used by THD attention.
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
+            image_grid_thw=multi_modal_inputs.get("image_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+            video_grid_thw=multi_modal_inputs.get("video_grid_thw") if isinstance(multi_modal_inputs, dict) else None,
+        )
+
+        forward_args = {
+            "input_ids": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+        }
+
+        original_tokens = tokens.clone()
+        forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
+        forward_args["packed_seq_params"] = None
+        forward_args["input_ids"] = original_tokens
+        # calculate position_ids in model forward
+        forward_args["position_ids"] = None
+        if pack_sequences_in_batch:
+            if forward_args["labels"] is not None:
+                # When using pp, labels could be None
+                forward_args["labels"] = forward_args["labels"].reshape(1, -1)
+            attention_mask = torch.ones(
+                original_tokens.shape[0], original_tokens.shape[1], dtype=torch.bool, device=original_tokens.device
+            )
+            forward_args["attention_mask"] = attention_mask
+            if forward_args["loss_mask"] is not None:
+                forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
+            # qwen3vl need the original input_ids and position_ids
+            # use split attention mask for calculate loss
+            forward_args["packed_seq_params"] = packed_seq_params
 
     # use cp split loss mask for calculate loss
     loss_mask = forward_args["loss_mask"]
