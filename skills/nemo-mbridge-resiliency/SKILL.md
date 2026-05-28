@@ -7,7 +7,7 @@ when_to_use: Enabling resiliency features, or investigating a commit that caused
 
 # Resiliency
 
-Stable docs: @docs/training/nemo-mbridge-resiliency.md, @docs/training/checkpointing.md
+Stable docs: @docs/training/resiliency.md, @docs/training/checkpointing.md
 Card: @skills/nemo-mbridge-resiliency/card.yaml
 
 ## Enablement
