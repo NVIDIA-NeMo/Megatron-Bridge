@@ -4,7 +4,12 @@ This page lists known issues and limitations in the current release.
 
 ## 26.04
 
-- The [`av`](https://pypi.org/project/av/) (PyAV) Python package is no longer installed by default in the NeMo Framework 26.04 container (`nvcr.io/nvidia/nemo:26.04`) to mitigate a CVE in the bundled FFmpeg binaries. Workflows that rely on `av` for video decoding (for example, certain multimodal data pipelines and `qwen-vl-utils` video paths) must reinstall it at runtime — see [`docker/common/README.md`](../../docker/common/README.md#reinstalling-pyav-av-at-runtime) for instructions.
+- The following video / image decoding packages are no longer installed by default in the NeMo Framework 26.04 container (`nvcr.io/nvidia/nemo:26.04`) to mitigate CVEs in their vendored native binaries:
+  - [`av`](https://pypi.org/project/av/) (PyAV)
+  - [`decord`](https://pypi.org/project/decord/)
+  - [`opencv-python-headless`](https://pypi.org/project/opencv-python-headless/)
+
+  Workflows that depend on any of these (for example, multimodal video pipelines, `qwen-vl-utils` video paths, or `decord[av-decode]`) must reinstall them at runtime — see [`docker/common/README.md`](../../docker/common/README.md#reinstalling-video--image-decoding-packages-av-decord-opencv-python-headless-at-runtime) for instructions.
 
 ## 26.02
 
