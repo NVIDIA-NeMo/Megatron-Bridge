@@ -72,7 +72,7 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
-    cfg.train.skip_sync_grad_norm_across_mp = True
+    cfg.train.skip_sync_grad_norm_across_mp = False
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
@@ -168,7 +168,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.optimizer.adam_eps = 1e-05
     cfg.optimizer.min_lr = 0.0004
     cfg.train.check_optimizer_step_success = False
-    cfg.train.skip_sync_grad_norm_across_mp = True
+    cfg.train.skip_sync_grad_norm_across_mp = False
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
@@ -281,7 +281,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
-    cfg.train.skip_sync_grad_norm_across_mp = True
+    cfg.train.skip_sync_grad_norm_across_mp = False
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
