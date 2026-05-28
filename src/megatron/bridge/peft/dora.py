@@ -21,7 +21,7 @@ from torch import nn
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
-from megatron.bridge.peft.utils import _get_pg_collection_from_module, get_adapter_attributes_from_linear
+from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
 
 
 logger = logging.getLogger(__name__)
@@ -72,13 +72,7 @@ class DoRA(PEFT, ModuleMatcher):
             "DoRA only supports pre-adapter dropout at this time. Please set DoRA(..., dropout_position='pre')"
         )
 
-    def transform(
-        self,
-        m: nn.Module,
-        name: Optional[str] = None,
-        prefix: Optional[str] = None,
-        pg_collection=None,
-    ) -> nn.Module:
+    def transform(self, m: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
         Applies DoRA to a specific module within the model architecture.
 
@@ -95,10 +89,8 @@ class DoRA(PEFT, ModuleMatcher):
             return m
 
         if (ans := self.match(m, name, prefix)) is not None:
-            _, full_name = ans
-            pg_collection = _get_pg_collection_from_module(m) or pg_collection
-            attrs_kwargs = {"pg_collection": pg_collection} if pg_collection is not None else {}
-            attrs = get_adapter_attributes_from_linear(m, **attrs_kwargs)
+            (match, full_name) = ans
+            attrs = get_adapter_attributes_from_linear(m)
             logger.info(f"Adding DoRA to: {full_name}")
             adapter = ParallelLinearDoRAAdapter(
                 attrs.in_features,
@@ -111,9 +103,8 @@ class DoRA(PEFT, ModuleMatcher):
                 input_is_parallel=attrs.input_is_parallel,
                 dropout=self.dropout,
                 dropout_position=self.dropout_position,
-                model_parallel_config=m.config,
+                model_parallel_config=getattr(m, "config", None),
                 alpha=self.alpha,
-                pg_collection=pg_collection,
                 disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,

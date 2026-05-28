@@ -14,7 +14,6 @@
 
 import datetime
 import os
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -336,42 +335,6 @@ class TestLoRA:
         assert isinstance(adapted.adapter, GroupedExpertLinearAdapter)
         assert adapted.adapter.linear_in.weight.shape == torch.Size([2, 32, 2048])
         assert adapted.adapter.linear_out.weight.shape == torch.Size([2, 512, 32])
-
-    def test_lora_transform_uses_parent_pg_collection_for_leaf_expert_linear(self):
-        """LoRA should use the nearest parent PG collection when the matched leaf only stores TP metadata."""
-        model = GroupedExpertModel()
-        parent_pg_collection = SimpleNamespace(
-            tp=object(),
-            ep=object(),
-            expt_tp=object(),
-            expt_dp=object(),
-        )
-        model.decoder.layers[0].mlp.experts._pg_collection = parent_pg_collection
-        lora = LoRA(target_modules=["linear_fc2"])
-        seen_pg_collections = []
-
-        def mock_get_attrs(module, is_expert=False, pg_collection=None):
-            seen_pg_collections.append(pg_collection)
-            return AdapterAttributes(
-                input_is_parallel=True,
-                in_features=module.in_features,
-                out_features=module.out_features,
-                disable_tensor_parallel_comm=False,
-                disable_sequence_parallel_comm=True,
-                base_linear_is_parallel=True,
-            )
-
-        with (
-            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
-            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_parallel_adapter,
-        ):
-            mock_parallel_adapter.return_value = nn.Identity()
-            transformed_model = lora(model, training=True)
-
-        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
-        assert isinstance(adapted, LoRALinear)
-        assert seen_pg_collections == [parent_pg_collection]
-        assert mock_parallel_adapter.call_args.kwargs["pg_collection"] is parent_pg_collection
 
     def test_lora_wildcard_matching(self):
         """Test LoRA transformation with wildcard patterns."""
@@ -774,6 +737,7 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_aligns_shared_expert_dim_to_expert_tp(self):
         """Normalized expert fc1 adapters should round up to the expert-TP granularity when needed."""
         model = MoEModel(moe_router_topk=8)
+        # Expert-TP sizing is supplied by the mock config/PG path, not lora.parallel_state.
         for module in model.modules():
             if hasattr(module, "config"):
                 module.config.expert_tensor_parallel_size = 2
@@ -811,6 +775,7 @@ class TestLoRANormalizeMoE:
         """Per-expert grouped adapters should round normalized dims up to expert-TP granularity."""
         model = GroupedExpertModel()
         model.decoder.layers[0].mlp.experts.linear_fc2.config.moe_router_topk = 8
+        # Expert-TP sizing is supplied by the mock config/PG path, not lora.parallel_state.
         model.decoder.layers[0].mlp.experts.linear_fc2.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc2"], dim=8, normalize_moe_lora=True, share_expert_adapters=False)
 
@@ -883,6 +848,7 @@ class TestLoRAMerge:
 
         adapter = MockAdapter()
         merge = LoRAMerge()
+        # LoRAMerge.merge receives TP context explicitly instead of reading lora.parallel_state.
         merged_weight = merge.merge(
             base_module.weight,
             adapter.linear_out.weight,
@@ -979,7 +945,7 @@ class TestLoRAMerge:
 
             mock_dist.all_gather.side_effect = mock_all_gather
 
-            # Apply merge
+            # LoRAMerge.merge receives TP context explicitly instead of reading lora.parallel_state.
             merge = LoRAMerge()
             merged_weight = merge.merge(
                 base_module.weight,
@@ -1036,7 +1002,7 @@ class TestLoRAMerge:
 
             mock_dist.all_gather.side_effect = mock_all_gather
 
-            # Apply merge
+            # LoRAMerge.merge receives TP context explicitly instead of reading lora.parallel_state.
             merge = LoRAMerge()
             merged_weight = merge.merge(
                 base_module.weight,

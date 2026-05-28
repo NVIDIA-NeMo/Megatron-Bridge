@@ -120,15 +120,11 @@ class DoRALinear(AdapterWrapper):
             torch.Tensor: The L2 norm of the combined weight matrix.
         """
         if self.adapter.input_is_parallel:
-            linear_out_weight = gather_from_tensor_model_parallel_region(
-                self.adapter.linear_out.weight.T, group=self.adapter.tp_group
-            ).T
+            linear_out_weight = gather_from_tensor_model_parallel_region(self.adapter.linear_out.weight.T).T
             linear_in_weight = self.adapter.linear_in.weight
         else:
             linear_out_weight = self.adapter.linear_out.weight
-            linear_in_weight = gather_from_tensor_model_parallel_region(
-                self.adapter.linear_in.weight.T, group=self.adapter.tp_group
-            ).T
+            linear_in_weight = gather_from_tensor_model_parallel_region(self.adapter.linear_in.weight.T).T
 
         weight = self.to_wrap.weight + self.scaling * linear_out_weight @ linear_in_weight
         return torch.linalg.norm(weight, dim=1).to(weight.dtype).detach()

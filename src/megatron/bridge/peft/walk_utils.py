@@ -55,16 +55,6 @@ ModuleFunc = Callable[[nn.Module], nn.Module]
 ModulePredicate = Callable[[nn.Module], Union[bool, HasBool]]
 
 
-def _get_pg_collection(module: nn.Module):
-    """Return a process-group collection attached to this module, if any."""
-
-    for attr in ("pg_collection", "_pg_collection"):
-        pg_collection = getattr(module, attr, None)
-        if pg_collection is not None:
-            return pg_collection
-    return None
-
-
 def map(  # noqa: A001
     module: _TModule,
     func: ModuleFunc,
@@ -228,11 +218,6 @@ def _map_module(
     if id(module) in transformed_modules:
         return module
 
-    # MCore keeps the full PG collection on parent modules; leaf linears may only expose TP.
-    pg_collection = _get_pg_collection(module)
-    if pg_collection is not None:
-        kwargs["pg_collection"] = pg_collection
-
     new_module = module
     f_kwargs = _get_func_kwargs(func, **kwargs)
 
@@ -272,10 +257,6 @@ def _map_module_list(
     """Apply a transformation function to a list of modules."""
     if transformed_modules is None:
         transformed_modules = set()
-
-    pg_collection = _get_pg_collection(module_list)
-    if pg_collection is not None:
-        kwargs["pg_collection"] = pg_collection
 
     f_kwargs = _get_func_kwargs(func, **kwargs)
     if not leaf_only:
@@ -332,10 +313,6 @@ def _map_module_dict(
     """
     if transformed_modules is None:
         transformed_modules = set()
-
-    pg_collection = _get_pg_collection(module_dict)
-    if pg_collection is not None:
-        kwargs["pg_collection"] = pg_collection
 
     f_kwargs = _get_func_kwargs(func, **kwargs)
     if not leaf_only:

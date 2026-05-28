@@ -106,6 +106,8 @@ def _get_pg_collection(
 
     pg_collection = pg_collection or _get_pg_collection_from_module(source)
     if pg_collection is None:
+        # TODO: Once LoRA/DoRA transforms carry the model-level ProcessGroupCollection,
+        # pass it into adapter constructors explicitly and remove this default-MPU fallback.
         pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=required_pgs)
     return pg_collection
 
@@ -818,6 +820,8 @@ class ParallelLinearAdapter(nn.Module):
         # in case this arg is not provided, use the dummy default config.
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
+        # TODO: When the PEFT transform API has explicit PG plumbing, pass the
+        # model-level collection here instead of relying on config/default discovery.
         self.pg_collection = _get_pg_collection(
             pg_collection,
             model_parallel_config,
@@ -1555,6 +1559,8 @@ class GroupedExpertLinearAdapter(nn.Module):
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
         self.config = model_parallel_config
+        # TODO: When the PEFT transform API has explicit PG plumbing, pass the
+        # model-level collection here instead of relying on config/default discovery.
         self.pg_collection = _get_pg_collection(
             pg_collection,
             model_parallel_config,
