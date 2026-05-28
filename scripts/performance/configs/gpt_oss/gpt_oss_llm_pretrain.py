@@ -69,6 +69,7 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.model.moe_router_fusion = False
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.position_embedding_type = "rope"
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
@@ -101,7 +102,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -121,7 +122,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -167,6 +168,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.model.moe_router_fusion = False
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.position_embedding_type = "rope"
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.optimizer.adam_eps = 1e-05
@@ -200,7 +202,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -226,7 +228,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -238,7 +240,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
@@ -286,6 +288,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.model.moe_router_fusion = False
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.position_embedding_type = "rope"
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = False
@@ -318,7 +321,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.calculate_per_token_loss = False
         cfg.model.moe_expert_rank_capacity_factor = 2
@@ -341,7 +344,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -353,7 +356,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_scope = "full"
+        cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
@@ -402,6 +405,7 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.model.moe_router_fusion = False
     cfg.model.moe_router_padding_for_quantization = False
     cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.position_embedding_type = "rope"
     cfg.model.use_te_rng_tracker = True
     cfg.model.tp_only_amax_red = True
     cfg.train.check_optimizer_step_success = True
