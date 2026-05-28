@@ -75,6 +75,22 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
 
+def get_gpt_oss_20b_precision_config(compute_dtype: str):
+    """Get the precision configs for the given compute dtype and FP8 recipe."""
+    precision_config = get_precision_config(compute_dtype)
+    precision_config.fp4_param = False
+    precision_config.fp4_param_gather = False
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
+    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
+    if compute_dtype == "fp8_mx":
+        precision_config.first_last_layers_bf16 = False
+        precision_config.num_layers_at_start_in_bf16 = 0
+    elif compute_dtype == "nvfp4":
+        precision_config.first_last_layers_bf16 = True
+        precision_config.num_layers_at_start_in_bf16 = 0
+        precision_config.num_layers_at_end_in_bf16 = 4
+    return precision_config
 
 def gpt_oss_20b_pretrain_config_b300(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
@@ -88,15 +104,9 @@ def gpt_oss_20b_pretrain_config_b300(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
-
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
-    precision_config.fp4_param = False
-    precision_config.fp4_param_gather = False
-    precision_config.fp8_param = False
-    precision_config.fp8_param_gather = False
-    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
@@ -158,12 +168,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
-    precision_config.fp4_param = False
-    precision_config.fp4_param_gather = False
-    precision_config.fp8_param = False
-    precision_config.fp8_param_gather = False
-    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
@@ -243,20 +248,13 @@ def gpt_oss_20b_pretrain_config_gb300(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
-
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
-    precision_config.fp4_param = False
-    precision_config.fp4_param_gather = False
-    precision_config.fp8_param = False
-    precision_config.fp8_param_gather = False
-    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
@@ -329,12 +327,7 @@ def gpt_oss_20b_pretrain_config_vr200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_precision_config(precision)
-    precision_config.fp4_param = False
-    precision_config.fp4_param_gather = False
-    precision_config.fp8_param = False
-    precision_config.fp8_param_gather = False
-    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
