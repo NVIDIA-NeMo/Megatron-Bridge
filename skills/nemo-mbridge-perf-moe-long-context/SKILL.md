@@ -118,7 +118,7 @@ For long-context MoE training:
 Useful references:
 
 - @docs/training/activation-recomputation.md
-- @skills/mbridge-perf-cuda-graphs/SKILL.md
+- @skills/perf-cuda-graphs/SKILL.md
 
 ## Pitfalls
 
