@@ -279,7 +279,6 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.optimizer.min_lr = 0.0005
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
-        cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 256
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
@@ -352,6 +351,7 @@ def gpt_oss_20b_pretrain_config_vr200(
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 512
+        cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.optimizer.lr = 0.0005
