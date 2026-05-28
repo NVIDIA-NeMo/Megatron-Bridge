@@ -402,6 +402,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
+        provider.dsa_indexer_loss_coeff = 0.0
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True
