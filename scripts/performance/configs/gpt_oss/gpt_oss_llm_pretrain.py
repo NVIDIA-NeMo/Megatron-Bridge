@@ -95,6 +95,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
+        cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 192
@@ -105,6 +106,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.moe_expert_rank_capacity_factor = 1.5
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0005
+        cfg.optimizer.min_lr = 0.0005
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 256
@@ -113,6 +115,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
+        cfg.optimizer.min_lr = 0.0006
         cfg.validation.eval_interval = 384
         cfg.validation.eval_iters = 32
         cfg.scheduler.lr_warmup_iters = 64
@@ -123,6 +126,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0004
+        cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 384
         cfg.validation.eval_iters = 32
         cfg.scheduler.lr_warmup_iters = 512
@@ -167,6 +171,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.model.tp_only_amax_red = True
     cfg.optimizer.adam_eps = 1e-05
     cfg.optimizer.min_lr = 0.0004
+    cfg.optimizer.min_lr = 0.0004
     cfg.train.check_optimizer_step_success = False
     cfg.train.skip_sync_grad_norm_across_mp = False
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
@@ -190,6 +195,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0006
+        cfg.optimizer.min_lr = 0.0006
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
@@ -206,6 +212,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.calculate_per_token_loss = False
         cfg.ddp.average_in_collective = True
         cfg.optimizer.lr = 0.0004
+        cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters=64
         cfg.scheduler.lr_warmup_iters = 128
@@ -225,6 +232,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.0004
+        cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 341
         cfg.validation.eval_iters=29
         cfg.scheduler.lr_warmup_iters = 256
@@ -237,6 +245,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.sequence_parallel = True
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.optimizer.lr = 0.00052
+        cfg.optimizer.min_lr = 0.00052
         cfg.validation.eval_interval = 192
         cfg.validation.eval_iters = 16
         cfg.scheduler.lr_warmup_iters = 32
@@ -295,7 +304,6 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.ddp.nccl_ub = True
     cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.optimizer.adam_eps = 1e-05
-    cfg.optimizer.min_lr = 0.0005
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
@@ -305,6 +313,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.model.cuda_graph_impl = "transformer_engine"
         cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
         cfg.optimizer.lr = 0.0004
+        cfg.optimizer.min_lr = 0.0005
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 192
