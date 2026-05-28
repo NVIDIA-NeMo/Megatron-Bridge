@@ -35,6 +35,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
 
+
 def gpt_oss_20b_pretrain_config_b300(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -79,7 +80,7 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-    cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
+    cfg.tokenizer.hf_tokenizer_kwargs = {"use_fast": True}
     cfg.tokenizer.vocab_size = 128256
     cfg.optimizer.adam_eps = 1e-05
     cfg.dataset.create_attention_mask = False
@@ -97,7 +98,7 @@ def gpt_oss_20b_pretrain_config_b300(
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 512
@@ -117,7 +118,7 @@ def gpt_oss_20b_pretrain_config_b300(
     # 64 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0006
         cfg.optimizer.min_lr = 0.0006
         cfg.validation.eval_interval = 384
@@ -136,6 +137,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 512
 
     return cfg
+
 
 def gpt_oss_20b_pretrain_config_gb200(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
@@ -182,7 +184,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-    cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
+    cfg.tokenizer.hf_tokenizer_kwargs = {"use_fast": True}
     cfg.tokenizer.vocab_size = 128256
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
@@ -199,7 +201,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0006
         cfg.optimizer.min_lr = 0.0006
         cfg.validation.eval_interval = 768
@@ -220,13 +222,13 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 768
-        cfg.validation.eval_iters=64
+        cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
         cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0006
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 341
@@ -241,7 +243,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 341
-        cfg.validation.eval_iters=29
+        cfg.validation.eval_iters = 29
         cfg.scheduler.lr_warmup_iters = 256
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
@@ -258,6 +260,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.scheduler.lr_warmup_iters = 32
 
     return cfg
+
 
 def gpt_oss_20b_pretrain_config_gb300(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
@@ -304,7 +307,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-    cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
+    cfg.tokenizer.hf_tokenizer_kwargs = {"use_fast": True}
     cfg.tokenizer.vocab_size = 128256
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
@@ -322,7 +325,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 512
@@ -340,12 +343,12 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.optimizer.min_lr = 0.0005
         cfg.validation.eval_interval = 512
         cfg.validation.eval_iters = 43
-        cfg.validation.eval_iters=43
+        cfg.validation.eval_iters = 43
         cfg.scheduler.lr_warmup_iters = 256
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
-        cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+        cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
         cfg.optimizer.lr = 0.0006
         cfg.optimizer.min_lr = 0.0006
         cfg.validation.eval_interval = 341
@@ -360,7 +363,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 341
-        cfg.validation.eval_iters=29
+        cfg.validation.eval_iters = 29
         cfg.scheduler.lr_warmup_iters = 256
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
@@ -377,6 +380,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 32
 
     return cfg
+
 
 def gpt_oss_20b_pretrain_config_vr200(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
@@ -403,7 +407,7 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.model.attention_backend = "auto"
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn","moe_router","moe_preprocess"]
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.model.cuda_graph_warmup_steps = 1
     cfg.model.fused_single_qkv_rope = True
     cfg.model.moe_aux_loss_coeff = 0.0
@@ -424,7 +428,7 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.fully_parallel_load = True
     cfg.checkpoint.load_optim = False
-    cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
+    cfg.tokenizer.hf_tokenizer_kwargs = {"use_fast": True}
     cfg.tokenizer.vocab_size = 128256
     cfg.optimizer.adam_eps = 1e-05
     cfg.ddp.bucket_size = 768000000
@@ -460,6 +464,7 @@ def gpt_oss_20b_pretrain_config_vr200(
         cfg.scheduler.lr_warmup_iters = 64
 
     return cfg
+
 
 def gpt_oss_120b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
