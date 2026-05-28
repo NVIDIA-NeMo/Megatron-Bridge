@@ -45,6 +45,9 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
 
     cfg.model.moe_router_force_load_balancing = True
 
+    cfg.optimizer.optimizer_cuda_graph = True
+    cfg.checkpoint.save = None
+
 
 def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     """Apply defaults required by full-iteration CUDA graph capture with dropless MoE.
