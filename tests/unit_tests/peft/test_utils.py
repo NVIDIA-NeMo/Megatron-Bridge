@@ -741,7 +741,13 @@ class TestParallelLinearAdapter:
     def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
-        """Shared grouped-expert adapters should sum grads across EP before expert-DP sync."""
+        """Shared grouped-expert adapters must not drift across EP ranks.
+
+        A shared expert adapter is one logical weight used by every EP rank, but
+        MCore's expert DDP sync only covers expert-DP replicas. The EP grad hook
+        keeps EP>1 ranks from updating that shared adapter from different local
+        token subsets.
+        """
         mock_linear_in = Mock()
         mock_linear_out = Mock()
         mock_linear_in.weight = nn.Parameter(torch.ones(2, 2))
@@ -1068,7 +1074,13 @@ class TestGroupedExpertLinearAdapter:
         torch.testing.assert_close(adapter.linear_out.weight, old_style_state_dict["linear_out.weight"])
 
     def test_grouped_expert_linear_adapter_forward_calls_weight_modules_for_param_sync_hooks(self):
-        """Grouped expert weights should trigger DDP forward pre-hooks before direct weight use."""
+        """Grouped per-expert adapters must participate in training-time param gather.
+
+        With EP plus expert-DP, distributed optimizer param gather is driven by
+        DDP forward pre-hooks. The weight containers need to be called so live
+        training weights refresh during normal forwards, not only at forced
+        eval/checkpoint sync boundaries.
+        """
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -1112,7 +1124,12 @@ class TestGroupedExpertLinearAdapter:
         assert calls == ["linear_in", "linear_out"]
 
     def test_grouped_expert_linear_adapter_zero_token_batch_keeps_weight_grad_dependency(self):
-        """Empty local expert batches should still produce zero grads for DDP hooks."""
+        """Empty local expert batches should still produce zero grads for DDP hooks.
+
+        EP routing can leave a local grouped adapter with no tokens on a step.
+        The zero-sized output still needs a zero-valued dependency on the LoRA
+        weights so DDP sees ready gradients instead of leaving replicas stale.
+        """
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -1468,7 +1485,12 @@ class TestGroupedExpertLinearAdapter:
         assert adapter.linear_out.weight.partition_dim == 1
 
     def test_grouped_expert_linear_adapter_groups_as_expert_ddp_buffer_when_ep_enabled(self):
-        """MCore DDP should place per-expert adapter params in expert-parallel buckets."""
+        """Per-expert adapter params must sync on expert-DP, not dense DP.
+
+        EP plus DP replicates each local expert across expert-DP ranks. Marking
+        these params as expert-parallel keeps replicas for the same expert in
+        sync without mixing different EP-owned experts.
+        """
         from megatron.core.distributed.param_and_grad_buffer import group_params_for_buffers
 
         with (
