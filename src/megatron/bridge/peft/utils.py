@@ -1640,6 +1640,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         sharded_state_dict.update(linear_out_sd)
         return sharded_state_dict
 
+
 def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
     """Mark a weight as logically replicated across the intra-PP-stage group.
 
