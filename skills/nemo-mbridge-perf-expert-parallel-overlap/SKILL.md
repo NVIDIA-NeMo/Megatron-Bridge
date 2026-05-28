@@ -1,18 +1,19 @@
 ---
-name: perf-expert-parallel-overlap
+name: nemo-mbridge-perf-expert-parallel-overlap
 description: Validate and use MoE expert-parallel communication overlap in Megatron-Bridge, including overlap_moe_expert_parallel_comm, delay_wgrad_compute, and flex dispatcher backends such as DeepEP and HybridEP.
+license: Apache-2.0
 when_to_use: Enabling EP overlap to hide dispatch/combine latency, or tracing a throughput regression to an EP overlap config change; 'overlap_moe_expert_parallel_comm', 'delay_wgrad_compute', 'flex dispatcher', 'DeepEP overlap', 'HybridEP overlap'.
 ---
 
 # MoE Expert-Parallel Overlap Skill
 
 Stable docs: @docs/training/communication-overlap.md
-Card: @skills/perf-expert-parallel-overlap/card.yaml
+Card: @skills/nemo-mbridge-perf-expert-parallel-overlap/card.yaml
 
 ## References
 
 - Stable docs: @docs/training/communication-overlap.md
-- Structured metadata: @skills/perf-expert-parallel-overlap/card.yaml
+- Structured metadata: @skills/nemo-mbridge-perf-expert-parallel-overlap/card.yaml
 
 ## What It Is
 

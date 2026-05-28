@@ -40,9 +40,9 @@ skills/perf-tp-dp-comm-overlap/SKILL
 skills/perf-megatron-fsdp/SKILL
 skills/perf-sequence-packing/SKILL
 skills/perf-hierarchical-context-parallel/SKILL
-skills/perf-expert-parallel-overlap/SKILL
-skills/perf-moe-comm-overlap/SKILL
-skills/perf-activation-recompute/SKILL
+skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL
+skills/nemo-mbridge-perf-moe-comm-overlap/SKILL
+skills/nemo-mbridge-perf-activation-recompute/SKILL
 skills/perf-memory-tuning/SKILL
 skills/perf-moe-dispatcher-selection/SKILL
 skills/perf-moe-hardware-configs/SKILL
