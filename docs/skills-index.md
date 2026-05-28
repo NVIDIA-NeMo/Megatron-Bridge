@@ -43,9 +43,9 @@ skills/perf-hierarchical-context-parallel/SKILL
 skills/perf-expert-parallel-overlap/SKILL
 skills/perf-moe-comm-overlap/SKILL
 skills/perf-activation-recompute/SKILL
-skills/perf-memory-tuning/SKILL
-skills/perf-moe-dispatcher-selection/SKILL
-skills/perf-moe-hardware-configs/SKILL
+skills/nemo-mbridge-perf-memory-tuning/SKILL
+skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL
+skills/nemo-mbridge-perf-moe-hardware-configs/SKILL
 skills/perf-moe-long-context/SKILL
 skills/perf-moe-optimization-workflow/SKILL
 skills/perf-moe-vlm-training/SKILL
