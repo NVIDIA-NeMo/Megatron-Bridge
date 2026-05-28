@@ -768,6 +768,9 @@ class ParallelLinearAdapter(nn.Module):
         elif model_parallel_config.fp16:
             self.half()
 
+        if self._uses_grouped_expert_sharding():
+            self._register_shared_expert_grad_sync_hooks()
+
         # revert config change in case it is read elsewhere
         model_parallel_config.sequence_parallel = _sequence_parallel
         self.disable_sequence_parallel_comm = disable_sequence_parallel_comm
@@ -902,6 +905,27 @@ class ParallelLinearAdapter(nn.Module):
         """Return whether this shared adapter needs an explicit expert axis."""
 
         return self.is_expert and is_grouped_expert_linear(self.base_linear_name)
+
+    @staticmethod
+    def _allreduce_shared_expert_grad(grad: torch.Tensor) -> torch.Tensor:
+        """Sum shared expert adapter grads across EP before expert-DP reduction."""
+
+        if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+            return grad
+        ep_group = parallel_state.get_expert_model_parallel_group(check_initialized=False)
+        if ep_group is None or ep_group.size() <= 1:
+            return grad
+        # Megatron DDP still handles expert-DP reduction/scaling for these params.
+        torch.distributed.all_reduce(grad, group=ep_group)
+        return grad
+
+    def _register_shared_expert_grad_sync_hooks(self) -> None:
+        """Keep shared grouped-expert adapters synchronized across EP ranks."""
+
+        for module in (self.linear_in, self.linear_out):
+            weight = getattr(module, "weight", None)
+            if isinstance(weight, torch.Tensor) and weight.requires_grad:
+                weight.register_hook(self._allreduce_shared_expert_grad)
 
     def _expert_axis_info(self, sharded_offsets: Tuple) -> Tuple[int, int, int]:
         """Return the global expert-axis sharding metadata for this rank."""
@@ -1064,21 +1088,6 @@ class ParallelLinearAdapter(nn.Module):
             sharded_tensor.replica_id,
             flattened_range=sharded_tensor.flattened_range,
         )
-
-    @staticmethod
-    def _replace_extra_state(
-        state_dict: ShardedStateDict,
-        extra_state_dict: ShardedStateDict,
-        *,
-        keep_extra_state: bool,
-    ) -> None:
-        """Replace sharded extra-state entries with a single shared entry."""
-
-        extra_state_items = [(key, value) for key, value in extra_state_dict.items() if "_extra_state" in key]
-        for key in [k for k in state_dict if "_extra_state" in k]:
-            del state_dict[key]
-        if keep_extra_state:
-            state_dict.update(extra_state_items)
 
     def sharded_state_dict(
         self,

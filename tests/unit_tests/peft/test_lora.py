@@ -284,6 +284,34 @@ class TestLoRA:
             assert isinstance(layer["mlp"]["linear_fc1"], LinearAdapter)
             assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
 
+    def test_lora_grouped_expert_transform_uses_shared_adapter_by_default(self):
+        """Grouped expert linears should keep the cheaper shared adapter path by default."""
+        model = GroupedExpertModel()
+        lora = LoRA(target_modules=["linear_fc2"])
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=True,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_parallel_adapter,
+            patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_grouped_adapter,
+        ):
+            mock_parallel_adapter.return_value = nn.Identity()
+            transformed_model = lora(model, training=True)
+
+        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
+        assert isinstance(adapted, LoRALinear)
+        mock_parallel_adapter.assert_called_once()
+        mock_grouped_adapter.assert_not_called()
+
     def test_lora_grouped_expert_transform_can_use_per_expert_adapters(self):
         """Grouped expert linears should get one LoRA adapter per local expert when requested."""
         model = GroupedExpertModel()
