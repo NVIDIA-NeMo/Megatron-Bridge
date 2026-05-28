@@ -52,7 +52,7 @@ class WanDatasetConfig(DatasetProvider):
 
     path: Optional[Union[str, list]] = None
     seq_length: int = 1024
-    packing_buffer_size: int = 200
+    packing_buffer_size: Optional[int] = 200
     micro_batch_size: int = 1
     global_batch_size: int = 4
     num_workers: int = 16
@@ -66,10 +66,10 @@ class WanDatasetConfig(DatasetProvider):
     number_packed_samples: int = 1
     context_seq_len: int = 512
     context_embeddings_dim: int = 4096
+    cfg_dropout_prob: float = 0.0
+    null_context_path: Optional[str] = None
 
     def __post_init__(self):
-        if self.packing_buffer_size is None:
-            raise ValueError("WAN requires sequence packing: `packing_buffer_size` cannot be None.")
         self.sequence_length = self.seq_length
 
     def build_datasets(self, context: DatasetBuildContext):
@@ -105,6 +105,8 @@ class WanDatasetConfig(DatasetProvider):
             micro_batch_size=self.micro_batch_size,
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,
+            cfg_dropout_prob=self.cfg_dropout_prob,
+            null_context_path=self.null_context_path,
         )
         return real_cfg.build_datasets(context)
 
@@ -113,18 +115,25 @@ class WanDatasetConfig(DatasetProvider):
 class WanDataModuleConfig(DiffusionDataModuleConfig):  # noqa: D101
     path: str
     seq_length: int
-    packing_buffer_size: int
+    packing_buffer_size: Optional[int]
     micro_batch_size: int
     global_batch_size: int
     num_workers: int
     dataloader_type: str = "external"
+    cfg_dropout_prob: float = 0.0
+    null_context_path: Optional[str] = None
 
     def __post_init__(self):
         self.dataset = DiffusionDataModule(
             path=self.path,
             seq_length=self.seq_length,
             packing_buffer_size=self.packing_buffer_size,
-            task_encoder=WanTaskEncoder(seq_length=self.seq_length, packing_buffer_size=self.packing_buffer_size),
+            task_encoder=WanTaskEncoder(
+                seq_length=self.seq_length,
+                packing_buffer_size=self.packing_buffer_size,
+                cfg_dropout_prob=self.cfg_dropout_prob,
+                null_context_path=self.null_context_path,
+            ),
             micro_batch_size=self.micro_batch_size,
             global_batch_size=self.global_batch_size,
             num_workers=self.num_workers,

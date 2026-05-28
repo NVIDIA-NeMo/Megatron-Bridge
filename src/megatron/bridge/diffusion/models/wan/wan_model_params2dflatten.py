@@ -19,6 +19,7 @@ from typing import Dict, Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from diffusers.models.embeddings import Timesteps
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict
@@ -32,7 +33,7 @@ from megatron.core.utils import make_sharded_tensor_for_checkpoint
 from torch import Tensor
 
 from megatron.bridge.diffusion.models.common.dit_embeddings import ParallelTimestepEmbedding
-from megatron.bridge.diffusion.models.wan.wan_layer_spec import (
+from megatron.bridge.diffusion.models.wan.wan_layer_spec_params2dflatten import (
     get_wan_block_with_transformer_engine_spec as WanLayerWithAdaLNspec,
 )
 
@@ -52,7 +53,7 @@ def sinusoidal_embedding_1d(dim, position):  # noqa: D103
 
 
 class Head(nn.Module):  # noqa: D101
-    def __init__(self, dim, out_dim, patch_size, eps=1e-6):
+    def __init__(self, dim, out_dim, patch_size, eps=1e-6, muon_non_2d_params_mode: list = []):
         super().__init__()
         self.dim = dim
         self.out_dim = out_dim
@@ -64,8 +65,12 @@ class Head(nn.Module):  # noqa: D101
         self.norm = nn.LayerNorm(dim, elementwise_affine=False, eps=eps)
         self.head = nn.Linear(dim, out_dim)
 
-        # modulation
-        self.modulation = nn.Parameter(torch.randn(1, 2, dim) / dim**0.5)
+        # modulation: [2, dim] (2D, MUON-compatible) or original [1, 2, dim].
+        # Both produce [B, 2, dim] in forward via broadcasting with e.unsqueeze(1) [B, 1, dim].
+        if "modulation" in muon_non_2d_params_mode:
+            self.modulation = nn.Parameter(torch.randn(2, dim) / dim**0.5)
+        else:
+            self.modulation = nn.Parameter(torch.randn(1, 2, dim) / dim**0.5)
 
     def forward(self, x, e):
         r"""
@@ -76,6 +81,41 @@ class Head(nn.Module):  # noqa: D101
         e = (self.modulation + e.unsqueeze(1)).chunk(2, dim=1)
         x = self.head(self.norm(x) * (1 + e[1]) + e[0])
         return x
+
+
+class FlatConv3d(nn.Module):
+    """Conv3d whose weight is stored as a 2D matrix for MUON optimizer compatibility.
+
+    Numerically identical to nn.Conv3d(kernel_size=stride=patch_size) applied to a single
+    patch. The 2D weight [out_channels, in_channels * kD * kH * kW] can be reshaped back to
+    the standard 5D Conv3d shape [out_channels, in_channels, kD, kH, kW] for HF checkpoint
+    round-trips.
+
+    Because MUON only handles parameters with ndim == 2, this avoids the fallback to AdamW
+    that nn.Conv3d would otherwise trigger.
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: tuple[int, int, int]):
+        super().__init__()
+        kD, kH, kW = kernel_size
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        fan_in = in_channels * kD * kH * kW
+        # 2D weight: MUON handles this instead of AdamW
+        self.weight = nn.Parameter(torch.empty(out_channels, fan_in))
+        # Bias init matches nn.Conv3d default: uniform(-1/sqrt(fan_in), 1/sqrt(fan_in))
+        self.bias = nn.Parameter(torch.empty(out_channels))
+        nn.init.uniform_(self.bias, -1.0 / math.sqrt(fan_in), 1.0 / math.sqrt(fan_in))
+
+    def forward(self, x: Tensor) -> Tensor:
+        # x: [N, in_channels, kD, kH, kW] — same interface as nn.Conv3d with stride=kernel_size
+        return F.conv3d(
+            x,
+            self.weight.view(self.out_channels, self.in_channels, *self.kernel_size),
+            self.bias,
+            stride=self.kernel_size,
+        )
 
 
 class WanModel(VisionModule):
@@ -126,14 +166,27 @@ class WanModel(VisionModule):
         # these attributes are unused for images/videos, we just set because bridge training requires for LLMs
         self.share_embeddings_and_output_weights = False
 
+        # Which non-2D params to flatten to 2D for MUON compatibility.
+        # Supported values: "patch_embedding", "modulation".
+        # Set via model.muon_non_2d_params_mode=["patch_embedding","modulation"] in the recipe.
+        muon_non_2d_params_mode = config.muon_non_2d_params_mode
+
         ######################################
         ########## Wan architecture ##########
 
         # embeddings
         if self.pre_process:
-            self.patch_embedding = nn.Conv3d(
-                self.in_channels, self.config.hidden_size, kernel_size=self.patch_size, stride=self.patch_size
-            )
+            if "patch_embedding" in muon_non_2d_params_mode:
+                # FlatConv3d stores weight as 2D [hidden_size, in_c*pF*pH*pW] so MUON can optimize
+                # it. Numerically equivalent to nn.Conv3d(kernel_size=stride=patch_size).
+                # For HF checkpoint conversion: reshape weight ↔ [hidden_size, in_c, pF, pH, pW].
+                self.patch_embedding = FlatConv3d(
+                    self.in_channels, self.config.hidden_size, kernel_size=self.patch_size
+                )
+            else:
+                self.patch_embedding = nn.Conv3d(
+                    self.in_channels, self.config.hidden_size, kernel_size=self.patch_size, stride=self.patch_size
+                )
 
         self.text_embedding = nn.Sequential(
             nn.Linear(self.config.text_dim, self.config.crossattn_emb_size),
@@ -170,7 +223,13 @@ class WanModel(VisionModule):
 
         # output head
         if self.post_process:
-            self.head = Head(self.config.hidden_size, self.out_channels, self.patch_size, eps=1e-6)
+            self.head = Head(
+                self.config.hidden_size,
+                self.out_channels,
+                self.patch_size,
+                eps=1e-6,
+                muon_non_2d_params_mode=muon_non_2d_params_mode,
+            )
 
         # set attributes "average_gradients_across_tp_domain" for nn.Parameter objects
         # this is used for gradient averaging across TP domain with sequence parallelism
@@ -195,7 +254,8 @@ class WanModel(VisionModule):
         initialized with xavier_uniform_ via config.init_method set in __init__.
 
         - All plain nn.Linear: xavier_uniform_ weight, zeros bias
-        - patch_embedding (Conv3d): xavier_uniform_ on flattened weight
+        - patch_embedding (FlatConv3d): xavier_uniform_ directly on the 2D weight
+        - patch_embedding (nn.Conv3d): xavier_uniform_ on flattened weight
         - text_embedding linears: normal(std=0.02)  [matches original]
         - time_embedder linears + time_proj: normal(std=0.02)  [matches original]
         - head output linear: zeros weight
@@ -207,8 +267,11 @@ class WanModel(VisionModule):
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
 
-        # patch_embedding: Conv3d — flatten spatial dims before xavier
-        nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
+        # patch_embedding: FlatConv3d weight is already 2D; nn.Conv3d weight needs flattening first
+        if isinstance(self.patch_embedding, FlatConv3d):
+            nn.init.xavier_uniform_(self.patch_embedding.weight)
+        else:
+            nn.init.xavier_uniform_(self.patch_embedding.weight.flatten(1))
 
         # text_embedding: override to normal(std=0.02) matching original
         for m in self.text_embedding.modules():

@@ -37,7 +37,7 @@ def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
     batch = next(dataloader_iter)
     batch = {k: v.to(device="cuda", non_blocking=True) if torch.is_tensor(v) else v for k, v in batch.items()}
     # Construct packed sequence parameters
-    if ("seq_len_q" in batch) and ("seq_len_kv" in batch):
+    if qkv_format == "thd":
         zero = torch.zeros(1, dtype=torch.int32, device="cuda")
 
         cu_seqlens = batch["seq_len_q"].cumsum(dim=0).to(torch.int32)
@@ -69,8 +69,13 @@ def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
             ),
         }
 
-    # tranpose from "sbhd" to "bshd" to be compatible with flow matching pipeline
-    batch["video_latents"] = batch["video_latents"].transpose(0, 1)
+        # transpose from [seq_len, 1, D] (SBHD) to [1, seq_len, D] (BSHD)
+        # to be compatible with flow matching pipeline
+        batch["video_latents"] = batch["video_latents"].transpose(0, 1)
+    else:
+        # BSHD: _batch_bshd() already produces [n, max_seq_q, D]; no transpose needed.
+        # PackedSeqParams is not used for BSHD attention.
+        batch["packed_seq_params"] = None
 
     return batch
 

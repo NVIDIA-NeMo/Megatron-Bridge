@@ -382,6 +382,8 @@ class FlowInferencePipeline:  # noqa: D101
             contexts_null.append(context_null)
 
         # pad to context_max_len tokens, and stack to a tensor of shape [s, b, hidden]
+        # Note: in original Wan 2.1 github implementation (https://github.com/Wan-Video/Wan2.1/blob/main/wan/modules/model.py)
+        # the context is always padded to a fixed length of 512 tokens, and it pays attention to the all tokens (including padding tokens).
         contexts = [F.pad(context, (0, 0, 0, context_max_len - context.shape[0])) for context in contexts]
         contexts_null = [
             F.pad(context_null, (0, 0, 0, context_max_len - context_null.shape[0])) for context_null in contexts_null
