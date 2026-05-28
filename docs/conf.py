@@ -57,8 +57,6 @@ exclude_patterns = [
     "_build",
     "Thumbs.db",
     ".DS_Store",
-    "skills/mbridge-linting-and-formatting/SKILL.md",
-    "skills/mbridge-parity-testing/SKILL.md",
 ]
 
 suppress_warnings = [

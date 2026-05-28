@@ -6,10 +6,16 @@
 
 ## Skills
 
-The `skills/` directory contains structured guides for common tasks (adding
-models, running experiments, debugging multi-node jobs, performance tuning,
-etc.). **Always read the relevant `SKILL.md` before starting any task it
-covers — skills are mandatory context, not optional background reading.**
+Agent skills live in two locations:
+
+- `skills/` contains public, product-use skills for running and tuning
+  Megatron Bridge workflows.
+- `.agents/contributor-skills/` contains contributor-facing repo workflow
+  skills such as model support, dependency bumps, CI, testing, and code style.
+
+All skills are symlinked into `.claude/skills/` for unified discovery.
+**Always read the relevant `SKILL.md` before starting any task it covers —
+skills are mandatory context, not optional background reading.**
 
 **Workflow — mandatory order for every task:**
 1. **Pull information first.** Read the commit, PR, error log, file, or
@@ -60,7 +66,7 @@ skill keyword — infer it from the artifact you read.
 
 Lint and format are enforced by pre-commit hooks (ruff). See @ruff.toml for
 the authoritative rules. For judgment calls not covered by tooling, see
-@skills/mbridge-linting-and-formatting/SKILL.md. Key points the linter cannot catch:
+@.agents/contributor-skills/mbridge-linting-and-formatting/SKILL.md. Key points the linter cannot catch:
 
 - Type hints required on all public API functions (`X | None`, not `Optional[X]`)
 - Google-style docstrings on public classes and functions

@@ -144,7 +144,7 @@ MODEL_ID=<org>/<representative-model-name>
 
 Report dummy-model results carefully: they validate model construction and training mechanics, not pretrained weight compatibility.
 
-For VLMs, the generic GSM8K PPO run is text-only. It can validate the language-side Bridge provider and external-loop wrapping, but it does not prove image/video preprocessing or vision encoder execution. Pair it with the VLM conversion/inference tests from @skills/mbridge-adding-model-support/tests-and-examples.md, or use a verl multimodal training command if one exists for the model family.
+For VLMs, the generic GSM8K PPO run is text-only. It can validate the language-side Bridge provider and external-loop wrapping, but it does not prove image/video preprocessing or vision encoder execution. Pair it with the VLM conversion/inference tests from @.agents/contributor-skills/mbridge-adding-model-support/tests-and-examples.md, or use a verl multimodal training command if one exists for the model family.
 
 For MoE models, Level 0 with `COMMON_EP=1` still catches many provider and PEFT issues, but it does not stress expert parallel routing. Add a Level 2 run with expert parallelism when the change touches expert layout, dispatcher config, router replay, or expert tensor parallelism.
 
@@ -163,7 +163,7 @@ uv run python -m pytest -q \
   <model-specific-test-paths>
 ```
 
-For a new model family, also run the relevant conversion or roundtrip test from the model's PR. See @skills/mbridge-adding-model-support/tests-and-examples.md for model-test patterns.
+For a new model family, also run the relevant conversion or roundtrip test from the model's PR. See @.agents/contributor-skills/mbridge-adding-model-support/tests-and-examples.md for model-test patterns.
 
 Minimum Bridge-side evidence for a new model/provider:
 

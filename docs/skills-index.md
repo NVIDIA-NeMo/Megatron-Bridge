@@ -1,33 +1,20 @@
-# Agent Skills Reference
+# Public Agent Skills Reference
 
-Operational guides and validated knowledge cards for Megatron Bridge.
+Public operational guides and validated knowledge cards for Megatron Bridge.
 
-Each skill contains enablement snippets, code anchors, constraints, pitfalls,
-and verification steps.
+Each public skill contains enablement snippets, code anchors, constraints,
+pitfalls, and verification steps.
+
+Contributor-facing repo workflow skills live under
+`.agents/contributor-skills/` and are intentionally outside the public catalog
+sync path.
 
 ```{toctree}
 :caption: Getting Started
 :maxdepth: 1
 
-skills/mbridge-build-and-dependency/SKILL
-skills/mbridge-bump-dependency/SKILL
-skills/mbridge-testing/SKILL
-skills/mbridge-cicd/SKILL
 skills/mbridge-mlm-bridge-training/SKILL
 skills/mbridge-recipe-recommender/SKILL
-```
-
-```{toctree}
-:caption: Adding Model Support
-:maxdepth: 1
-
-skills/mbridge-adding-model-support/SKILL
-skills/mbridge-adding-model-support/llm-patterns
-skills/mbridge-adding-model-support/vlm-patterns
-skills/mbridge-adding-model-support/recipe-patterns
-skills/mbridge-adding-model-support/tests-and-examples
-skills/mbridge-verl-e2e-testing/SKILL
-skills/mbridge-nemo-rl-e2e-testing/SKILL
 ```
 
 ```{toctree}

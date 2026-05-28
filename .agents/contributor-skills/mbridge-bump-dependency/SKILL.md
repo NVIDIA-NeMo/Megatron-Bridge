@@ -30,9 +30,9 @@ For pure dep additions/removals without a CI loop, the
 Read first, then follow the steps below:
 
 - @CONTRIBUTING.md — PR title/label policy, DCO sign-off
-- @skills/mbridge-build-and-dependency/SKILL.md — `uv lock` mechanics, container choice
-- @skills/mbridge-cicd/SKILL.md — how `copy-pr-bot` and `/ok to test` work
-- @skills/mbridge-testing/SKILL.md — `active/` vs `flaky/` directory layout, `git mv` quarantine recipe
+- @.agents/contributor-skills/mbridge-build-and-dependency/SKILL.md — `uv lock` mechanics, container choice
+- @.agents/contributor-skills/mbridge-cicd/SKILL.md — how `copy-pr-bot` and `/ok to test` work
+- @.agents/contributor-skills/mbridge-testing/SKILL.md — `active/` vs `flaky/` directory layout, `git mv` quarantine recipe
 
 ## Step 1 — Worktree and edit
 
@@ -64,7 +64,7 @@ moving tip; use a full SHA for reproducibility. TE branches use
 ## Step 2 — Regenerate the lockfile
 
 Run `uv lock` inside the project container per
-@skills/mbridge-build-and-dependency/SKILL.md "Regenerating uv.lock". Then
+@.agents/contributor-skills/mbridge-build-and-dependency/SKILL.md "Regenerating uv.lock". Then
 confirm only the intended packages moved:
 
 ```bash
@@ -80,7 +80,7 @@ revert them.
 ## Step 3 — Commit and push
 
 Sign-off + signed-commit + PR title format per @CONTRIBUTING.md and
-@skills/mbridge-cicd/SKILL.md "Commit and PR Workflow". For a bump:
+@.agents/contributor-skills/mbridge-cicd/SKILL.md "Commit and PR Workflow". For a bump:
 
 ```bash
 git add pyproject.toml uv.lock
@@ -133,7 +133,7 @@ To update the PR title or body later, use `gh api -X PATCH
 
 ## Step 5 — Trigger CI on the exact SHA
 
-Trigger mechanics live in @skills/mbridge-cicd/SKILL.md "How CI Is Triggered".
+Trigger mechanics live in @.agents/contributor-skills/mbridge-cicd/SKILL.md "How CI Is Triggered".
 For this loop the rule is simple: **on every new SHA you push, post
 `/ok to test $(git rev-parse HEAD)`** as a PR comment, even if your
 commits are signed. This guarantees the run targets the SHA you actually
@@ -261,7 +261,7 @@ When a `JOB <name> -> failure` event fires:
    Quarantining a real regression hides the very signal the bump PR
    exists to surface.
 
-2. **Move the launch script to `flaky/`** per @skills/mbridge-testing/SKILL.md
+2. **Move the launch script to `flaky/`** per @.agents/contributor-skills/mbridge-testing/SKILL.md
    "Moving a Test to Flaky". Map a CI job name to its launch script via:
 
    - prefix `gb200_` → `gb200/active/`, otherwise `h100/active/`

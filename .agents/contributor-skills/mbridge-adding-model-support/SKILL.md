@@ -146,8 +146,8 @@ directory — keep them namespaced under the `modeling_<model>` prefix.
 3. **Model class** — Combine vision encoder + language decoder.
 
 For detailed patterns, see:
-- VLM: @skills/mbridge-adding-model-support/vlm-patterns.md
-- LLM: @skills/mbridge-adding-model-support/llm-patterns.md
+- VLM: @.agents/contributor-skills/mbridge-adding-model-support/vlm-patterns.md
+- LLM: @.agents/contributor-skills/mbridge-adding-model-support/llm-patterns.md
 
 ### Critical: `tie_word_embeddings` for VLMs
 
@@ -316,7 +316,7 @@ Each recipe file defines functions for each model size + training mode:
 - `<model>_<size>_peft_config()` — LoRA/DoRA parameter-efficient fine-tuning
 - `<model>_<size>_pretrain_config()` — Pretraining (LLM only, usually)
 
-For detailed recipe patterns, see @skills/mbridge-adding-model-support/recipe-patterns.md.
+For detailed recipe patterns, see @.agents/contributor-skills/mbridge-adding-model-support/recipe-patterns.md.
 
 Recipes are the right API surface for model-size presets. Do not create or
 export size-specific provider subclasses for recipes; either call
@@ -350,7 +350,7 @@ tests/functional_tests/models/<model>/
 └── test_<model>_provider.py    # compare_provider_configs (optional)
 ```
 
-For detailed test patterns, see @skills/mbridge-adding-model-support/tests-and-examples.md.
+For detailed test patterns, see @.agents/contributor-skills/mbridge-adding-model-support/tests-and-examples.md.
 
 ## Phase 5: Docs and Examples
 

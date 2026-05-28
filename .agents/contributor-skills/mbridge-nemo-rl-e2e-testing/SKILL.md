@@ -101,7 +101,7 @@ uv run python -m pytest -q \
   <model-specific-test-paths>
 ```
 
-For a new model family, also run the relevant conversion or roundtrip test from the model's PR. See @skills/mbridge-adding-model-support/tests-and-examples.md for model-test patterns.
+For a new model family, also run the relevant conversion or roundtrip test from the model's PR. See @.agents/contributor-skills/mbridge-adding-model-support/tests-and-examples.md for model-test patterns.
 
 Minimum Bridge-side evidence for a new model/provider:
 

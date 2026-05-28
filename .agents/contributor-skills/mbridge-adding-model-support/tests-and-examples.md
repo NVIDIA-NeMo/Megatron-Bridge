@@ -286,7 +286,7 @@ policy-to-generation weight transfer, delta compression, or vLLM loading. Add PE
 Megatron generation, parallelism stress, learning-signal, or architecture-specific variants when
 the change requires that coverage.
 
-Read @skills/mbridge-nemo-rl-e2e-testing/SKILL.md for the full workflow, environment setup, metric checks,
+Read @.agents/contributor-skills/mbridge-nemo-rl-e2e-testing/SKILL.md for the full workflow, environment setup, metric checks,
 failure triage, and reporting format.
 
 ## Optional External verl E2E
@@ -297,7 +297,7 @@ compatibility. This is not required for every model-support change. Start with t
 Bridge path, LoRA enabled, and Megatron DDP selected, then add save/resume, parallelism stress,
 Megatron-FSDP, or architecture-specific variants when the change requires that coverage.
 
-Read @skills/mbridge-verl-e2e-testing/SKILL.md for the full workflow and reporting format.
+Read @.agents/contributor-skills/mbridge-verl-e2e-testing/SKILL.md for the full workflow and reporting format.
 
 ## Documentation Page
 

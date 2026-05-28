@@ -55,7 +55,7 @@ jobs:
 
             Mandatory workflow — never skip or reorder:
             1. Read the PR diff first (gh pr diff).
-            2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
+            2. Based on the changed files and areas, identify relevant skills from .claude/skills/<name>/SKILL.md.
                Common skill names: mbridge-linting-and-formatting, mbridge-testing, mbridge-cicd, mbridge-build-and-dependency,
                mbridge-adding-model-support, mbridge-perf-activation-recompute, mbridge-perf-memory-tuning, etc.
             3. Read the SKILL.md files for all relevant areas using the Read tool.
@@ -118,7 +118,7 @@ jobs:
       prompt: |
         Mandatory workflow — never skip or reorder:
         1. Read the PR diff first.
-        2. Based on the changed files and areas, identify relevant skills from skills/<name>/SKILL.md.
+        2. Based on the changed files and areas, identify relevant skills from .claude/skills/<name>/SKILL.md.
            Common skill names: mbridge-linting-and-formatting, mbridge-testing, mbridge-cicd, mbridge-build-and-dependency,
            mbridge-adding-model-support, mbridge-perf-activation-recompute, mbridge-perf-memory-tuning, etc.
         3. Read the SKILL.md files for all relevant areas using the Read tool.

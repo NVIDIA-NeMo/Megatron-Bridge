@@ -142,7 +142,7 @@ Hardware runners: H100 uses `nemo-ci-{azure,aws}-gpu-x2`; GB200 uses `nemo-ci-gc
 
 | Component | Path |
 |---|---|
-| Matrix generation (H100) | @.github/workflows/mbridge-cicd-main.yml job `generate-test-matrix` |
-| Matrix generation (GB200) | @.github/workflows/mbridge-cicd-main.yml job `generate-gb200-test-matrix` |
+| Matrix generation (H100) | @.github/workflows/cicd-main.yml job `generate-test-matrix` |
+| Matrix generation (GB200) | @.github/workflows/cicd-main.yml job `generate-gb200-test-matrix` |
 | Test runner action | @.github/actions/test-template/action.yml |
 | Launch scripts root | `tests/functional_tests/launch_scripts/` |
