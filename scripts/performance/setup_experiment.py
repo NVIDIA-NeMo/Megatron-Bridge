@@ -64,18 +64,41 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 
 
 def _filter_run_script_args(argv: List[str]) -> List[str]:
-    """Drop launcher-only args before forwarding argv to the rank-local script."""
+    """Drop launcher-only args before forwarding argv to the rank-local script.
+
+    --additional_slurm_params takes a single value and is launcher-only.
+    --custom_bash_cmds / -cb is nargs='*' and contains shell metacharacters
+    (semicolons separating commands) that bash word-splits if forwarded
+    verbatim — eating subsequent run_recipe.py args. Drop the flag and
+    every following non-flag token until the next argument that starts
+    with '-'.
+    """
+    LAUNCHER_ONLY_SINGLE_VALUE = {"--additional_slurm_params"}
+    LAUNCHER_ONLY_NARGS_STAR = {"--custom_bash_cmds", "-cb"}
+
     filtered_args = []
     skip_next = False
+    swallow_until_flag = False
 
     for arg in argv:
+        if swallow_until_flag:
+            if arg.startswith("-"):
+                swallow_until_flag = False
+                # fall through to normal handling for this flag
+            else:
+                continue
         if skip_next:
             skip_next = False
             continue
-        if arg == "--additional_slurm_params":
+        if arg in LAUNCHER_ONLY_SINGLE_VALUE:
             skip_next = True
             continue
-        if arg.startswith("--additional_slurm_params="):
+        if any(arg.startswith(f"{f}=") for f in LAUNCHER_ONLY_SINGLE_VALUE):
+            continue
+        if arg in LAUNCHER_ONLY_NARGS_STAR:
+            swallow_until_flag = True
+            continue
+        if any(arg.startswith(f"{f}=") for f in LAUNCHER_ONLY_NARGS_STAR):
             continue
         filtered_args.append(arg)
 
