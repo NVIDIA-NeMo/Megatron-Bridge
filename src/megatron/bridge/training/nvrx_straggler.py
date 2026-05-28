@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
 import logging
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 
@@ -22,19 +23,22 @@ from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.utils.import_utils import MISSING_NVRX_MSG
 
 
-try:
-    # Try the newer version first (nvidia-resiliency-ext >= 0.4)
-    import nvidia_resiliency_ext.attribution.straggler as straggler
-
-    HAVE_NVRX = True
-except (ImportError, ModuleNotFoundError):
+def _import_nvrx_straggler() -> tuple[Any, bool, BaseException | None]:
+    """Import the NVRx straggler module with compatibility fallback."""
     try:
-        # Fall back to the older version (nvidia-resiliency-ext < 0.4)
-        import nvidia_resiliency_ext.straggler as straggler
+        # Try the newer version first (nvidia-resiliency-ext >= 0.4)
+        return importlib.import_module("nvidia_resiliency_ext.attribution.straggler"), True, None
+    except Exception as attribution_exc:
+        try:
+            # Fall back to the older version (nvidia-resiliency-ext < 0.4).
+            # TODO: remove this guard when the NVRx dev package no longer imports the
+            # LangChain endpoint stack from nvidia_resiliency_ext.attribution.straggler.
+            return importlib.import_module("nvidia_resiliency_ext.straggler"), True, None
+        except Exception as legacy_exc:
+            return None, False, legacy_exc if isinstance(attribution_exc, ImportError) else attribution_exc
 
-        HAVE_NVRX = True
-    except (ImportError, ModuleNotFoundError):
-        HAVE_NVRX = False
+
+straggler, HAVE_NVRX, _NVRX_IMPORT_ERROR = _import_nvrx_straggler()
 
 
 class NVRxStragglerDetectionManager:
@@ -52,7 +56,7 @@ class NVRxStragglerDetectionManager:
             ValueError: If invalid configuration is provided.
         """
         if not HAVE_NVRX:
-            raise ImportError(MISSING_NVRX_MSG)
+            raise ImportError(MISSING_NVRX_MSG) from _NVRX_IMPORT_ERROR
         self.config = config
         self.logger = logging.getLogger(config.logger_name)
         self.initialized = False

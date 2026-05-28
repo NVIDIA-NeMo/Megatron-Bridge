@@ -16,13 +16,14 @@ import os
 import re
 import types
 import warnings
+from inspect import signature
 from pathlib import Path
 
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core.transformer.module import Float16Module
-from megatron.core.utils import get_batch_on_this_cp_rank
+from megatron.core.utils import get_batch_on_this_cp_rank as _mcore_get_batch_on_this_cp_rank
 
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_local_rank,
@@ -39,6 +40,27 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
+
+
+_GET_BATCH_ON_THIS_CP_RANK_PARAMS = signature(_mcore_get_batch_on_this_cp_rank).parameters
+
+
+def get_batch_on_this_cp_rank(
+    batch: dict,
+    *,
+    is_hybrid_cp: bool = False,
+    cp_group: torch.distributed.ProcessGroup | None = None,
+    hybrid_cp_group_func=None,
+):
+    """Call MCore's CP batch slicer across supported signatures."""
+    kwargs = {}
+    if "is_hybrid_cp" in _GET_BATCH_ON_THIS_CP_RANK_PARAMS:
+        kwargs["is_hybrid_cp"] = is_hybrid_cp
+    if "cp_group" in _GET_BATCH_ON_THIS_CP_RANK_PARAMS:
+        kwargs["cp_group"] = cp_group
+    if "hybrid_cp_group_func" in _GET_BATCH_ON_THIS_CP_RANK_PARAMS:
+        kwargs["hybrid_cp_group_func"] = hybrid_cp_group_func
+    return _mcore_get_batch_on_this_cp_rank(batch, **kwargs)
 
 
 def get_rank_safe() -> int:

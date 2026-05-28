@@ -21,7 +21,8 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["megatron.bridge", "megatron.bridge.*"]
+include = ["megatron", "megatron.bridge", "megatron.bridge.*"]
+namespaces = true
 
 [project]
 name = "megatron-bridge"

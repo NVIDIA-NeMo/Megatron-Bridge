@@ -450,16 +450,16 @@ _patch_te_grouped_linear_single_grouped_weight()
 
 
 def _patch_mtp_checkpointed_forward_padding_mask():
-    """Guard for MCore commits where MTP recompute drops the padding_mask parameter.
+    """Guard for MCore commits where MTP recompute padding-mask signatures drift.
 
     MCore main commit 4c636026 passes ``padding_mask`` from
     ``MultiTokenPredictionLayer.forward`` into ``_checkpointed_forward``, but
-    that helper's signature does not accept the kwarg yet. Keep the Bridge bump
-    working without editing the MCore submodule. This is a no-op once upstream
-    MCore adds the parameter.
+    that helper's signature does not accept the kwarg yet. Newer dev commits
+    remove ``padding_mask`` from the projection helper as well. Keep Bridge
+    working across both API shapes without editing the MCore submodule.
 
-    TODO: Remove once MCore's ``MultiTokenPredictionLayer._checkpointed_forward``
-    accepts ``padding_mask`` directly.
+    TODO: Remove once supported MCore versions no longer need Bridge compatibility
+    for MTP ``padding_mask`` recompute signature drift.
     """
     try:
         from megatron.core import parallel_state, tensor_parallel
@@ -477,8 +477,16 @@ def _patch_mtp_checkpointed_forward_padding_mask():
         return
     if "hidden_states" not in _checkpointed_forward_params:
         return
-    if "padding_mask" not in inspect.signature(MultiTokenPredictionLayer._proj_and_transformer_layer).parameters:
-        return
+
+    _proj_forward_params = inspect.signature(MultiTokenPredictionLayer._proj_and_transformer_layer).parameters
+    _proj_forward_accepts_padding_mask = "padding_mask" in _proj_forward_params or any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in _proj_forward_params.values()
+    )
+
+    def _proj_and_transformer_layer_with_optional_padding_mask(self, **kwargs):
+        if not _proj_forward_accepts_padding_mask:
+            kwargs.pop("padding_mask", None)
+        return self._proj_and_transformer_layer(**kwargs)
 
     def _checkpointed_forward(
         self,
@@ -508,7 +516,8 @@ def _patch_mtp_checkpointed_forward_padding_mask():
             rotary_pos_sin,
             sequence_len_offset,
         ):
-            return self._proj_and_transformer_layer(
+            return _proj_and_transformer_layer_with_optional_padding_mask(
+                self,
                 hidden_states=hidden_states,
                 decoder_input=decoder_input,
                 attention_mask=attention_mask,
@@ -573,7 +582,8 @@ def _patch_mtp_checkpointed_forward_padding_mask():
                 "recompute_method == 'block' is not supported for MTP yet. Skipping recompute.",
                 stacklevel=2,
             )
-            outputs = self._proj_and_transformer_layer(
+            outputs = _proj_and_transformer_layer_with_optional_padding_mask(
+                self,
                 hidden_states=hidden_states,
                 decoder_input=decoder_input,
                 attention_mask=attention_mask,

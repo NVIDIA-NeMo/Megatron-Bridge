@@ -72,6 +72,7 @@ def mock_nvidia_resiliency_ext():
 from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.training.nvrx_straggler import (
     NVRxStragglerDetectionManager,
+    _import_nvrx_straggler,
     check_nvrx_straggler_detection,
     safe_shutdown_nvrx_straggler_manager,
 )
@@ -125,6 +126,42 @@ class TestNVRxStragglerDetectionConfig:
         assert config.profiling_interval == 1
         assert config.logger_name == "megatron.bridge.NVRxStragglerDetection"
 
+    def test_import_nvrx_straggler_falls_back_after_attribution_import_error(self):
+        """Test NVRx straggler fallback when attribution import raises a runtime error."""
+        fallback_straggler = MagicMock()
+
+        def mock_import_module(module_name):
+            if module_name == "nvidia_resiliency_ext.attribution.straggler":
+                raise RuntimeError("transitive dependency import failed")
+            if module_name == "nvidia_resiliency_ext.straggler":
+                return fallback_straggler
+            raise AssertionError(f"Unexpected module import: {module_name}")
+
+        with patch("megatron.bridge.training.nvrx_straggler.importlib.import_module", side_effect=mock_import_module):
+            imported_straggler, have_nvrx, import_error = _import_nvrx_straggler()
+
+        assert imported_straggler is fallback_straggler
+        assert have_nvrx is True
+        assert import_error is None
+
+    def test_import_nvrx_straggler_defers_runtime_import_error(self):
+        """Test NVRx straggler import records runtime import failures for deferred errors."""
+        runtime_error = RuntimeError("transitive dependency import failed")
+
+        def mock_import_module(module_name):
+            if module_name == "nvidia_resiliency_ext.attribution.straggler":
+                raise runtime_error
+            if module_name == "nvidia_resiliency_ext.straggler":
+                raise ModuleNotFoundError("legacy straggler module missing")
+            raise AssertionError(f"Unexpected module import: {module_name}")
+
+        with patch("megatron.bridge.training.nvrx_straggler.importlib.import_module", side_effect=mock_import_module):
+            imported_straggler, have_nvrx, import_error = _import_nvrx_straggler()
+
+        assert imported_straggler is None
+        assert have_nvrx is False
+        assert import_error is runtime_error
+
     def test_custom_config(self):
         """Test custom configuration values."""
         config = NVRxStragglerDetectionConfig(
@@ -176,7 +213,11 @@ class TestNVRxStragglerDetectionManager:
     @pytest.fixture
     def mock_straggler_module(self):
         """Mock the nvidia_resiliency_ext.straggler module."""
-        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
+        with (
+            patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler,
+            patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", True),
+            patch("megatron.bridge.training.nvrx_straggler._NVRX_IMPORT_ERROR", None),
+        ):
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()
             yield mock_straggler
@@ -593,7 +634,11 @@ class TestIntegration:
     def test_full_workflow(self, full_config):
         """Test the complete workflow from initialization to shutdown."""
         # Use the same mocking pattern as other tests for consistency
-        with patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler:
+        with (
+            patch("megatron.bridge.training.nvrx_straggler.straggler") as mock_straggler,
+            patch("megatron.bridge.training.nvrx_straggler.HAVE_NVRX", True),
+            patch("megatron.bridge.training.nvrx_straggler._NVRX_IMPORT_ERROR", None),
+        ):
             # Setup mocks
             mock_straggler.Detector = Mock()
             mock_straggler.CallableId = Mock()
