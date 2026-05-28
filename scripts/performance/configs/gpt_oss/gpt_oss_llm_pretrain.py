@@ -52,6 +52,10 @@ def gpt_oss_20b_pretrain_config_b300(
 
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
+    precision_config.fp4_param = False
+    precision_config.fp4_param_gather = False
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
@@ -152,7 +156,10 @@ def gpt_oss_20b_pretrain_config_gb200(
         config_variant=config_variant,
     )
     precision_config = get_precision_config(precision)
-
+    precision_config.fp4_param = False
+    precision_config.fp4_param_gather = False
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
@@ -214,7 +221,6 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
-        cfg.mixed_precision.fp8_param_gather = True
         cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
         cfg.model.cuda_graph_warmup_steps = 5
         cfg.model.calculate_per_token_loss = False
@@ -278,7 +284,10 @@ def gpt_oss_20b_pretrain_config_gb300(
 
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
-
+    precision_config.fp4_param = False
+    precision_config.fp4_param_gather = False
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
         set_gpt_oss_common_configs(cfg)
@@ -395,7 +404,10 @@ def gpt_oss_20b_pretrain_config_vr200(
         config_variant=config_variant,
     )
     precision_config = get_precision_config(precision)
-
+    precision_config.fp4_param = False
+    precision_config.fp4_param_gather = False
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
