@@ -247,6 +247,8 @@ omit = [
     "/opt/Megatron-Bridge/*.py",
     "*_ray.py",
 ]
+
+[tool.coverage.paths]
 source = [
     ".",
     "/opt/Megatron-Bridge/",
