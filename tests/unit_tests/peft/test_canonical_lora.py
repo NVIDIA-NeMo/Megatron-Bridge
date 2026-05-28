@@ -461,7 +461,6 @@ class TestCanonicalLoRA:
     def test_canonical_lora_normalize_moe_lora_aligns_expert_dim_to_expert_tp(self):
         """Normalized canonical expert fc1 adapters should round up to the expert-TP granularity when needed."""
         model = MoEMegatronStyleModel(moe_router_topk=8)
-        # Expert-TP sizing is supplied by the mock config/PG path, not canonical_lora.parallel_state.
         for module in model.modules():
             if hasattr(module, "config"):
                 module.config.expert_tensor_parallel_size = 2

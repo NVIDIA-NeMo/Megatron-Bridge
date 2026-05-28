@@ -246,7 +246,17 @@ class TEFusedLoRALinear(LoRALinear):
             "tensor_parallel_group": None,
             "sequence_parallel": False,
         }
-        # LoRA.transform only selects the TE op-fuser path when TP size is 1.
+        # TODO: Restore once TP is supported
+        # tensor_parallel_size = parallel_state.get_tensor_model_parallel_world_size()
+        # if tensor_parallel_size > 1:
+        #     kwargs["tensor_parallel_group"] = parallel_state.get_tensor_model_parallel_group()
+        #     if isinstance(self.to_wrap, (te.Linear, te.LayerNormLinear)):
+        #         kwargs["tensor_parallel_mode"] = self.to_wrap.parallel_mode
+        #         kwargs["sequence_parallel"] = self.to_wrap.sequence_parallel
+        #     if kwargs["tensor_parallel_mode"] == "row":
+        #         kwargs["in_features"] *= tensor_parallel_size
+        #     elif kwargs["tensor_parallel_mode"] == "column":
+        #         kwargs["out_features"] *= tensor_parallel_size
 
         # wgrad accumulation fusion
         accumulate_into_main_grad = False
