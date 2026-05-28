@@ -1,13 +1,14 @@
 ---
-name: perf-moe-optimization-workflow
+name: nemo-mbridge-perf-moe-optimization-workflow
 description: Systematic workflow for MoE training optimization in Megatron Bridge, based on the Megatron-Core MoE paper. Covers the Three Walls framework, parallel folding, recompute strategy, dispatcher choice, and CUDA-graph bring-up.
+license: Apache-2.0
 when_to_use: Full MoE throughput tuning sweep, or diagnosing a MoE throughput regression after a commit or config change; 'optimize MoE throughput', 'MoE perf tuning', 'Three Walls', 'memory wall', 'communication wall', 'compute wall'.
 ---
 
 # MoE Training Optimization Workflow
 
 Stable docs: @docs/training/moe-optimization.md
-Card: @skills/perf-moe-optimization-workflow/card.yaml
+Card: @skills/nemo-mbridge-perf-moe-optimization-workflow/card.yaml
 Source: [Scalable Training of MoE Models with Megatron Core](https://arxiv.org/abs/2603.07685)
 
 ## Quick Reference
@@ -130,7 +131,7 @@ or tightly controlled static-shape experiments.
 
 Related references:
 
-- @skills/perf-cuda-graphs/SKILL.md
+- @skills/mbridge-perf-cuda-graphs/SKILL.md
 - @docs/training/cuda-graphs.md
 - @docs/training/activation-recomputation.md
 

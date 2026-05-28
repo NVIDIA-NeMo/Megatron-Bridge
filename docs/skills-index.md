@@ -46,9 +46,9 @@ skills/perf-activation-recompute/SKILL
 skills/perf-memory-tuning/SKILL
 skills/perf-moe-dispatcher-selection/SKILL
 skills/perf-moe-hardware-configs/SKILL
-skills/perf-moe-long-context/SKILL
-skills/perf-moe-optimization-workflow/SKILL
-skills/perf-moe-vlm-training/SKILL
+skills/nemo-mbridge-perf-moe-long-context/SKILL
+skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL
+skills/nemo-mbridge-perf-moe-vlm-training/SKILL
 skills/perf-cpu-offloading/SKILL
 ```
 

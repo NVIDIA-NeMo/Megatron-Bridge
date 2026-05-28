@@ -1,13 +1,14 @@
 ---
-name: perf-moe-vlm-training
+name: nemo-mbridge-perf-moe-vlm-training
 description: Practical guidance for training MoE VLMs in Megatron Bridge. Compares FSDP and 3D-parallel approaches, using rounded lessons from Qwen3-VL, Qwen3-Next, and other multimodal experiments.
+license: Apache-2.0
 when_to_use: Training MoE VLMs, or investigating a commit that caused MoE VLM training failure or OOM; 'MoE VLM', 'multimodal MoE', 'Qwen3-VL training', 'FSDP vs 3D-parallel for VLM', 'MoE vision language model'.
 ---
 
 # MoE VLM Training
 
 Stable docs: @docs/training/moe-optimization.md
-Card: @skills/perf-moe-vlm-training/card.yaml
+Card: @skills/nemo-mbridge-perf-moe-vlm-training/card.yaml
 
 ## FSDP vs 3D Parallel
 
