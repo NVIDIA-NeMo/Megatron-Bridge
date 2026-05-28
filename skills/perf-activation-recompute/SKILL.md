@@ -28,7 +28,7 @@ how many layers via `recompute_num_layers`.
 
 1. **Set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` first** — most
    borderline OOMs are caused by memory fragmentation, not capacity. This
-   fixes it at zero cost. See @skills/perf-memory-tuning/SKILL.md.
+   fixes it at zero cost. See @skills/nemo-mbridge-perf-memory-tuning/SKILL.md.
 2. Start with `recompute_granularity=selective`, `recompute_modules=[core_attn]`
    (often already the default in recipes).
 3. Add `layernorm` to recompute modules — nearly free compute-wise but saves
@@ -128,7 +128,7 @@ Key takeaways:
   (hidden=28672) is expensive to recompute
 - Combining `mlp` + `core_attn` is slightly worse than `mlp` alone
 - For this workload, the actual OOM fix was `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
-  (memory fragmentation, not capacity). See @skills/perf-memory-tuning/SKILL.md.
+  (memory fragmentation, not capacity). See @skills/nemo-mbridge-perf-memory-tuning/SKILL.md.
 
 ## Code Anchors
 

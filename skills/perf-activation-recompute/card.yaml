@@ -92,7 +92,7 @@ recommended_path:
   first_try: "recompute_granularity=selective, recompute_modules=[core_attn]"
   if_still_oom: "add layernorm (cheap) or mlp (expensive but saves ~3 GB)"
   last_resort: "recompute_granularity=full, recompute_method=uniform"
-  alternative: "see skills/perf-memory-tuning/ for VPP tuning and other memory strategies"
+  alternative: "see skills/nemo-mbridge-perf-memory-tuning/ for VPP tuning and other memory strategies"
 expected_metric_change:
   - metric: peak_memory
     direction: down
