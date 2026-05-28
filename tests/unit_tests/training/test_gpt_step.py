@@ -115,9 +115,17 @@ class TestGetBatch:
     def test_middle_pp_stage_preserves_full_packed_batch(self, monkeypatch):
         """Middle PP stages load full tensors when packed metadata is active."""
         _set_middle_pp_stage(monkeypatch)
+
+        def _preserve_batch_for_cp(batch, *, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None):
+            assert is_hybrid_cp is False
+            assert cp_group is not None
+            assert cp_group.size() == 1
+            assert hybrid_cp_group_func is None
+            return batch
+
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
-            lambda batch, cp_group: batch,
+            _preserve_batch_for_cp,
         )
 
         tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]]))
