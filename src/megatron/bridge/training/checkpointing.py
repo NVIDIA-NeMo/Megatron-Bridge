@@ -934,27 +934,27 @@ def save_checkpoint(
             pg_collection=pg_collection,
         )
 
-    # De-interleave GLU weights/biases if model has interleaved weights in memory
-    # Checkpoints are always saved in contiguous format
-    from megatron.core.utils import get_model_config
-
-    model_interleave_size = None
-    try:
-        if len(model) > 0:
-            model_config = get_model_config(model[0])
-            model_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
-    except Exception:
-        model_interleave_size = getattr(cfg.model, "moe_mlp_glu_interleave_size", None)
-
-    model_is_interleaved = model_interleave_size is not None
-    if model_is_interleaved:
+    # De-interleave GLU weights/biases if model has interleaved weights in memory.
+    # Checkpoints are always saved in contiguous format.
+    routed_interleave_size, shared_interleave_size = _get_model_glu_interleave_sizes(model, cfg)
+    if routed_interleave_size is not None:
         print_rank_0(
-            f"[GLU Interleaving] De-interleaving GLU weights on save: model has interleaved weights (size={model_interleave_size}), converting to contiguous format for checkpoint"
+            "[GLU Interleaving] De-interleaving routed/dense GLU weights on save: "
+            f"model has interleaved weights (size={routed_interleave_size}), "
+            "converting to contiguous format for checkpoint"
         )
+    if shared_interleave_size is not None:
+        print_rank_0(
+            "[GLU Interleaving] De-interleaving shared expert GLU weights on save: "
+            f"model has interleaved weights (size={shared_interleave_size}), "
+            "converting to contiguous format for checkpoint"
+        )
+    if routed_interleave_size is not None or shared_interleave_size is not None:
         if len(model) == 1:
-            state_dict["model"] = _process_state_dict_for_glu_interleaving(
+            state_dict["model"] = _process_state_dict_for_model_glu_interleaving(
                 state_dict["model"],
-                model_interleave_size,
+                routed_interleave_size,
+                shared_interleave_size,
                 interleave=False,
                 use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
             )
@@ -962,9 +962,10 @@ def save_checkpoint(
             for i in range(len(model)):
                 model_key = "model%d" % i
                 if model_key in state_dict:
-                    state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                    state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
                         state_dict[model_key],
-                        model_interleave_size,
+                        routed_interleave_size,
+                        shared_interleave_size,
                         interleave=False,
                         use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                     )
@@ -984,10 +985,10 @@ def save_checkpoint(
                     "FSDP DTensor format requires a model, but model list is empty. "
                     "This can happen with low_memory_save=True. Use ckpt_format='torch_dist' instead."
                 )
-            state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
 
             # FSDP DTensor checkpoint save path using PyTorch Distributed Checkpointing
             if ckpt_cfg.async_save and HAVE_NVRX:
+                state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model[0])
                 planner = torch.distributed.checkpoint.DefaultSavePlanner()
                 coordinator_rank = 0
                 fs_storage_writer = FileSystemWriterAsync(
@@ -1006,15 +1007,12 @@ def save_checkpoint(
                 )
                 async_save_request = get_save_and_finalize_callbacks(fs_storage_writer, save_state_dict_ret)
             else:
-                if MultiStorageClientFeature.is_enabled():
-                    from multistorageclient.contrib.torch.filesystem import MultiStorageFileSystemWriter
-
-                    fs_storage_writer = MultiStorageFileSystemWriter(checkpoint_name)
-                else:
-                    fs_storage_writer = torch.distributed.checkpoint.FileSystemWriter(checkpoint_name)
-                torch.distributed.checkpoint.save(
-                    state_dict=state_dict,
-                    storage_writer=fs_storage_writer,
+                save_fsdp_dtensor_checkpoint(
+                    checkpoint_name,
+                    state_dict,
+                    cfg=cfg,
+                    model=model[0],
+                    barrier=False,
                 )
         else:
             # torch_dist and other formats using MCore distributed checkpointing
@@ -1215,6 +1213,8 @@ def save_checkpoint(
             )
 
         def mlflow_finalize_fn() -> None:
+            if not state.cfg.logger.mlflow_log_artifacts:
+                return
             mlflow_utils.on_save_checkpoint_success(
                 checkpoint_name,
                 save_dir,
@@ -1673,6 +1673,56 @@ def preprocess_fsdp_dtensor_state_dict(cfg, raw_state_dict: dict[str, Any], mode
     return state_dict
 
 
+def save_fsdp_dtensor_checkpoint(
+    checkpoint_path: str | Path,
+    state_dict: dict[str, Any],
+    *,
+    cfg: Any,
+    model: MegatronModule,
+    storage_writer: Any | None = None,
+    barrier: bool = True,
+) -> Any:
+    """Preprocess and save an FSDP DTensor checkpoint with PyTorch DCP.
+
+    This exposes the Bridge preprocessing used by the trainer save path for
+    external trainers that already own the training loop.
+
+    Args:
+        checkpoint_path: Directory to write when ``storage_writer`` is not provided.
+        state_dict: Raw FSDP DTensor state dict to save.
+        cfg: Configuration object passed through to FSDP DTensor preprocessing.
+        model: Model chunk used to infer FSDP DTensor preprocessing rules.
+        storage_writer: Optional PyTorch Distributed Checkpoint storage writer.
+        barrier: Whether to run a distributed barrier after the save.
+
+    Returns:
+        The value returned by ``torch.distributed.checkpoint.save``.
+    """
+    if not HAVE_MEGATRON_FSDP:
+        raise RuntimeError("Megatron FSDP is required but not available for saving FSDP DTensor checkpoints.")
+
+    preprocessed_state_dict = preprocess_fsdp_dtensor_state_dict(cfg, state_dict, model)
+    fs_storage_writer = storage_writer
+    if fs_storage_writer is None:
+        fs_storage_writer = _create_fsdp_dtensor_storage_writer(str(checkpoint_path))
+
+    result = torch.distributed.checkpoint.save(
+        state_dict=preprocessed_state_dict,
+        storage_writer=fs_storage_writer,
+    )
+    if barrier and torch.distributed.is_initialized():
+        torch.distributed.barrier()
+    return result
+
+
+def _create_fsdp_dtensor_storage_writer(checkpoint_path: str) -> Any:
+    if MultiStorageClientFeature.is_enabled():
+        from multistorageclient.contrib.torch.filesystem import MultiStorageFileSystemWriter
+
+        return MultiStorageFileSystemWriter(checkpoint_path)
+    return torch.distributed.checkpoint.FileSystemWriter(checkpoint_path)
+
+
 def _load_model_weights_from_checkpoint(
     checkpoint_path: str,
     model: list[MegatronModule],
@@ -1843,22 +1893,36 @@ def _interleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.
     return x.reshape(shape)
 
 
-def _is_swiglu_fc1_checkpoint_key(key: str) -> bool:
-    """True for MoE local-expert SwiGLU linear_fc1 weights/biases (not shared_experts).
+def _is_swiglu_fc1_checkpoint_key(
+    key: str,
+    *,
+    include_routed_experts: bool = True,
+    include_shared_experts: bool = False,
+    include_dense: bool = True,
+) -> bool:
+    """True for selected SwiGLU linear_fc1 weights/biases.
 
-    Dense ``mlp.linear_fc1`` is included only when ``USE_ACT_FUSION_FOR_DENSE=1`` (same block layout
-    as fused experts); otherwise dense weights stay contiguous and must not be permuted.
+    Dense ``mlp.linear_fc1`` is included only when ``USE_ACT_FUSION_FOR_DENSE=1``.
+    Shared experts are enabled separately by ``moe_shared_expert_glu_interleave_size``
+    before this helper is called.
     """
     is_swiglu_fc1_dense = (
-        os.environ.get("USE_ACT_FUSION_FOR_DENSE", "0") == "1"
+        include_dense
+        and os.environ.get("USE_ACT_FUSION_FOR_DENSE", "0") == "1"
         and "experts" not in key
         and "mlp" in key
         and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
     )
-    is_swiglu_fc1_moe = (
-        "shared_experts" not in key and "experts" in key and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+    is_swiglu_fc1_shared = (
+        include_shared_experts and "shared_experts" in key and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
     )
-    return is_swiglu_fc1_dense or is_swiglu_fc1_moe
+    is_swiglu_fc1_moe = (
+        include_routed_experts
+        and "shared_experts" not in key
+        and "experts" in key
+        and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+    )
+    return is_swiglu_fc1_dense or is_swiglu_fc1_shared or is_swiglu_fc1_moe
 
 
 def _apply_glu_interleave_to_tensor_data(tensor: torch.Tensor, interleave_size: int, interleave: bool) -> torch.Tensor:
@@ -1875,6 +1939,9 @@ def _process_state_dict_for_glu_interleaving(
     interleave_size: int,
     interleave: bool = True,
     use_megatron_fsdp: bool = False,
+    include_routed_experts: bool = True,
+    include_shared_experts: bool = False,
+    include_dense: bool = True,
 ) -> dict[str, Any]:
     """Process GLU weights and biases in state dict for interleaving or de-interleaving.
 
@@ -1900,7 +1967,12 @@ def _process_state_dict_for_glu_interleaving(
     for key in sorted_keys:
         # Get model state.
         value = model_state_dict[key]
-        if not _is_swiglu_fc1_checkpoint_key(key):
+        if not _is_swiglu_fc1_checkpoint_key(
+            key,
+            include_routed_experts=include_routed_experts,
+            include_shared_experts=include_shared_experts,
+            include_dense=include_dense,
+        ):
             processed_state_dict[key] = value
             continue
 
@@ -1962,6 +2034,70 @@ def _process_state_dict_for_glu_interleaving(
         )
 
     return processed_state_dict
+
+
+def _get_model_glu_interleave_sizes(
+    model: list[MegatronModule], cfg: ConfigContainer
+) -> tuple[Optional[int], Optional[int]]:
+    """Return routed/dense and shared-expert GLU interleave sizes for this model."""
+    from megatron.core.utils import get_model_config
+
+    model_config = getattr(cfg, "model", None)
+    try:
+        if len(model) > 0:
+            model_config = get_model_config(model[0])
+    except Exception:
+        pass
+
+    routed_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
+    shared_interleave_size = getattr(model_config, "moe_shared_expert_glu_interleave_size", None)
+    return routed_interleave_size, shared_interleave_size
+
+
+def _process_state_dict_for_model_glu_interleaving(
+    model_state_dict: dict[str, Any],
+    routed_interleave_size: Optional[int],
+    shared_interleave_size: Optional[int],
+    interleave: bool = True,
+    use_megatron_fsdp: bool = False,
+) -> dict[str, Any]:
+    """Apply GLU interleaving transforms for each model component that needs them."""
+    if (
+        routed_interleave_size is not None
+        and shared_interleave_size is not None
+        and routed_interleave_size == shared_interleave_size
+    ):
+        return _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            routed_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=True,
+            include_shared_experts=True,
+            include_dense=True,
+        )
+
+    if routed_interleave_size is not None:
+        model_state_dict = _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            routed_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=True,
+            include_shared_experts=False,
+            include_dense=True,
+        )
+    if shared_interleave_size is not None:
+        model_state_dict = _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            shared_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=False,
+            include_shared_experts=True,
+            include_dense=False,
+        )
+    return model_state_dict
 
 
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
@@ -2333,39 +2469,39 @@ def _load_checkpoint_from_path(
 
     # Load model weights
     if not skip_load_to_model_and_opt:
-        # Process state dict for GLU interleaving if needed
-        # Assumption: checkpoints are always in contiguous (non-interleaved) format
-        from megatron.core.utils import get_model_config
+        # Process state dict for GLU interleaving if needed.
+        # Assumption: checkpoints are always in contiguous (non-interleaved) format.
+        routed_interleave_size, shared_interleave_size = _get_model_glu_interleave_sizes(model, cfg)
 
-        # Check if model expects interleaved weights - get from model config
-        model_interleave_size = None
-        try:
-            if len(model) > 0:
-                model_config = get_model_config(model[0])
-                model_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
-        except Exception:
-            # Fallback to cfg if model config not available
-            model_interleave_size = getattr(cfg.model, "moe_mlp_glu_interleave_size", None)
-        model_expects_interleaving = model_interleave_size is not None
-
-        # Interleave if model expects interleaved weights (checkpoints are always contiguous)
-        if model_expects_interleaving:
+        # Interleave if model expects interleaved weights.
+        if routed_interleave_size is not None:
             print_rank_0(
-                f"[GLU Interleaving] Interleaving GLU weights on load: model expects interleaving (size={model_interleave_size}), converting checkpoint from contiguous to interleaved format"
+                "[GLU Interleaving] Interleaving routed/dense GLU weights on load: "
+                f"model expects interleaving (size={routed_interleave_size}), "
+                "converting checkpoint from contiguous to interleaved format"
             )
+        if shared_interleave_size is not None:
+            print_rank_0(
+                "[GLU Interleaving] Interleaving shared expert GLU weights on load: "
+                f"model expects interleaving (size={shared_interleave_size}), "
+                "converting checkpoint from contiguous to interleaved format"
+            )
+        if routed_interleave_size is not None or shared_interleave_size is not None:
             if len(model) == 1:
-                state_dict["model"] = _process_state_dict_for_glu_interleaving(
+                state_dict["model"] = _process_state_dict_for_model_glu_interleaving(
                     state_dict["model"],
-                    model_interleave_size,
+                    routed_interleave_size,
+                    shared_interleave_size,
                     use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                 )
             else:
                 for i in range(len(model)):
                     model_key = "model%d" % i
                     if model_key in state_dict:
-                        state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                        state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
                             state_dict[model_key],
-                            model_interleave_size,
+                            routed_interleave_size,
+                            shared_interleave_size,
                             use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                         )
 
@@ -2705,51 +2841,6 @@ def _resolve_checkpoint_iteration(load_dir: str | None, ckpt_step_override: int 
     return iteration, release
 
 
-def _transpose_first_dim(
-    t: torch.Tensor, num_splits: int, num_splits_first: bool, model: torch.nn.Module
-) -> torch.Tensor:
-    """Helper function to transpose first dimension of tensor t."""
-    input_shape = t.size()
-    # We use a self_attention module but the values extracted aren't
-    # specific to self attention so should work for cross attention as well
-    while hasattr(model, "module"):
-        model = model.module
-    attention_module = model.language_model.encoder.layers[0].self_attention
-    hidden_size_per_attention_head = attention_module.hidden_size_per_attention_head
-    num_attention_heads_per_partition = attention_module.num_attention_heads_per_partition
-    if num_splits_first:
-        """[num_splits * np * hn, h]
-        -->(view) [num_splits, np, hn, h]
-        -->(tranpose) [np, num_splits, hn, h]
-        -->(view) [np * num_splits * hn, h]"""
-
-        intermediate_shape = (
-            num_splits,
-            num_attention_heads_per_partition,
-            hidden_size_per_attention_head,
-        ) + input_shape[1:]
-
-        t = t.view(*intermediate_shape)
-        t = t.transpose(0, 1).contiguous()
-    else:
-        """[np * hn * num_splits, h]
-        -->(view) [np, hn, num_splits, h]
-        -->(tranpose) [np, num_splits, hn, h]
-        -->(view) [np * num_splits * hn, h]"""
-
-        intermediate_shape = (
-            num_attention_heads_per_partition,
-            hidden_size_per_attention_head,
-            num_splits,
-        ) + input_shape[1:]
-
-        t = t.view(*intermediate_shape)
-        t = t.transpose(1, 2).contiguous()
-    t = t.view(*input_shape)
-
-    return t
-
-
 def _get_non_persistent_iteration(
     non_persistent_global_dir: str,
     non_persistent_ckpt_type: Optional[Literal["global", "local"]] = None,
@@ -2927,11 +3018,11 @@ def _load_base_checkpoint(
                 pg_collection=pg_collection,
             )
         elif ckpt_format == "fsdp_dtensor":
-            return _load_fsdp_dtensor_base_checkpoint(
+            return load_fsdp_dtensor_checkpoint(
                 load_dir,
                 ckpt_cfg,
-                rank0,
-                sharded_state_dict,
+                rank0=rank0,
+                sharded_state_dict=sharded_state_dict,
                 iteration=None,
                 release=False,
                 checkpoint_path_override=checkpoint_path,
@@ -3016,13 +3107,13 @@ def _load_base_checkpoint(
             pg_collection=pg_collection,
         )
     elif ckpt_format == "fsdp_dtensor":
-        return _load_fsdp_dtensor_base_checkpoint(
+        return load_fsdp_dtensor_checkpoint(
             load_dir,
             ckpt_cfg,
-            rank0,
-            sharded_state_dict,
-            iteration,
-            release,
+            rank0=rank0,
+            sharded_state_dict=sharded_state_dict,
+            iteration=iteration,
+            release=release,
             checkpointing_context=checkpointing_context,
             cfg=cfg,
         )
@@ -3030,18 +3121,18 @@ def _load_base_checkpoint(
         raise NotImplementedError(f"Checkpoint format {ckpt_format} not supported")
 
 
-def _load_fsdp_dtensor_base_checkpoint(
+def load_fsdp_dtensor_checkpoint(
     load_dir: str,
     ckpt_cfg: CheckpointConfig,
     rank0: bool,
     sharded_state_dict: Optional[dict[str, Any]],
     iteration: Optional[int],
-    release: bool,
+    release: bool = False,
     checkpoint_path_override: Optional[str] = None,
     checkpointing_context: Optional[dict[str, Any]] = None,
-    cfg: Optional[ConfigContainer] = None,
+    cfg: Any | None = None,
 ) -> tuple[dict[str, Any], str, bool, CheckpointType]:
-    """Load the base state_dict from an FSDP DTensor checkpoint.
+    """Load the base state dict from an FSDP DTensor checkpoint.
 
     This function preprocesses the state dict (handling expert parameters, SWiGLU, FP8)
     before loading from checkpoint, matching the preprocessing applied during save.

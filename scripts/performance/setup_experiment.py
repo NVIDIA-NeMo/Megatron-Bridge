@@ -63,6 +63,25 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
+def _filter_run_script_args(argv: List[str]) -> List[str]:
+    """Drop launcher-only args before forwarding argv to the rank-local script."""
+    filtered_args = []
+    skip_next = False
+
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == "--additional_slurm_params":
+            skip_next = True
+            continue
+        if arg.startswith("--additional_slurm_params="):
+            continue
+        filtered_args.append(arg)
+
+    return filtered_args
+
+
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
     """Check if training is finished.
 
@@ -488,7 +507,7 @@ def main(
         path=str(run_script_path),
         entrypoint="python",
         env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
-        args=list(sys.argv[1:]),
+        args=_filter_run_script_args(sys.argv[1:]),
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
@@ -550,7 +569,11 @@ def main(
 
             # Raise on terminal failures only if training didn't actually complete —
             # a job can time out due to hanging on teardown after all steps finished.
-            if terminal_failure and not is_finished_experiment:
+            # Long-convergence runs are intentionally split across walltime slices
+            # (slurm cancels at TIME_LIMIT, we resume from the saved checkpoint on
+            # the next outer-loop iteration), so the walltime-cap path is expected
+            # and must not raise.
+            if terminal_failure and not is_finished_experiment and not is_long_convergence_run:
                 raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(

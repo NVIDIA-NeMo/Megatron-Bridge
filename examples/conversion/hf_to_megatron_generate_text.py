@@ -128,6 +128,23 @@ def main(args) -> None:
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
 
+        # Read pipeline layout from checkpoint for PP > 1
+        if pp > 1:
+            from pathlib import Path
+
+            import yaml
+
+            ckpt_path = Path(args.megatron_model_path)
+            for candidate in [ckpt_path, *ckpt_path.glob("iter_*")]:
+                rc = candidate / "run_config.yaml"
+                if rc.exists():
+                    with open(rc) as f:
+                        cfg = yaml.safe_load(f)
+                    saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
+                    if isinstance(saved_layout, list):
+                        model_provider.pipeline_model_parallel_layout = saved_layout
+                        break
+
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
