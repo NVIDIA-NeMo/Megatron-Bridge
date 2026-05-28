@@ -60,7 +60,7 @@ skill keyword — infer it from the artifact you read.
 
 Lint and format are enforced by pre-commit hooks (ruff). See @ruff.toml for
 the authoritative rules. For judgment calls not covered by tooling, see
-@skills/linting-and-formatting/SKILL.md. Key points the linter cannot catch:
+@skills/mbridge-linting-and-formatting/SKILL.md. Key points the linter cannot catch:
 
 - Type hints required on all public API functions (`X | None`, not `Optional[X]`)
 - Google-style docstrings on public classes and functions

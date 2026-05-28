@@ -9,59 +9,59 @@ and verification steps.
 :caption: Getting Started
 :maxdepth: 1
 
-skills/build-and-dependency/SKILL
-skills/bump-dependency/SKILL
-skills/testing/SKILL
-skills/cicd/SKILL
-skills/mlm-bridge-training/SKILL
-skills/recipe-recommender/SKILL
+skills/mbridge-build-and-dependency/SKILL
+skills/mbridge-bump-dependency/SKILL
+skills/mbridge-testing/SKILL
+skills/mbridge-cicd/SKILL
+skills/mbridge-mlm-bridge-training/SKILL
+skills/mbridge-recipe-recommender/SKILL
 ```
 
 ```{toctree}
 :caption: Adding Model Support
 :maxdepth: 1
 
-skills/adding-model-support/SKILL
-skills/adding-model-support/llm-patterns
-skills/adding-model-support/vlm-patterns
-skills/adding-model-support/recipe-patterns
-skills/adding-model-support/tests-and-examples
-skills/verl-e2e-testing/SKILL
-skills/nemo-rl-e2e-testing/SKILL
+skills/mbridge-adding-model-support/SKILL
+skills/mbridge-adding-model-support/llm-patterns
+skills/mbridge-adding-model-support/vlm-patterns
+skills/mbridge-adding-model-support/recipe-patterns
+skills/mbridge-adding-model-support/tests-and-examples
+skills/mbridge-verl-e2e-testing/SKILL
+skills/mbridge-nemo-rl-e2e-testing/SKILL
 ```
 
 ```{toctree}
 :caption: Performance Techniques
 :maxdepth: 1
 
-skills/perf-parallelism-strategies/SKILL
-skills/perf-cuda-graphs/SKILL
-skills/perf-tp-dp-comm-overlap/SKILL
-skills/perf-megatron-fsdp/SKILL
-skills/perf-sequence-packing/SKILL
-skills/perf-hierarchical-context-parallel/SKILL
-skills/perf-expert-parallel-overlap/SKILL
-skills/perf-moe-comm-overlap/SKILL
-skills/perf-activation-recompute/SKILL
-skills/perf-memory-tuning/SKILL
-skills/perf-moe-dispatcher-selection/SKILL
-skills/perf-moe-hardware-configs/SKILL
-skills/perf-moe-long-context/SKILL
-skills/perf-moe-optimization-workflow/SKILL
-skills/perf-moe-vlm-training/SKILL
-skills/perf-cpu-offloading/SKILL
+skills/mbridge-perf-parallelism-strategies/SKILL
+skills/mbridge-perf-cuda-graphs/SKILL
+skills/mbridge-perf-tp-dp-comm-overlap/SKILL
+skills/mbridge-perf-megatron-fsdp/SKILL
+skills/mbridge-perf-sequence-packing/SKILL
+skills/mbridge-perf-hierarchical-context-parallel/SKILL
+skills/mbridge-perf-expert-parallel-overlap/SKILL
+skills/mbridge-perf-moe-comm-overlap/SKILL
+skills/mbridge-perf-activation-recompute/SKILL
+skills/mbridge-perf-memory-tuning/SKILL
+skills/mbridge-perf-moe-dispatcher-selection/SKILL
+skills/mbridge-perf-moe-hardware-configs/SKILL
+skills/mbridge-perf-moe-long-context/SKILL
+skills/mbridge-perf-moe-optimization-workflow/SKILL
+skills/mbridge-perf-moe-vlm-training/SKILL
+skills/mbridge-perf-cpu-offloading/SKILL
 ```
 
 ```{toctree}
 :caption: Cluster & Debugging
 :maxdepth: 1
 
-skills/multi-node-slurm/SKILL
+skills/mbridge-multi-node-slurm/SKILL
 ```
 
 ```{toctree}
 :caption: Resiliency
 :maxdepth: 1
 
-skills/resiliency/SKILL
+skills/mbridge-resiliency/SKILL
 ```

@@ -451,7 +451,7 @@ A refactor PR that renames something without updating all references will break 
 
 ## ✨ Code Quality
 
-- Follow the existing code style and conventions (see [skills/code-style/SKILL.md](skills/code-style/SKILL.md))
+- Follow the existing code style and conventions (see [skills/mbridge-linting-and-formatting/SKILL.md](skills/mbridge-linting-and-formatting/SKILL.md))
 - Write tests for new features
 - Update documentation to reflect your changes
 - Ensure all tests pass before submitting a PR
