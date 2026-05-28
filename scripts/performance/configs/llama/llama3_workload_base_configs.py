@@ -464,6 +464,81 @@ LLAMA3_8B_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
 )
 
 
+# Llama3 8B pretrain - MLPERF (MLPerf v6.0 reference parity, GB200/GB300 only).
+# Recipe-level parity knobs applied by set_llama3_mlperf_parity_overrides() in llama3_llm_pretrain.py.
+
+# ---- MLPERF_V1: 8 GPU ----
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    num_gpus=8,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    micro_batch_size=2,
+    global_batch_size=16,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_MX_MLPERF_V1 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_NVFP4_MLPERF_V1 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1
+
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_CS_MLPERF_V1 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_MX_MLPERF_V1 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4_MLPERF_V1 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V1
+
+
+# ---- MLPERF_V2: 16-64 GPU (mid shape; FP8 uses CP=2, NVFP4 uses CP=1; gbs scales w/ num_gpus at runtime) ----
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V2 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    num_gpus=32,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=2,
+    micro_batch_size=1,
+    global_batch_size=16,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_MX_MLPERF_V2 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V2
+
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_NVFP4_MLPERF_V2 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    num_gpus=32,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    micro_batch_size=1,
+    global_batch_size=32,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_CS_MLPERF_V2 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V2
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_MX_MLPERF_V2 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V2
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4_MLPERF_V2 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_NVFP4_MLPERF_V2
+
+
+# ---- MLPERF_V3: 128 GPU (sub shape: tp2 pp1 cp4 mbs1 gbs16) ----
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3 = replace(
+    BASE_LLAMA3_8B_CONFIG,
+    num_gpus=128,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=4,
+    micro_batch_size=1,
+    global_batch_size=16,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
+)
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_MX_MLPERF_V3 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3
+# NVFP4 V3: no canonical MLPerf v6.0 reference NVFP4 config at 128 GPU; use FP8 shape as fallback
+LLAMA3_8B_PRETRAIN_CONFIG_GB300_NVFP4_MLPERF_V3 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3
+
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_CS_MLPERF_V3 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_FP8_MX_MLPERF_V3 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3
+LLAMA3_8B_PRETRAIN_CONFIG_GB200_NVFP4_MLPERF_V3 = LLAMA3_8B_PRETRAIN_CONFIG_GB300_FP8_CS_MLPERF_V3
+
+
 LLAMA3_8B_PRETRAIN_CONFIG_H100_BF16_V1 = replace(
     BASE_LLAMA3_8B_CONFIG,
     context_parallel_size=2,
