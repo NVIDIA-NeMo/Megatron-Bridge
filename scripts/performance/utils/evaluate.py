@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import argparse
+import itertools
 import json
 import logging
 import math
@@ -82,9 +83,12 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         handles.append(open(log_path))
 
     try:
-        for lines in zip(*handles):
-            for line in lines:
-                all_lines.append(line)
+        # itertools.chain (not zip): zip stops at the shortest file, which
+        # silently truncates the dataset when retries leave short failed-attempt
+        # logs alongside a long successful one. Concatenate every line from
+        # every file instead — regex matches don't depend on line order.
+        for line in itertools.chain.from_iterable(handles):
+            all_lines.append(line)
     finally:
         for f in handles:
             f.close()
