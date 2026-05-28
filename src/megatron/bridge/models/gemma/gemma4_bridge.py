@@ -149,15 +149,16 @@ class Gemma4Bridge(MegatronModelBridge):
             provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
 
         # MoE configuration
-        provider.num_moe_experts = getattr(hf_config, "num_experts", 128)
-        provider.moe_router_topk = getattr(hf_config, "top_k_experts", 8)
-        provider.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", 704)
+        if getattr(hf_config, "enable_moe_block", False):
+            provider.num_moe_experts = getattr(hf_config, "num_experts", 128)
+            provider.moe_router_topk = getattr(hf_config, "top_k_experts", 8)
+            provider.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", 704)
 
-        # Dense MLP intermediate → shared expert
-        provider.moe_shared_expert_intermediate_size = getattr(hf_config, "intermediate_size", 2112)
-        provider.moe_shared_expert_overlap = False  # Must be False: Gemma4 needs separate pre/post norms
-        provider.moe_shared_expert_gate = False
-        provider.moe_layer_freq = 1  # all layers are MoE
+            # Dense MLP intermediate → shared expert
+            provider.moe_shared_expert_intermediate_size = getattr(hf_config, "intermediate_size", 2112)
+            provider.moe_shared_expert_overlap = False  # Must be False: Gemma4 needs separate pre/post norms
+            provider.moe_shared_expert_gate = False
+            provider.moe_layer_freq = 1  # all layers are MoE
 
         # Logit softcapping
         provider.final_logit_softcapping = getattr(hf_config, "final_logit_softcapping", 30.0)
