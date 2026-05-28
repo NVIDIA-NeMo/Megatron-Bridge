@@ -1042,7 +1042,9 @@ class ParallelLinearAdapter(nn.Module):
             return grad
         if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
             return grad
-        # Megatron DDP still handles expert-DP reduction/scaling for these params.
+        # Sum across EP first; MCore expert DDP then reduces across expert-DP
+        # and scales expert buffers by 1 / dp_cp_group.size(), i.e. the full
+        # EP x expert-DP data-parallel world, not just expert-DP.
         torch.distributed.all_reduce(grad, group=self.ep_group)
         return grad
 
@@ -1237,6 +1239,10 @@ class ParallelLinearAdapter(nn.Module):
             Sharded state dictionary for distributed checkpointing.
         """
         sharded_state_dict = {}
+        # Shared grouped-expert adapters have one 2D weight per EP rank, but the
+        # checkpoint must expose the global expert axis so EP changes can reshard it.
+        # Non-grouped expert adapters already sit under .local_experts.* and keep
+        # their existing expert-DP replica metadata instead.
         use_expert_axis = self._uses_grouped_expert_sharding()
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)

@@ -765,20 +765,20 @@ class TestParallelLinearAdapter:
             model_parallel_config=mock_config,
         )
 
-        assert mock_linear_in.weight._backward_hooks
-        assert mock_linear_out.weight._backward_hooks
-        hook = next(iter(mock_linear_in.weight._backward_hooks.values()))
         ep_group = mock_config._pg_collection.ep
-        grad = torch.ones(2, 2)
 
         with (
             patch("torch.distributed.is_available", return_value=True),
             patch("torch.distributed.is_initialized", return_value=True),
             patch("torch.distributed.all_reduce") as mock_all_reduce,
         ):
-            assert hook(grad) is grad
+            (mock_linear_in.weight.sum() + mock_linear_out.weight.sum()).backward()
 
-        mock_all_reduce.assert_called_once_with(grad, group=ep_group)
+        assert mock_all_reduce.call_count == 2
+        for call in mock_all_reduce.call_args_list:
+            grad = call.args[0]
+            torch.testing.assert_close(grad, torch.ones_like(grad))
+            assert call.kwargs["group"] is ep_group
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")

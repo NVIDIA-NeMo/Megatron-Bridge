@@ -246,7 +246,7 @@ class TEFusedLoRALinear(LoRALinear):
             "tensor_parallel_group": None,
             "sequence_parallel": False,
         }
-        # TODO: Restore TP support by passing the wrapped TE module's explicit TP group.
+        # LoRA.transform only selects the TE op-fuser path when TP size is 1.
 
         # wgrad accumulation fusion
         accumulate_into_main_grad = False
