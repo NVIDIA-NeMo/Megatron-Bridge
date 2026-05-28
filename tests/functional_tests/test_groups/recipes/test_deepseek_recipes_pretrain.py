@@ -14,12 +14,47 @@
 
 """Functional smoke tests for DeepSeek recipe configurations."""
 
+import importlib.util
+import os
+from pathlib import Path
+
 import pytest
+import torch
 
 from megatron.bridge.recipes.deepseek import (
     deepseek_v2_lite_pretrain_config as deepseek_v2_lite_config,
+    deepseek_v4_flash_pretrain_mxfp8_config,
+    deepseek_v4_flash_pretrain_muon_config,
 )
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
+
+
+DEEPSEEK_V4_TEST_MODEL_ENV = "DEEPSEEK_V4_TOY_HF_PATH"
+DEEPSEEK_V4_TEST_MODEL_PATH = Path("/home/TestData/megatron_bridge/models/deepseek_v4_toy")
+
+
+def _has_dsv4_in_mcore() -> bool:
+    try:
+        return all(
+            importlib.util.find_spec(mod) is not None
+            for mod in (
+                "megatron.core.transformer.hyper_connection",
+                "megatron.core.transformer.experimental_attention_variant.csa",
+                "megatron.core.transformer.experimental_attention_variant.deepseek_v4_hybrid_attention",
+            )
+        )
+    except ModuleNotFoundError:
+        return False
+
+
+def _deepseek_v4_toy_model_path() -> str:
+    model_path = Path(os.environ.get(DEEPSEEK_V4_TEST_MODEL_ENV, DEEPSEEK_V4_TEST_MODEL_PATH))
+    if not model_path.exists():
+        pytest.skip(
+            f"DeepSeek-V4 toy HF model not found at {model_path}. "
+            f"Set {DEEPSEEK_V4_TEST_MODEL_ENV} or upload the synthetic model to CI test data."
+        )
+    return str(model_path)
 
 
 DEEPSEEK_PRETRAIN_RECIPES = [
@@ -44,6 +79,39 @@ DEEPSEEK_PRETRAIN_RECIPES = [
     # ),
 ]
 
+DEEPSEEK_V4_MODEL_OVERRIDES = {
+    "num_layers": 2,
+    "mtp_num_layers": None,
+    "pipeline_model_parallel_layout": None,
+    "num_moe_experts": 8,
+    "moe_router_topk": 1,
+    "moe_layer_freq": [0, 1],
+    "csa_compress_ratios": [0, 0],
+    "csa_backend": "unfused",
+    "use_fused_mhc": False,
+    "apply_rope_fusion": False,
+    "dsa_indexer_loss_coeff": 0.0,
+    "dsa_indexer_use_sparse_loss": False,
+    "recompute_granularity": None,
+    "recompute_modules": None,
+}
+
+DEEPSEEK_V4_PRETRAIN_RECIPES = [
+    # (config_func, name, requires_blackwell, checkpoint_overrides)
+    (
+        deepseek_v4_flash_pretrain_muon_config,
+        "deepseek_v4_flash_muon_bf16",
+        False,
+        None,
+    ),
+    (
+        deepseek_v4_flash_pretrain_mxfp8_config,
+        "deepseek_v4_flash_adam_mxfp8",
+        True,
+        {"save_optim": False, "load_optim": False},
+    ),
+]
+
 
 class TestDeepSeekRecipes:
     """Test class for DeepSeek recipe functional tests."""
@@ -62,4 +130,37 @@ class TestDeepSeekRecipes:
             tmp_path,
             model_overrides=model_overrides,
             **parallelism_overrides,
+        )
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.skipif(not _has_dsv4_in_mcore(), reason="megatron-core does not yet ship DSv4 prerequisites.")
+    @pytest.mark.parametrize(
+        "config_func,recipe_name,requires_blackwell,checkpoint_overrides", DEEPSEEK_V4_PRETRAIN_RECIPES
+    )
+    def test_deepseek_v4_pretrain_recipes(
+        self,
+        config_func,
+        recipe_name,
+        requires_blackwell,
+        checkpoint_overrides,
+        tmp_path,
+    ):
+        """Functional test for DeepSeek-V4 Flash pretraining recipes."""
+        if requires_blackwell and torch.cuda.get_device_capability()[0] < 10:
+            pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
+
+        hf_path = _deepseek_v4_toy_model_path()
+
+        def recipe_with_test_model():
+            return config_func(hf_path=hf_path)
+
+        run_pretrain_recipe_test(
+            recipe_with_test_model,
+            recipe_name,
+            tmp_path,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            expert_model_parallel_size=1,
+            model_overrides=DEEPSEEK_V4_MODEL_OVERRIDES,
+            checkpoint_overrides=checkpoint_overrides,
         )

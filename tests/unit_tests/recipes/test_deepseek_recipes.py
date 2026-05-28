@@ -39,6 +39,8 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
         "deepseek_v2_lite_pretrain_config",
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_pretrain_mxfp8_config",
+        "deepseek_v4_flash_pretrain_muon_config",
     }
 )
 _DEEPSEEK_EXPORTED_NAMES = set(getattr(_deepseek_module, "__all__", ()))
@@ -54,6 +56,7 @@ class _FakeModelCfg:
         self.rotary_base = 10000.0
         self.num_moe_experts = 0
         self.apply_rope_fusion = False
+        self.vocab_size = 1024
 
     def finalize(self):
         return None
@@ -67,7 +70,7 @@ class _FakeBridge:
         return _FakeModelCfg()
 
     @staticmethod
-    def from_hf_pretrained(hf_path: str):
+    def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
 
 
@@ -191,3 +194,59 @@ def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
     set_deepseek_v3_pipeline_model_parallel_layout(model_cfg)
 
     assert model_cfg.pipeline_model_parallel_layout[-1][-2:] == ["mtp", "loss"]
+
+
+def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
+    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    return getattr(mod, name)()
+
+
+def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_mxfp8_config", monkeypatch)
+
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.optimizer.lr == 2.7e-4
+    assert cfg.optimizer.min_lr == 2.7e-5
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.adam_eps == 1e-20
+    assert cfg.scheduler.start_weight_decay == 0.1
+    assert cfg.scheduler.end_weight_decay == 0.1
+    assert cfg.scheduler.weight_decay_incr_style == "constant"
+    assert cfg.ddp.use_distributed_optimizer is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
+    assert cfg.model.csa_backend == "cudnn_dsa"
+    assert cfg.model.use_fused_mhc is True
+    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert cfg.mixed_precision.fp8_param_gather is False
+    assert cfg.model.mtp_eval_in_bf16 is True
+
+
+def test_deepseek_v4_muon_bf16_recipe_uses_validated_optimizer_defaults(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_muon_config", monkeypatch)
+
+    assert cfg.optimizer.optimizer == "muon"
+    assert cfg.optimizer.lr == 2.7e-4
+    assert cfg.optimizer.min_lr == 2.7e-5
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.optimizer.adam_beta1 == 0.9
+    assert cfg.optimizer.adam_beta2 == 0.95
+    assert cfg.optimizer.adam_eps == 1e-20
+    assert cfg.optimizer.muon_momentum == 0.95
+    assert cfg.optimizer.muon_nesterov is True
+    assert cfg.optimizer.muon_scale_mode == "unit_rms_norm"
+    assert cfg.optimizer.muon_num_ns_steps == 5
+    assert cfg.optimizer.muon_extra_scale_factor == 0.2
+    assert cfg.ddp.use_distributed_optimizer is False
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
+    assert cfg.model.csa_backend == "cudnn_dsa"
+    assert cfg.model.use_fused_mhc is True

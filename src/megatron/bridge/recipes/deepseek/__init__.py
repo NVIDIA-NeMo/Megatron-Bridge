@@ -15,7 +15,7 @@
 """DeepSeek recipe exports.
 
 This module re-exports AutoBridge-based pretrain config helpers for DeepSeek
-models (V2, V2-Lite, V3).
+models (V2, V2-Lite, V3, V4).
 """
 
 # DeepSeek V2/V2-Lite
@@ -31,6 +31,12 @@ from .deepseek_v3 import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 
+# DeepSeek V4
+from .deepseek_v4 import (
+    deepseek_v4_flash_pretrain_muon_config,
+    deepseek_v4_flash_pretrain_mxfp8_config,
+)
+
 
 __all__ = [
     # DeepSeek V2/V2-Lite
@@ -40,4 +46,7 @@ __all__ = [
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
     "set_deepseek_v3_pipeline_model_parallel_layout",
+    # DeepSeek V4
+    "deepseek_v4_flash_pretrain_mxfp8_config",
+    "deepseek_v4_flash_pretrain_muon_config",
 ]

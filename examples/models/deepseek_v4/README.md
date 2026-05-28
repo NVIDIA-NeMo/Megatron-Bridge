@@ -26,8 +26,20 @@ Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pin
 
 - `conversion.sh` imports HF weights into Megatron Bridge and exports Megatron checkpoints back to HF format.
 - `inference.sh` runs text generation against an HF or Megatron checkpoint.
+- `slurm_pretrain.sh` runs the DeepSeek-V4-Flash pretraining recipes.
 
 Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
+
+## Pretraining Recipes
+
+See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the Slurm launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for recipe definitions.
+
+Available pretraining recipes:
+
+- `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
+- `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
+
+Before submitting, set `CONTAINER_IMAGE`. For DCLM, also set `DCLM_DATA_DIR` and `DCLM_CACHE`. Use `CONTAINER_MOUNTS` and `EXTRA_PYTHONPATH` for cluster-specific data, checkouts, and Python dependencies.
 
 The bridge's `maybe_modify_loaded_hf_weight` hook dispatches dequantisation by tensor dtype:
 
