@@ -33,7 +33,7 @@ uv run torchrun --nproc_per_node=8 examples/conversion/convert_checkpoints_multi
     --hf-model $HF_MODEL_ID \
     --megatron-path ${WORKSPACE}/models/$MODEL_NAME/iter_0000000 \
     --hf-path ${WORKSPACE}/models/$MODEL_NAME-hf-export \
-    --tp 1 --ep 8 
+    --tp 1 --ep 8
 
 
 # Round-trip validation
