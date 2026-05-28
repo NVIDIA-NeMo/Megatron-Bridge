@@ -1,13 +1,14 @@
 ---
-name: perf-cuda-graphs
+name: nemo-mbridge-perf-cuda-graphs
 description: Validate and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs for attention, MLP, and MoE modules.
+license: Apache-2.0
 when_to_use: Reducing host-driver overhead via CUDA graphs, or tracing a crash or regression to a CUDA graph config change; 'cuda_graph_impl', 'full iteration graph', 'TE scoped graph', 'graphed callables', 'CUDA graph capture'.
 ---
 
 # CUDA Graphs
 
 Stable docs: @docs/training/cuda-graphs.md
-Card: @skills/perf-cuda-graphs/card.yaml
+Card: @skills/nemo-mbridge-perf-cuda-graphs/card.yaml
 
 ## What It Is
 
@@ -302,7 +303,7 @@ def _delete_cuda_graphs(cuda_graph_helper):
     recompute (`recompute_granularity="selective"` + `recompute_modules`),
     disable CUDA graphs, or switch to `local` + `full_iteration`. Enforced
     in MCore `transformer_config.py:2001-2005`. See also
-    @skills/perf-activation-recompute/SKILL.md.
+    @skills/mbridge-perf-activation-recompute/SKILL.md.
 
 12. **Benchmark numbers are workload-specific**: graph wins are usually real
     when host overhead is visible, but the exact gain depends on batch shape,
