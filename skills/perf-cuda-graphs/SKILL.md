@@ -302,7 +302,7 @@ def _delete_cuda_graphs(cuda_graph_helper):
     recompute (`recompute_granularity="selective"` + `recompute_modules`),
     disable CUDA graphs, or switch to `local` + `full_iteration`. Enforced
     in MCore `transformer_config.py:2001-2005`. See also
-    @skills/perf-activation-recompute/SKILL.md.
+    @skills/nemo-mbridge-perf-activation-recompute/SKILL.md.
 
 12. **Benchmark numbers are workload-specific**: graph wins are usually real
     when host overhead is visible, but the exact gain depends on batch shape,
