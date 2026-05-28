@@ -169,6 +169,7 @@ class Qwen3VLVisionModel(VisionModule):
                 transformer_config,
                 patch_merger_spec,
                 use_postshuffle_norm=False,
+                tp_group=self.tp_group,
             )
 
         self.input_tensor = None

@@ -120,22 +120,25 @@ no-build-isolation-package = [
     "nv-grouped-gemm",
     "flash_mla",
     "flash-linear-attention",
+    "fast-hadamard-transform",
 ]
 prerelease = "allow"
 override-dependencies = [
-    "av; sys_platform == 'never'",  # Optional and addresses CVE from transitive dependency
+    "av; sys_platform == 'never'",                          # Optional and addresses CVE from transitive dependency
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.15",
-    "mlflow>=3.9.0",    # To address CVE-2025-15031
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.16",
+    "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
     "nvidia-modelopt==0.44.0rc5",
-    "urllib3>=2.6.3",    # To address CVE-2026-21441
-    "langchain>=0.3.28",       # To address CVE-2025-65106
-    "langchain-core>=0.3.80",  # To address CVE-2025-65106
-    "onnx>=1.21.0; python_version < '3.13'",  # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
+    "urllib3>=2.6.3",                                       # To address CVE-2026-21441
+    "langchain>=0.3.28",                                    # To address CVE-2025-65106
+    "langchain-core>=0.3.80",                               # To address CVE-2025-65106
+    "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
+    "nvidia-cudnn-frontend==1.23.0",
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
 ]
 
 [[tool.uv.index]]

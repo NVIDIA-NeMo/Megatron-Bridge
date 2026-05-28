@@ -18,7 +18,7 @@ All subsets are merged into a single train split.
 
 Usage::
 
-    python examples/models/vlm/qwen3_vl/prepare_mantis_energon.py \\
+    python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \\
         --source-dir /path/to/mantis_instruct/Mantis-Instruct \\
         --output-dir /path/to/mantis_energon \\
         --max-samples-per-tar 1000
