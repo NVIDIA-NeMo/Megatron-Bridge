@@ -215,6 +215,25 @@ class TestNemotronHBridge:
         # assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
         assert any([isinstance(m, QKVMapping) for m in mapping_registry.mappings])
 
+    def test_mapping_registry_contains_mamba_conv1d_compat_mappings(self):
+        """Test that Mamba conv mappings support old and new Megatron-Core names."""
+        registry = NemotronHBridge().mapping_registry()
+
+        new_weight = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d_weight")
+        new_bias = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d_bias")
+        old_weight = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d.weight")
+        old_bias = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d.bias")
+
+        assert new_weight.hf_param == "backbone.layers.0.mixer.conv1d.weight"
+        assert new_bias.hf_param == "backbone.layers.0.mixer.conv1d.bias"
+        assert old_weight.hf_param == "backbone.layers.0.mixer.conv1d.weight"
+        assert old_bias.hf_param == "backbone.layers.0.mixer.conv1d.bias"
+
+        reverse_weight = registry.hf_to_megatron_lookup("backbone.layers.0.mixer.conv1d.weight")
+        reverse_bias = registry.hf_to_megatron_lookup("backbone.layers.0.mixer.conv1d.bias")
+        assert reverse_weight.megatron_param == "decoder.layers.0.mixer.conv1d_weight"
+        assert reverse_bias.megatron_param == "decoder.layers.0.mixer.conv1d_bias"
+
     def test_provider_bridge_fixed_settings(self, mock_pretrained_nemotronh):
         """Test fixed settings that should always be set regardless of config."""
         bridge = NemotronHBridge()
