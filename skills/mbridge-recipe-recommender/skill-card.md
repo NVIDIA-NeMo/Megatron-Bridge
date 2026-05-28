@@ -1,5 +1,5 @@
 ## Description: <br>
-Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal, indexing library recipes (pretrain/SFT/PEFT) and performance recipes. <br>
+Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers selecting and customizing Megatron Bridge training recipes for their specific model family, GPU configuration, and training objective (pretraining, SFT, or PEFT). <br>
+Developers and engineers training large language models with Megatron Bridge who need a starting recipe or training configuration matched to their model, GPU count, and training goal. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -20,8 +20,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Recipe Unification PR #2803](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2803) <br>
+- [Megatron Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
@@ -31,7 +30,7 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Tasks: <br>
-Evaluated via NVSkills-Eval external profile: Tier 1 static validation (9 checks, 10 findings) and Tier 2 deduplication analysis (2 checks, 1 finding). Tier 3 live agent evaluation not available. <br>
+NVSkills-Eval 3-Tier evaluation with external profile; Tier 1 static validation (9 checks, 14 findings), Tier 2 deduplication (2 checks, 1 finding). Tier 3 live agent evaluation not available. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -44,7 +43,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6 (source: git tag) <br>
+7306f258 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
