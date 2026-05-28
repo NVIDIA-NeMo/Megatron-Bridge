@@ -664,9 +664,15 @@ def main(
             logger.removeHandler(_dup_handler)
             _dup_file.close()
 
-            if not is_long_convergence_run:
-                n_attempts = max_retries + 1
-                is_finished_experiment = True
+            # The convergence-check runs against the just-completed training
+            # output; the result is deterministic, re-running won't flip it.
+            # Always bump n_attempts so the outer loop exits — otherwise a
+            # failed perf/convergence gate on a long-convergence run causes
+            # the outer loop to spin forever (inner loop is skipped because
+            # is_finished_experiment is True, and the same check fires again
+            # next outer iteration).
+            n_attempts = max_retries + 1
+            is_finished_experiment = True
 
         if is_finished_experiment and is_testing_passed:
             break
