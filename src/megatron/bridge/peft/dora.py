@@ -21,7 +21,7 @@ from torch import nn
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora_layers import DoRALinear, ParallelLinearDoRAAdapter
 from megatron.bridge.peft.module_matcher import ModuleMatcher
-from megatron.bridge.peft.utils import get_adapter_attributes_from_linear
+from megatron.bridge.peft.utils import _get_pg_collection_from_module, get_adapter_attributes_from_linear
 
 
 logger = logging.getLogger(__name__)
@@ -90,7 +90,9 @@ class DoRA(PEFT, ModuleMatcher):
 
         if (ans := self.match(m, name, prefix)) is not None:
             _, full_name = ans
-            attrs = get_adapter_attributes_from_linear(m)
+            pg_collection = _get_pg_collection_from_module(m)
+            attrs_kwargs = {"pg_collection": pg_collection} if pg_collection is not None else {}
+            attrs = get_adapter_attributes_from_linear(m, **attrs_kwargs)
             logger.info(f"Adding DoRA to: {full_name}")
             adapter = ParallelLinearDoRAAdapter(
                 attrs.in_features,
@@ -105,6 +107,7 @@ class DoRA(PEFT, ModuleMatcher):
                 dropout_position=self.dropout_position,
                 model_parallel_config=m.config,
                 alpha=self.alpha,
+                pg_collection=pg_collection,
                 disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                 disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,

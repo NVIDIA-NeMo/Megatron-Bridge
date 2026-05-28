@@ -28,6 +28,7 @@ from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    _get_pg_collection_from_module,
     align_expert_dim_for_tp,
     get_adapter_attributes_from_linear,
     get_effective_lora_dim,
@@ -330,7 +331,11 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(m, is_expert=is_expert)
+            pg_collection = _get_pg_collection_from_module(m)
+            attrs_kwargs = {"is_expert": is_expert}
+            if pg_collection is not None:
+                attrs_kwargs["pg_collection"] = pg_collection
+            attrs = get_adapter_attributes_from_linear(m, **attrs_kwargs)
 
             dim = get_effective_lora_dim(
                 m, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
@@ -341,6 +346,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 normalize_moe_lora=self.normalize_moe_lora,
                 is_expert=is_expert,
                 input_is_parallel=attrs.input_is_parallel,
+                pg_collection=pg_collection,
             )
             use_per_expert_adapter = is_grouped_expert_linear(full_name) and not self.share_expert_adapters
             adapter_cls = GroupedExpertLinearAdapter if use_per_expert_adapter else ParallelLinearAdapter
@@ -357,6 +363,7 @@ class CanonicalLoRA(PEFT, ModuleMatcher):
                 model_parallel_config=m.config,
                 alpha=self.alpha,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
+                pg_collection=pg_collection,
             )
             if use_per_expert_adapter:
                 first_param = next(m.parameters())

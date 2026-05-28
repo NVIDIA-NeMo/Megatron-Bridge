@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import packaging
 import torch
 import torch.nn as nn
-from megatron.core import ModelParallelConfig, parallel_state
+from megatron.core import ModelParallelConfig
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
@@ -35,6 +35,7 @@ from megatron.core.tensor_parallel.mappings import (
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.utils import get_pg_rank, get_pg_size
 
 from megatron.bridge.utils.activation_map import str_to_dtype
 from megatron.bridge.utils.import_utils import safe_import_from
@@ -80,6 +81,110 @@ HAVE_TE = all(
         HAVE_TE_ROW_GRP_LINEAR,
     )
 )
+
+
+def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
+    """Return the process-group collection attached to a module or its config."""
+
+    for owner in (module, getattr(module, "config", None)):
+        if owner is None:
+            continue
+        for attr in ("pg_collection", "_pg_collection"):
+            pg_collection = getattr(owner, attr, None)
+            if pg_collection is not None:
+                return pg_collection
+    return None
+
+
+def _get_pg_collection(
+    pg_collection: ProcessGroupCollection | None = None,
+    source: object | None = None,
+    *,
+    required_pgs: List[str],
+) -> ProcessGroupCollection | None:
+    """Return the explicit PG collection or MCore's default collection fallback."""
+
+    pg_collection = pg_collection or _get_pg_collection_from_module(source)
+    if pg_collection is None:
+        pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=required_pgs)
+    return pg_collection
+
+
+def _get_process_group(pg_collection: ProcessGroupCollection | None, *names: str) -> object | None:
+    """Return the first named process group available on a collection."""
+
+    if pg_collection is None:
+        return None
+    for name in names:
+        group = getattr(pg_collection, name, None)
+        if group is not None:
+            return group
+    return None
+
+
+def _process_group_size(group: object | None, fallback: int = 1) -> int:
+    """Return a process-group size without consulting global parallel state."""
+
+    if group is None:
+        return int(fallback or 1)
+    size = None
+    size_attr = getattr(group, "size", None)
+    try:
+        size = size_attr() if callable(size_attr) else size_attr
+    except (RuntimeError, ValueError, TypeError):
+        size = None
+    if size is None:
+        try:
+            size = get_pg_size(group)
+        except (RuntimeError, ValueError, TypeError):
+            size = None
+    return int(size if size is not None else fallback or 1)
+
+
+def _process_group_rank(group: object | None, fallback: int = 0) -> int:
+    """Return this rank within a process group without consulting global parallel state."""
+
+    if group is None:
+        return int(fallback or 0)
+    rank = None
+    rank_attr = getattr(group, "rank", None)
+    try:
+        rank = rank_attr() if callable(rank_attr) else rank_attr
+    except (RuntimeError, ValueError, TypeError):
+        rank = None
+    if rank is None:
+        try:
+            rank = get_pg_rank(group)
+        except (RuntimeError, ValueError, TypeError):
+            rank = None
+    return int(rank if rank is not None else fallback or 0)
+
+
+def _get_tensor_parallel_group(
+    pg_collection: ProcessGroupCollection | None, *, is_expert: bool = False
+) -> object | None:
+    """Return the tensor-parallel group for dense or expert linear layers."""
+
+    if is_expert:
+        return _get_process_group(pg_collection, "expt_tp", "etp")
+    return _get_process_group(pg_collection, "tp")
+
+
+def _get_tensor_parallel_group_from_module(
+    module: nn.Module, *, is_expert: bool = False, pg_collection: ProcessGroupCollection | None = None
+) -> object | None:
+    """Return the TP group passed to the wrapped module, falling back to its collection."""
+
+    pg_collection = _get_pg_collection(
+        pg_collection,
+        module,
+        required_pgs=["expt_tp"] if is_expert else ["tp"],
+    )
+    group = _get_tensor_parallel_group(pg_collection, is_expert=is_expert)
+    if group is not None:
+        return group
+    return getattr(module, "_tp_group", None) or getattr(module, "tp_group", None)
+
 
 MixedFusedLayerNorm, HAVE_APEX = safe_import_from("apex.normalization.fused_layer_norm", "MixedFusedLayerNorm")
 ModelOptLinear, HAVE_MODELOPT_LINEAR = safe_import_from("megatron.core.post_training.modelopt.layers", "Linear")
@@ -158,11 +263,9 @@ def load_peft_adapter_checkpoint(
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
         load_strategy = get_default_load_sharded_strategy(checkpoint_path)
-        if fully_parallel_load and parallel_state.is_initialized():
-            load_strategy = FullyParallelLoadStrategyWrapper(
-                load_strategy,
-                parallel_state.get_data_parallel_group(with_context_parallel=True),
-            )
+        dp_cp_group = _get_process_group(pg_collection, "dp_cp")
+        if fully_parallel_load and dp_cp_group is not None:
+            load_strategy = FullyParallelLoadStrategyWrapper(load_strategy, dp_cp_group)
 
     loaded_state_dict = dist_checkpointing.load(sharded_state_dict, checkpoint_path, load_strategy)
     for vpp_rank, model_chunk in enumerate(model_chunks):
@@ -256,7 +359,11 @@ class AdapterAttributes:
     base_linear_is_parallel: bool
 
 
-def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) -> AdapterAttributes:
+def get_adapter_attributes_from_linear(
+    m: nn.Module,
+    is_expert: bool = False,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> AdapterAttributes:
     """Returns attributes from the base layer as an AdapterAttributes dataclass.
 
     input_is_parallel, in_features, out_features, disable_tensor_parallel_comm,
@@ -302,10 +409,15 @@ def get_adapter_attributes_from_linear(m: nn.Module, is_expert: bool = False) ->
             base_linear_is_parallel=False,
         )
 
-    if is_expert:
-        tp_size = parallel_state.get_expert_tensor_parallel_world_size()
-    else:
-        tp_size = parallel_state.get_tensor_model_parallel_world_size()
+    tp_group = _get_tensor_parallel_group_from_module(m, is_expert=is_expert, pg_collection=pg_collection)
+    tp_size = _process_group_size(
+        tp_group,
+        getattr(
+            m.config,
+            "expert_tensor_parallel_size" if is_expert else "tensor_model_parallel_size",
+            1,
+        ),
+    )
     if isinstance(m, TopKRouter):
         input_is_parallel = False
         in_features = m.weight.shape[1]
@@ -422,15 +534,15 @@ def align_expert_dim_for_tp(
     normalize_moe_lora: bool,
     is_expert: bool,
     input_is_parallel: bool,
+    pg_collection: ProcessGroupCollection | None = None,
 ) -> int:
     """Round normalized expert LoRA ranks up to the expert-TP granularity when needed."""
 
     if not normalize_moe_lora or not is_expert or input_is_parallel:
         return dim
 
-    expert_tp_size = (
-        parallel_state.get_expert_tensor_parallel_world_size() or module.config.expert_tensor_parallel_size or 1
-    )
+    expert_tp_group = _get_tensor_parallel_group_from_module(module, is_expert=True, pg_collection=pg_collection)
+    expert_tp_size = _process_group_size(expert_tp_group, module.config.expert_tensor_parallel_size or 1)
     if expert_tp_size <= 1 or dim % expert_tp_size == 0:
         return dim
 
@@ -561,7 +673,7 @@ class _All2AllHp2Sp(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input_: torch.Tensor) -> torch.Tensor:
+    def forward(ctx, input_: torch.Tensor, group: object | None) -> torch.Tensor:
         """Forward pass: All-to-All from Hidden Parallel to Sequence Parallel.
 
         Args:
@@ -571,8 +683,8 @@ class _All2AllHp2Sp(torch.autograd.Function):
         Returns:
             Output tensor in sequence parallel layout.
         """
-        world_size = parallel_state.get_tensor_model_parallel_world_size()
-        group = parallel_state.get_tensor_model_parallel_group()
+        ctx.group = group
+        world_size = _process_group_size(group)
         send_list = list(input_.chunk(world_size, dim=0))
         send_list = [tensor.contiguous() for tensor in send_list]
         receive_list = [torch.empty_like(send_list[0]) for _ in range(world_size)]
@@ -592,18 +704,18 @@ class _All2AllHp2Sp(torch.autograd.Function):
         Returns:
             Gradient tensor in hidden parallel layout.
         """
-        world_size = parallel_state.get_tensor_model_parallel_world_size()
-        group = parallel_state.get_tensor_model_parallel_group()
+        group = ctx.group
+        world_size = _process_group_size(group)
         send_list = list(grad_output.chunk(world_size, dim=-1))
         send_list = [tensor.contiguous() for tensor in send_list]
         receive_list = [torch.empty_like(send_list[0]) for _ in range(world_size)]
         torch.distributed.all_to_all(receive_list, send_list, group=group)
         x = torch.cat(receive_list, dim=0)
 
-        return x
+        return x, None
 
 
-def all2all_hp2sp(input_: torch.Tensor) -> torch.Tensor:
+def all2all_hp2sp(input_: torch.Tensor, tensor_parallel_group: object | None = None) -> torch.Tensor:
     """Perform All-to-All communication from Hidden Parallel to Sequence Parallel.
 
     Args:
@@ -612,7 +724,7 @@ def all2all_hp2sp(input_: torch.Tensor) -> torch.Tensor:
     Returns:
         Output tensor in sequence parallel layout.
     """
-    return _All2AllHp2Sp.apply(input_)
+    return _All2AllHp2Sp.apply(input_, tensor_parallel_group)
 
 
 class ParallelLinearAdapter(nn.Module):
@@ -663,6 +775,7 @@ class ParallelLinearAdapter(nn.Module):
         disable_tensor_parallel_comm: bool = False,
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -700,6 +813,14 @@ class ParallelLinearAdapter(nn.Module):
         # in case this arg is not provided, use the dummy default config.
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
+        self.pg_collection = _get_pg_collection(
+            pg_collection,
+            model_parallel_config,
+            required_pgs=["ep", "expt_tp", "expt_dp"] if is_expert else ["tp"],
+        )
+        self.tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=is_expert)
+        self.ep_group = _get_process_group(self.pg_collection, "ep")
+        self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
         _sequence_parallel = model_parallel_config.sequence_parallel
         model_parallel_config.sequence_parallel = False  # SP is irrelevant for the lora linear layer
         self.config = model_parallel_config
@@ -718,6 +839,7 @@ class ParallelLinearAdapter(nn.Module):
                 bias=False,
                 init_method=self._get_init_fn(column_init_method),
                 is_expert=is_expert,
+                tp_group=self.tp_group,
             )
         else:
             self.linear_in = ColumnParallelLinear(
@@ -729,6 +851,7 @@ class ParallelLinearAdapter(nn.Module):
                 init_method=self._get_init_fn(column_init_method),
                 disable_grad_reduce=_sequence_parallel,
                 is_expert=is_expert,
+                tp_group=self.tp_group,
             )
 
         # (@adithyare) we use this option to mirror the behavior
@@ -755,6 +878,7 @@ class ParallelLinearAdapter(nn.Module):
             gather_output=lin_out_gather_output,
             init_method=self._get_init_fn(row_init_method),
             is_expert=is_expert,
+            tp_group=self.tp_group,
         )
 
         if dropout > 0.0:
@@ -853,7 +977,7 @@ class ParallelLinearAdapter(nn.Module):
             # layernorm before lora is impacted by sequence parallel,
             # hence seq dim need to be gathered right before lora linear layers
             # this function also handles the backward pass correctly
-            x = gather_from_sequence_parallel_region(x)
+            x = gather_from_sequence_parallel_region(x, group=self.tp_group)
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             x.activation_offloading = True
@@ -872,9 +996,9 @@ class ParallelLinearAdapter(nn.Module):
             # this function also handles the backward pass correctly
             if self.use_a2a:
                 # all2all hidden_size / TP to seq_len / TP
-                x = all2all_hp2sp(x)
+                x = all2all_hp2sp(x, self.tp_group)
             else:
-                x = scatter_to_sequence_parallel_region(x)
+                x = scatter_to_sequence_parallel_region(x, group=self.tp_group)
 
         # Add dropout if available
         if self.dropout_position == "post":
@@ -891,7 +1015,7 @@ class ParallelLinearAdapter(nn.Module):
     def local_experts_per_rank(self) -> int:
         """Return the number of global expert slots owned by this EP rank."""
 
-        ep_size = parallel_state.get_expert_model_parallel_world_size() or self.config.expert_model_parallel_size or 1
+        ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
         num_global_experts = getattr(self.config, "num_moe_experts", None)
         if num_global_experts is None:
             return 1
@@ -906,17 +1030,15 @@ class ParallelLinearAdapter(nn.Module):
 
         return self.is_expert and is_grouped_expert_linear(self.base_linear_name)
 
-    @staticmethod
-    def _allreduce_shared_expert_grad(grad: torch.Tensor) -> torch.Tensor:
+    def _allreduce_shared_expert_grad(self, grad: torch.Tensor) -> torch.Tensor:
         """Sum shared expert adapter grads across EP before expert-DP reduction."""
 
         if not torch.distributed.is_available() or not torch.distributed.is_initialized():
             return grad
-        ep_group = parallel_state.get_expert_model_parallel_group(check_initialized=False)
-        if ep_group is None or ep_group.size() <= 1:
+        if self.ep_group is None or _process_group_size(self.ep_group) <= 1:
             return grad
         # Megatron DDP still handles expert-DP reduction/scaling for these params.
-        torch.distributed.all_reduce(grad, group=ep_group)
+        torch.distributed.all_reduce(grad, group=self.ep_group)
         return grad
 
     def _register_shared_expert_grad_sync_hooks(self) -> None:
@@ -930,8 +1052,8 @@ class ParallelLinearAdapter(nn.Module):
     def _expert_axis_info(self, sharded_offsets: Tuple) -> Tuple[int, int, int]:
         """Return the global expert-axis sharding metadata for this rank."""
 
-        ep_size = parallel_state.get_expert_model_parallel_world_size() or self.config.expert_model_parallel_size or 1
-        ep_rank = parallel_state.get_expert_model_parallel_rank() or 0
+        ep_size = _process_group_size(self.ep_group, self.config.expert_model_parallel_size or 1)
+        ep_rank = _process_group_rank(self.ep_group)
         local_experts = self.local_experts_per_rank()
         if local_experts <= 0:
             raise ValueError(f"local_experts_per_rank must be positive, got {local_experts}")
@@ -954,14 +1076,14 @@ class ParallelLinearAdapter(nn.Module):
     def _keep_expert_extra_state(self) -> bool:
         """Keep one unsharded adapter extra-state entry."""
 
-        tp_rank = parallel_state.get_expert_tensor_parallel_rank()
-        ep_rank = parallel_state.get_expert_model_parallel_rank()
+        tp_rank = _process_group_rank(self.tp_group)
+        ep_rank = _process_group_rank(self.ep_group)
         return tp_rank == 0 and ep_rank == 0
 
     def _set_expert_replica_ids(self, *state_dicts: ShardedStateDict) -> None:
         """Mark expert adapter replicas across expert data-parallel ranks."""
 
-        edp_rank = parallel_state.get_expert_data_parallel_rank() or 0
+        edp_rank = _process_group_rank(self.expert_dp_group)
         for state_dict in state_dicts:
             for value in state_dict.values():
                 if not hasattr(value, "replica_id"):
@@ -1132,7 +1254,7 @@ class ParallelLinearAdapter(nn.Module):
                         split_swiglu=split_swiglu,
                     )
         elif self.is_expert:
-            if parallel_state.get_tensor_model_parallel_rank() > 0:
+            if _process_group_rank(self.tp_group) > 0:
                 for state_dict in (linear_in_sd, linear_out_sd):
                     for key in [k for k in state_dict if "_extra_state" in k]:
                         del state_dict[key]
@@ -1319,6 +1441,9 @@ def _make_grouped_expert_sharded_tensor(
     *,
     tp_axis: Optional[int],
     sharded_offsets: Tuple,
+    pg_collection: ProcessGroupCollection | None,
+    ep_size_fallback: int = 1,
+    etp_size_fallback: int = 1,
 ) -> ShardedTensor:
     """Build a sharded tensor for packed grouped-expert weights.
 
@@ -1329,28 +1454,31 @@ def _make_grouped_expert_sharded_tensor(
     prepend_axis_num = len(sharded_offsets)
     rank_offsets = list(sharded_offsets)
 
-    ep_size = parallel_state.get_expert_model_parallel_world_size() or 1
+    ep_group = _get_process_group(pg_collection, "ep")
+    ep_size = _process_group_size(ep_group, ep_size_fallback)
     _append_rank_offset(
         rank_offsets,
         prepend_axis_num,
-        parallel_state.get_expert_model_parallel_rank() or 0,
+        _process_group_rank(ep_group),
         ep_size,
     )
 
     if tp_axis is not None:
-        etp_size = parallel_state.get_expert_tensor_parallel_world_size() or 1
+        etp_group = _get_tensor_parallel_group(pg_collection, is_expert=True)
+        etp_size = _process_group_size(etp_group, etp_size_fallback)
         _append_rank_offset(
             rank_offsets,
             prepend_axis_num + tp_axis,
-            parallel_state.get_expert_tensor_parallel_rank() or 0,
+            _process_group_rank(etp_group),
             etp_size,
         )
 
+    expt_dp_group = _get_process_group(pg_collection, "expt_dp")
     return ShardedTensor.from_rank_offsets(
         key,
         tensor,
         *rank_offsets,
-        replica_id=(0, 0, parallel_state.get_expert_data_parallel_rank() or 0),
+        replica_id=(0, 0, _process_group_rank(expt_dp_group)),
         prepend_axis_num=prepend_axis_num,
     )
 
@@ -1394,6 +1522,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         base_linear_is_parallel: bool = True,
         params_device: Optional[torch.device] = None,
         params_dtype: Optional[torch.dtype] = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         """Initialize grouped-expert LoRA weights for one adapter per local expert."""
 
@@ -1415,11 +1544,20 @@ class GroupedExpertLinearAdapter(nn.Module):
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
         self.config = model_parallel_config
+        self.pg_collection = _get_pg_collection(
+            pg_collection,
+            model_parallel_config,
+            required_pgs=["ep", "expt_tp", "expt_dp"],
+        )
+        self.expert_tp_group = _get_tensor_parallel_group(self.pg_collection, is_expert=True)
+        self.ep_group = _get_process_group(self.pg_collection, "ep")
+        self.expert_dp_group = _get_process_group(self.pg_collection, "expt_dp")
 
         model_parallel_config.perform_initialization = True
 
-        expert_tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size() or model_parallel_config.expert_tensor_parallel_size
+        expert_tp_size = _process_group_size(
+            self.expert_tp_group,
+            model_parallel_config.expert_tensor_parallel_size or 1,
         )
         linear_in_tp_axis = 2 if input_is_parallel else 1
         linear_out_tp_axis = 1
@@ -1443,11 +1581,12 @@ class GroupedExpertLinearAdapter(nn.Module):
         )
 
         if params_device is None:
+            distributed_initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
             params_device = (
                 torch.device("cpu")
                 if model_parallel_config.use_cpu_initialization
                 or not torch.cuda.is_available()
-                or not parallel_state.is_initialized()
+                or not distributed_initialized
                 else torch.device("cuda", torch.cuda.current_device())
             )
         dtype = params_dtype or model_parallel_config.params_dtype
@@ -1458,8 +1597,12 @@ class GroupedExpertLinearAdapter(nn.Module):
         ParallelLinearAdapter._get_init_fn(self, row_init_method)(linear_out_weight)
 
         expert_parallel = (
-            parallel_state.get_expert_model_parallel_world_size() or model_parallel_config.expert_model_parallel_size
-        ) > 1
+            _process_group_size(
+                self.ep_group,
+                model_parallel_config.expert_model_parallel_size or 1,
+            )
+            > 1
+        )
         self._linear_in_tp_axis = linear_in_tp_axis
         self._linear_out_tp_axis = linear_out_tp_axis
         self.linear_in = _GroupedExpertAdapterWeight(linear_in_weight)
@@ -1502,12 +1645,10 @@ class GroupedExpertLinearAdapter(nn.Module):
     def _gather_along_last_dim(self, tensor: torch.Tensor) -> torch.Tensor:
         """Gather a tensor across expert TP ranks by concatenating its last dimension."""
 
-        expert_tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size() or self.config.expert_tensor_parallel_size
-        )
+        expert_tp_size = _process_group_size(self.expert_tp_group, self.config.expert_tensor_parallel_size or 1)
         if expert_tp_size == 1:
             return tensor
-        expert_tp_group = parallel_state.get_expert_tensor_parallel_group(check_initialized=False)
+        expert_tp_group = self.expert_tp_group
         if expert_tp_group is None:
             raise ValueError(
                 f"{self.base_linear_name} requires initialized expert tensor parallel state "
@@ -1740,9 +1881,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         if self.dropout_position == "pre":
             x = self.dropout(x)
 
-        expert_tp_size = (
-            parallel_state.get_expert_tensor_parallel_world_size() or self.config.expert_tensor_parallel_size
-        )
+        expert_tp_size = _process_group_size(self.expert_tp_group, self.config.expert_tensor_parallel_size or 1)
         output_features = self.linear_out.weight.shape[1]
         if self.input_is_parallel:
             output_features *= expert_tp_size
@@ -1836,6 +1975,9 @@ class GroupedExpertLinearAdapter(nn.Module):
                 f"{prefix}linear_in.weight",
                 tp_axis=self._linear_in_tp_axis,
                 sharded_offsets=sharded_offsets,
+                pg_collection=self.pg_collection,
+                ep_size_fallback=self.config.expert_model_parallel_size or 1,
+                etp_size_fallback=self.config.expert_tensor_parallel_size or 1,
             )
         }
         linear_out_sd = {
@@ -1844,6 +1986,9 @@ class GroupedExpertLinearAdapter(nn.Module):
                 f"{prefix}linear_out.weight",
                 tp_axis=self._linear_out_tp_axis,
                 sharded_offsets=sharded_offsets,
+                pg_collection=self.pg_collection,
+                ep_size_fallback=self.config.expert_model_parallel_size or 1,
+                etp_size_fallback=self.config.expert_tensor_parallel_size or 1,
             )
         }
 

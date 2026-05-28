@@ -20,7 +20,6 @@ import torch
 import torch.distributed as dist
 import torch.nn as nn
 import transformer_engine.pytorch as te
-from megatron.core import parallel_state
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
 
@@ -37,6 +36,9 @@ from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    _get_pg_collection_from_module,
+    _get_tensor_parallel_group_from_module,
+    _process_group_size,
     align_expert_dim_for_tp,
     get_adapter_attributes_from_linear,
     get_effective_lora_dim,
@@ -153,7 +155,11 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
+            pg_collection = _get_pg_collection_from_module(module)
+            attrs_kwargs = {"is_expert": is_expert}
+            if pg_collection is not None:
+                attrs_kwargs["pg_collection"] = pg_collection
+            attrs = get_adapter_attributes_from_linear(module, **attrs_kwargs)
 
             dim = get_effective_lora_dim(
                 module, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
@@ -164,6 +170,7 @@ class LoRA(PEFT, ModuleMatcher):
                 normalize_moe_lora=self.normalize_moe_lora,
                 is_expert=is_expert,
                 input_is_parallel=attrs.input_is_parallel,
+                pg_collection=pg_collection,
             )
             use_per_expert_adapter = is_grouped_expert_linear(full_name) and not self.share_expert_adapters
 
@@ -172,7 +179,11 @@ class LoRA(PEFT, ModuleMatcher):
                 and not is_expert
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
                 # TP not yet supported
-                and parallel_state.get_tensor_model_parallel_world_size() == 1
+                and _process_group_size(
+                    _get_tensor_parallel_group_from_module(module, pg_collection=pg_collection),
+                    module.config.tensor_model_parallel_size,
+                )
+                == 1
             )
 
             logger.info(f"Adding lora to: {full_name}")
@@ -188,6 +199,7 @@ class LoRA(PEFT, ModuleMatcher):
                 model_parallel_config=module.config,
                 alpha=self.alpha,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
+                pg_collection=pg_collection,
             )
             if use_per_expert_adapter:
                 first_param = next(module.parameters())
