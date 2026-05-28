@@ -2,6 +2,10 @@
 
 This page lists known issues and limitations in the current release.
 
+## 26.04
+
+- The [`av`](https://pypi.org/project/av/) (PyAV) Python package is no longer installed by default in the NeMo Framework 26.04 container (`nvcr.io/nvidia/nemo:26.04`) to mitigate a CVE in the bundled FFmpeg binaries. Workflows that rely on `av` for video decoding (for example, certain multimodal data pipelines and `qwen-vl-utils` video paths) must reinstall it at runtime — see [`docker/common/README.md`](../../docker/common/README.md#reinstalling-pyav-av-at-runtime) for instructions.
+
 ## 26.02
 
 - AWS EKS only: Due to AWS-OFI-NCCL v1.17.0 long-running jobs suffer a memory leak that causes performance regression over time. This can be mitigated by upgrading to [v1.17.3](https://github.com/aws/aws-ofi-nccl/releases/tag/v1.17.3).
