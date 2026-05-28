@@ -105,7 +105,7 @@ dependencies = [
 ]
 
 
-[tool.hatch.version]
+[tool.setuptools.dynamic]
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
