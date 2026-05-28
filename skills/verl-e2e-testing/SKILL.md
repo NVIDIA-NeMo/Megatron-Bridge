@@ -336,7 +336,7 @@ bash tests/special_e2e/run_ppo_trainer_megatron.sh \
   ++critic.megatron.override_transformer_config.gradient_accumulation_fusion=False
 ```
 
-For Bridge-native FSDP behavior and constraints, also read @skills/perf-megatron-fsdp/SKILL.md.
+For Bridge-native FSDP behavior and constraints, also read @skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md.
 
 ## Convergence / Learning Signal
 
