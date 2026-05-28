@@ -1034,7 +1034,6 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         return {str(self.hf_param): full_weights}
 
-
     def megatron_to_hf_quant(
         self,
         megatron_weights: Optional[torch.Tensor],
@@ -1052,7 +1051,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             megatron_weights = self.maybe_dequantize(megatron_weights)
             assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
             q_weight, scale = quant_fn(megatron_weights, quant_block_size)
-            
+
         q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
         if q_weight is None:
             return {}
@@ -1068,7 +1067,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
             gathered_s = self.gather_from_tp_ranks(scale)
             full_scale = torch.cat(gathered_s, dim=0)
-            
+
         if self.is_expert and not self.is_adapter:
             q_weight_dict = self.gather_from_ep_ranks(full_q_weight, megatron_module, self.hf_param)
             s_dict = self.gather_from_ep_ranks_scale(full_scale, megatron_module, self.hf_param)
@@ -1079,13 +1078,12 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         hf_name = str(self.hf_param)
         scale_name = hf_name + "_scale_inv"
-        
-        quant_result = {
-            hf_name: full_q_weight,
-            scale_name: full_scale
-        }
+
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
 
         return quant_result
+
+
 def _pad_right_dim0(x: torch.Tensor, pad_size: int) -> torch.Tensor:
     padder = torch.zeros((pad_size, *x.shape[1:]), dtype=x.dtype, device=x.device)
     return torch.cat([x, padder], dim=0)
@@ -1199,7 +1197,6 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         return {str(self.hf_param): full_weights}
 
-
     def megatron_to_hf_quant(
         self,
         megatron_weights: Optional[torch.Tensor],
@@ -1217,7 +1214,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             megatron_weights = self.maybe_dequantize(megatron_weights)
             assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
             q_weight, scale = quant_fn(megatron_weights, quant_block_size)
-            
+
         q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
         if q_weight is None:
             return {}
@@ -1246,12 +1243,10 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         hf_name = str(self.hf_param)
         scale_name = hf_name + "_scale_inv"
 
-        quant_result = {
-            hf_name: full_q_weight,
-            scale_name: full_scale
-        }
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
 
         return quant_result
+
 
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
     """Mapping for weights that are **fully replicated** across TP ranks.
@@ -1592,8 +1587,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
     ) -> Dict[str, torch.Tensor]:
         """Delegate to appropriate mapping based on module type with quantization before PP broadcast."""
         assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
-        rank = torch.distributed.get_rank()
-        
+
         if self._mapping is None:
             if megatron_module is not None:
                 self._detected_type = self._detect_parallelism_type(megatron_module)
@@ -1602,7 +1596,9 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
                 self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
-        result = self._mapping.megatron_to_hf_quant(megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size)
+        result = self._mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size
+        )
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -1769,6 +1765,7 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         else:
             config = self._get_config(megatron_module)
             import copy
+
             config = remove_non_pickleables(copy.copy(config), max_depth=3)
             config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
 
@@ -1776,15 +1773,15 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         head_size = config.kv_channels or (config.hidden_size // head_num)
         hidden_size = config.hidden_size
         assert quant_block_size is not None, "quant_block_size must be provided for quantization"
-        assert head_size % quant_block_size[0] == 0, f"head_size {head_size} is not divisible by quant_block_size {quant_block_size[0]}"
-        assert hidden_size % quant_block_size[1] == 0, f"hidden_size {hidden_size} is not divisible by quant_block_size {quant_block_size[1]}"
+        assert head_size % quant_block_size[0] == 0, (
+            f"head_size {head_size} is not divisible by quant_block_size {quant_block_size[0]}"
+        )
+        assert hidden_size % quant_block_size[1] == 0, (
+            f"hidden_size {hidden_size} is not divisible by quant_block_size {quant_block_size[1]}"
+        )
         # Delegate TP/PP gathering and quantization.
         packed_dict = self._tp_mapping.megatron_to_hf_quant(
-            megatron_weights, 
-            megatron_module, 
-            lambda _: True, 
-            quant_fn,
-            quant_block_size
+            megatron_weights, megatron_module, lambda _: True, quant_fn, quant_block_size
         )
 
         if not packed_dict:
@@ -1812,6 +1809,7 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             q_scale, k_scale, v_scale = split_qkv_weights_scale(config, packed_scale, quant_block_size)
 
         quant_result = {}
+
         def add_to_result(result, q_tensor, scale_tensor, hf_name):
             result[hf_name] = q_tensor
             scale_name = hf_name + "_scale_inv"
@@ -2712,21 +2710,23 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             megatron_weights = self.maybe_dequantize(megatron_weights)
 
             assert quant_block_size is not None, "quant_block_size must be provided for quantization"
-            
+
             if len(megatron_weights.shape) == 2:
                 # Calculate the shape of gate and up shards without performing the actual chunk
                 dim0_chunk = megatron_weights.shape[0] // 2
                 dim1_chunk = megatron_weights.shape[1]
-                
+
                 if dim0_chunk % quant_block_size[0] != 0 or dim1_chunk % quant_block_size[1] != 0:
-                    raise ValueError(f"gate_shard and up_shard shape ({dim0_chunk}, {dim1_chunk}) cannot be divided by quant_block_size {quant_block_size}")
+                    raise ValueError(
+                        f"gate_shard and up_shard shape ({dim0_chunk}, {dim1_chunk}) cannot be divided by quant_block_size {quant_block_size}"
+                    )
 
             assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
             fused_q, fused_scale = quant_fn(megatron_weights, quant_block_size)
 
         fused_q = self.broadcast_from_pp_rank(fused_q, cache_key=str(self.hf_param["gate"]) + "_fused_q")
         fused_scale = self.broadcast_from_pp_rank(fused_scale, cache_key=str(self.hf_param["gate"]) + "_fused_scale")
-        
+
         if fused_q is None:
             return {}
 
@@ -2746,7 +2746,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
                 up_q_parts.append(up_shard)
             full_gate_q = torch.cat(gate_q_parts, dim=0)
             full_up_q = torch.cat(up_q_parts, dim=0)
-            
+
             if len(fused_scale.shape) > 0:
                 gathered_fused_scale = self.gather_from_tp_ranks(fused_scale)
                 gate_scale_parts = []
@@ -2762,22 +2762,25 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         if self.is_expert:
             ep_gate_dict = self.gather_from_ep_ranks(full_gate_q, megatron_module, self.hf_param["gate"])
             ep_up_dict = self.gather_from_ep_ranks(full_up_q, megatron_module, self.hf_param["up"])
-            
+
             quant_result = {**ep_gate_dict, **ep_up_dict}
-            
-            ep_gate_scale_dict = self.gather_from_ep_ranks_scale(full_gate_scale, megatron_module, self.hf_param["gate"])
+
+            ep_gate_scale_dict = self.gather_from_ep_ranks_scale(
+                full_gate_scale, megatron_module, self.hf_param["gate"]
+            )
             for k, v in ep_gate_scale_dict.items():
                 scale_name = k + "_scale_inv"
                 quant_result[scale_name] = v
-            
+
             ep_up_scale_dict = self.gather_from_ep_ranks_scale(full_up_scale, megatron_module, self.hf_param["up"])
             for k, v in ep_up_scale_dict.items():
                 scale_name = k + "_scale_inv"
                 quant_result[scale_name] = v
-                
+
             return quant_result
 
         quant_result = {}
+
         def add_to_result(result, q_tensor, scale_tensor, hf_name):
             result[hf_name] = q_tensor
             scale_name = hf_name + "_scale_inv"
@@ -3331,6 +3334,7 @@ def split_qkv_weights(
 
     return q, k, v
 
+
 def split_qkv_weights_scale(
     provider: TransformerConfig, qkv: torch.Tensor, quant_block_size: Tuple[int, int]
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -3348,7 +3352,7 @@ def split_qkv_weights_scale(
     num_query_groups = provider.num_query_groups
     heads_per_group = head_num // num_query_groups
     head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // quant_block_size[0]
-    
+
     if getattr(provider, "attention_output_gate", False):
         qkv_total_dim = 2 * head_num + 2 * num_query_groups
         total_heads_per_group = 2 * heads_per_group + 2

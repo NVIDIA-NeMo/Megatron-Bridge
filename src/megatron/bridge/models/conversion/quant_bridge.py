@@ -18,6 +18,7 @@ import torch
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
+
 if TYPE_CHECKING:
     from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
 
@@ -41,11 +42,12 @@ class MegatronQuantizationBridge:
         conversion_tasks: Optional[List["WeightConversionTask"]] = None,
         merge_adapter_weights: bool = False,
     ) -> Iterable["HFWeightTuple"]:
-        """Export Megatron weights to HuggingFace format with quantization.
-        """
+        """Export Megatron weights to HuggingFace format with quantization."""
         from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
-        assert not merge_adapter_weights, "Adapter merging is not supported for quantized weights. Use merge_adapter_weights=False instead."
+        assert not merge_adapter_weights, (
+            "Adapter merging is not supported for quantized weights. Use merge_adapter_weights=False instead."
+        )
 
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
@@ -61,7 +63,9 @@ class MegatronQuantizationBridge:
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
-        for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress):
+        for task in self._with_progress_tracking(
+            megatron_to_hf_tasks, "Converting to HuggingFace (Quantized)", show_progress
+        ):
             converted_weights_dict = task.mapping.megatron_to_hf_quant(
                 task.param_weight, task.megatron_module, quantization_checker, quant_fn, quant_block_size
             )
@@ -84,6 +88,8 @@ class MegatronQuantizationBridge:
                         if "lm_head.weight" in expected_keys:
                             yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
-                    raise ValueError("Encountered lm_head.weight when embeddings are tied. This indicates a mapping error.")
+                    raise ValueError(
+                        "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
+                    )
                 else:
                     yield HFWeightTuple(hf_name, final_tensor)

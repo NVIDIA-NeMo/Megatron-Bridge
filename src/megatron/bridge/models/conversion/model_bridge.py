@@ -34,7 +34,6 @@ from typing import (
     Type,
     TypeVar,
     Union,
-    Tuple,
 )
 
 import torch
@@ -53,12 +52,12 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
 )
-from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeight,
     AdapterWeightConversionTask,
     MegatronPeftBridge,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -319,7 +318,9 @@ def _megatron_local_name_to_global(
     return param_name
 
 
-class MegatronModelBridge(MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(
+    MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]
+):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 

@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union, Tuple
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 import torch.distributed as dist

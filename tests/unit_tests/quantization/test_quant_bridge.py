@@ -28,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     merge_qkv_weights,
 )
 
+
 def scaled_fp8_blockwise(
     data_hp,
     weight_block_size,
@@ -168,21 +169,18 @@ class TestColumnParallelMappingQuant:
         mock_distributed_env(tp_size=2, tp_rank=tp_rank)
         mapping = ColumnParallelMapping("col.weight", "hf.weight")
         megatron_shard = torch.randn(16, 16)
-        quant_block_size = (4,4)
+        quant_block_size = (4, 4)
 
         with patch.object(mapping, "gather_from_tp_ranks") as mock_gather:
             full_weight = torch.randn(32, 16)
             q_full, scale_full = scaled_fp8_blockwise(full_weight, quant_block_size)
-            
-            mock_gather.side_effect = [
-                list(torch.chunk(q_full, 2, dim=0)),
-                list(torch.chunk(scale_full, 2, dim=0))
-            ]
-            
+
+            mock_gather.side_effect = [list(torch.chunk(q_full, 2, dim=0)), list(torch.chunk(scale_full, 2, dim=0))]
+
             result = mapping.megatron_to_hf_quant(
-                megatron_shard, 
-                None, 
-                quantization_checker=dummy_quantization_checker, 
+                megatron_shard,
+                None,
+                quantization_checker=dummy_quantization_checker,
                 quant_fn=scaled_fp8_blockwise,
                 quant_block_size=quant_block_size,
             )
@@ -198,23 +196,20 @@ class TestRowParallelMappingQuant:
         mock_distributed_env(tp_size=2, tp_rank=tp_rank)
         mapping = RowParallelMapping("row.weight", "hf.weight")
         megatron_shard = torch.randn(16, 16)
-        quant_block_size = (4,4)
+        quant_block_size = (4, 4)
 
         with patch.object(mapping, "gather_from_tp_ranks") as mock_gather:
             full_weight = torch.randn(16, 32)
             q_full, scale_full = scaled_fp8_blockwise(full_weight, quant_block_size)
-            
-            mock_gather.side_effect = [
-                list(torch.chunk(q_full, 2, dim=1)),
-                list(torch.chunk(scale_full, 2, dim=1))
-            ]
-            
+
+            mock_gather.side_effect = [list(torch.chunk(q_full, 2, dim=1)), list(torch.chunk(scale_full, 2, dim=1))]
+
             result = mapping.megatron_to_hf_quant(
-                megatron_shard, 
-                None, 
-                quantization_checker=dummy_quantization_checker, 
+                megatron_shard,
+                None,
+                quantization_checker=dummy_quantization_checker,
                 quant_fn=scaled_fp8_blockwise,
-                quant_block_size=quant_block_size
+                quant_block_size=quant_block_size,
             )
 
             assert "hf.weight" in result
@@ -228,13 +223,10 @@ class TestReplicatedMappingQuant:
         mock_distributed_env(tp_size=2, tp_rank=tp_rank)
         mapping = ReplicatedMapping("rep.weight", "hf.weight")
         megatron_weight = torch.randn(16, 16)
-        
+
         # ReplicatedMapping doesn't quantize, it just calls megatron_to_hf
         result = mapping.megatron_to_hf_quant(
-            megatron_weight, 
-            None, 
-            quantization_checker=dummy_quantization_checker, 
-            quant_fn=scaled_fp8_blockwise
+            megatron_weight, None, quantization_checker=dummy_quantization_checker, quant_fn=scaled_fp8_blockwise
         )
 
         assert "hf.weight" in result
@@ -245,27 +237,27 @@ class TestAutoMappingQuant:
     def test_megatron_to_hf_quant(self, mock_distributed_env, transformer_config):
         mock_distributed_env()
         mapping = AutoMapping(megatron_param="some.weight", hf_param="hf.weight")
-        
+
         class MyCol(torch.nn.Module):
             tensor_model_parallel = True
             partition_dim = 0
-            
+
         megatron_module = MyCol()
         megatron_weight = torch.randn(16, 16)
-        quant_block_size = (4,4)
-        
+        quant_block_size = (4, 4)
+
         with patch.object(ColumnParallelMapping, "megatron_to_hf_quant") as mock_quant:
             q_full, scale_full = scaled_fp8_blockwise(megatron_weight, quant_block_size)
             mock_quant.return_value = {"hf.weight": q_full, "hf.weight_scale_inv": scale_full}
-            
+
             result = mapping.megatron_to_hf_quant(
-                megatron_weight, 
-                megatron_module, 
-                quantization_checker=dummy_quantization_checker, 
+                megatron_weight,
+                megatron_module,
+                quantization_checker=dummy_quantization_checker,
                 quant_fn=scaled_fp8_blockwise,
-                quant_block_size=quant_block_size
+                quant_block_size=quant_block_size,
             )
-            
+
             assert "hf.weight" in result
             assert torch.equal(result["hf.weight"].to(torch.float32), q_full.to(torch.float32))
             assert torch.equal(result["hf.weight_scale_inv"], scale_full)
@@ -318,11 +310,11 @@ class TestGatedMLPMappingQuant:
         megatron_module = MockModule(transformer_config, weight_shape=(256, 32))
 
         result = mapping.megatron_to_hf_quant(
-            merged_weight, 
-            megatron_module, 
-            quantization_checker=dummy_quantization_checker, 
+            merged_weight,
+            megatron_module,
+            quantization_checker=dummy_quantization_checker,
             quant_fn=scaled_fp8_blockwise,
-            quant_block_size=(16, 16)
+            quant_block_size=(16, 16),
         )
 
         assert "gate.weight" in result
