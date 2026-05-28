@@ -254,7 +254,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
-        set_gpt_oss_20b_common_configs(cfg)
+    set_gpt_oss_20b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
 
