@@ -441,12 +441,12 @@ class TestResolveTarget:
     def test_resolve_non_callable_target(self):
         """Test resolving non-callable target with check_callable=True."""
         with pytest.raises(InstantiationException, match="Expected a callable target"):
-            _resolve_target("builtins.__name__", "test_key", check_callable=True)
+            _resolve_target("builtins.Ellipsis", "test_key", check_callable=True)
 
     def test_resolve_non_callable_target_no_check(self):
         """Test resolving non-callable target with check_callable=False."""
-        result = _resolve_target("builtins.__name__", "test_key", check_callable=False)
-        assert result == "builtins"
+        result = _resolve_target("builtins.Ellipsis", "test_key", check_callable=False)
+        assert result is Ellipsis
 
 
 class TestExtractPosArgs:
@@ -697,6 +697,39 @@ class TestTargetPrefixValidation:
                 target_allowlist.remove_prefix("custom_pkg.")
             except ValueError:
                 pass
+
+    def test_instantiate_rejects_allowlist_registration_target(self):
+        """Test that configs cannot mutate the target allowlist."""
+        config = {
+            "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+            "_args_": ["os."],
+        }
+        with pytest.raises(InstantiationException, match="modify target validation state"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
+            "megatron.bridge.utils.instantiate_utils.target_allowlist.disable",
+            "megatron.training.config.instantiate_utils.target_allowlist.add_prefix",
+            "megatron.training.config.instantiate_utils.target_allowlist.disable",
+        ],
+    )
+    def test_instantiate_rejects_target_allowlist_mutators(self, target):
+        """Test that configs cannot mutate the shared target allowlist."""
+        config = {"_target_": target, "_args_": ["os."]}
+        with pytest.raises(InstantiationException, match="modify target validation state"):
+            instantiate(config)
+
+    def test_instantiate_rejects_private_target_segments(self):
+        """Test that configs cannot reach private target attributes."""
+        config = {
+            "_target_": "megatron.bridge.utils.instantiate_utils._ALLOWED_TARGET_PREFIXES.add",
+            "_args_": ["os."],
+        }
+        with pytest.raises(InstantiationException, match="private target path segments"):
+            instantiate(config)
 
     def test_register_empty_prefix_rejected(self):
         """Test that registering an empty prefix is rejected."""

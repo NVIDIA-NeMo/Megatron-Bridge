@@ -43,6 +43,27 @@ _ALLOWED_TARGET_PREFIXES: set[str] = {
     "nemo.",
 }
 
+_TARGET_ALLOWLIST_MUTATORS: tuple[str, ...] = (
+    "add_prefix",
+    "remove_prefix",
+    "add_exact",
+    "remove_exact",
+    "disable",
+    "enable",
+)
+
+_DISALLOWED_TARGETS: set[str] = {
+    "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+    *{
+        f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}"
+        for method in _TARGET_ALLOWLIST_MUTATORS
+    },
+    *{
+        f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
+        for method in _TARGET_ALLOWLIST_MUTATORS
+    },
+}
+
 
 # Mirror Bridge's allowlist into the MLM `target_allowlist` singleton, which is
 # the source of truth consulted by `_validate_target_prefix` below. MLM's
@@ -77,7 +98,18 @@ def register_allowed_target_prefix(prefix: str) -> None:
 
 
 def _validate_target_prefix(*, target: str, full_key: str) -> None:
-    """Validate that a _target_ string is permitted by the allowlist."""
+    """Validate that a _target_ string is permitted by Bridge hardening rules."""
+    if target in _DISALLOWED_TARGETS:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed because it can modify target validation state."
+            + (f"\nfull_key: {full_key}" if full_key else "")
+        )
+    private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
+    if private_segments:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed because private target path segments are not supported: "
+            f"{private_segments}." + (f"\nfull_key: {full_key}" if full_key else "")
+        )
     if not target_allowlist.is_allowed(target):
         raise InstantiationException(
             f"Instantiation of '{target}' is not allowed. "
