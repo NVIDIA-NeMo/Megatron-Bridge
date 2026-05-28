@@ -27,7 +27,7 @@ import torch.nn as nn
 from megatron.core import ModelParallelConfig, parallel_state
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
+from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
 from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
@@ -1355,6 +1355,23 @@ def _make_grouped_expert_sharded_tensor(
     )
 
 
+class _GroupedExpertAdapterWeight(nn.Module):
+    """Callable parameter container so DDP forward pre-hooks see grouped LoRA weights."""
+
+    # Overlapped param gather is driven by module forward pre-hooks. Calling this
+    # container before reading the weight makes expert-DP LoRA params participate
+    # in the normal training-time gather instead of only forced eval/checkpoint sync.
+
+    def __init__(self, weight: torch.Tensor) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(weight)
+
+    def forward(self, indices: Optional[List[int]] = None) -> torch.Tensor:
+        if indices is None:
+            return self.weight
+        return self.weight[indices]
+
+
 class GroupedExpertLinearAdapter(nn.Module):
     """LoRA adapter with one low-rank pair per local grouped MoE expert."""
 
@@ -1445,18 +1462,15 @@ class GroupedExpertLinearAdapter(nn.Module):
         ) > 1
         self._linear_in_tp_axis = linear_in_tp_axis
         self._linear_out_tp_axis = linear_out_tp_axis
-        self.linear_in = nn.Module()
-        self.linear_in.weight = nn.Parameter(linear_in_weight)
-        self.linear_out = nn.Module()
-        self.linear_out.weight = nn.Parameter(linear_out_weight)
+        self.linear_in = _GroupedExpertAdapterWeight(linear_in_weight)
+        self.linear_out = _GroupedExpertAdapterWeight(linear_out_weight)
         for weight, tp_axis in (
             (self.linear_in.weight, linear_in_tp_axis),
             (self.linear_out.weight, linear_out_tp_axis),
         ):
             setattr(weight, "allreduce", not expert_parallel)
             if tp_axis is not None:
-                setattr(weight, "partition_dim", tp_axis)
-                setattr(weight, "partition_stride", 1)
+                set_tensor_model_parallel_attributes(weight, True, tp_axis, 1)
 
         if dropout > 0.0:
             self.dropout = nn.Dropout(dropout)
@@ -1678,6 +1692,8 @@ class GroupedExpertLinearAdapter(nn.Module):
     ) -> torch.Tensor:
         """Apply the adapter using the per-expert fallback path."""
 
+        linear_in_weight = self.linear_in()
+        linear_out_weight = self.linear_out()
         outputs = []
         start = 0
         for expert_idx, split_size in enumerate(expert_splits):
@@ -1690,14 +1706,14 @@ class GroupedExpertLinearAdapter(nn.Module):
                 if self.config.cpu_offloading and self.config.cpu_offloading_activations:
                     expert_input.activation_offloading = True
 
-            hidden = nn.functional.linear(expert_input, self.linear_in.weight[expert_idx])
+            hidden = nn.functional.linear(expert_input, linear_in_weight[expert_idx])
             if not self.input_is_parallel:
                 hidden = self._gather_along_last_dim(hidden)
             hidden = self.activation(hidden)
 
             if self.config.cpu_offloading and self.config.cpu_offloading_activations:
                 hidden.activation_offloading = True
-            expert_output = nn.functional.linear(hidden, self.linear_out.weight[expert_idx])
+            expert_output = nn.functional.linear(hidden, linear_out_weight[expert_idx])
             if self.input_is_parallel:
                 expert_output = self._gather_along_last_dim(expert_output)
 
@@ -1731,7 +1747,10 @@ class GroupedExpertLinearAdapter(nn.Module):
         if self.input_is_parallel:
             output_features *= expert_tp_size
         if x.shape[0] == 0:
-            return x.new_empty((0, output_features)) * (self.alpha / self.dim)
+            linear_in_weight = self.linear_in()
+            linear_out_weight = self.linear_out()
+            grad_anchor = linear_in_weight.reshape(-1)[0] + linear_out_weight.reshape(-1)[0]
+            return (x.new_empty((0, output_features)) + grad_anchor * 0.0) * (self.alpha / self.dim)
 
         if not use_te_grouped_linear and not self._can_use_grouped_mm(x):
             return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size) * (
@@ -1762,7 +1781,7 @@ class GroupedExpertLinearAdapter(nn.Module):
         if not use_te_grouped_linear:
             offs = self._build_grouped_mm_offsets(padded_splits, device=x.device)
 
-        active_linear_in = self.linear_in.weight[active_expert_indices]
+        active_linear_in = self.linear_in(active_expert_indices)
         hidden = self._forward_grouped_projection(
             grouped_input,
             weight=active_linear_in,
@@ -1776,7 +1795,7 @@ class GroupedExpertLinearAdapter(nn.Module):
 
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             hidden.activation_offloading = True
-        active_linear_out = self.linear_out.weight[active_expert_indices]
+        active_linear_out = self.linear_out(active_expert_indices)
         expert_output = self._forward_grouped_projection(
             hidden,
             weight=active_linear_out,

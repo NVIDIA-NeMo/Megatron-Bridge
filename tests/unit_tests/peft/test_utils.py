@@ -1041,6 +1041,98 @@ class TestGroupedExpertLinearAdapter:
         )
         torch.testing.assert_close(output, expected)
 
+    def test_grouped_expert_linear_adapter_keeps_checkpoint_keys_after_weight_module_wrap(self):
+        """Calling weight containers should not change existing adapter checkpoint keys."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        state_dict = adapter.state_dict()
+
+        assert sorted(state_dict) == ["linear_in.weight", "linear_out.weight"]
+        old_style_state_dict = {
+            "linear_in.weight": torch.ones_like(adapter.linear_in.weight),
+            "linear_out.weight": torch.full_like(adapter.linear_out.weight, 2.0),
+        }
+        missing, unexpected = adapter.load_state_dict(old_style_state_dict, strict=True)
+        assert missing == []
+        assert unexpected == []
+        torch.testing.assert_close(adapter.linear_in.weight, old_style_state_dict["linear_in.weight"])
+        torch.testing.assert_close(adapter.linear_out.weight, old_style_state_dict["linear_out.weight"])
+
+    def test_grouped_expert_linear_adapter_forward_calls_weight_modules_for_param_sync_hooks(self):
+        """Grouped expert weights should trigger DDP forward pre-hooks before direct weight use."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        calls = []
+        adapter.linear_in.register_forward_pre_hook(lambda module, inputs: calls.append("linear_in"))
+        adapter.linear_out.register_forward_pre_hook(lambda module, inputs: calls.append("linear_out"))
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=fake_grouped_mm,
+                create=True,
+            ),
+        ):
+            adapter(x, [1, 0, 2])
+
+        assert calls == ["linear_in", "linear_out"]
+
+    def test_grouped_expert_linear_adapter_zero_token_batch_keeps_weight_grad_dependency(self):
+        """Empty local expert batches should still produce zero grads for DDP hooks."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        output = adapter(torch.empty(0, 2), [0, 0])
+
+        assert output.shape == (0, 2)
+        output.sum().backward()
+        assert adapter.linear_in.weight.grad is not None
+        assert adapter.linear_out.weight.grad is not None
+        torch.testing.assert_close(adapter.linear_in.weight.grad, torch.zeros_like(adapter.linear_in.weight))
+        torch.testing.assert_close(adapter.linear_out.weight.grad, torch.zeros_like(adapter.linear_out.weight))
+
     def test_grouped_expert_linear_adapter_grouped_mm_falls_back_on_cpu(self):
         """CPU inputs should not enter the grouped_mm fast path."""
         adapter = GroupedExpertLinearAdapter(
@@ -1370,6 +1462,48 @@ class TestGroupedExpertLinearAdapter:
 
         assert adapter.linear_in.weight.allreduce is expected_allreduce
         assert adapter.linear_out.weight.allreduce is expected_allreduce
+        assert adapter.linear_in.weight.tensor_model_parallel is True
+        assert adapter.linear_out.weight.tensor_model_parallel is True
+        assert adapter.linear_in.weight.partition_dim == 1
+        assert adapter.linear_out.weight.partition_dim == 1
+
+    def test_grouped_expert_linear_adapter_groups_as_expert_ddp_buffer_when_ep_enabled(self):
+        """MCore DDP should place per-expert adapter params in expert-parallel buckets."""
+        from megatron.core.distributed.param_and_grad_buffer import group_params_for_buffers
+
+        with (
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
+                return_value=8,
+            ),
+            patch(
+                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
+                return_value=1,
+            ),
+        ):
+            adapter = GroupedExpertLinearAdapter(
+                in_features=2,
+                out_features=2,
+                dim=2,
+                num_local_experts=2,
+                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+                activation="identity",
+                input_is_parallel=False,
+                model_parallel_config=MockModelParallelConfig(),
+            )
+
+        buffer_groups = group_params_for_buffers(
+            [adapter.linear_in.weight, adapter.linear_out.weight],
+            grad_reduce_in_fp32=False,
+        )
+
+        assert len(buffer_groups) == 1
+        buffer_key, (params, _param_indices) = next(iter(buffer_groups.items()))
+        assert buffer_key.is_expert_parallel
+        assert [id(param) for param in params] == [
+            id(adapter.linear_in.weight),
+            id(adapter.linear_out.weight),
+        ]
 
     def test_grouped_expert_linear_sharded_state_dict_uses_expert_parallel_offsets(self):
         """Grouped-expert weights should shard only across expert EP/ETP and use expert-DP replica ids."""
