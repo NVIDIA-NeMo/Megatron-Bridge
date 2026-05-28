@@ -13,8 +13,8 @@ skills/build-and-dependency/SKILL
 skills/bump-dependency/SKILL
 skills/testing/SKILL
 skills/cicd/SKILL
-skills/mlm-bridge-training/SKILL
-skills/mbridge-recipe-recommender/SKILL
+skills/nemo-mbridge-mlm-bridge-training/SKILL
+skills/nemo-mbridge-recipe-recommender/SKILL
 ```
 
 ```{toctree}
@@ -56,7 +56,8 @@ skills/perf-cpu-offloading/SKILL
 :caption: Cluster & Debugging
 :maxdepth: 1
 
-skills/multi-node-slurm/SKILL
+skills/nemo-mbridge-multi-node-slurm/SKILL
+skills/nemo-mbridge-multi-node-slurm/references/templates
 ```
 
 ```{toctree}
