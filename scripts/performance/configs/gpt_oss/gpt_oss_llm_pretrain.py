@@ -56,6 +56,7 @@ def gpt_oss_20b_pretrain_config_b300(
     precision_config.fp4_param_gather = False
     precision_config.fp8_param = False
     precision_config.fp8_param_gather = False
+    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
@@ -94,7 +95,6 @@ def gpt_oss_20b_pretrain_config_b300(
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
-    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
@@ -160,6 +160,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     precision_config.fp4_param_gather = False
     precision_config.fp8_param = False
     precision_config.fp8_param_gather = False
+    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
@@ -203,7 +204,6 @@ def gpt_oss_20b_pretrain_config_gb200(
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
-    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
@@ -214,14 +214,12 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
-        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
-        cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
         cfg.model.cuda_graph_warmup_steps = 5
         cfg.model.calculate_per_token_loss = False
         cfg.ddp.average_in_collective = True
@@ -230,7 +228,6 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
-        cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
@@ -288,6 +285,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     precision_config.fp4_param_gather = False
     precision_config.fp8_param = False
     precision_config.fp8_param_gather = False
+    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
         set_gpt_oss_common_configs(cfg)
@@ -325,7 +323,6 @@ def gpt_oss_20b_pretrain_config_gb300(
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
-    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.optimizer.adam_eps = 1e-05
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
@@ -408,6 +405,7 @@ def gpt_oss_20b_pretrain_config_vr200(
     precision_config.fp4_param_gather = False
     precision_config.fp8_param = False
     precision_config.fp8_param_gather = False
+    precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
@@ -447,7 +445,6 @@ def gpt_oss_20b_pretrain_config_vr200(
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
-    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
