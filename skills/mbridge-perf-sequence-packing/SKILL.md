@@ -1,6 +1,7 @@
 ---
 name: mbridge-perf-sequence-packing
 description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints.
+license: Apache-2.0
 when_to_use: Enabling sequence packing or long-context SFT, or investigating a commit that broke sequence packing or changed packing behavior; 'packed sequences', 'sequence packing', 'PackedSequenceSpecs', 'pack_sequences_in_batch', 'CP with packing'.
 ---
 

@@ -1,6 +1,7 @@
 ---
 name: mbridge-recipe-recommender
 description: Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes.
+license: Apache-2.0
 when_to_use: User wants a starting recipe or training config; 'which recipe', 'recommend recipe', 'how to train Llama', 'starting config for X GPUs', 'what recipe for SFT'.
 ---
 

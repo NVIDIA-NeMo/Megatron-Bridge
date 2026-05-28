@@ -1,6 +1,7 @@
 ---
 name: mbridge-perf-cuda-graphs
 description: Validate and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs for attention, MLP, and MoE modules.
+license: Apache-2.0
 when_to_use: Reducing host-driver overhead via CUDA graphs, or tracing a crash or regression to a CUDA graph config change; 'cuda_graph_impl', 'full iteration graph', 'TE scoped graph', 'graphed callables', 'CUDA graph capture'.
 ---
 

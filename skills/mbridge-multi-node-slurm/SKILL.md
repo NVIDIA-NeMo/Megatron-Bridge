@@ -1,6 +1,7 @@
 ---
 name: mbridge-multi-node-slurm
 description: Convert single-node scripts to multi-node Slurm sbatch jobs and debug common multi-node failures. Covers srun-native vs uv run torch.distributed approaches, container setup, NCCL timeouts, OOM sizing for MoE models, and interactive allocation.
+license: Apache-2.0
 when_to_use: Writing or converting Slurm sbatch scripts, scaling to multiple nodes, debugging NCCL/launch failures, or investigating a commit that caused multi-node training failures; 'run on multiple nodes', 'sbatch script', 'NCCL timeout', 'multi-node OOM'.
 ---
 

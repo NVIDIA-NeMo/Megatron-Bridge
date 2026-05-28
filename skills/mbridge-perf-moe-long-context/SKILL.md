@@ -1,6 +1,7 @@
 ---
 name: mbridge-perf-moe-long-context
 description: Long-context MoE training guidance for Megatron Bridge. Covers CP sizing, selective recompute, dispatcher choices, and practical patterns from DSV3, Qwen3, and Qwen3-Next long-context experiments.
+license: Apache-2.0
 when_to_use: Training MoE at long sequence lengths, or investigating a commit that caused long-context MoE OOM or degraded throughput; 'long context MoE', '128k tokens', 'CP sizing for long sequences', 'selective recompute long context', 'MoE long-context OOM'.
 ---
 
