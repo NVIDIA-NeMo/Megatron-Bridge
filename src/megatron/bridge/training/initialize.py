@@ -789,10 +789,16 @@ def _initialize_distributed(
         if parallel_state.model_parallel_is_initialized():
             print("model parallel is already initialized")
         else:
-            # Guard for main/dev branch submodule compat: dev exposes dynamic_context_parallel instead.
-            # TODO(mcore-dev): remove once dev exposes hybrid_context_parallel or Bridge migrates the config.
+            # Guard for main/dev branch submodule compatibility while Bridge pins
+            # MCore commits across the Dynamic CP rename.
             _init_mp_params = set(inspect.signature(parallel_state.initialize_model_parallel).parameters)
             _optional_kwargs = {}
+            if "dynamic_context_parallel" in _init_mp_params and hasattr(model_config, "dynamic_context_parallel"):
+                _optional_kwargs["dynamic_context_parallel"] = model_config.dynamic_context_parallel
+            if "min_dynamic_context_parallel_size" in _init_mp_params and hasattr(
+                model_config, "min_dynamic_context_parallel_size"
+            ):
+                _optional_kwargs["min_dynamic_context_parallel_size"] = model_config.min_dynamic_context_parallel_size
             if "hybrid_context_parallel" in _init_mp_params:
                 _optional_kwargs["hybrid_context_parallel"] = model_config.hybrid_context_parallel
 

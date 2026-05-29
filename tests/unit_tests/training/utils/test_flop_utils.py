@@ -930,6 +930,54 @@ class TestMoELatentTransformerPath:
 
 
 @pytest.mark.unit
+class TestGluFfnExpansion:
+    """Tests that gated_linear_unit uses ffn_expansion_factor=3 for any GLU activation."""
+
+    def test_glu_non_silu_uses_expansion_factor_three(self):
+        """GeGLU and SwiGLU both count three FFN projections; activation_func is not in the formula."""
+        import torch.nn.functional as F
+
+        batch_size = 1
+        seq_length = 512
+        hidden_size = 1024
+        ffn_hidden_size = 4096
+        num_layers = 4
+        vocab_size = 32000
+
+        base = dict(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_length,
+            ffn_hidden_size=ffn_hidden_size,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=128,
+            vocab_size=vocab_size,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+        )
+
+        cfg_no_glu = MockConfigContainer(model=MockModelConfig(**base, gated_linear_unit=False))
+        cfg_glu_gelu = MockConfigContainer(
+            model=MockModelConfig(**base, gated_linear_unit=True, activation_func=F.gelu)
+        )
+        cfg_glu_silu = MockConfigContainer(
+            model=MockModelConfig(**base, gated_linear_unit=True, activation_func=F.silu)
+        )
+
+        flops_no_glu = num_floating_point_operations(cfg_no_glu, batch_size=batch_size)
+        flops_glu_gelu = num_floating_point_operations(cfg_glu_gelu, batch_size=batch_size)
+        flops_glu_silu = num_floating_point_operations(cfg_glu_silu, batch_size=batch_size)
+
+        assert flops_glu_gelu == flops_glu_silu, "GLU FLOPs must not depend on activation_func"
+
+        # Only the dense MLP term changes: expansion 3 vs 2 (attn + logit are identical).
+        expected_mlp_delta = batch_size * seq_length * 3 * 2 * hidden_size * ffn_hidden_size * num_layers
+        assert flops_glu_gelu - flops_no_glu == expected_mlp_delta
+        assert flops_glu_silu - flops_no_glu == expected_mlp_delta
+
+
+@pytest.mark.unit
 class TestSlidingWindowAttentionFlops:
     """Tests for sliding window attention (SWA) FLOPs in transformer_flops path."""
 
@@ -1016,8 +1064,13 @@ class TestSlidingWindowAttentionFlops:
         query_projection_size = kv_channels * num_attention_heads
         effective_window = window_left + 0 + 1  # 512
 
-        # Core attention difference per SWA layer: Q * (S - W) (the /2 *2 cancels)
-        core_diff_per_layer = query_projection_size * (seq_length - effective_window)
+        # Causal SWA: query at position t attends to min(t, W) keys.
+        # Sum over t=1..T, then average (flop_utils divides by T; *T happens in seq_length).
+        total_swa_keys = (
+            effective_window * (effective_window + 1) / 2 + (seq_length - effective_window) * effective_window
+        )
+        avg_swa_keys = total_swa_keys / seq_length
+        core_diff_per_layer = query_projection_size * (seq_length - 2 * avg_swa_keys)
         expected_delta = batch_size * seq_length * 3 * 2 * num_swa_layers * core_diff_per_layer
         actual_delta = flops_full - flops_swa
 

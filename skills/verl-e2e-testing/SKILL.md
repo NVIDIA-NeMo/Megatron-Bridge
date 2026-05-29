@@ -336,7 +336,7 @@ bash tests/special_e2e/run_ppo_trainer_megatron.sh \
   ++critic.megatron.override_transformer_config.gradient_accumulation_fusion=False
 ```
 
-For Bridge-native FSDP behavior and constraints, also read @skills/perf-megatron-fsdp/SKILL.md.
+For Bridge-native FSDP behavior and constraints, also read @skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md.
 
 ## Convergence / Learning Signal
 
@@ -431,7 +431,7 @@ If an attach helper enters a container that no longer sees the expected checkout
 
 On CUDA/H100 clusters, some launchers set both `CUDA_VISIBLE_DEVICES` and ROCm variables such as `ROCR_VISIBLE_DEVICES`. If verl workers fail before model construction with `Please don't set ROCR_VISIBLE_DEVICES when HIP/CUDA_VISIBLE_DEVICES is set`, fix the launcher/container environment or apply a temporary local verl workaround that drops `ROCR_VISIBLE_DEVICES` when CUDA is already set. Do not report this as a Bridge provider failure.
 
-For general Slurm debugging and multi-node patterns, read @skills/multi-node-slurm/SKILL.md.
+For general Slurm debugging and multi-node patterns, read @skills/nemo-mbridge-multi-node-slurm/SKILL.md.
 
 ## Pass Criteria
 
