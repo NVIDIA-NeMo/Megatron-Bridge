@@ -42,6 +42,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
         "deepseek_v2_lite_pretrain_config",
         "deepseek_v3_pretrain_config",
         "deepseek_v3_pretrain_config_32nodes",
+        "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
     }
@@ -61,6 +62,7 @@ class _FakeModelCfg:
         self.num_moe_experts = 0
         self.apply_rope_fusion = False
         self.vocab_size = 1024
+        self.make_vocab_size_divisible_by = 128
 
     def finalize(self):
         return None
@@ -249,10 +251,13 @@ def test_deepseek_v4_adam_mxfp8_recipe_uses_validated_optimizer_defaults(monkeyp
     assert cfg.ddp.overlap_param_gather is True
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.model.apply_dsa_kernel_fusion is False
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
-    assert cfg.model.csa_backend == "cudnn_dsa"
+    assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is True
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.mixed_precision.fp8_recipe == "mxfp8"
     assert cfg.mixed_precision.fp8_param_gather is False
     assert cfg.model.mtp_eval_in_bf16 is True
@@ -276,26 +281,27 @@ def test_deepseek_v4_muon_bf16_recipe_uses_validated_optimizer_defaults(monkeypa
     assert cfg.ddp.use_distributed_optimizer is False
     assert cfg.ddp.overlap_grad_reduce is True
     assert cfg.ddp.grad_reduce_in_fp32 is True
+    assert cfg.model.apply_dsa_kernel_fusion is False
     assert cfg.model.dsa_indexer_loss_coeff == 0.0
     assert cfg.model.dsa_indexer_use_sparse_loss is False
-    assert cfg.model.csa_backend == "cudnn_dsa"
+    assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is True
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.fp8 is None
     assert cfg.mixed_precision.fp8_param_gather is False
 
 
-def test_deepseek_v4_rejects_muon_mxfp8(monkeypatch: pytest.MonkeyPatch):
-    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_pretrain_config", monkeypatch)
 
-    with pytest.raises(ValueError, match="Muon \\+ MXFP8"):
-        mod._deepseek_v4_flash_pretrain_config(optimizer_type="muon", mxfp8=True)
-
-
-def test_deepseek_v4_rejects_invalid_optimizer(monkeypatch: pytest.MonkeyPatch):
-    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-
-    with pytest.raises(ValueError, match="Invalid DeepSeek-V4 optimizer type"):
-        mod._deepseek_v4_flash_pretrain_config(optimizer_type="sgd")
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.apply_dsa_kernel_fusion is False
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.use_fused_mhc is True
+    assert cfg.model.dsa_indexer_loss_coeff == 0.0
+    assert cfg.model.dsa_indexer_use_sparse_loss is False
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.micro_batch_size == 1

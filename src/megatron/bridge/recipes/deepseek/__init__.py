@@ -33,6 +33,7 @@ from .deepseek_v3 import (
 
 # DeepSeek V4
 from .deepseek_v4 import (
+    deepseek_v4_flash_pretrain_config,
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
     set_deepseek_v4_pipeline_model_parallel_layout,
@@ -48,6 +49,7 @@ __all__ = [
     "deepseek_v3_pretrain_config_32nodes",
     "set_deepseek_v3_pipeline_model_parallel_layout",
     # DeepSeek V4
+    "deepseek_v4_flash_pretrain_config",
     "deepseek_v4_flash_pretrain_mxfp8_config",
     "deepseek_v4_flash_pretrain_muon_config",
     "set_deepseek_v4_pipeline_model_parallel_layout",

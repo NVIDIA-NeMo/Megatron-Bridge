@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Literal
-
 import torch
 from megatron.core.quantization.quant_config import RecipeConfig
 
@@ -27,10 +25,6 @@ from megatron.bridge.recipes.utils.optimizer_utils import (
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
-
-
-DSV4_CSA_BACKEND = Literal["unfused", "cudnn_dsa"]
-DSV4_OPTIMIZER = Literal["adam", "muon"]
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: GPTModelProvider) -> None:
@@ -87,16 +81,16 @@ def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
     )
 
 
-def _deepseek_v4_flash_pretrain_config(
-    *,
-    optimizer_type: DSV4_OPTIMIZER = "adam",
-    mxfp8: bool = False,
-    csa_backend: DSV4_CSA_BACKEND = "cudnn_dsa",
-    use_fused_kernels: bool = True,
-    hf_path: str = "deepseek-ai/DeepSeek-V4-Flash",
-) -> ConfigContainer:
+def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
+    """Return the DeepSeek-V4-Flash Blackwell pre-training base config.
+
+    Recommended Blackwell baseline: TP=1, PP=4, EP=8, CP=1.
+    """
+    use_fused_kernels = True
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        "deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True
+    ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -117,10 +111,9 @@ def _deepseek_v4_flash_pretrain_config(
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
+    cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.apply_rope_fusion = use_fused_kernels
     cfg.model.use_fused_mhc = use_fused_kernels
-    cfg.model.csa_backend = csa_backend
-    # Keep indexer loss disabled until the DSv4 fused indexer-loss path is supported.
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -143,6 +136,9 @@ def _deepseek_v4_flash_pretrain_config(
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
+    cfg.tokenizer.make_vocab_size_divisible_by = cfg.model.make_vocab_size_divisible_by
+    cfg.tokenizer.tensor_model_parallel_size = cfg.model.tensor_model_parallel_size
+    cfg.tokenizer.rank = 0
 
     cfg.dataset.blend = None
     cfg.dataset.blend_per_split = None
@@ -169,96 +165,140 @@ def _deepseek_v4_flash_pretrain_config(
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
-    if optimizer_type == "adam":
-        opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-            lr_warmup_iters=2000,
-            lr_decay_iters=cfg.train.train_iters,
-            max_lr=2.7e-4,
-            min_lr=2.7e-5,
-            weight_decay=0.1,
-            clip_grad=1.0,
-        )
-        opt_cfg.use_precision_aware_optimizer = True
-        opt_cfg.main_grads_dtype = torch.float32
-        opt_cfg.main_params_dtype = torch.float32
-        opt_cfg.exp_avg_dtype = torch.bfloat16
-        opt_cfg.exp_avg_sq_dtype = torch.bfloat16
-        opt_cfg.adam_beta1 = 0.9
-        opt_cfg.adam_beta2 = 0.95
-        opt_cfg.adam_eps = 1e-20
-
-        scheduler_cfg.start_weight_decay = 0.1
-        scheduler_cfg.end_weight_decay = 0.1
-        scheduler_cfg.weight_decay_incr_style = "constant"
-
-        cfg.ddp.use_distributed_optimizer = True
-        cfg.ddp.overlap_param_gather = True
-        cfg.ddp.overlap_grad_reduce = True
-        cfg.ddp.grad_reduce_in_fp32 = True
-        cfg.ddp.average_in_collective = True
-        cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-        cfg.mixed_precision = bf16_with_mxfp8_mixed() if mxfp8 else bf16_mixed()
-        if mxfp8:
-            # MCore uses a layer's training quantization recipe during eval unless an
-            # evaluation_recipe is provided. Keep DSv4 MTP/validation eval in BF16
-            # while training TE linears with MXFP8.
-            cfg.mixed_precision.fp8_param_gather = False
-            cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-            cfg.model.moe_router_padding_for_fp8 = True
-            cfg.model.mtp_eval_in_bf16 = True
-            cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
-    elif optimizer_type == "muon":
-        if mxfp8:
-            raise ValueError("DeepSeek-V4 Muon + MXFP8 is not a supported recipe yet.")
-        opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
-            muon_momentum=0.95,
-            muon_use_nesterov=True,
-            muon_scale_mode="unit_rms_norm",
-            muon_fp32_matmul_prec="highest",
-            muon_num_ns_steps=5,
-            muon_extra_scale_factor=0.2,
-            lr_warmup_iters=2000,
-            lr_decay_iters=cfg.train.train_iters,
-            max_lr=2.7e-4,
-            min_lr=2.7e-5,
-            weight_decay=0.1,
-            clip_grad=1.0,
-        )
-        # DSv4 Muon uses non-layer-wise optimizer dispatch.
-        opt_cfg.optimizer = "muon"
-        opt_cfg.adam_beta1 = 0.9
-        opt_cfg.adam_beta2 = 0.95
-        opt_cfg.adam_eps = 1e-20
-        if hasattr(opt_cfg, "muon_coefficient_type"):
-            opt_cfg.muon_coefficient_type = "quintic"
-
-        scheduler_cfg.start_weight_decay = 0.1
-        scheduler_cfg.end_weight_decay = 0.1
-        scheduler_cfg.weight_decay_incr_style = "constant"
-
-        cfg.ddp.use_distributed_optimizer = False
-        cfg.ddp.overlap_param_gather = False
-        cfg.ddp.overlap_grad_reduce = True
-        cfg.ddp.grad_reduce_in_fp32 = True
-        cfg.ddp.average_in_collective = True
-        cfg.ddp.data_parallel_sharding_strategy = "no_shard"
-        cfg.mixed_precision = bf16_mixed()
-        cfg.mixed_precision.grad_reduce_in_fp32 = True
-    else:
-        raise ValueError(f"Invalid DeepSeek-V4 optimizer type: {optimizer_type}")
-
-    cfg.optimizer = opt_cfg
-    cfg.scheduler = scheduler_cfg
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
     return cfg
 
 
-def deepseek_v4_flash_pretrain_mxfp8_config(hf_path: str = "deepseek-ai/DeepSeek-V4-Flash") -> ConfigContainer:
+def deepseek_v4_flash_pretrain_mxfp8_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Flash Adam + MXFP8 pre-training config."""
-    return _deepseek_v4_flash_pretrain_config(optimizer_type="adam", mxfp8=True, hf_path=hf_path)
+    cfg = deepseek_v4_flash_pretrain_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.train.train_iters = 1_000_000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    use_fused_kernels = True
+    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.apply_rope_fusion = use_fused_kernels
+    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.dsa_indexer_loss_coeff = 0.0
+    cfg.model.dsa_indexer_use_sparse_loss = False
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+
+    opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
+        lr_warmup_iters=2000,
+        lr_decay_iters=cfg.train.train_iters,
+        max_lr=2.7e-4,
+        min_lr=2.7e-5,
+        weight_decay=0.1,
+        clip_grad=1.0,
+    )
+    opt_cfg.use_precision_aware_optimizer = True
+    opt_cfg.main_grads_dtype = torch.float32
+    opt_cfg.main_params_dtype = torch.float32
+    opt_cfg.exp_avg_dtype = torch.bfloat16
+    opt_cfg.exp_avg_sq_dtype = torch.bfloat16
+    opt_cfg.adam_beta1 = 0.9
+    opt_cfg.adam_beta2 = 0.95
+    opt_cfg.adam_eps = 1e-20
+
+    scheduler_cfg.start_weight_decay = 0.1
+    scheduler_cfg.end_weight_decay = 0.1
+    scheduler_cfg.weight_decay_incr_style = "constant"
+
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.mixed_precision = bf16_with_mxfp8_mixed()
+    # MCore uses a layer's training quantization recipe during eval unless an
+    # evaluation_recipe is provided. Keep DSv4 MTP/validation eval in BF16
+    # while training TE linears with MXFP8.
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.model.moe_router_padding_for_fp8 = True
+    cfg.model.mtp_eval_in_bf16 = True
+    cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
+    return cfg
 
 
-def deepseek_v4_flash_pretrain_muon_config(hf_path: str = "deepseek-ai/DeepSeek-V4-Flash") -> ConfigContainer:
+def deepseek_v4_flash_pretrain_muon_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Flash BF16 Muon pre-training config."""
-    return _deepseek_v4_flash_pretrain_config(optimizer_type="muon", mxfp8=False, hf_path=hf_path)
+    cfg = deepseek_v4_flash_pretrain_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.train.train_iters = 1_000_000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    use_fused_kernels = True
+    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.apply_rope_fusion = use_fused_kernels
+    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.dsa_indexer_loss_coeff = 0.0
+    cfg.model.dsa_indexer_use_sparse_loss = False
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+
+    opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
+        muon_momentum=0.95,
+        muon_use_nesterov=True,
+        muon_scale_mode="unit_rms_norm",
+        muon_fp32_matmul_prec="highest",
+        muon_num_ns_steps=5,
+        muon_extra_scale_factor=0.2,
+        lr_warmup_iters=2000,
+        lr_decay_iters=cfg.train.train_iters,
+        max_lr=2.7e-4,
+        min_lr=2.7e-5,
+        weight_decay=0.1,
+        clip_grad=1.0,
+    )
+    # DSv4 Muon uses non-layer-wise optimizer dispatch.
+    opt_cfg.optimizer = "muon"
+    opt_cfg.adam_beta1 = 0.9
+    opt_cfg.adam_beta2 = 0.95
+    opt_cfg.adam_eps = 1e-20
+    if hasattr(opt_cfg, "muon_coefficient_type"):
+        opt_cfg.muon_coefficient_type = "quintic"
+
+    scheduler_cfg.start_weight_decay = 0.1
+    scheduler_cfg.end_weight_decay = 0.1
+    scheduler_cfg.weight_decay_incr_style = "constant"
+
+    cfg.optimizer = opt_cfg
+    cfg.scheduler = scheduler_cfg
+    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
+    return cfg

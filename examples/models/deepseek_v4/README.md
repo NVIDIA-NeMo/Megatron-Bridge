@@ -4,9 +4,9 @@ End-to-end conversion and inference scripts for the DeepSeek V4 family on Megatr
 
 The bridge supports four published variants out of the same code path. The on-disk quantisation differs between post-trained (Flash, Pro) and pretrained-only (Flash-Base, Pro-Base) models — see [`docs/models/deepseek/deepseek-v4.md`](../../../docs/models/deepseek/deepseek-v4.md) for the per-variant scheme.
 
-## MCore Dev Branch Requirement
+## MCore Checkout
 
-DSv4 imports require MCore changes that are not yet on a tagged release: PR [#3430](https://github.com/NVIDIA/Megatron-LM/pull/3430), PR [#4458](https://github.com/NVIDIA/Megatron-LM/pull/4458), PR [#4481](https://github.com/NVIDIA/Megatron-LM/pull/4481), and PR [#4518](https://github.com/NVIDIA/Megatron-LM/pull/4518), and PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+The pretraining recipes were tested with Megatron-LM `dev` commit `35f36c7c9dba` plus PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839) (`f04b762406f0` in the OCI test checkout). The Megatron-LM copy inside the current NeMo FW container is not expected to work for these recipes.
 
 ```bash
 ./scripts/switch_mcore.sh dev
@@ -34,10 +34,12 @@ Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each
 
 See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the Slurm launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for recipe definitions.
 
-Available pretraining recipes:
+Available Blackwell pretraining recipes:
 
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
+
+`slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
 Before submitting, set `CONTAINER_IMAGE`. For DCLM, also set `DCLM_DATA_DIR` and `DCLM_CACHE`. Use `CONTAINER_MOUNTS` and `EXTRA_PYTHONPATH` for cluster-specific data, checkouts, and Python dependencies.
 
