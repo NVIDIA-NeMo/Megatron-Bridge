@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling expert-parallel communication overlap to hide dispatch/combine latency in MoE model training, or diagnosing throughput regressions related to EP overlap configuration changes in Megatron-Bridge. <br>
+Developers and engineers enabling MoE expert-parallel communication overlap to optimize distributed training throughput for Mixture-of-Experts models in Megatron-Bridge. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,12 +19,13 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron-Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
+- [Megatron-Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Shell commands, Configuration instructions, Analysis] <br>
+**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -40,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-gcdb9c50d (source: git describe) <br>
+v0.2.0rc6-1469-g6fe590a5 (source: git describe, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemo-mbridge-perf-activation-recompute`
-- Evaluation date: 2026-05-28
+- Evaluation date: 2026-05-29
 - NVSkills-Eval profile: `external`
 - Overall verdict: FAIL
 - Tier 3 live agent evaluation: not available in this report
@@ -40,7 +40,7 @@ Tier 3 dimension rollup was not available in this report.
 
 ## Tier 1: Static Validation Summary
 
-Tier 1 validation passed with observations. NVSkills-Eval ran 9 checks and found 10 total findings.
+Tier 1 validation reported findings. NVSkills-Eval ran 9 checks and found 13 total findings.
 
 Top findings:
 

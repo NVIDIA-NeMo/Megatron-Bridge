@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers configuring activation recompute strategies in Megatron Bridge to reduce GPU memory consumption during large language model training, or diagnosing OOM and performance regressions caused by recompute settings. <br>
+Developers and engineers reducing GPU memory pressure during LLM training by configuring activation recompute strategies in Megatron Bridge, or diagnosing OOM failures and performance regressions related to recompute settings. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -21,16 +21,17 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Format:** [Markdown with inline code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Tasks: <br>
-NVSkills-Eval 3-Tier evaluation (external profile) assessing skill safety, discoverability, effectiveness, and usefulness for agents before publication. <br>
+3-Tier NVSkills-Eval evaluation covering static validation, deduplication, and live agent testing for safety, correctness, discoverability, effectiveness, and efficiency. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,7 +44,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-gcdb9c50d (source: git describe) <br>
+v0.2.0rc6-1469-g6fe590a5 (source: git tag) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
