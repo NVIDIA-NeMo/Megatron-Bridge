@@ -14,7 +14,7 @@
 
 import copy
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
@@ -23,6 +23,13 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+
+
+def _get_language_mlp_submodules(language_spec: Any) -> object:
+    """Extract MLP submodules from object-style or partial-wrapped specs."""
+    language_submodules = get_submodules(language_spec)
+    mlp_layer_submodules = get_submodules(language_submodules.mlp_layer)
+    return get_submodules(mlp_layer_submodules.mlp)
 
 
 @dataclass
@@ -121,7 +128,7 @@ class NemotronVLModelProvider(MambaModelProvider):
 
         language_spec = mamba_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(get_submodules(language_spec.submodules.mlp_layer.submodules.mlp))
+        vision_proj_spec = copy.deepcopy(_get_language_mlp_submodules(language_spec))
 
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,
