@@ -39,6 +39,7 @@ from megatron.bridge.training.mixed_precision import (
     fp16_with_fp8_subchannel_scaling_mixed,
     fp16_with_mxfp8_mixed,
     get_mixed_precision_config,
+    nemotron_3_super_bf16_with_nvfp4_mixed,
     nemotron_h_bf16_with_fp8_current_scaling_mixed,
     update_config_with_precision_overrides,
 )
@@ -637,6 +638,17 @@ class TestMixedPrecisionRecipes:
         assert config.fp4 == "e2m1"
         assert config.fp4_recipe == "nvfp4"
         assert config.fp8_param_gather is False
+
+    def test_nemotron_3_super_bf16_with_nvfp4_mixed(self):
+        config = nemotron_3_super_bf16_with_nvfp4_mixed()
+
+        assert config.bf16 is True
+        assert config.fp4 == "e2m1"
+        assert config.fp4_recipe == "nvfp4"
+        assert config.first_last_layers_bf16 is True
+        assert config.num_layers_at_end_in_bf16 == 14
+        assert config.fp4_param_gather is False
+        assert config.fp4_param is False
 
     def test_fp16_with_fp8_subchannel_scaling_mixed(self):
         config = fp16_with_fp8_subchannel_scaling_mixed()

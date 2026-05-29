@@ -302,7 +302,7 @@ def autoconfig_roundtrip(
         dist.destroy_process_group()
 
     # Megatron → HF via auto-config export
-    bridge = AutoBridge.from_auto_config(megatron_root, local_model_path)
+    bridge = AutoBridge.from_auto_config(megatron_root, local_model_path, trust_remote_code=trust_remote_code)
     bridge.export_ckpt(
         megatron_path=megatron_root,
         hf_path=str(export_path),

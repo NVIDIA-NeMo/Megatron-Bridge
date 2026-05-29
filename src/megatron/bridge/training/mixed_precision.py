@@ -426,6 +426,9 @@ def nemotron_3_super_bf16_with_nvfp4_mixed() -> MixedPrecisionConfig:
     cfg = bf16_with_nvfp4_mixed()
     cfg.first_last_layers_bf16 = True
     cfg.num_layers_at_end_in_bf16 = 14
+    # Mamba TELayerNormColumnParallelLinear parameter quantization fails in TE's
+    # NVFP4 tensor-map setup; keep parameters in BF16 while retaining NVFP4 compute.
+    cfg.fp4_param_gather = False
     return cfg
 
 
