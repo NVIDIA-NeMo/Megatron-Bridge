@@ -71,6 +71,7 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
+    cfg.rng.te_rng_tracker = True
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
@@ -104,13 +105,13 @@ def gpt_oss_20b_pretrain_config_b300(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
+    set_workload_base_configs(cfg, base_cfg)
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
@@ -168,13 +169,13 @@ def gpt_oss_20b_pretrain_config_gb200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
+    set_workload_base_configs(cfg, base_cfg)
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
@@ -248,13 +249,13 @@ def gpt_oss_20b_pretrain_config_gb300(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
+    set_workload_base_configs(cfg, base_cfg)
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
 
     # 8 GPUs
     if precision == "nvfp4" and config_variant == "v1":
@@ -327,13 +328,13 @@ def gpt_oss_20b_pretrain_config_vr200(
         task="pretrain",
         config_variant=config_variant,
     )
-    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg = gpt_oss_20b_pretrain_config()
+    set_workload_base_configs(cfg, base_cfg)
+    precision_config = get_gpt_oss_20b_precision_config(precision)
     cfg.mixed_precision = precision_config
     if base_cfg.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_20b_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
