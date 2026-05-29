@@ -9,7 +9,7 @@ This page lists known issues and limitations in the current release.
   - [`decord`](https://pypi.org/project/decord/)
   - [`opencv-python-headless`](https://pypi.org/project/opencv-python-headless/)
 
-  Workflows that depend on any of these (for example, multimodal video pipelines, `qwen-vl-utils` video paths, or `decord[av-decode]`) must reinstall them at runtime — see [`docker/common/README.md`](../../docker/common/README.md#reinstalling-video--image-decoding-packages-av-decord-opencv-python-headless-at-runtime) for instructions.
+  Workflows that depend on any of these (for example, multimodal video pipelines, `qwen-vl-utils` video paths, or `decord[av-decode]`) must reinstall them at runtime — see [`docker/common/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/docker/common/README.md#reinstalling-video--image-decoding-packages-av-decord-opencv-python-headless-at-runtime) for instructions.
 
 ## 26.02
 

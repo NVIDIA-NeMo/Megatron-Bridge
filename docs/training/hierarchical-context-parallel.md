@@ -5,7 +5,7 @@ especially the `a2a+p2p` transport path and
 `hierarchical_context_parallel_sizes`.
 
 For operational setup, code anchors, and verification commands, see
-[the hierarchical CP skill](../skills/perf-hierarchical-context-parallel/SKILL.md).
+[the hierarchical CP skill](../skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md).
 
 ## What It Is
 
@@ -104,5 +104,5 @@ all Bridge initialization modes.
 
 - [docs/performance-guide.md](../performance-guide.md)
 - [docs/training/communication-overlap.md](communication-overlap.md)
-- [Hierarchical CP skill](../skills/perf-hierarchical-context-parallel/SKILL.md)
-- [Hierarchical CP skill card](../skills/perf-hierarchical-context-parallel/card.yaml)
+- [Hierarchical CP skill](../skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md)
+- [Hierarchical CP skill card](../skills/nemo-mbridge-perf-hierarchical-context-parallel/card.yaml)

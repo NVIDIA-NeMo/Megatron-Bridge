@@ -13,8 +13,8 @@ skills/build-and-dependency/SKILL
 skills/bump-dependency/SKILL
 skills/testing/SKILL
 skills/cicd/SKILL
-skills/mlm-bridge-training/SKILL
-skills/mbridge-recipe-recommender/SKILL
+skills/nemo-mbridge-mlm-bridge-training/SKILL
+skills/nemo-mbridge-recipe-recommender/SKILL
 ```
 
 ```{toctree}
@@ -34,12 +34,12 @@ skills/nemo-rl-e2e-testing/SKILL
 :caption: Performance Techniques
 :maxdepth: 1
 
-skills/perf-parallelism-strategies/SKILL
-skills/perf-cuda-graphs/SKILL
-skills/perf-tp-dp-comm-overlap/SKILL
-skills/perf-megatron-fsdp/SKILL
-skills/perf-sequence-packing/SKILL
-skills/perf-hierarchical-context-parallel/SKILL
+skills/nemo-mbridge-perf-parallelism-strategies/SKILL
+skills/nemo-mbridge-perf-cuda-graphs/SKILL
+skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL
+skills/nemo-mbridge-perf-megatron-fsdp/SKILL
+skills/nemo-mbridge-perf-sequence-packing/SKILL
+skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL
 skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL
 skills/nemo-mbridge-perf-moe-comm-overlap/SKILL
 skills/nemo-mbridge-perf-activation-recompute/SKILL
@@ -56,7 +56,8 @@ skills/perf-cpu-offloading/SKILL
 :caption: Cluster & Debugging
 :maxdepth: 1
 
-skills/multi-node-slurm/SKILL
+skills/nemo-mbridge-multi-node-slurm/SKILL
+skills/nemo-mbridge-multi-node-slurm/references/templates
 ```
 
 ```{toctree}
