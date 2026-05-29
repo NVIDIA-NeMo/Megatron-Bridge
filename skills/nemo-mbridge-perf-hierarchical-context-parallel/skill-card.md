@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers scaling context parallelism beyond KV heads in Megatron-Bridge training workloads, or investigating commits that changed CP configuration and caused OOM or regressions. <br>
+Developers and engineers scaling context parallelism beyond KV heads in Megatron-Bridge, or investigating commits that changed CP config and caused OOM or regressions. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -20,13 +20,13 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Hierarchical Context Parallel Documentation](docs/training/hierarchical-context-parallel.md) <br>
-- [Skill Validation Card](skills/nemo-mbridge-perf-hierarchical-context-parallel/card.yaml) <br>
+- [Skill Configuration](skills/nemo-mbridge-perf-hierarchical-context-parallel/card.yaml) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Analysis] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -41,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-g9bc6989b (source: git describe) <br>
+c52bd643 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

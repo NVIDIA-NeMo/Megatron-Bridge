@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling FSDP-based data parallelism in Megatron-Bridge training recipes, or diagnosing OOM and regression issues related to FSDP configuration changes. <br>
+Developers and engineers enabling FSDP-based data parallelism instead of DDP in Megatron-Bridge, or diagnosing OOM errors and regressions related to FSDP configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,18 +19,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron-Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron-Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Megatron FSDP Training Documentation](docs/training/megatron-fsdp.md) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron-Bridge Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Code] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Type(s):** [Configuration instructions, Shell commands] <br>
+**Output Format:** [Markdown with inline code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
-
-## Evaluation Tasks: <br>
-3-Tier NVSkills-Eval evaluation with external profile, covering static validation (9 checks) and deduplication (2 checks). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-9bc6989b (source: git SHA, committed 2026-05-28) <br>
+c52bd643 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
