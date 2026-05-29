@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling tensor-parallel, data-parallel, and pipeline-parallel communication overlap in Megatron-Bridge for optimized distributed LLM training performance on NVIDIA GPUs. <br>
+Developers and engineers enabling tensor-parallel, data-parallel, and pipeline-parallel communication overlap in Megatron-Bridge training workloads to improve GPU utilization and training throughput. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,7 +19,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Communication Overlap Guide](docs/training/communication-overlap.md) <br>
+- [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [CommOverlapConfig Source](src/megatron/bridge/training/comm_overlap.py) <br>
 
@@ -41,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-2c0d3adb (source: git SHA, committed 2026-05-28) <br>
+67b6ae5d (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

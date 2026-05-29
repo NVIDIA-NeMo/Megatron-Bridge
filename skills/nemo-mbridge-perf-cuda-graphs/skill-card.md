@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to configure, validate, and troubleshoot CUDA graph capture for reducing host-driver overhead in Megatron Bridge GPU training workloads. <br>
+Developers and engineers use this skill to enable, validate, and troubleshoot CUDA graph capture in Megatron Bridge training workloads, reducing host-driver overhead for improved GPU throughput on static-shape pretraining runs. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -20,18 +20,18 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Format:** [Markdown with inline code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Tasks: <br>
-Evaluated via NVSkills-Eval 3-tier framework (Tier 1 static validation: 9 checks, 10 findings; Tier 2 deduplication: 2 checks, 0 findings). Overall verdict: PASS. Tier 3 live agent evaluation not available in this report. <br>
+Evaluated through NVSkills-Eval 3-Tier validation (external profile, 2026-05-29). Tier 1 static validation and Tier 2 deduplication completed; Tier 3 live agent evaluation not available. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,8 +43,15 @@ Reported benchmark dimensions: <br>
 
 
 
+## Evaluation Results: <br>
+| Tier | Checks | Findings | Status |
+|---|---:|---:|---|
+| Tier 1 (Static Validation) | 9 | 13 | FAIL |
+| Tier 2 (Deduplication) | 2 | 0 | PASS |
+| Tier 3 (Live Agent) | — | — | Not available |
+
 ## Skill Version(s): <br>
-2c0d3adb (source: git SHA, committed 2026-05-28) <br>
+67b6ae5d (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

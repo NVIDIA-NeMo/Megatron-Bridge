@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers choosing or sizing TP, DP, PP, CP, and EP parallelism degrees for large-scale model training, or diagnosing OOM and performance regressions caused by parallelism configuration changes. <br>
+Developers and engineers selecting and sizing parallelism strategies (TP, DP, PP, CP, EP) for large-scale model training with Megatron Bridge on NVIDIA GPUs. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,20 +19,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Bridge Parallelism Documentation](docs/parallelisms.md) <br>
+- [Parallelisms Documentation](docs/parallelisms.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Pangu Ultra MoE (arXiv:2504.14960)](https://arxiv.org/pdf/2504.14960) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Type(s):** [Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
-
-## Evaluation Tasks: <br>
-Evaluated through NVSkills-Eval 3-Tier validation with external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -45,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6 (source: git tag) <br>
+v0.2.0rc6-1468-g67b6ae5d (source: git describe) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
