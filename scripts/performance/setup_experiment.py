@@ -368,11 +368,17 @@ def main(
 
     if save_dir:
         save_dir_path = Path(save_dir).resolve()
-        save_dir_path.mkdir(parents=True, exist_ok=True)
-        save_dir_mount = f"{save_dir_path}:{save_dir_path}"
-        if save_dir_mount not in custom_mounts:
-            custom_mounts.append(save_dir_mount)
-            logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
+        # On Kubeflow, save_dir typically lives on a PVC that's only mounted
+        # inside the trainer pod, not on the launcher pod where this script
+        # runs. Creating the dir from the launcher would either fail (PVC
+        # not present) or create a useless dir on the launcher's local FS.
+        # Let the trainer container create its own dirs on first write.
+        if kubeflow_namespace is None:
+            save_dir_path.mkdir(parents=True, exist_ok=True)
+            save_dir_mount = f"{save_dir_path}:{save_dir_path}"
+            if save_dir_mount not in custom_mounts:
+                custom_mounts.append(save_dir_mount)
+                logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
 
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
