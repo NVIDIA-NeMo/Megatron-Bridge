@@ -438,26 +438,46 @@ def train(
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
 
-        (
-            loss_dict,
-            skipped_iter,
-            should_checkpoint,
-            should_exit,
-            exit_code,
-            grad_norm,
-            num_zeros_in_grad,
-            log_max_attention_logit,
-        ) = wrapped_train_step(
-            wrapped_forward_step_func,
-            train_data_iterator,
-            model,
-            optimizer,
-            scheduler,
-            global_state,
-            pg_collection,
-            forward_backward_func,
-            p2p_communicator,
-        )
+        if _should_run_active_determinism_check(config, global_state.train_state.step):
+            (
+                loss_dict,
+                skipped_iter,
+                should_checkpoint,
+                should_exit,
+                exit_code,
+                grad_norm,
+                num_zeros_in_grad,
+                log_max_attention_logit,
+            ) = _train_step_with_determinism_check(
+                wrapped_forward_step_func,
+                train_data_iterator,
+                model,
+                optimizer,
+                scheduler,
+                global_state,
+                forward_backward_func,
+            )
+        else:
+            (
+                loss_dict,
+                skipped_iter,
+                should_checkpoint,
+                should_exit,
+                exit_code,
+                grad_norm,
+                num_zeros_in_grad,
+                log_max_attention_logit,
+            ) = wrapped_train_step(
+                wrapped_forward_step_func,
+                train_data_iterator,
+                model,
+                optimizer,
+                scheduler,
+                global_state,
+                pg_collection,
+                forward_backward_func,
+                p2p_communicator,
+            )
 
         fault_tolerance.on_training_step_end(global_state)
 
@@ -1671,3 +1691,223 @@ def _maybe_register_fsdp_buffers(
                 if fsdp_param_and_grad_buffer is not None:
                     fsdp_param_and_grad_buffer.manual_buffer_registration()
         print_rank_0("[Megatron-FSDP] Buffer registered")
+
+
+# ====================================================================
+# Determinism debug check (DeterminismDebugPlugin within-step rerun)
+# Ported from origin/zhiyul/deterministics_gb200_dsv3_debug_forward_backward.
+# Runs the same batch num_repeats times, compares per-layer activations
+# and gradients across runs, and reports the first divergent tensor.
+# ====================================================================
+
+def _should_run_active_determinism_check(cfg: ConfigContainer, current_step: int) -> bool:
+    """Return True iff the within-step determinism rerun should fire at this step."""
+    model_config = cfg.model
+    if not getattr(model_config, "determinism_debug_enabled", False):
+        return False
+    check_interval = getattr(model_config, "determinism_check_interval", 1)
+    if current_step == 0 or current_step % check_interval != 0:
+        return False
+    return True
+
+
+def _train_step_with_determinism_check(
+    forward_step_func,
+    data_iterator,
+    model,
+    optimizer,
+    scheduler,
+    global_state,
+    forward_backward_func,
+):
+    """Run the same batch num_repeats times, then compare via DeterminismDebugPlugin.
+
+    Returns the 8-tuple shape expected at the call site (log_max_attention_logit=None).
+    """
+    import copy
+
+    cfg = global_state.cfg
+    model_config = get_model_config(model[0])
+    num_repeats = getattr(model_config, "determinism_num_repeats", 2)
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+
+    if rank == 0:
+        print(f"\n{'=' * 70}\n[ACTIVE DETERMINISM CHECK] step {global_state.train_state.step}\n"
+              f"Running same batch {num_repeats} times...\n{'=' * 70}")
+
+    plugin = (
+        model_config.get_determinism_plugin()
+        if hasattr(model_config, "get_determinism_plugin")
+        else None
+    )
+    if plugin is None and hasattr(model_config, "_setup_determinism_plugin"):
+        try:
+            model_config._setup_determinism_plugin()
+            plugin = model_config.get_determinism_plugin()
+        except Exception as e:
+            if rank == 0:
+                print(f"[determinism] plugin init failed: {e}; falling back to wrapped_train_step")
+            plugin = None
+    if plugin is None:
+        # Re-dispatch via the normal path; reconstruct the 8-tuple here.
+        loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad = train_step(
+            forward_step_func, data_iterator, model, optimizer, scheduler, global_state, forward_backward_func
+        )
+        return loss_dict, skipped_iter, should_checkpoint, should_exit, exit_code, grad_norm, num_zeros_in_grad, None
+
+    # Register hooks once (plugin is created lazily after model wrapping)
+    if not getattr(plugin, "_hooks_registered", False):
+        for model_chunk in model:
+            actual_model = model_chunk.module if hasattr(model_chunk, "module") else model_chunk
+            plugin.register_hooks(actual_model)
+        plugin._hooks_registered = True
+
+    # Cache the batch once (first/last PP stages own the data)
+    cached_batch = None
+    if parallel_state.is_pipeline_first_stage() or parallel_state.is_pipeline_last_stage():
+        if data_iterator is not None:
+            if isinstance(data_iterator, list):
+                cached_batch = [next(di) if di is not None else None for di in data_iterator]
+            else:
+                cached_batch = next(data_iterator)
+
+    loss_dict_final, skipped_iter, grad_norm, num_zeros_in_grad = {}, 0, None, None
+    for run_idx in range(num_repeats):
+        plugin.start_new_run()
+
+        if cached_batch is not None:
+            if isinstance(cached_batch, list):
+                def _make_iter_list():
+                    cb = copy.deepcopy(cached_batch)
+                    its = []
+                    for b in cb:
+                        def _g(bb=b):
+                            while True:
+                                yield copy.deepcopy(bb)
+                        its.append(_g())
+                    return its
+                run_iter = _make_iter_list()
+            else:
+                cb = copy.deepcopy(cached_batch)
+                def _g():
+                    while True:
+                        yield copy.deepcopy(cb)
+                run_iter = _g()
+        else:
+            run_iter = data_iterator
+
+        is_final = run_idx == num_repeats - 1
+        ld, si, _, _, _, gn, nz = _single_determinism_run(
+            forward_step_func=forward_step_func,
+            data_iterator=run_iter,
+            model=model,
+            optimizer=optimizer,
+            scheduler=scheduler,
+            global_state=global_state,
+            forward_backward_func=forward_backward_func,
+            skip_optimizer_step=not is_final,
+        )
+        if is_final:
+            loss_dict_final, skipped_iter, grad_norm, num_zeros_in_grad = ld, si, gn, nz
+
+    try:
+        all_results = plugin.gather_all_results()
+        if rank == 0:
+            from megatron.bridge.training.utils.determinism import analyze_results
+            analysis = analyze_results(all_results)
+            print("\n" + "=" * 70 + "\nDETERMINISM ANALYSIS\n" + "=" * 70)
+            print(analysis)
+            print("=" * 70 + "\n")
+            try:
+                from pathlib import Path
+                outdir = Path(plugin.config.output_dir)
+                outdir.mkdir(parents=True, exist_ok=True)
+                (outdir / f"analysis_step_{global_state.train_state.step}.txt").write_text(analysis)
+            except Exception as e:
+                print(f"[determinism] could not write analysis file: {e}")
+        plugin.reset_for_next_step()
+    except Exception as e:
+        if rank == 0:
+            import traceback
+            print(f"[determinism] analysis failed: {e}")
+            traceback.print_exc()
+
+    return loss_dict_final, skipped_iter, False, False, 0, grad_norm, num_zeros_in_grad, None
+
+
+def _single_determinism_run(
+    forward_step_func,
+    data_iterator,
+    model,
+    optimizer,
+    scheduler,
+    global_state,
+    forward_backward_func,
+    skip_optimizer_step,
+):
+    """Single forward+backward pass; optionally skip optimizer.step for replay runs."""
+    cfg = global_state.cfg
+    timers = global_state.timers
+    model_config = get_model_config(model[0])
+    train_config = cfg.train
+    optim_config = cfg.optimizer
+
+    for model_chunk in model:
+        model_chunk.zero_grad_buffer()
+    optimizer.zero_grad()
+
+    _handle_mxfp8_param_buffer_copy(
+        optimizer=optimizer,
+        reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
+        overlap_param_gather=cfg.ddp.overlap_param_gather,
+    )
+
+    seq_length = model_config.seq_length
+
+    losses_reduced = forward_backward_func(
+        forward_step_func=forward_step_func,
+        data_iterator=data_iterator,
+        model=model,
+        num_microbatches=get_num_microbatches(),
+        seq_length=seq_length,
+        micro_batch_size=train_config.micro_batch_size,
+        decoder_seq_length=seq_length,
+        forward_only=False,
+    )
+
+    if train_config.empty_unused_memory_level >= 1:
+        torch.cuda.empty_cache()
+
+    if skip_optimizer_step:
+        grad_norm = None
+        num_zeros_in_grad = None
+        skipped_iter = 0
+    else:
+        timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
+        update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
+        timers("optimizer").stop()
+        skipped_iter = 0 if update_successful else 1
+        if update_successful:
+            increment = (
+                get_num_microbatches() * train_config.micro_batch_size * cfg.ddp.data_parallel_sharding_strategy is not None  # noqa: F841
+            )
+            scheduler.step(increment=get_num_microbatches() * train_config.micro_batch_size)
+        if train_config.empty_unused_memory_level >= 2:
+            torch.cuda.empty_cache()
+
+    if parallel_state.is_pipeline_last_stage(ignore_virtual=True):
+        loss_reduced = {}
+        for key in losses_reduced[0].keys():
+            val = [x[key].view(-1) for x in losses_reduced]
+            if val[0].numel() == 2:
+                val = torch.vstack(val).sum(dim=0)
+                torch.distributed.all_reduce(
+                    val, group=parallel_state.get_data_parallel_group(with_context_parallel=True)
+                )
+                loss_reduced[key] = val[0] / val[1]
+            elif val[0].numel() == 1:
+                loss_reduced[key] = torch.cat(val).mean()
+            else:
+                raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+        return loss_reduced, skipped_iter, False, False, 0, grad_norm, num_zeros_in_grad
+    return {}, skipped_iter, False, False, 0, grad_norm, num_zeros_in_grad
