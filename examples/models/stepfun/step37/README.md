@@ -1,4 +1,4 @@
-# Step37 (`stepfun-ai/Step-3.7-Flash`) Examples
+# Step 3.7 Flash Examples
 
 Step37 is a multimodal LLM. Its text backbone is
 byte-identical Step-3.5 (45 layers, hybrid full/sliding 64/96 GQA, MoE
