@@ -161,7 +161,7 @@ PASSED=0
 # run prepare_llava_pretrain_audio.sh (which auto-downloads LLaVA-Pretrain as
 # needed, synthesizes per-sample audio, and merges ${HF_DATA_FILES}) into
 # AUDIO_DATASET_DIR, then point DATASET_ROOT at it. Skipped when the merged JSON
-# is already present. Pass SRC/LIMIT/NUM_SHARDS/TTS_* through the environment to
+# is already present. Pass DATASET_DOWNLOAD_DIR/LIMIT/NUM_SHARDS/TTS_* through the environment to
 # tune the build (see prepare_llava_pretrain_audio.sh).
 prepare_dataset() {
     if [[ -n "${DATASET_ROOT}" ]]; then
@@ -176,7 +176,7 @@ prepare_dataset() {
     fi
 
     echo "DATASET_ROOT not set; building audio-augmented dataset (LIMIT=${LIMIT}) under ${DATASET_ROOT}"
-    DST="${DATASET_ROOT}" LIMIT="${LIMIT}" "${SCRIPT_DIR}/prepare_llava_pretrain_audio.sh"
+    AUGMENTED_DATASET_DIR="${DATASET_ROOT}" LIMIT="${LIMIT}" "${SCRIPT_DIR}/prepare_llava_pretrain_audio.sh"
     echo "  Audio-augmented dataset ready at ${DATASET_ROOT}"
 }
 

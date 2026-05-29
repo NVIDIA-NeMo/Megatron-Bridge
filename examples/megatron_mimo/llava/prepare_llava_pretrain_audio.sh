@@ -2,15 +2,15 @@
 # Prepare an audio-augmented LLaVA-Pretrain dataset for training with
 # examples/megatron_mimo/llava/megatron_mimo_training_llava_audio.py --audio-column audio.
 #
-# Writes a fresh DST tree containing:
-#   blip_laion_cc_sbu_558k.json              — records with image paths absolutised to SRC
+# Writes a fresh AUGMENTED_DATASET_DIR tree containing:
+#   blip_laion_cc_sbu_558k.json              — records with image paths absolutised to DATASET_ROOT
 #   blip_laion_cc_sbu_558k_with_audio.json   — same records + "audio" field (emitted by merge)
 #   audio/<prefix>/<id>.flac                 — synthesized 16 kHz FLACs
 #   audio_manifest/shard_NNNNN.jsonl         — per-shard manifest ({id, audio, text, ...})
 #   shard_logs/shard_NNNNN.log               — per-shard stdout+stderr (multi-GPU runs)
 #
 # Image paths inside the JSON are absolutised so we do not have to copy or
-# symlink the ~107 GB image tree into DST.
+# symlink the ~107 GB image tree into AUGMENTED_DATASET_DIR.
 #
 # Run inside the project container (nemo-toolkit[tts] + soundfile + scipy).
 #
@@ -28,18 +28,19 @@
 
 set -euo pipefail
 
-# Empty SRC triggers an auto-download of LLaVA-Pretrain (captions JSON + extracted
-# images) into DATASET_DOWNLOAD_DIR; set SRC to use an existing local copy.
-SRC=${SRC:-""}
+# Empty DATASET_ROOT triggers an auto-download of LLaVA-Pretrain (captions JSON +
+# extracted images) into DATASET_DOWNLOAD_DIR; set DATASET_ROOT to use an existing
+# local copy.
+DATASET_ROOT=${DATASET_ROOT:-""}
 DATASET_DOWNLOAD_DIR=${DATASET_DOWNLOAD_DIR:-/workspace/llava_pretrain}
 LLAVA_PRETRAIN_REPO=${LLAVA_PRETRAIN_REPO:-liuhaotian/LLaVA-Pretrain}
-DST=${DST:-/workspace/llava_pretrain_audio_augmented}
+AUGMENTED_DATASET_DIR=${AUGMENTED_DATASET_DIR:-/workspace/llava_pretrain_audio_augmented}
 # REPO defaults to the repo root inferred from this script's location
 # ($REPO/examples/megatron_mimo/llava/prepare_llava_pretrain_audio.sh).
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 REPO=${REPO:-$(cd "$SCRIPT_DIR/../../.." && pwd)}
 LIMIT=${LIMIT:-}  # empty = use all 558k records
-TTS_CACHE=${TTS_CACHE:-$DST/.tts_cache}
+TTS_CACHE=${TTS_CACHE:-$AUGMENTED_DATASET_DIR/.tts_cache}
 TTS_NEMO=${TTS_NEMO:-}
 VOCODER_NEMO=${VOCODER_NEMO:-}
 TTS_MODEL_NAME=${TTS_MODEL_NAME:-tts_en_fastpitch}
@@ -50,7 +51,7 @@ NUM_GPUS=${NUM_GPUS:-1}
 NUM_SHARDS=${NUM_SHARDS:-$NUM_GPUS}
 if (( NUM_SHARDS < 1 )); then NUM_SHARDS=1; fi
 
-mkdir -p "$DST" "$TTS_CACHE"
+mkdir -p "$AUGMENTED_DATASET_DIR" "$TTS_CACHE"
 
 # -1. Install NeMo speech (TTS) into the container if it isn't importable.
 #     The NeMo 26.0x containers are optimized for the LLM/Multimodal domains and
@@ -104,62 +105,62 @@ bootstrap_nemo() {
 
 bootstrap_nemo
 
-# 0. Ensure the source LLaVA-Pretrain dataset is available. When SRC is empty,
-#    download liuhaotian/LLaVA-Pretrain (captions JSON + images.zip) into
-#    DATASET_DOWNLOAD_DIR and extract images.zip there, then point SRC at it.
-#    The JSON's image paths (e.g. "00453/004531425.jpg") are absolutised against
-#    SRC below, so images.zip is extracted directly into it. Both the download
-#    and the extraction are skipped if already present.
+# 0. Ensure the source LLaVA-Pretrain dataset is available. When DATASET_ROOT is
+#    empty, download liuhaotian/LLaVA-Pretrain (captions JSON + images.zip) into
+#    DATASET_DOWNLOAD_DIR and extract images.zip there, then point DATASET_ROOT at
+#    it. The JSON's image paths (e.g. "00453/004531425.jpg") are absolutised
+#    against DATASET_ROOT below, so images.zip is extracted directly into it. Both
+#    the download and the extraction are skipped if already present.
 prepare_dataset() {
-    if [[ -n "$SRC" ]]; then
-        echo "[prepare] using SRC=$SRC"
+    if [[ -n "$DATASET_ROOT" ]]; then
+        echo "[prepare] using DATASET_ROOT=$DATASET_ROOT"
         return
     fi
 
-    SRC="$DATASET_DOWNLOAD_DIR"
-    local json_file="$SRC/blip_laion_cc_sbu_558k.json"
-    local images_zip="$SRC/images.zip"
+    DATASET_ROOT="$DATASET_DOWNLOAD_DIR"
+    local json_file="$DATASET_ROOT/blip_laion_cc_sbu_558k.json"
+    local images_zip="$DATASET_ROOT/images.zip"
 
     # Already prepared: captions JSON + extracted image shards present. This
     # holds even if images.zip was deleted post-extraction.
-    if [[ -f "$json_file" && -d "$SRC/00000" ]]; then
-        echo "[prepare] using cached LLaVA-Pretrain dataset at $SRC"
+    if [[ -f "$json_file" && -d "$DATASET_ROOT/00000" ]]; then
+        echo "[prepare] using cached LLaVA-Pretrain dataset at $DATASET_ROOT"
         return
     fi
 
-    echo "[prepare] SRC not set; preparing $LLAVA_PRETRAIN_REPO under $SRC"
-    mkdir -p "$SRC"
+    echo "[prepare] DATASET_ROOT not set; preparing $LLAVA_PRETRAIN_REPO under $DATASET_ROOT"
+    mkdir -p "$DATASET_ROOT"
 
     if [[ -f "$json_file" && -f "$images_zip" ]]; then
-        echo "[prepare]   using cached download in $SRC"
+        echo "[prepare]   using cached download in $DATASET_ROOT"
     else
         echo "[prepare]   downloading $LLAVA_PRETRAIN_REPO (this can take a while)..."
-        LLAVA_PRETRAIN_REPO="$LLAVA_PRETRAIN_REPO" SRC="$SRC" python - <<'PY'
+        LLAVA_PRETRAIN_REPO="$LLAVA_PRETRAIN_REPO" DATASET_ROOT="$DATASET_ROOT" python - <<'PY'
 import os
 from huggingface_hub import snapshot_download
-snapshot_download(repo_id=os.environ["LLAVA_PRETRAIN_REPO"], repo_type="dataset", local_dir=os.environ["SRC"])
+snapshot_download(repo_id=os.environ["LLAVA_PRETRAIN_REPO"], repo_type="dataset", local_dir=os.environ["DATASET_ROOT"])
 PY
     fi
 
     # images.zip extracts to 5-digit shard dirs (00000, 00001, ...) at the root.
-    if [[ -d "$SRC/00000" ]]; then
+    if [[ -d "$DATASET_ROOT/00000" ]]; then
         echo "[prepare]   images already extracted."
     else
         echo "[prepare]   extracting images.zip..."
-        unzip -q -o "$images_zip" -d "$SRC"
+        unzip -q -o "$images_zip" -d "$DATASET_ROOT"
     fi
 
-    echo "[prepare]   dataset ready at $SRC"
+    echo "[prepare]   dataset ready at $DATASET_ROOT"
 }
 
 prepare_dataset
 
 # 1. Write the working JSON with absolute image paths (so training can still
-#    resolve images without copying the 107 GB image tree into DST).  If LIMIT
+#    resolve images without copying the 107 GB image tree into AUGMENTED_DATASET_DIR).  If LIMIT
 #    is set, first-N records are used; otherwise all 558k are kept.
-SRC="$SRC" DST="$DST" LIMIT="$LIMIT" python - <<'PY'
+DATASET_ROOT="$DATASET_ROOT" AUGMENTED_DATASET_DIR="$AUGMENTED_DATASET_DIR" LIMIT="$LIMIT" python - <<'PY'
 import json, os
-src, dst = os.environ["SRC"], os.environ["DST"]
+src, dst = os.environ["DATASET_ROOT"], os.environ["AUGMENTED_DATASET_DIR"]
 limit = int(os.environ["LIMIT"]) if os.environ.get("LIMIT") else None
 recs = json.load(open(os.path.join(src, "blip_laion_cc_sbu_558k.json")))
 if limit is not None:
@@ -209,9 +210,9 @@ fi
 echo "[prepare] using TTS_NEMO=$TTS_NEMO"
 echo "[prepare] using VOCODER_NEMO=$VOCODER_NEMO"
 
-# 3. Synthesize FLACs under DST/audio and per-shard manifests under DST/audio_manifest.
+# 3. Synthesize FLACs under AUGMENTED_DATASET_DIR/audio and per-shard manifests under AUGMENTED_DATASET_DIR/audio_manifest.
 #    One process per GPU, launched in parallel and bound via CUDA_VISIBLE_DEVICES.
-LOG_DIR=$DST/shard_logs
+LOG_DIR=$AUGMENTED_DATASET_DIR/shard_logs
 mkdir -p "$LOG_DIR"
 
 echo "[prepare] launching $NUM_SHARDS synth shard(s) across $NUM_GPUS GPU(s)"
@@ -224,7 +225,7 @@ for (( s=0; s<NUM_SHARDS; s++ )); do
     echo "[prepare]   shard $s -> GPU $gpu, log=$log"
     CUDA_VISIBLE_DEVICES=$gpu \
       python "$REPO/examples/megatron_mimo/llava/synthesize_llava_pretrain_audio.py" \
-        --dataset-root "$DST" \
+        --dataset-root "$AUGMENTED_DATASET_DIR" \
         --shard-index "$s" --num-shards "$NUM_SHARDS" \
         ${LIMIT:+--limit "$LIMIT"} \
         --tts-model "$TTS_NEMO" --vocoder-model "$VOCODER_NEMO" \
@@ -244,6 +245,6 @@ if (( fail > 0 )); then
 fi
 echo "[prepare] all $NUM_SHARDS shard(s) completed successfully"
 
-# 4. Merge into DST/blip_laion_cc_sbu_558k_with_audio.json (what the test consumes).
+# 4. Merge into AUGMENTED_DATASET_DIR/blip_laion_cc_sbu_558k_with_audio.json (what the test consumes).
 python "$REPO/examples/megatron_mimo/llava/synthesize_llava_pretrain_audio.py" --mode merge \
-    --dataset-root "$DST"
+    --dataset-root "$AUGMENTED_DATASET_DIR"
