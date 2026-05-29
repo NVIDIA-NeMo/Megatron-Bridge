@@ -18,7 +18,7 @@ synthetic data. Requires torchrun with --nproc_per_node=2.
 
 Run:
     torchrun --nproc_per_node=2 -m pytest -v -s -x \
-        tests/functional_tests/test_groups/training/test_pretrain_megatron_mimo.py
+        tests/functional_tests/test_groups/megatron_mimo/test_pretrain_megatron_mimo.py
 """
 
 from __future__ import annotations
@@ -473,7 +473,7 @@ class TestMegatronMIMOTraining:
 
     Requires 2 GPUs. Run with:
         torchrun --nproc_per_node=2 -m pytest -v -s -x \\
-            tests/functional_tests/test_groups/training/test_pretrain_megatron_mimo.py
+            tests/functional_tests/test_groups/megatron_mimo/test_pretrain_megatron_mimo.py
     """
 
     @pytest.mark.run_only_on("GPU")

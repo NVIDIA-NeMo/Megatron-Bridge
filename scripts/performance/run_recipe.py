@@ -145,6 +145,11 @@ def set_user_overrides(config, args):
             config.tokenizer = TokenizerConfig(
                 tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
             )
+    else:
+        # Diffusion recipes (FLUX, WAN) keep their own dataset object (Wan/FluxDatasetConfig).
+        # Override only the path; None → recipe-default mock data.
+        if args.diffusion_dataset_path:
+            config.dataset.path = args.diffusion_dataset_path
 
     # Model configuration
     # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
@@ -252,7 +257,11 @@ def main():
     elif args.task in ["sft", "lora"]:
         logging.info("Starting finetuning")
         from megatron.bridge.training.finetune import finetune
-        from megatron.bridge.training.gpt_step import forward_step
+
+        if args.model_family_name in DIFFUSION_FAMILIES:
+            forward_step = _get_diffusion_step(args.model_family_name)
+        else:
+            from megatron.bridge.training.gpt_step import forward_step
 
         finetune(config=recipe, forward_step_func=forward_step)
     else:

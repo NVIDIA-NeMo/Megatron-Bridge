@@ -14,7 +14,7 @@ skills/bump-dependency/SKILL
 skills/testing/SKILL
 skills/cicd/SKILL
 skills/mlm-bridge-training/SKILL
-skills/recipe-recommender/SKILL
+skills/mbridge-recipe-recommender/SKILL
 ```
 
 ```{toctree}

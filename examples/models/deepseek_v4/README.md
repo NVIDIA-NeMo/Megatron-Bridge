@@ -54,6 +54,11 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 
 - **Fused mHC is not supported on H100.** Set `use_fused_mhc=False` in the bridge config when running on Hopper GPUs. Fused mHC is enabled by default and works on GB200.
 
-- **`fast_hadamard_transform` is optional.** When unavailable, DSA falls back to a PyTorch hadamard implementation. Throughput is lower but numerical behavior is unchanged.
+- **`fast_hadamard_transform` is required by the DSA attention variant.** `csa.py` and `dsa.py` import `hadamard_transform` from this package and hard-assert availability — there is no in-tree PyTorch fallback. Install from the Dao-AILab git repo (the PyPI source distribution is incomplete; see the sibling GLM-5 [README](../glm/glm5/README.md#pre-requisites) for the same dependency):
+
+  ```bash
+  pip install --no-build-isolation \
+      git+https://github.com/Dao-AILab/fast-hadamard-transform.git
+  ```
 
 - **Logit parity is verified for Flash and Flash-Base** against the official inference stack at last-real-token logits. The remaining gap is structural, from different attention/HC kernel decompositions and accumulation precisions between MCore and official inference.

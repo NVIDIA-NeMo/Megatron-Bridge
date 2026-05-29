@@ -10,6 +10,14 @@ You can either follow the steps below to set up the environment from scratch, or
 
 **Build and run the Docker container**:
 
+First, set up the third-party modules of this repository so they can be copied into the container:
+
+```bash
+git submodule update --init --recursive
+```
+
+Build the container:
+
 ```bash
 docker build \
     -f docker/Dockerfile.ci \

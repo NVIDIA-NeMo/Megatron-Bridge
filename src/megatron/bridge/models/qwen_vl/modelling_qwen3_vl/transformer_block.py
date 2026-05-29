@@ -93,6 +93,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     config,
                     patch_merger_spec,
                     use_postshuffle_norm=True,
+                    tp_group=self.tp_group,
                 )
                 for _ in range(len(config.deepstack_visual_indexes))
             ]
