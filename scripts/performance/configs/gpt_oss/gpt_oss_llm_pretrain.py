@@ -34,6 +34,7 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_fusion = True
     cfg.model.moe_router_force_load_balancing = True
 
+
 def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     """Set common performance configurations for all GPT-OSS 20b configs."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
@@ -76,6 +77,7 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
 
+
 def get_gpt_oss_20b_precision_config(compute_dtype: str):
     """Get the precision configs for the given compute dtype and FP8 recipe."""
     precision_config = get_precision_config(compute_dtype)
@@ -92,6 +94,7 @@ def get_gpt_oss_20b_precision_config(compute_dtype: str):
         precision_config.num_layers_at_start_in_bf16 = 0
         precision_config.num_layers_at_end_in_bf16 = 4
     return precision_config
+
 
 def gpt_oss_20b_pretrain_config_b300(
     precision: str = "nvfp4", mock: bool = True, config_variant: str = "v1"
