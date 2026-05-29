@@ -1,6 +1,6 @@
 #!/bin/bash
 # Heterogeneous MIMO LLaVA training — LLM on ranks 0-3, CLIP on ranks 4-7.
-
+set -euo pipefail
 GPUS_PER_NODE=8
 NUM_NODES=1
 
