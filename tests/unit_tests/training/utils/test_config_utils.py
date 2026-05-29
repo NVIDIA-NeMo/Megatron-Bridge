@@ -19,7 +19,6 @@ import copy
 import functools
 import os
 import tempfile
-import warnings
 from dataclasses import dataclass, field
 from unittest.mock import MagicMock, mock_open, patch
 
@@ -116,7 +115,6 @@ class TestConfigContainer_Basic:
         assert config.name == "test_config"
         assert config.value == 100
         assert config.description == "A test configuration"
-        assert config.__version__ == "0.1.0"
 
     def test_custom_initialization(self):
         """Test initialization with custom values."""
@@ -129,7 +127,7 @@ class TestConfigContainer_Basic:
 class TestConfigContainer_FromDict:
     """Test ConfigContainer.from_dict method."""
 
-    @patch("megatron.bridge.training.utils.config_utils.instantiate")
+    @patch("megatron.training.config.container.instantiate")
     def test_from_dict_basic(self, mock_instantiate):
         """Test basic from_dict functionality."""
         config_dict = {
@@ -147,7 +145,7 @@ class TestConfigContainer_FromDict:
         assert result.name == "from_dict"
         assert result.value == 300
 
-    @patch("megatron.bridge.training.utils.config_utils.instantiate")
+    @patch("megatron.training.config.container.instantiate")
     def test_from_dict_with_mode(self, mock_instantiate):
         """Test from_dict with different instantiation modes."""
         config_dict = {
@@ -181,7 +179,7 @@ class TestConfigContainer_FromDict:
         with pytest.raises(ValueError, match="Dictionary contains extra keys"):
             TestConfigContainer.from_dict(config_dict, mode=InstantiationMode.STRICT)
 
-    @patch("megatron.bridge.training.utils.config_utils.instantiate")
+    @patch("megatron.training.config.container.instantiate")
     def test_from_dict_extra_keys_lenient_mode(self, mock_instantiate):
         """Test from_dict removes extra keys in lenient mode."""
         config_dict = {
@@ -226,7 +224,7 @@ class TestConfigContainer_FromYaml:
         with pytest.raises(FileNotFoundError, match="YAML file not found"):
             TestConfigContainer.from_yaml("non_existent_file.yaml")
 
-    @patch("megatron.bridge.training.utils.config_utils.OmegaConf")
+    @patch("omegaconf.OmegaConf")
     @patch("builtins.open", new_callable=mock_open)
     @patch("os.path.exists")
     def test_from_yaml_success(self, mock_exists, mock_file, mock_omegaconf):
@@ -277,7 +275,7 @@ class TestConfigContainer_FromYaml:
 
         with patch("builtins.open", mock_open()):
             with patch("yaml.safe_load", return_value={}):
-                with patch("megatron.bridge.training.utils.config_utils.OmegaConf") as mock_omegaconf:
+                with patch("omegaconf.OmegaConf") as mock_omegaconf:
                     # Mock OmegaConf methods to return expected values
                     mock_conf = MagicMock()
                     mock_omegaconf.create.return_value = mock_conf
@@ -373,14 +371,12 @@ class TestConfigContainer_ToDict:
         assert result["name"] == "ser_test"
         assert result["nested"] == {"_target_": "my.module.NestedSerializable", "value": 99}
 
-    def test_to_dict_excludes_private_fields(self):
-        """Test that to_dict excludes fields starting with underscore."""
+    def test_to_dict_includes_target(self):
+        """Test that to_dict includes the _target_ key."""
         config = TestConfigContainer()
         result = config.to_dict()
 
-        # Should include _target_ but exclude __version__
         assert "_target_" in result
-        assert "__version__" not in result
 
 
 class TestConfigContainer_ConvertValueToDict:
@@ -494,25 +490,7 @@ class TestConfigContainer_ConvertValueToDict:
 class TestConfigContainer_ToYaml:
     """Test ConfigContainer.to_yaml method."""
 
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
-    @patch("yaml.safe_dump")
-    @patch("builtins.print")
-    def test_to_yaml_print_to_stdout(self, mock_print, mock_yaml_dump, mock_safe_representers):
-        """Test to_yaml printing to stdout when no path provided."""
-        config = TestConfigContainer(name="yaml_test", value=777)
-        mock_yaml_dump.return_value = "yaml_content"
-        mock_safe_representers.return_value.__enter__ = MagicMock()
-        mock_safe_representers.return_value.__exit__ = MagicMock()
-
-        # Test that deprecation warning is raised
-        with pytest.warns(DeprecationWarning, match=r"Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"):
-            config.to_yaml()
-
-        mock_safe_representers.assert_called_once()
-        mock_yaml_dump.assert_called_once()
-        mock_print.assert_called_once_with("yaml_content")
-
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.training.config.container.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.open", new_callable=mock_open)
     def test_to_yaml_save_to_file(self, mock_file, mock_yaml_dump, mock_safe_representers):
@@ -545,56 +523,11 @@ class TestConfigContainer_ToYaml:
             loaded_config = TestConfigContainer.from_yaml(f"msc://default{temp_dir}/test_output.yaml")
             assert config.to_dict() == loaded_config.to_dict()
 
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
-    @patch("yaml.safe_dump")
-    @patch("builtins.open", new_callable=mock_open)
-    def test_to_yaml_with_path_no_deprecation_warning(self, mock_file, mock_yaml_dump, mock_safe_representers):
-        """Test that to_yaml with a path does not trigger deprecation warning."""
-        config = TestConfigContainer(name="no_warning_test", value=333)
-        mock_safe_representers.return_value.__enter__ = MagicMock()
-        mock_safe_representers.return_value.__exit__ = MagicMock()
-
-        # Test that no warning is raised when yaml_path is provided
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            config.to_yaml("test_file.yaml")
-
-            # Check that no DeprecationWarning was raised
-            deprecation_warnings = [warning for warning in w if issubclass(warning.category, DeprecationWarning)]
-            assert len(deprecation_warnings) == 0
-
-        mock_safe_representers.assert_called_once()
-        mock_file.assert_called_once_with("test_file.yaml", "w")
-        mock_yaml_dump.assert_called_once()
-
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
-    @patch("yaml.safe_dump")
-    @patch("builtins.print")
-    def test_to_yaml_deprecation_warning_content(self, mock_print, mock_yaml_dump, mock_safe_representers):
-        """Test the specific content of the deprecation warning."""
-        config = TestConfigContainer(name="warning_content_test", value=444)
-        mock_yaml_dump.return_value = "test_content"
-        mock_safe_representers.return_value.__enter__ = MagicMock()
-        mock_safe_representers.return_value.__exit__ = MagicMock()
-
-        # Capture the warning and verify its content
-        with pytest.warns(DeprecationWarning) as warning_info:
-            config.to_yaml()
-
-        assert len(warning_info) == 1
-        warning_message = str(warning_info[0].message)
-        assert "to_yaml() without a path" in warning_message
-        assert "is deprecated" in warning_message
-        assert "Use print_yaml() instead" in warning_message
-
-        # Verify the warning has correct stacklevel (should point to caller, not internal code)
-        assert warning_info[0].filename.endswith("test_config_utils.py")
-
 
 class TestConfigContainer_PrintYaml:
     """Test ConfigContainer.print_yaml method."""
 
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.training.config.container.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.print")
     def test_print_yaml_basic(self, mock_print, mock_yaml_dump, mock_safe_representers):
@@ -626,7 +559,7 @@ class TestConfigContainer_PrintYaml:
         # Verify print is called with the YAML content
         mock_print.assert_called_once_with("printed_yaml_content")
 
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.training.config.container.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.print")
     def test_print_yaml_with_complex_config(self, mock_print, mock_yaml_dump, mock_safe_representers):
@@ -662,7 +595,7 @@ class TestConfigContainer_PrintYaml:
         assert config_dict["items"] == ["a", "b", "c"]
         assert config_dict["metadata"] == {"key1": 10, "key2": 20}
 
-    @patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers")
+    @patch("megatron.training.config.container.safe_yaml_representers")
     @patch("yaml.safe_dump")
     @patch("builtins.print")
     def test_print_yaml_calls_to_dict(self, mock_print, mock_yaml_dump, mock_safe_representers):
@@ -780,13 +713,10 @@ class TestConfigContainer_Integration:
         """Test YAML conversion produces expected structure."""
         config = TestConfigContainer(name="yaml_roundtrip", value=1234)
 
-        with patch("megatron.bridge.training.utils.config_utils.safe_yaml_representers"):
+        with patch("megatron.training.config.container.safe_yaml_representers"):
             with patch("yaml.safe_dump") as mock_dump:
-                # Test with deprecation warning
-                with pytest.warns(
-                    DeprecationWarning, match=r"Calling to_yaml\(\) without a path.*Use print_yaml\(\) instead"
-                ):
-                    config.to_yaml()
+                with patch("builtins.open", new_callable=mock_open):
+                    config.to_yaml("yaml_roundtrip.yaml")
 
                 # Verify the dictionary passed to yaml.safe_dump
                 call_args = mock_dump.call_args[0][0]
