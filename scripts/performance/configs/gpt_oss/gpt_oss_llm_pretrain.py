@@ -127,7 +127,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -147,7 +147,7 @@ def gpt_oss_20b_pretrain_config_b300(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -191,7 +191,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.scheduler.lr_warmup_iters = 128
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -203,6 +203,8 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.validation.eval_interval = 768
         cfg.validation.eval_iters = 64
         cfg.scheduler.lr_warmup_iters = 128
+        cfg.mixed_precision.fp8_param_gather = True
+        cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
     # 72 GPUs
     elif precision == "nvfp4" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "transformer_engine"
@@ -214,7 +216,7 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -226,7 +228,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
@@ -271,7 +273,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 192
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.calculate_per_token_loss = False
         cfg.model.moe_expert_rank_capacity_factor = 2
@@ -293,7 +295,7 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.scheduler.lr_warmup_iters = 64
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -305,7 +307,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     # 512 GPUs
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
-        cfg.model.cuda_graph_modules = "full"
+        cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
