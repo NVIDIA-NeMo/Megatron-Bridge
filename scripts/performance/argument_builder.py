@@ -13,7 +13,6 @@
 # limitations under the License.
 import argparse
 import os
-import shlex
 
 from argument_parser import parse_cli_args
 
@@ -68,11 +67,14 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
                     cli_arg_string.append(long_arg_name)
                     cli_arg_string.append(env_value)
 
-    # shlex.quote every token so JSON values, paths with spaces, etc. survive
-    # the consumer's `$(python -m argument_builder)` substitution. Without
-    # this, values like `{"key": "v"}` get word-split into multiple argv
-    # entries and argparse logs "Ignoring unrecognized arguments".
-    return " ".join(shlex.quote(tok) for tok in cli_arg_string)
+    # Plain space-join — the consumer is `$(python -m argument_builder)` which
+    # does NOT respect shell quote chars in substituted output, so shlex.quote
+    # would only inject literal "'" characters that get word-split into the
+    # neighboring tokens. Instead, callers are expected to ensure no value
+    # contains internal whitespace, with one exception: nargs='+' args (e.g.
+    # --dataset_paths) intentionally carry space-separated lists, which the
+    # word-split correctly fans out into multiple positional args.
+    return " ".join(cli_arg_string)
 
 
 if __name__ == "__main__":
