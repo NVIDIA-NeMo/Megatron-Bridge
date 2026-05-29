@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""Qwen3.5-VL MegatronMIMO HF-data SFT runner.
+"""Qwen3.5-VL MegatronMIMO SFT runner on HF VLM conversation data.
 
-This standalone example runs the MegatronMIMO training path on the same HF
-CORD-v2-style VLM data path used by the standard Qwen3.5-VL SFT launcher.
+This is the MegatronMIMO counterpart to the standard Qwen3.5-VL SFT recipe.
+It runs on the same HF CORD-v2-style VLM conversation data, but routes the
+batch through the MegatronMIMO heterogeneous-parallelism training path:
+language and image encoder modules run on disjoint rank groups, each with its
+own TP/PP/DP configuration.
 
-The research sparse/mock runner uses ``MockMegatronMIMOProvider`` to control
-text-only ratios. This example runner instead builds conversation examples
-with the standard HF VLM provider and adapts the resulting Qwen batch into the
-MIMO forward shape:
+Conversation examples are built with the standard HF VLM provider, then the
+resulting Qwen batch is adapted into the MIMO forward shape:
 
   - language inputs: ``input_ids``, MRoPE ``position_ids``, labels, loss mask
   - image inputs: ``modality_inputs["images"]["qwen_visual"]``
 
-Example 2-GPU smoke with random initialization:
+Example 2-GPU smoke:
 
-  CUDA_VISIBLE_DEVICES=0,1 \\
+  FLASHINFER_DISABLE_VERSION_CHECK=1 CUDA_VISIBLE_DEVICES=0,1 \\
   uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \\
     examples/megatron_mimo/qwen35_vl/finetune_qwen35_vl.py \\
       --hf-model Qwen/Qwen3.5-0.8B \\
-      --allow-random-init \\
       --component language=tp=1,dp=1,rank_offset=0 \\
       --component images=tp=1,dp=1,rank_offset=1 \\
       --train-iters 2
@@ -31,7 +31,7 @@ import argparse
 import logging
 import os
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -202,8 +202,7 @@ def _validate_mimo_batch_sizes(
             raise ValueError(f"Component {name!r} must set dp explicitly.")
         if args.micro_batch_size % dp != 0:
             raise ValueError(
-                f"--micro-batch-size ({args.micro_batch_size}) must be divisible by "
-                f"component {name!r} dp ({dp})."
+                f"--micro-batch-size ({args.micro_batch_size}) must be divisible by component {name!r} dp ({dp})."
             )
         summaries.append(f"{name}: dp={dp}, local_mbs={args.micro_batch_size // dp}")
     return summaries
@@ -369,20 +368,61 @@ def _summarize_batch(batch: dict[str, Any], adapted: dict[str, Any], spec: Qwen3
     )
 
 
-def _wrap_iter(
+class _Qwen35HFMimoCollateAdapter:
+    """Pickleable collate wrapper that runs the MIMO adapt step inside the dataloader workers.
+
+    Runs after the standard HF VLM collate (which produces `input_ids`,
+    `visual_inputs`, etc.) and before the batch crosses the worker→main IPC
+    boundary. Moves `get_rope_index` and `reorganize_inputs` off the main
+    process critical path; the main process now only receives MIMO-shaped
+    batches and the `get_batch` host-to-device copy.
+    """
+
+    def __init__(
+        self,
+        base_collate: Callable[[list[Any]], dict[str, Any]],
+        spec: Qwen35MIMOHFSpec,
+        seq_length: int,
+        pad_to_seq_length: bool,
+    ) -> None:
+        self.base_collate = base_collate
+        self.spec = spec
+        self.seq_length = seq_length
+        self.pad_to_seq_length = pad_to_seq_length
+
+    def __call__(self, items: list[Any]) -> dict[str, Any]:
+        batch = self.base_collate(items)
+        return _adapt_qwen35_hf_batch(
+            batch,
+            self.spec,
+            seq_length=self.seq_length,
+            pad_to_seq_length=self.pad_to_seq_length,
+        )
+
+
+def _summarize_adapted_batch(adapted: dict[str, Any], spec: Qwen35MIMOHFSpec) -> str:
+    input_ids = adapted["input_ids"]
+    image_token_counts = (input_ids == spec.image_token_id).sum(dim=1)
+    image_text = int((image_token_counts > 0).sum().item())
+    batch_size = int(input_ids.size(0))
+    modality_inputs = adapted.get("modality_inputs") or {}
+    image_inputs = modality_inputs.get(spec.image_modality_name) or {}
+    encoder_inputs = image_inputs.get(spec.image_encoder_key) or {}
+    grid_thw = encoder_inputs.get("grid_thw")
+    raw_images = 0 if grid_thw is None else int(grid_thw.reshape(-1, 3).size(0))
+    return (
+        f"batch_size={batch_size}, image_text={image_text}, "
+        f"llm_image_tokens={int(image_token_counts.sum().item())}, raw_images={raw_images}, "
+        f"seq_len={input_ids.size(1)}"
+    )
+
+
+def _wrap_iter_logging(
     loader_iter: Iterator[dict[str, Any]],
     spec: Qwen35MIMOHFSpec,
-    args: argparse.Namespace,
 ) -> Iterator[dict[str, Any]]:
-    for batch_idx, batch in enumerate(loader_iter):
-        adapted = _adapt_qwen35_hf_batch(
-            batch,
-            spec,
-            seq_length=args.seq_length,
-            pad_to_seq_length=args.pad_to_seq_length,
-        )
-        if args.log_batches:
-            _log(f"hf batch {batch_idx}: {_summarize_batch(batch, adapted, spec)}")
+    for batch_idx, adapted in enumerate(loader_iter):
+        _log(f"hf batch {batch_idx}: {_summarize_adapted_batch(adapted, spec)}")
         yield adapted
 
 
@@ -411,9 +451,20 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         train_ds, _, _ = cfg.dataset.build_datasets(context)
         if train_ds is None:
             raise ValueError("HF conversation provider did not build a train dataset.")
-        collate_fn = getattr(train_ds, "collate_fn", None)
-        if collate_fn is None:
+        base_collate = getattr(train_ds, "collate_fn", None)
+        if base_collate is None:
             raise ValueError("HF conversation train dataset does not expose collate_fn.")
+
+        # Wrap the dataset's collate so the MIMO adapt runs in worker processes
+        # alongside the HF VLM processor work; the main process used to spend
+        # ~1s/iter doing `get_rope_index` here via a generator that ran adapt
+        # post-`next(...)`.
+        collate_fn = _Qwen35HFMimoCollateAdapter(
+            base_collate=base_collate,
+            spec=spec,
+            seq_length=args.seq_length,
+            pad_to_seq_length=args.pad_to_seq_length,
+        )
 
         train_loader = build_pretraining_data_loader(
             dataset=train_ds,
@@ -429,7 +480,12 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
             data_parallel_size=sampler_dp_size,
             drop_last=cfg.dataset.drop_last,
         )
-        return _wrap_iter(train_loader, spec, args), None
+
+        # `pretrain_megatron_mimo` calls `next(data_iterator)` per microbatch, so
+        # return an iterator (DataLoader is iterable but not itself an iterator).
+        if args.log_batches:
+            return _wrap_iter_logging(train_loader, spec), None
+        return iter(train_loader), None
 
     return _build_data_iterators
 
@@ -565,6 +621,9 @@ def _build_config(
             train_iters=args.train_iters,
             eval_interval=None,
             eval_iters=None,
+            manual_gc=True,
+            manual_gc_interval=100,
+            manual_gc_eval=100,
         ),
         model=model_provider,
         optimizer=optimizer_cfg,
@@ -621,7 +680,7 @@ def _resolve_default_paths(args: argparse.Namespace) -> None:
 
 
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="MegatronMIMO Qwen3.5-VL HF-data SFT")
+    parser = argparse.ArgumentParser(description="MegatronMIMO Qwen3.5-VL HF CORD-v2 validation training")
     parser.add_argument("--hf-model", type=str, default="Qwen/Qwen3.5-0.8B", help="HF model id or local config path")
     parser.add_argument("--processor-path", type=str, default=None, help="HF processor path; defaults to --hf-model")
     parser.add_argument("--trust-remote-code", action="store_true")
@@ -711,7 +770,7 @@ def _parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    """Entry point for Qwen3.5-VL MegatronMIMO HF-data SFT."""
+    """Entry point for Qwen3.5-VL MegatronMIMO HF-data validation training."""
     global G_RANK_LOG_FILE
 
     args = _parse_args()

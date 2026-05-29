@@ -303,9 +303,7 @@ def validate_data_loader_contract(
         dp_size = grid.get_pg_size(["dp"])
 
         if micro_batch_size % dp_size != 0:
-            raise ValueError(
-                f"Micro batch size {micro_batch_size} not divisible by {module_name} DP size {dp_size}"
-            )
+            raise ValueError(f"Micro batch size {micro_batch_size} not divisible by {module_name} DP size {dp_size}")
 
         # Check global batch divisibility
         if global_batch_size % dp_size != 0:

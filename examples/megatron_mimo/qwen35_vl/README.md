@@ -18,7 +18,6 @@ scripts to a new layout or dataset.
 |---|---|
 | `conversion.sh` | Converts HF Qwen3.5-VL checkpoints to MegatronMIMO format and exports back to HF for a round-trip check. |
 | `finetune_qwen35_vl.py` | Standalone MegatronMIMO HF-data SFT runner. |
-| `slurm_sft.sh` | Slurm launcher for the non-colocated MIMO SFT path. |
 
 ## Workspace
 
@@ -87,34 +86,13 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
     --train-iters 2
 ```
 
-## Slurm SFT
+## Multi-Node Slurm
 
-The 27B Slurm example uses:
-
-- Language: TP4, PP4, DP2 on ranks 0-31.
-- Images: TP1, PP1, DP1 on rank 32.
-- Active ranks: 33.
-- MIMO microbatch size: 2.
-- Language-local microbatch size: 1.
-- Global batch size: 32.
-- Sequence length: 2048.
-
-Before submission, set at least:
-
-```bash
-export WORKSPACE=/path/to/shared/workspace
-export CONTAINER_IMAGE=/path/to/container.sqsh
-```
-
-Then submit the Slurm launcher:
-
-```bash
-sbatch examples/megatron_mimo/qwen35_vl/slurm_sft.sh
-```
-
-Set `PRETRAINED_CHECKPOINT` to load a converted MegatronMIMO checkpoint. If
-neither `PRETRAINED_CHECKPOINT` nor `LOAD_CHECKPOINT` is set, the launcher uses
-random initialization and passes `--allow-random-init`.
+A short upstream-friendly multi-node Slurm launcher for the non-colocated
+33-rank layout (32 language ranks + 1 image rank, packed across 5 8-GPU nodes
+via srun MPMD) is coming in a follow-up. In the meantime, see the standard
+Qwen3.5-VL launcher at `examples/models/qwen/qwen35_vl/slurm_sft.sh` for the
+container, mounts, and `CLI_OVERRIDES` pattern.
 
 ## Current Support
 

@@ -17,6 +17,7 @@ Note: Stub ranks are disallowed - validated at setup time.
 
 from __future__ import annotations
 
+import gc
 import logging
 from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
 
@@ -41,7 +42,7 @@ from megatron.bridge.training.profiling import (
     should_profile_rank,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.train import checkpoint_and_decide_exit
+from megatron.bridge.training.train import checkpoint_and_decide_exit, maybe_run_manual_gc
 from megatron.bridge.training.utils.train_utils import (
     prepare_forward_step_func,
     training_log,
@@ -289,6 +290,11 @@ def train_megatron_mimo(
             prof = initialize_pytorch_profiler(prof_config, cfg.logger.tensorboard_dir)
             prof.start()
 
+    if train_config.manual_gc:
+        assert train_config.manual_gc_interval >= 0, "Manual garbage collection interval must be non-negative"
+        gc.disable()
+        gc.collect()
+
     logger.info(f"Rank {dist.get_rank()}: Starting MegatronMIMO training loop")
 
     # Main training loop
@@ -393,6 +399,8 @@ def train_megatron_mimo(
             and train_state.step % train_config.eval_interval == 0
             and valid_data_iterator is not None
         ):
+            if train_config.manual_gc and train_config.manual_gc_eval:
+                gc.collect()
             timers("evaluate", log_level=0).start(barrier=True)
             evaluate_and_print_results(
                 state=global_state,
@@ -407,6 +415,15 @@ def train_megatron_mimo(
                 pg_collection=multimodule_pg_collection,
             )
             timers("evaluate").stop()
+            if train_config.manual_gc and train_config.manual_gc_eval:
+                # Collect only objects created during eval (gen-0 is cheap).
+                gc.collect(generation=0)
+
+        maybe_run_manual_gc(
+            train_config.manual_gc,
+            train_config.manual_gc_interval,
+            train_state.step,
+        )
 
         # Checkpointing (interval, signal, duration, exit-interval) and exit decision.
         # TODO: MegatronMIMO FLOPs estimation is non-trivial (heterogeneous modules); pass 0 for now.
