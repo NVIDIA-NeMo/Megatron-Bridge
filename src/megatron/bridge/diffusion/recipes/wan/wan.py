@@ -136,10 +136,6 @@ def wan_1_3b_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-# Backward-compatible public recipe name used by existing external validation.
-wan_1_3B_pretrain_config = wan_1_3b_pretrain_config
-
-
 def wan_14b_pretrain_config() -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 14B model.

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.wan.wan import (
-    wan_1_3B_pretrain_config,
     wan_1_3b_pretrain_config,
     wan_1_3b_sft_config,
     wan_1_3b_text2image_pretrain_config,
@@ -24,7 +23,6 @@ from megatron.bridge.diffusion.recipes.wan.wan import (
 
 
 __all__ = [
-    "wan_1_3B_pretrain_config",
     "wan_1_3b_pretrain_config",
     "wan_1_3b_text2image_pretrain_config",
     "wan_1_3b_text2video_pretrain_config",
