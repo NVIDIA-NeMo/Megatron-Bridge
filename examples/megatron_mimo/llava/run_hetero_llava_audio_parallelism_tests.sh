@@ -36,7 +36,17 @@ ADAM_BETA2=${ADAM_BETA2:-0.95}
 LOG_INTERVAL=${LOG_INTERVAL:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"Megatron-Bridge-MIMO"}
 WANDB_SAVE_DIR=${WANDB_SAVE_DIR:-"/tmp/wandb"}
-DATASET_ROOT=${DATASET_ROOT:-"/path/to/LLaVA-Pretrain-Audio-Augmented"}
+# Audio-augmented dataset. Empty DATASET_ROOT triggers a build via
+# prepare_llava_pretrain_audio.sh into AUDIO_DATASET_DIR (TTS synthesis over
+# LLaVA-Pretrain; resume-safe, skipped if already built). Set DATASET_ROOT to an
+# existing audio-augmented tree to skip the build.
+DATASET_ROOT=${DATASET_ROOT:-""}
+AUDIO_DATASET_DIR=${AUDIO_DATASET_DIR:-/workspace/llava_pretrain_audio_augmented}
+# Only train_iters * GBS samples are consumed over the whole run (the loader caps
+# the dataset at train_samples and reserves no val/test split), so audio is
+# synthesized for just that many records via LIMIT rather than all 558k. Override
+# LIMIT to force a specific count.
+LIMIT=${LIMIT:-$((TRAIN_ITERS * GLOBAL_BATCH_SIZE))}
 UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 
 # HuggingFace source models for checkpoint conversion
@@ -147,6 +157,29 @@ declare -a RESULTS=()
 declare -a FAILED_CONFIGS=()
 TOTAL=0
 PASSED=0
+
+# Ensure the audio-augmented dataset is available. When DATASET_ROOT is empty,
+# run prepare_llava_pretrain_audio.sh (which auto-downloads LLaVA-Pretrain as
+# needed, synthesizes per-sample audio, and merges ${HF_DATA_FILES}) into
+# AUDIO_DATASET_DIR, then point DATASET_ROOT at it. Skipped when the merged JSON
+# is already present. Pass SRC/LIMIT/NUM_SHARDS/TTS_* through the environment to
+# tune the build (see prepare_llava_pretrain_audio.sh).
+prepare_dataset() {
+    if [[ -n "${DATASET_ROOT}" ]]; then
+        echo "Using DATASET_ROOT: ${DATASET_ROOT}"
+        return
+    fi
+
+    DATASET_ROOT="${AUDIO_DATASET_DIR}"
+    if [[ -f "${DATASET_ROOT}/${HF_DATA_FILES}" ]]; then
+        echo "Using cached audio-augmented dataset at ${DATASET_ROOT}"
+        return
+    fi
+
+    echo "DATASET_ROOT not set; building audio-augmented dataset (LIMIT=${LIMIT}) under ${DATASET_ROOT}"
+    DST="${DATASET_ROOT}" LIMIT="${LIMIT}" "${SCRIPT_DIR}/prepare_llava_pretrain_audio.sh"
+    echo "  Audio-augmented dataset ready at ${DATASET_ROOT}"
+}
 
 convert_checkpoints() {
     local vision_tp="$1"
@@ -300,6 +333,9 @@ run_config() {
     fi
     return 0
 }
+
+# Ensure dataset is available (builds the audio-augmented tree when DATASET_ROOT is empty)
+prepare_dataset
 
 # Run tests
 if [[ -n "${SINGLE_CONFIG}" ]]; then
