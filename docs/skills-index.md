@@ -34,6 +34,9 @@ skills/nemo-rl-e2e-testing/SKILL
 :caption: Performance Techniques
 :maxdepth: 1
 
+skills/nemo-mbridge-perf-moe-long-context/SKILL
+skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL
+skills/nemo-mbridge-perf-moe-vlm-training/SKILL
 skills/nemo-mbridge-perf-memory-tuning/SKILL
 skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL
 skills/nemo-mbridge-perf-moe-hardware-configs/SKILL
