@@ -72,7 +72,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-dsv4
 
 # TP,PP,EP,CP. The default targets 8 GB200 nodes with 4 GPUs per node.
-PARALLELISM_CONFIG="1,4,8,1"
+PARALLELISM_CONFIG=${PARALLELISM_CONFIG:-1,4,8,1}
 
 CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
@@ -212,6 +212,7 @@ echo "DeepSeek-V4-Flash Pretraining"
 echo "======================================"
 echo "Job ID: ${SLURM_JOB_ID:-manual}"
 echo "Recipe: $RECIPE_NAME"
+echo "Hardware target: GB200/Blackwell"
 echo "Dataset: $DATASET_TYPE/$DATASET_NAME"
 echo "Parallelism: TP=$TP PP=$PP EP=$EP CP=$CP"
 echo "Run name: $RUN_NAME"
