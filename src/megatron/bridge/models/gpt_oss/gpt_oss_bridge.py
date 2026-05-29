@@ -227,13 +227,9 @@ class GPTOSSMLPDownProjMapping(AutoMapping):
         return super().hf_to_megatron(hf_weights[global_expert_number], megatron_module)
 
     def megatron_to_hf(self, megatron_weights: torch.Tensor, megatron_module: nn.Module) -> Dict[str, torch.Tensor]:
-        if megatron_weights is not None:
-            megatron_weights = megatron_weights.contiguous()
-        result = super().megatron_to_hf(megatron_weights, megatron_module)
-        # TE GroupedLinear stores weights in (in, out) layout via state_dict().
-        # Transpose per-expert weight back to HF's (out, in) after TP gather.
-        # Must apply on all PP ranks since broadcast happens inside super().
-        return {k: v.t().contiguous() if v.ndim == 2 else v for k, v in result.items()}
+        if megatron_weights is None:
+            return super().megatron_to_hf(megatron_weights, megatron_module)
+        return super().megatron_to_hf(megatron_weights.contiguous(), megatron_module)
 
 
 class GPTOSSMLPGateUpProjMapping(AutoMapping):
