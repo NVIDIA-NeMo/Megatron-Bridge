@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import argparse
 import json
 import logging
 import math
@@ -22,11 +21,6 @@ import sys
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-
-try:
-    from scripts.performance.argument_parser import _testing_args
-except (ImportError, ModuleNotFoundError):
-    from .scripts.performance.argument_parser import _testing_args
 
 try:
     import numpy as np
@@ -846,97 +840,3 @@ def calc_convergence_and_performance(
 
     _logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
     return has_validation_failures is False, error_msg
-
-
-def main():
-    """
-    Evaluate the performance of a model against golden values.
-    """
-    logging.basicConfig(level=logging.INFO)
-
-    parser = argparse.ArgumentParser(
-        description="Evaluate against golden values",
-        argument_default=None,
-    )
-
-    # add any new testing args here
-    _testing_args(parser)
-
-    parser.add_argument(
-        "--log_paths",
-        type=str,
-        nargs="+",
-        required=True,
-        help="Paths to training log files to evaluate",
-    )
-    parser.add_argument(
-        "--assets_dir",
-        type=str,
-        required=True,
-        help="Directory containing job results / where new golden values are written",
-    )
-
-    parser.add_argument(
-        "-m",
-        "--model_family_name",
-        type=str,
-        help="Model family name to use for experiment. E.g. `--model_family_name llama` (not llama3)",
-        required=True,
-    )
-    parser.add_argument(
-        "-mr",
-        "--model_recipe_name",
-        type=str,
-        help="Model recipe name to use for experiment. E.g. `--model_recipe_name llama31_405b`",
-        required=True,
-    )
-
-    args = parser.parse_args()
-
-    convergence_config = {
-        "correlation_threshold": args.correlation_threshold,
-        "high_loss_tolerance": args.high_loss_tolerance,
-        "medium_loss_tolerance": args.medium_loss_tolerance,
-        "low_loss_tolerance": args.low_loss_tolerance,
-        "final_loss_tolerance": args.final_loss_tolerance,
-        "max_outlier_ratio": args.max_outlier_ratio,
-        "outlier_threshold": args.outlier_threshold,
-        "skip_first_percent_loss": args.skip_first_percent_loss,
-    }
-
-    performance_config = {
-        "timing_threshold": args.timing_threshold,
-        "skip_first_percent_time": args.skip_first_percent_time,
-        "eval_time_start_step": args.eval_time_start_step,
-        "eval_time_end_step": args.eval_time_end_step,
-    }
-
-    memory_config = {
-        "memory_threshold": args.memory_threshold,
-    }
-
-    passed, error_msg = calc_convergence_and_performance(
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        assets_dir=args.assets_dir,
-        log_paths=args.log_paths,
-        loss_metric="lm loss",
-        timing_metric="elapsed time per iteration (ms)",
-        alloc_metric="alloc",
-        max_alloc_metric="max_alloc",
-        golden_values_path=args.golden_values_path,
-        convergence_config=convergence_config,
-        performance_config=performance_config,
-        memory_config=memory_config,
-        wandb_run=None,
-    )
-
-    if not passed:
-        logger.error(f"Evaluation FAILED:\n{error_msg}")
-        sys.exit(1)
-
-    logger.info("Evaluation PASSED")
-
-
-if __name__ == "__main__":
-    main()
