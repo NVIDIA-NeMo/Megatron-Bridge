@@ -535,6 +535,21 @@ def parse_cli_args():
         default=[],
     )
     kubeflow_args.add_argument(
+        "--kubeflow_volumes_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Volume dicts attached to the training pod "
+        "(e.g. PVCs, emptyDir, hostPath).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_volume_mounts_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes VolumeMount dicts applied to the training container.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_tolerations_json",
         type=str,
         help="JSON-encoded list of Kubernetes Toleration dicts applied to the training pods. "

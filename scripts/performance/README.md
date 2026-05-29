@@ -204,6 +204,8 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
 - `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
 - `--kubeflow_image_pull_secrets`: Comma-separated list of Kubernetes image pull secret names.
+- `--kubeflow_volumes_json`: JSON-encoded list of Kubernetes `Volume` dicts attached to the training pod (PVC, emptyDir, hostPath).
+- `--kubeflow_volume_mounts_json`: JSON-encoded list of Kubernetes `VolumeMount` dicts applied to the training container (must match a name in `--kubeflow_volumes_json`).
 - `--kubeflow_tolerations_json`: JSON-encoded list of Kubernetes `Toleration` dicts applied to the training pods (e.g. to land on lease-tainted nodes such as `gpu-wrangler.nvidia.com/lease`).
 - `--kubeflow_affinity_json`: JSON-encoded Kubernetes `Affinity` dict applied to the training pods (e.g. node affinity onto GPULease-allocated nodes).
 - `--kubeflow_env_list_json`: JSON-encoded list of Kubernetes `EnvVar` dicts (supports `valueFrom.secretKeyRef` for secret-backed env vars such as `WANDB_API_KEY` / `HF_TOKEN`).
