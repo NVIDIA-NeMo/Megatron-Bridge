@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import inspect
 from abc import ABC
 from dataclasses import dataclass
 from types import SimpleNamespace
@@ -29,6 +30,18 @@ from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+
+
+def _filter_llava_model_kwargs(llava_model_cls: type, kwargs: dict[str, object]) -> dict[str, object]:
+    """Drop Nemotron-Omni kwargs unsupported by the active MCore LLaVAModel."""
+    parameters = inspect.signature(llava_model_cls.__init__).parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
+        return kwargs
+
+    accepted_kwargs = set(parameters)
+    # TODO: remove this guard when dev Megatron-Core's LLaVAModel constructor
+    # supports the Nemotron Omni optional kwargs used by the stable MCore pin.
+    return {name: value for name, value in kwargs.items() if name in accepted_kwargs}
 
 
 @dataclass
@@ -254,46 +267,50 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
                 input_size=self.sound_hidden_size,
             )
 
-        llava_model = LLaVAModel(
-            language_transformer_config=language_cfg,
-            language_transformer_layer_spec=language_spec,
-            language_vocab_size=self.vocab_size,
-            language_max_sequence_length=self.seq_length,
-            vision_transformer_config=vision_cfg,
-            vision_transformer_layer_spec=vision_spec,
-            drop_vision_class_token=True,
-            vision_projection_config=vision_proj_cfg,
-            vision_projection_layer_spec=vision_proj_spec,
-            vision_projection_type="mlp",
-            parallel_output=self.parallel_output,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            language_position_embedding_type=self.position_embedding_type,
-            pre_process=pre_process if pre_process is not None else True,
-            post_process=post_process if post_process is not None else True,
-            add_encoder=add_encoder_flag,
-            add_decoder=add_decoder_flag,
-            img_h=512,
-            img_w=512,
-            patch_dim=16,
-            hybrid_layer_pattern=self.hybrid_layer_pattern,
-            image_token_index=self.image_token_index,
-            pixel_shuffle=True,
-            max_num_tiles=12,
-            tokenizer_type=self.tokenizer_type,
-            use_vision_backbone_fp8_arch=self.use_vision_backbone_fp8_arch,
-            dynamic_resolution=self.dynamic_resolution,
-            radio_force_eval_mode=self.radio_force_eval_mode,
-            radio_force_cpe_eval_mode=self.radio_force_cpe_eval_mode,
-            radio_interpolate_only_cpe=self.radio_interpolate_only_cpe,
-            radio_cpe_aspect_ratio_select=self.radio_cpe_aspect_ratio_select,
-            radio_disable_cpe=self.radio_disable_cpe,
-            sound_model=sound_model,
-            sound_projection=sound_projection,
-            sound_token_index=sound_token_index,
-            temporal_patch_dim=self.temporal_patch_dim,
-            separate_video_embedder=self.separate_video_embedder,
-            temporal_ckpt_compat=self.temporal_ckpt_compat,
+        llava_kwargs = _filter_llava_model_kwargs(
+            LLaVAModel,
+            {
+                "language_transformer_config": language_cfg,
+                "language_transformer_layer_spec": language_spec,
+                "language_vocab_size": self.vocab_size,
+                "language_max_sequence_length": self.seq_length,
+                "vision_transformer_config": vision_cfg,
+                "vision_transformer_layer_spec": vision_spec,
+                "drop_vision_class_token": True,
+                "vision_projection_config": vision_proj_cfg,
+                "vision_projection_layer_spec": vision_proj_spec,
+                "vision_projection_type": "mlp",
+                "parallel_output": self.parallel_output,
+                "share_embeddings_and_output_weights": self.share_embeddings_and_output_weights,
+                "language_position_embedding_type": self.position_embedding_type,
+                "pre_process": pre_process if pre_process is not None else True,
+                "post_process": post_process if post_process is not None else True,
+                "add_encoder": add_encoder_flag,
+                "add_decoder": add_decoder_flag,
+                "img_h": 512,
+                "img_w": 512,
+                "patch_dim": 16,
+                "hybrid_layer_pattern": self.hybrid_layer_pattern,
+                "image_token_index": self.image_token_index,
+                "pixel_shuffle": True,
+                "max_num_tiles": 12,
+                "tokenizer_type": self.tokenizer_type,
+                "use_vision_backbone_fp8_arch": self.use_vision_backbone_fp8_arch,
+                "dynamic_resolution": self.dynamic_resolution,
+                "radio_force_eval_mode": self.radio_force_eval_mode,
+                "radio_force_cpe_eval_mode": self.radio_force_cpe_eval_mode,
+                "radio_interpolate_only_cpe": self.radio_interpolate_only_cpe,
+                "radio_cpe_aspect_ratio_select": self.radio_cpe_aspect_ratio_select,
+                "radio_disable_cpe": self.radio_disable_cpe,
+                "sound_model": sound_model,
+                "sound_projection": sound_projection,
+                "sound_token_index": sound_token_index,
+                "temporal_patch_dim": self.temporal_patch_dim,
+                "separate_video_embedder": self.separate_video_embedder,
+                "temporal_ckpt_compat": self.temporal_ckpt_compat,
+            },
         )
+        llava_model = LLaVAModel(**llava_kwargs)
 
         model = NemotronOmniModel(llava_model=llava_model)
 

@@ -24,7 +24,10 @@ from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
+from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
+    NemotronOmniModelProvider,
+    _filter_llava_model_kwargs,
+)
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
 
@@ -140,6 +143,45 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+
+
+def test_filter_llava_model_kwargs_keeps_supported_omni_kwargs():
+    class StableLLaVAModel:
+        def __init__(self, language_transformer_config, dynamic_resolution=False, sound_model=None):
+            pass
+
+    language_cfg = object()
+    sound_model = object()
+
+    assert _filter_llava_model_kwargs(
+        StableLLaVAModel,
+        {
+            "language_transformer_config": language_cfg,
+            "dynamic_resolution": True,
+            "sound_model": sound_model,
+        },
+    ) == {
+        "language_transformer_config": language_cfg,
+        "dynamic_resolution": True,
+        "sound_model": sound_model,
+    }
+
+
+def test_filter_llava_model_kwargs_drops_unsupported_omni_kwargs():
+    class DevLLaVAModel:
+        def __init__(self, language_transformer_config):
+            pass
+
+    language_cfg = object()
+
+    assert _filter_llava_model_kwargs(
+        DevLLaVAModel,
+        {
+            "language_transformer_config": language_cfg,
+            "dynamic_resolution": True,
+            "sound_model": object(),
+        },
+    ) == {"language_transformer_config": language_cfg}
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():
