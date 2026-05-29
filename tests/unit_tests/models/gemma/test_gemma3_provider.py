@@ -22,10 +22,6 @@ from megatron.core.transformer.enums import AttnBackend
 from megatron.bridge.models.gemma.gemma3_provider import (
     Gemma3LanguageModelEmbedding,
     Gemma3ModelProvider,
-    Gemma3ModelProvider1B,
-    Gemma3ModelProvider4B,
-    Gemma3ModelProvider12B,
-    Gemma3ModelProvider27B,
     Gemma3RotaryEmbedding,
     Gemma3SelfAttention,
     Gemma3TEDotProductAttention,
@@ -186,127 +182,6 @@ class TestGemma3ModelProvider:
                 mock_embedding.assert_not_called()
                 # But setup method should still be called
                 mock_model.setup_embeddings_and_output_layer.assert_called_once()
-
-
-class TestGemma3ModelProvider1B:
-    """Test cases for Gemma3ModelProvider1B class."""
-
-    def test_gemma3_1b_configuration(self):
-        """Test that Gemma3ModelProvider1B has correct configuration values."""
-        provider = Gemma3ModelProvider1B()
-
-        # Test 1B specific values
-        assert provider.is_vision_language is False
-        assert provider.num_layers == 26
-        assert provider.hidden_size == 1152
-        assert provider.num_attention_heads == 4
-        assert provider.num_query_groups == 1
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 6912
-        assert provider.window_size == 512
-        assert provider.rope_scaling_factor == 1.0  # no rope scaling
-        assert provider.seq_length == 32768
-        assert provider.bf16 is True
-        assert provider.vocab_size == 262_144
-
-        # Test inherited Gemma3 defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.rotary_base == (10_000, 1_000_000)
-        assert provider.interleaved_attn_pattern == (5, 1)
-
-    def test_gemma3_1b_inheritance(self):
-        """Test that Gemma3ModelProvider1B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider1B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider4B:
-    """Test cases for Gemma3ModelProvider4B class."""
-
-    def test_gemma3_4b_configuration(self):
-        """Test that Gemma3ModelProvider4B has correct configuration values."""
-        provider = Gemma3ModelProvider4B()
-
-        # Test 4B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 34
-        assert provider.hidden_size == 2560
-        assert provider.num_attention_heads == 8
-        assert provider.num_query_groups == 4
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 10240
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-        # Test inherited Gemma3 defaults
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-
-    def test_gemma3_4b_inheritance(self):
-        """Test that Gemma3ModelProvider4B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider4B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider12B:
-    """Test cases for Gemma3ModelProvider12B class."""
-
-    def test_gemma3_12b_configuration(self):
-        """Test that Gemma3ModelProvider12B has correct configuration values."""
-        provider = Gemma3ModelProvider12B()
-
-        # Test 12B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 48
-        assert provider.hidden_size == 3840
-        assert provider.num_attention_heads == 16
-        assert provider.num_query_groups == 8
-        assert provider.kv_channels == 256
-        assert provider.ffn_hidden_size == 15360
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-    def test_gemma3_12b_inheritance(self):
-        """Test that Gemma3ModelProvider12B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider12B()
-        assert isinstance(provider, Gemma3ModelProvider)
-
-
-class TestGemma3ModelProvider27B:
-    """Test cases for Gemma3ModelProvider27B class."""
-
-    def test_gemma3_27b_configuration(self):
-        """Test that Gemma3ModelProvider27B has correct configuration values."""
-        provider = Gemma3ModelProvider27B()
-
-        # Test 27B specific values
-        assert provider.is_vision_language is True  # VL model
-        assert provider.num_layers == 62
-        assert provider.hidden_size == 5376
-        assert provider.num_attention_heads == 32
-        assert provider.num_query_groups == 16
-        assert provider.kv_channels == 128  # Different from other sizes
-        assert provider.softmax_scale == 1.0 / math.sqrt(168)  # Special for 27B
-        assert provider.ffn_hidden_size == 21504
-        assert provider.window_size == 1024
-        assert provider.rope_scaling_factor == 8.0
-        assert provider.vocab_size == 262_208
-
-    def test_gemma3_27b_softmax_scale_calculation(self):
-        """Test that 27B model has correct softmax scale calculation."""
-        provider = Gemma3ModelProvider27B()
-
-        # Verify the softmax scale calculation: (5376 // 32)^(-0.5) = 168^(-0.5)
-        expected_scale = 1.0 / math.sqrt(168)
-        assert abs(provider.softmax_scale - expected_scale) < 1e-10
-
-    def test_gemma3_27b_inheritance(self):
-        """Test that Gemma3ModelProvider27B properly inherits from Gemma3ModelProvider."""
-        provider = Gemma3ModelProvider27B()
-        assert isinstance(provider, Gemma3ModelProvider)
 
 
 class TestGemma3UtilityFunctions:
@@ -527,128 +402,36 @@ class TestGemma3CustomComponents:
 class TestGemma3ModelProviderIntegration:
     """Integration tests for Gemma3 model providers."""
 
-    def test_all_providers_have_provide_method(self):
-        """Test that all provider classes have the provide method."""
+    def test_provider_accepts_explicit_architecture_values(self):
+        """Test that architecture values can be supplied without size subclasses."""
         providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in providers:
-            assert hasattr(provider, "provide")
-            assert callable(getattr(provider, "provide"))
-
-    def test_vision_language_configuration(self):
-        """Test that VL models are configured correctly."""
-        # 1B is not VL
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.is_vision_language is False
-
-        # 4B, 12B, 27B are VL models
-        vl_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in vl_providers:
-            assert provider.is_vision_language is True
-
-    def test_rope_scaling_configuration(self):
-        """Test rope scaling configuration across different model sizes."""
-        # 1B has no rope scaling
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.rope_scaling_factor == 1.0
-
-        # Larger models have rope scaling
-        scaled_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in scaled_providers:
-            assert provider.rope_scaling_factor == 8.0
-
-    def test_window_size_configuration(self):
-        """Test window size configuration across different model sizes."""
-        # 1B has smaller window
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.window_size == 512
-
-        # Larger models have bigger window
-        larger_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in larger_providers:
-            assert provider.window_size == 1024
-
-    def test_kv_channels_configuration(self):
-        """Test kv_channels configuration across different model sizes."""
-        # Most models use 256
-        standard_providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-        ]
-
-        for provider in standard_providers:
-            assert provider.kv_channels == 256
-
-        # 27B uses different kv_channels
-        provider_27b = Gemma3ModelProvider27B()
-        assert provider_27b.kv_channels == 128
-
-    def test_vocab_size_configuration(self):
-        """Test vocabulary size configuration across different model sizes."""
-        # 1B has different vocab size
-        provider_1b = Gemma3ModelProvider1B()
-        assert provider_1b.vocab_size == 262_144
-
-        # Larger models have same vocab size
-        larger_providers = [
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
-        ]
-
-        for provider in larger_providers:
-            assert provider.vocab_size == 262_208
-
-    def test_all_providers_inherit_correctly(self):
-        """Test that all provider variants inherit from base Gemma3ModelProvider."""
-        providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-            Gemma3ModelProvider27B(),
+            Gemma3ModelProvider(
+                num_layers=26,
+                hidden_size=1152,
+                num_attention_heads=4,
+                num_query_groups=1,
+                kv_channels=256,
+                ffn_hidden_size=6912,
+                window_size=512,
+                rope_scaling_factor=1.0,
+                seq_length=32768,
+                vocab_size=262_144,
+            ),
+            Gemma3ModelProvider(
+                num_layers=62,
+                hidden_size=5376,
+                num_attention_heads=32,
+                num_query_groups=16,
+                kv_channels=128,
+                softmax_scale=1.0 / math.sqrt(168),
+                ffn_hidden_size=21504,
+                window_size=1024,
+                rope_scaling_factor=8.0,
+                vocab_size=262_208,
+            ),
         ]
 
         for provider in providers:
             assert isinstance(provider, Gemma3ModelProvider)
-
-    def test_softmax_scale_configuration(self):
-        """Test features unique to the 27B model."""
-        provider_27b = Gemma3ModelProvider27B()
-
-        # 27B has unique softmax_scale
-        assert hasattr(provider_27b, "softmax_scale")
-        expected_scale = 1.0 / math.sqrt(168)
-        assert abs(provider_27b.softmax_scale - expected_scale) < 1e-10
-
-        # Other models have this attribute set to 1.0 / math.sqrt(256)
-        other_providers = [
-            Gemma3ModelProvider1B(),
-            Gemma3ModelProvider4B(),
-            Gemma3ModelProvider12B(),
-        ]
-
-        for provider in other_providers:
-            assert hasattr(provider, "softmax_scale")
-            expected_scale = 1.0 / math.sqrt(256)
-            assert abs(provider.softmax_scale - expected_scale) < 1e-10
+            assert hasattr(provider, "provide")
+            assert callable(getattr(provider, "provide"))

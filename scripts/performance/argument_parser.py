@@ -323,6 +323,11 @@ def parse_cli_args():
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
+    data_args.add_argument(
+        "--diffusion_dataset_path",
+        type=str,
+        help="WebDataset root path for diffusion recipes (FLUX, WAN). When unset, recipes fall back to mock data.",
+    )
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
@@ -759,6 +764,12 @@ def parse_cli_args():
         required=False,
         default=-1,
     )
+    performance_args.add_argument(
+        "--deterministic",
+        help="Enable bit-exact deterministic training. Sets NCCL/cuBLAS/TE env vars "
+        "and disables fused cross-entropy loss and TP comm overlap.",
+        action="store_true",
+    )
 
     # Logging
     logging_args = parser.add_argument_group("Logging arguments")
@@ -828,7 +839,13 @@ def parse_cli_args():
         help="List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).",
     )
 
-    # Testing parameters
+    _testing_args(parser)
+
+    return parser
+
+
+def _testing_args(parser):
+    """Add testing-related arguments to the parser."""
     testing_args = parser.add_argument_group("Testing arguments")
     testing_args.add_argument(
         "--is_long_convergence_run",
@@ -892,5 +909,3 @@ def parse_cli_args():
         default=None,
         help="End step (0-indexed, exclusive) for timing average window. If None, averages to end.",
     )
-
-    return parser

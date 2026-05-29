@@ -692,6 +692,7 @@ class TestGlobalState:
         mock_config.logger.mlflow_run_name = "test_run"
         mock_config.logger.mlflow_tracking_uri = "http://localhost:5000"
         mock_config.logger.mlflow_tags = {"env": "test"}
+        mock_config.logger.mlflow_description = None
         mock_config.to_dict.return_value = {"config": "data"}
         state._cfg = mock_config
 
@@ -722,10 +723,51 @@ class TestGlobalState:
 
                 mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
                 mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
-                mock_mlflow.start_run.assert_called_once_with(run_name="test_run", tags={"env": "test"})
+                mock_mlflow.start_run.assert_called_once_with(
+                    run_name="test_run", tags={"env": "test"}, description=None
+                )
                 mock_mlflow.log_params.assert_called_once()
                 assert logger == mock_mlflow
                 assert state._mlflow_logger == mock_mlflow
+
+    def test_mlflow_logger_passes_description_to_start_run(self):
+        """Test mlflow logger forwards mlflow_description as the run description."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = "test_run"
+        mock_config.logger.mlflow_tracking_uri = None
+        mock_config.logger.mlflow_tags = None
+        mock_config.logger.mlflow_description = "Pretraining sweep on H100, seed 42"
+        mock_config.to_dict.return_value = {"config": "data"}
+        state._cfg = mock_config
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = None
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            patch.dict("sys.modules", {"mlflow": mock_mlflow}),
+        ):
+            import importlib
+
+            import megatron.bridge.training.state as state_module
+
+            importlib.reload(state_module)
+
+            state = state_module.GlobalState()
+            state._cfg = mock_config
+
+            with (
+                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            ):
+                _ = state.mlflow_logger
+
+                mock_mlflow.start_run.assert_called_once_with(
+                    run_name="test_run", tags=None, description="Pretraining sweep on H100, seed 42"
+                )
 
     def test_mlflow_logger_property_missing_run_name(self):
         """Test mlflow logger raises error when run name is empty."""

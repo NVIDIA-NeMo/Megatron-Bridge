@@ -17,7 +17,10 @@
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
-from megatron.bridge.data.hf_processors.openmathinstruct2 import process_openmathinstruct2_example
+from megatron.bridge.data.hf_processors.openmathinstruct2 import (
+    process_openmathinstruct2_example,
+    process_openmathinstruct2_thinking_packed_example,
+)
 from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
@@ -179,3 +182,32 @@ def default_gsm8k_config(
         packed_sequence_specs=packed_sequence_specs,
         rewrite=False,
     )
+
+
+def default_openmathinstruct2_thinking_packed_config(
+    seq_length: int = 4096,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> HFDatasetConfig:
+    """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
+
+    Puts generated_solution (minus the trailing \boxed{N}) into the assistant thinking field
+    (rendered as <|channel|>analysis) and #### {expected_answer} into the content field
+    (rendered as <|channel|>final). Uses packed sequences for training efficiency.
+
+    Args:
+        seq_length: Sequence length (default 4096)
+        packed_sequence: Whether to enable packed sequences for training efficiency
+        pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs)
+    """
+    from megatron.bridge.data.datasets.sft import get_dataset_root
+
+    cfg = default_openmathinstruct2_config(
+        seq_length=seq_length,
+        packed_sequence=packed_sequence,
+        pad_seq_to_mult=pad_seq_to_mult,
+    )
+    cfg.process_example_fn = process_openmathinstruct2_thinking_packed_example
+    cfg.dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    cfg.dataset_root = get_dataset_root("nvidia/OpenMathInstruct-2-gsm8k-analysis-final")
+    return cfg

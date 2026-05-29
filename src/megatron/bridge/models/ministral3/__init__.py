@@ -39,9 +39,6 @@ Example usage:
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider,
-    Ministral3ModelProvider3B,
-    Ministral3ModelProvider8B,
-    Ministral3ModelProvider14B,
 )
 from megatron.bridge.models.ministral3.modeling_ministral3 import Ministral3Model
 
@@ -53,7 +50,4 @@ __all__ = [
     "Ministral3Model",
     # Model Providers
     "Ministral3ModelProvider",
-    "Ministral3ModelProvider3B",
-    "Ministral3ModelProvider8B",
-    "Ministral3ModelProvider14B",
 ]

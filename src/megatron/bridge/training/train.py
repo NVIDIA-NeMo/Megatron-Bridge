@@ -89,6 +89,7 @@ from megatron.bridge.training.tensor_inspect import (
 )
 from megatron.bridge.training.utils import flop_utils
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log
+from megatron.bridge.training.utils.mlflow_utils import end_active_mlflow_run
 from megatron.bridge.training.utils.train_utils import (
     calc_params_l2_norm,
     logical_and_across_model_parallel_group,
@@ -313,7 +314,6 @@ def train(
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
-    num_floating_point_operations_model = flop_utils.num_floating_point_operations(config, batch_size=1)
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
@@ -433,6 +433,11 @@ def train(
                 ),
             )
 
+        # Reset per-step FLOPS accumulators (filled by forward_step micro-batches).
+        global_state._flops_seqlen_sum = 0
+        global_state._flops_seqlen_sq_sum = 0
+        global_state._flops_vision_patches = 0
+
         (
             loss_dict,
             skipped_iter,
@@ -537,7 +542,51 @@ def train(
         else:
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
-        num_floating_point_operations_in_batch = num_floating_point_operations_model * batch_size
+
+        # Read accumulated FLOPS metadata from forward_step micro-batches.
+        # These are per-DP-rank totals; scale by dp_size for global estimate.
+        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
+        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
+        # the FLOPS formula already accounts for ALL layers in the full model.
+        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
+        local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
+        local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
+        num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
+        # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
+        # (not the default), which breaks the numeric comparisons below.
+        if not isinstance(local_seqlen_sum, int):
+            local_seqlen_sum = 0
+        if not isinstance(local_seqlen_sq_sum, int):
+            local_seqlen_sq_sum = 0
+        if not isinstance(num_vision_patches, int):
+            num_vision_patches = 0
+
+        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
+        # once per virtual stage, but FLOPS formula already covers all stages.
+        vp_size = config.model.virtual_pipeline_model_parallel_size
+        if isinstance(vp_size, int) and vp_size > 1:
+            local_seqlen_sum = local_seqlen_sum // vp_size
+            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
+            num_vision_patches = num_vision_patches // vp_size
+
+        if local_seqlen_sum > 0:
+            seqlen_sum = local_seqlen_sum * dp_size
+            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
+        else:
+            # Fallback for step functions that don't set accumulators
+            seqlen_sum = None
+            seqlen_squared_sum = None
+
+        # Vision patches: local accumulation * dp_size for global
+        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
+
+        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
+            config,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            num_vision_patches=num_vision_patches,
+        )
         global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
@@ -580,6 +629,7 @@ def train(
                 model,
                 log_max_attention_logit,
                 loaded_iteration=start_iteration,
+                seq_length=seqlen_sum // batch_size if seqlen_sum else None,
             )
 
         if (
@@ -593,6 +643,14 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.pause()
             timers("interval-time").stop()
+            if config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather:
+                # disable_forward_pre_hook(param_sync=True) below force-syncs params for eval.
+                # Copy the main params to param buffer before the forced AllGather.
+                for model_chunk in model:
+                    model_chunk.zero_grad_buffer()
+                for optim_instance in optimizer.chained_optimizers:
+                    if isinstance(optim_instance, DistributedOptimizer):
+                        optim_instance._copy_main_params_to_param_buffer()
             if should_toggle_forward_pre_hook:
                 disable_forward_pre_hook(model)
                 pre_hook_enabled = False
@@ -1324,6 +1382,7 @@ def checkpoint_and_decide_exit(
                     callback_manager=callback_manager,
                     module_name=module_name,
                 )
+            end_active_mlflow_run("KILLED")
             barrier_and_log("exiting program after receiving SIGTERM.")
 
             return True

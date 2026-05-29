@@ -441,6 +441,13 @@ def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert (
+        cfg.model.pipeline_model_parallel_size
+        * cfg.model.expert_model_parallel_size
+        * cfg.model.expert_tensor_parallel_size
+        == 48
+    )
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.peft is None
     assert cfg.optimizer.lr == 2e-5

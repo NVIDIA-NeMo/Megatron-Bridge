@@ -13,7 +13,18 @@
 # limitations under the License.
 """
 Data path utilities for Megatron-Bridge CI testing.
-Provides cluster-specific paths for datasets and tokenizers.
+
+Resolves cluster-specific paths from a single per-cluster JSON file
+(``--base_paths``) for the dataset/tokenizer type selected by ``--type``.
+
+Supported types:
+
+- ``rp2``        — expands per-cluster RedPajama-v2 base into the head/middle
+                   shard list (37 paths by default, 13 with ``--head_only``).
+- ``tokenizer``  — appends ``tokenizer/tokenizer.model`` to the per-cluster
+                   base.
+- ``direct``     — emits the per-cluster value unchanged (e.g. webdataset
+                   directories used by diffusion recipes).
 """
 
 import argparse
@@ -31,55 +42,63 @@ def bool_arg(arg):
         raise ValueError(f"Invalid value for boolean argument: {arg}")
 
 
-def get_tokenizer_path(cluster: str, base_paths_tokenizer: dict[str, str]) -> str:
-    """Get the default tokenizer path for the specified cluster."""
-    if cluster not in base_paths_tokenizer:
-        raise ValueError(f"Unsupported cluster: {cluster}. Supported clusters: {list(base_paths_tokenizer.keys())}")
+def _require_cluster(cluster: str, base_paths: dict[str, str]) -> str:
+    """Return ``base_paths[cluster]`` or raise with the list of known clusters."""
+    if cluster not in base_paths:
+        raise ValueError(f"Unsupported cluster: {cluster}. Supported clusters: {list(base_paths.keys())}")
+    return base_paths[cluster]
 
-    return os.path.join(base_paths_tokenizer[cluster], "tokenizer/tokenizer.model")
+
+def get_tokenizer_path(cluster: str, base_paths: dict[str, str]) -> str:
+    """Return the per-cluster path to ``tokenizer/tokenizer.model``."""
+    return os.path.join(_require_cluster(cluster, base_paths), "tokenizer/tokenizer.model")
 
 
-def get_dataset_paths(cluster: str, base_paths_rp2: dict[str, str], head_only: bool = False) -> list[str]:
-    """Get the default dataset paths for the specified cluster."""
-    if cluster not in base_paths_rp2:
-        raise ValueError(f"Unsupported cluster: {cluster}. Supported clusters: {list(base_paths_rp2.keys())}")
+def get_direct_path(cluster: str, base_paths: dict[str, str]) -> str:
+    """Return the per-cluster path verbatim — no template expansion."""
+    return _require_cluster(cluster, base_paths)
 
-    paths = []
-    for i in range(1, 14):
-        paths.append(
-            os.path.join(
-                base_paths_rp2[cluster],
-                f"kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_{i:02d}_text_document",
-            )
+
+def get_rp2_paths(cluster: str, base_paths: dict[str, str], head_only: bool = False) -> list[str]:
+    """Expand the per-cluster RedPajama-v2 base into the head/middle shard list."""
+    base = _require_cluster(cluster, base_paths)
+    paths = [
+        os.path.join(
+            base,
+            f"kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_{i:02d}_text_document",
         )
-
+        for i in range(1, 14)
+    ]
     if not head_only:
-        for i in range(1, 26):
-            paths.append(
-                os.path.join(
-                    base_paths_rp2[cluster],
-                    f"kenlm_perp_middle_gopher_linefilter_decompressed/bin_idx/nemo/middle_{i:02d}_text_document",
-                )
+        paths.extend(
+            os.path.join(
+                base,
+                f"kenlm_perp_middle_gopher_linefilter_decompressed/bin_idx/nemo/middle_{i:02d}_text_document",
             )
-
+            for i in range(1, 26)
+        )
     return paths
+
+
+def _load_base_paths(path: str) -> dict[str, str]:
+    """Load a per-cluster base-paths JSON file."""
+    with open(path, "r") as f:
+        return json.load(f)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--type", choices=["dataset", "tokenizer"])
+    parser.add_argument("--type", choices=["rp2", "tokenizer", "direct"], required=True)
     parser.add_argument("--cluster", type=str, required=True)
-    parser.add_argument("--base_paths_rp2", type=str, required=False)
-    parser.add_argument("--base_paths_tokenizer", type=str, required=False)
+    parser.add_argument("--base_paths", type=str, required=True, help="Path to per-cluster base-paths JSON.")
     parser.add_argument("--head_only", type=bool_arg, required=False, default=False)
     args = parser.parse_args()
 
-    if args.type == "dataset":
-        with open(args.base_paths_rp2, "r") as f:
-            base_paths_rp2 = json.load(f)
-        print(" ".join(get_dataset_paths(args.cluster, base_paths_rp2=base_paths_rp2, head_only=args.head_only)))
+    base_paths = _load_base_paths(args.base_paths)
 
-    if args.type == "tokenizer":
-        with open(args.base_paths_tokenizer, "r") as f:
-            base_paths_tokenizer = json.load(f)
-        print(get_tokenizer_path(args.cluster, base_paths_tokenizer=base_paths_tokenizer))
+    if args.type == "rp2":
+        print(" ".join(get_rp2_paths(args.cluster, base_paths=base_paths, head_only=args.head_only)))
+    elif args.type == "tokenizer":
+        print(get_tokenizer_path(args.cluster, base_paths=base_paths))
+    elif args.type == "direct":
+        print(get_direct_path(args.cluster, base_paths=base_paths))

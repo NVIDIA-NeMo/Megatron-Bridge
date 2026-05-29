@@ -44,7 +44,7 @@ from tests.functional_tests.utils import (
 )
 
 
-class Llama32ModelProvider1B(GPTModelProvider):
+class Llama32TestModelProvider(GPTModelProvider):
     normalization: str = "RMSNorm"
     activation_func: Callable = F.silu
     gated_linear_unit: bool = True
@@ -392,7 +392,7 @@ class TestPretrain:
             seq_length = 512
             total_iters = 5
 
-            model_cfg = Llama32ModelProvider1B(
+            model_cfg = Llama32TestModelProvider(
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,

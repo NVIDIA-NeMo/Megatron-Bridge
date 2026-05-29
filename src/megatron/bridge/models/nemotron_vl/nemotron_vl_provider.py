@@ -20,12 +20,13 @@ from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 
 
 @dataclass
-class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
+class NemotronVLModelProvider(MambaModelProvider):
     """Configuration provider for Nemotron-VL models.
 
     Inlines NemotronH + NemotronNano12Bv2 defaults directly.
@@ -120,7 +121,7 @@ class NemotronNano12Bv2VLModelProvider(MambaModelProvider):
 
         language_spec = mamba_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(language_spec.submodules.mlp_layer.submodules.mlp.submodules)
+        vision_proj_spec = copy.deepcopy(get_submodules(language_spec.submodules.mlp_layer.submodules.mlp))
 
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,

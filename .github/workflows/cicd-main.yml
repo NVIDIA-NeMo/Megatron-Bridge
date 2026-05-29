@@ -673,7 +673,7 @@ jobs:
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
-  # L2: runs on schedule (nightly/weekly) and workflow_dispatch only
+  # L2: runs on schedule (nightly/weekly), workflow_dispatch, and PRs labeled `full-test-suite`
   cicd-functional-tests-l2:
     strategy:
       fail-fast: false
@@ -1130,20 +1130,3 @@ jobs:
           path: |
             .coverage
           include-hidden-files: true
-
-  cleanup-taint-node:
-    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
-    needs:
-      - pre-flight
-      - Nemo_CICD_Test
-      - Coverage
-      - Coverage_Fake
-    if: |
-      always()
-      && !cancelled()
-      && needs.pre-flight.outputs.is_deployment_workflow != 'true'
-    steps:
-      - name: Taint node for cleanup
-        if: contains(runner.name, 'ephemeral')
-        shell: bash
-        run: taint-node.sh

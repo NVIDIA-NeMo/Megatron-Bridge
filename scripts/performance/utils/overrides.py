@@ -14,12 +14,14 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional
 
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
@@ -112,8 +114,6 @@ def _set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:  # this condition ensures we unset in case of user override to "none" from default
-            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
@@ -126,6 +126,9 @@ def _set_cuda_graph_overrides(
         assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
+    elif recipe.model.cuda_graph_impl == "none":
+        recipe.model.cuda_graph_scope = []
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     return recipe
 
@@ -159,6 +162,9 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
+        if recipe.comm_overlap is None:
+            tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
+            recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
@@ -199,6 +205,9 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
 
     if args.save_config_filepath is not None:
         recipe.logger.save_config_filepath = args.save_config_filepath
+        # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+        # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+        os.makedirs(os.path.dirname(os.path.abspath(args.save_config_filepath)), exist_ok=True)
 
     return recipe
 
@@ -309,6 +318,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
 
     recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+    # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+    # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+    os.makedirs(os.path.dirname(os.path.abspath(recipe.logger.save_config_filepath)), exist_ok=True)
 
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -455,6 +467,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
     if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
         recipe.dist.use_tp_pp_dp_mapping = True
+
+    if args.deterministic:
+        apply_determinism_overrides(recipe)
 
     return recipe
 
