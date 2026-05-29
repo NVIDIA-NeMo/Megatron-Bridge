@@ -228,7 +228,7 @@ measured_results:
     jobs: "10111518"
 minimal_example:
   docs_example: docs/training/cuda-graphs.md
-  skill_example: skills/perf-cuda-graphs/SKILL.md
+  skill_example: skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
   test_path: tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py
   cli_path: scripts/performance/run_performance_workload.py
 failure_modes:

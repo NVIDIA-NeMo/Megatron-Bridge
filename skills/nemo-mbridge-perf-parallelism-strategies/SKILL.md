@@ -1,6 +1,7 @@
 ---
-name: perf-parallelism-strategies
+name: nemo-mbridge-perf-parallelism-strategies
 description: Operational guide for choosing and combining parallelism strategies in Megatron Bridge, including sizing rules, hardware topology mapping, and combined parallelism configuration.
+license: Apache-2.0
 when_to_use: Choosing or sizing TP/DP/PP/CP/EP degrees, or tracing an OOM or regression to a parallelism config change; 'how to parallelize', 'tensor parallel', 'pipeline parallel', 'parallelism config', 'which parallelism for X GPUs'.
 ---
 
@@ -9,7 +10,7 @@ when_to_use: Choosing or sizing TP/DP/PP/CP/EP degrees, or tracing an OOM or reg
 For stable background on each parallelism type, see:
 
 - @docs/parallelisms.md
-- @skills/perf-parallelism-strategies/card.yaml
+- @skills/nemo-mbridge-perf-parallelism-strategies/card.yaml
 
 ## Decision by Model Size
 
@@ -255,7 +256,7 @@ parallel_state.initialize_model_parallel(
    Always profile the first iteration to check memory and communication.
 
 7. `CUDA_DEVICE_MAX_CONNECTIONS` and related env vars interact with
-   overlap settings. See @skills/perf-tp-dp-comm-overlap/SKILL.md.
+   overlap settings. See @skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL.md.
 
 8. The minimum GPU count for an MoE config is `PP * max(TP*CP, EP*ETP)`,
    not the product of all dimensions. The dense `TP*CP`-mesh and MoE
