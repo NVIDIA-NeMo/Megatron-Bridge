@@ -1,13 +1,14 @@
 ---
-name: perf-moe-hardware-configs
+name: nemo-mbridge-perf-moe-hardware-configs
 description: Representative MoE training playbooks by hardware platform and model family. Summarizes rounded throughput bands, parallelism patterns, and common tuning stacks.
+license: Apache-2.0
 when_to_use: Hardware-specific MoE playbooks or throughput estimates; 'MoE on H100', 'GB200 config', 'expected throughput', 'MoE hardware playbook', 'parallelism for B200'.
 ---
 
 # MoE Hardware Configuration Reference
 
 Stable docs: @docs/training/moe-optimization.md
-Card: @skills/perf-moe-hardware-configs/card.yaml
+Card: @skills/nemo-mbridge-perf-moe-hardware-configs/card.yaml
 
 ## Quick Platform Playbook
 

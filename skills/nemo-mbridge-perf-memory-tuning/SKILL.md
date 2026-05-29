@@ -1,13 +1,14 @@
 ---
-name: perf-memory-tuning
+name: nemo-mbridge-perf-memory-tuning
 description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
+license: Apache-2.0
 when_to_use: GPU OOM errors, reducing peak memory, or tracing an OOM regression to a specific commit or config change; 'out of memory', 'OOM', 'memory fragmentation', 'expandable_segments', 'reduce GPU memory', 'PYTORCH_CUDA_ALLOC_CONF'.
 ---
 
 # Memory Tuning
 
 Stable docs: @docs/parallelisms.md
-Card: @skills/perf-memory-tuning/card.yaml
+Card: @skills/nemo-mbridge-perf-memory-tuning/card.yaml
 
 ## What It Is
 

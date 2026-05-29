@@ -34,6 +34,9 @@ skills/nemo-rl-e2e-testing/SKILL
 :caption: Performance Techniques
 :maxdepth: 1
 
+skills/nemo-mbridge-perf-memory-tuning/SKILL
+skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL
+skills/nemo-mbridge-perf-moe-hardware-configs/SKILL
 skills/nemo-mbridge-perf-parallelism-strategies/SKILL
 skills/nemo-mbridge-perf-cuda-graphs/SKILL
 skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL
@@ -43,13 +46,6 @@ skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL
 skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL
 skills/nemo-mbridge-perf-moe-comm-overlap/SKILL
 skills/nemo-mbridge-perf-activation-recompute/SKILL
-skills/perf-memory-tuning/SKILL
-skills/perf-moe-dispatcher-selection/SKILL
-skills/perf-moe-hardware-configs/SKILL
-skills/perf-moe-long-context/SKILL
-skills/perf-moe-optimization-workflow/SKILL
-skills/perf-moe-vlm-training/SKILL
-skills/perf-cpu-offloading/SKILL
 ```
 
 ```{toctree}

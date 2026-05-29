@@ -1,13 +1,14 @@
 ---
-name: perf-moe-dispatcher-selection
+name: nemo-mbridge-perf-moe-dispatcher-selection
 description: Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. Summarizes patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work.
+license: Apache-2.0
 when_to_use: Choosing a MoE token dispatcher, or tracing a MoE regression or crash to a dispatcher config change; 'which dispatcher', 'alltoall vs DeepEP', 'HybridEP', 'MoE dispatcher', 'flex backend', 'EP dispatcher selection'.
 ---
 
 # MoE Dispatcher Selection Guide
 
 Stable docs: @docs/training/moe-optimization.md
-Card: @skills/perf-moe-dispatcher-selection/card.yaml
+Card: @skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml
 
 ## Quick Decision
 
