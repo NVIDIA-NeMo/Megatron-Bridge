@@ -40,7 +40,7 @@ from typing import Any, Iterable
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.data.vlm_datasets.step37_flickr8k.preprocess import preprocess_packed_batch
@@ -79,7 +79,6 @@ def forward_step(
     straggler_timer = state.straggler_timer
 
     this_pg_collection = get_pg_collection(model)
-    is_first = is_pp_first_stage(this_pg_collection.pp)
     is_last = is_pp_last_stage(this_pg_collection.pp)
 
     config = get_model_config(model)

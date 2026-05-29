@@ -29,6 +29,8 @@ from typing import Literal
 
 @dataclass
 class PackingResult:
+    """Result metadata from greedy sample packing."""
+
     num_packed_samples: int
     num_droped: int
     packed_sample_ranges: list[tuple[int, int]]
@@ -36,6 +38,16 @@ class PackingResult:
 
 
 def pack(sizes: list[int], max_len: int, oversize_policy: Literal["drop", "extend"]) -> PackingResult:
+    """Pack ordered sample lengths into contiguous groups without truncation.
+
+    Args:
+        sizes: Token lengths for the samples to pack.
+        max_len: Maximum packed sequence length.
+        oversize_policy: Whether to drop oversize samples or keep them in extended packs.
+
+    Returns:
+        Metadata describing the packed sample ranges and dropped sample count.
+    """
     total = len(sizes)
     packed_sample_ranges: list[tuple[int, int]] = []
     packed_ids, packed_size, consumed, droped = [], 0, 0, 0

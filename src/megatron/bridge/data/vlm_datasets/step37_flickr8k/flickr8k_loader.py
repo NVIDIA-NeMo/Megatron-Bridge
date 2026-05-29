@@ -33,6 +33,8 @@ from megatron.bridge.data.vlm_datasets.step37_flickr8k.template import IMAGE_PLA
 
 @dataclass(frozen=True)
 class Flickr8kSample:
+    """Image-caption sample from the Flickr8k dataset."""
+
     image_path: str
     caption: str
 
