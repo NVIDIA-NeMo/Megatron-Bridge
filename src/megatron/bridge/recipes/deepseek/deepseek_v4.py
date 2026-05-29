@@ -29,7 +29,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
 
 
-DSV4_CSA_BACKEND = Literal["unfused", "cudnn_dsa", "tilelang_official", "flashmla_official"]
+DSV4_CSA_BACKEND = Literal["unfused", "cudnn_dsa"]
 DSV4_OPTIMIZER = Literal["adam", "muon"]
 
 
@@ -64,12 +64,40 @@ def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: GPTModelProvider) 
     model_cfg.pipeline_model_parallel_layout = layout
 
 
-def _set_deepseek_v4_common_model_config(
-    cfg: ConfigContainer,
+def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
+    """Use MXFP8 for training and BF16 for DSv4 validation/evaluation paths."""
+    return RecipeConfig.from_config_dict(
+        {
+            "configs": {
+                "mxfp8_evaluate_bf16": {
+                    "transformer_engine_config_type": "TEQuantizationParams",
+                    "training_recipe": {"fp8_quantization_recipe": "mxfp8"},
+                    "evaluation_recipe": {},
+                },
+            },
+            "matchers": {
+                "all_te_linears": {
+                    "config": "mxfp8_evaluate_bf16",
+                    "type": "glob",
+                    "pattern": "*",
+                    "enabled": True,
+                },
+            },
+        }
+    )
+
+
+def _deepseek_v4_flash_pretrain_config(
     *,
-    csa_backend: DSV4_CSA_BACKEND,
-    use_fused_kernels: bool,
-) -> None:
+    optimizer_type: DSV4_OPTIMIZER = "adam",
+    mxfp8: bool = False,
+    csa_backend: DSV4_CSA_BACKEND = "cudnn_dsa",
+    use_fused_kernels: bool = True,
+    hf_path: str = "deepseek-ai/DeepSeek-V4-Flash",
+) -> ConfigContainer:
+    cfg = _pretrain_common()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -112,8 +140,6 @@ def _set_deepseek_v4_common_model_config(
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
 
-
-def _set_deepseek_v4_common_training_config(cfg: ConfigContainer) -> None:
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
@@ -143,36 +169,6 @@ def _set_deepseek_v4_common_training_config(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
-
-def _mxfp8_train_bf16_eval_quant_recipe() -> RecipeConfig:
-    """Train TE linear modules in MXFP8 while evaluating them in BF16."""
-    return RecipeConfig.from_config_dict(
-        {
-            "configs": {
-                "mxfp8_evaluate_bf16": {
-                    "transformer_engine_config_type": "TEQuantizationParams",
-                    "training_recipe": {"fp8_quantization_recipe": "mxfp8"},
-                    "evaluation_recipe": {},
-                },
-            },
-            "matchers": {
-                "all_te_linears": {
-                    "config": "mxfp8_evaluate_bf16",
-                    "type": "glob",
-                    "pattern": "*",
-                    "enabled": True,
-                },
-            },
-        }
-    )
-
-
-def _set_deepseek_v4_optimizer_and_precision(
-    cfg: ConfigContainer,
-    *,
-    optimizer_type: DSV4_OPTIMIZER,
-    mxfp8: bool,
-) -> None:
     if optimizer_type == "adam":
         opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
             lr_warmup_iters=2000,
@@ -203,13 +199,14 @@ def _set_deepseek_v4_optimizer_and_precision(
         cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
         cfg.mixed_precision = bf16_with_mxfp8_mixed() if mxfp8 else bf16_mixed()
         if mxfp8:
-            # Keep eval and param-gather-adjacent paths out of MXFP8 for DSv4 stability.
-            # The training path still uses MXFP8, while validation/MTP eval remains BF16.
+            # MCore uses a layer's training quantization recipe during eval unless an
+            # evaluation_recipe is provided. Keep DSv4 MTP/validation eval in BF16
+            # while training TE linears with MXFP8.
             cfg.mixed_precision.fp8_param_gather = False
             cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
             cfg.model.moe_router_padding_for_fp8 = True
             cfg.model.mtp_eval_in_bf16 = True
-            cfg.model.quant_recipe = _mxfp8_train_bf16_eval_quant_recipe()
+            cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     elif optimizer_type == "muon":
         if mxfp8:
             raise ValueError("DeepSeek-V4 Muon + MXFP8 is not a supported recipe yet.")
@@ -227,6 +224,7 @@ def _set_deepseek_v4_optimizer_and_precision(
             weight_decay=0.1,
             clip_grad=1.0,
         )
+        # DSv4 Muon uses non-layer-wise optimizer dispatch.
         opt_cfg.optimizer = "muon"
         opt_cfg.adam_beta1 = 0.9
         opt_cfg.adam_beta2 = 0.95
@@ -253,22 +251,6 @@ def _set_deepseek_v4_optimizer_and_precision(
     cfg.scheduler = scheduler_cfg
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
-
-
-def _deepseek_v4_flash_pretrain_config(
-    *,
-    optimizer_type: DSV4_OPTIMIZER = "adam",
-    mxfp8: bool = False,
-    csa_backend: DSV4_CSA_BACKEND = "cudnn_dsa",
-    use_fused_kernels: bool = True,
-    hf_path: str = "deepseek-ai/DeepSeek-V4-Flash",
-) -> ConfigContainer:
-    cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
-
-    _set_deepseek_v4_common_model_config(cfg, csa_backend=csa_backend, use_fused_kernels=use_fused_kernels)
-    _set_deepseek_v4_common_training_config(cfg)
-    _set_deepseek_v4_optimizer_and_precision(cfg, optimizer_type=optimizer_type, mxfp8=mxfp8)
     return cfg
 
 

@@ -16,25 +16,11 @@
 # ==============================================================================
 # DeepSeek-V4-Flash Pretraining
 #
-# This script runs one DeepSeek-V4-Flash recipe through scripts/training/run_recipe.py.
-# Defaults are a release-candidate 1k pretraining run: seq4096, GBS128,
-# validation every 100 iterations, 10 eval iterations, TP1/PP4/EP8/CP1.
-#
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster.
 #   2. Set CONTAINER_IMAGE to your container path.
-#   3. If needed, mount datasets/dependencies through CONTAINER_MOUNTS and add
-#      extra Python dependency paths through EXTRA_PYTHONPATH.
+#   3. Select RECIPE_NAME below: Adam MXFP8 or Muon BF16.
 #   4. Submit: sbatch slurm_pretrain.sh
-#
-# Release pretrain recipes:
-#   Adam MXFP8 (default):
-#     sbatch --job-name=dsv4-adam-mxfp8 --export=ALL,RECIPE_NAME=deepseek_v4_flash_pretrain_mxfp8_config,CASE_NAME=dsv4_adam_mxfp8 slurm_pretrain.sh
-#   Muon BF16:
-#     sbatch --job-name=dsv4-muon-bf16 --export=ALL,RECIPE_NAME=deepseek_v4_flash_pretrain_muon_config,CASE_NAME=dsv4_muon_bf16 slurm_pretrain.sh
-#
-# Fast smoke override:
-#   sbatch --export=ALL,DATASET_NAME=mock,DATASET_TYPE=mock,SEQ_LENGTH=128,TRAIN_ITERS=60,EVAL_INTERVAL=20,EVAL_ITERS=5 slurm_pretrain.sh
 # ==============================================================================
 
 #SBATCH --job-name=dsv4-pretrain
@@ -54,173 +40,77 @@ set -euo pipefail
 # Configuration
 # ==============================================================================
 
-# Workspace directory for checkpoints, logs, and results.
-WORKSPACE="${WORKSPACE:-/workspace}"
+WORKSPACE=${WORKSPACE:-/workspace}
+export WKDIR="${WKDIR:-}"
 
-# Paths inside the container. The default container is expected to provide Bridge
-# and Megatron-LM at these locations. Override them when mounting local checkouts.
-BRIDGE_PATH="${BRIDGE_PATH:-/opt/Megatron-Bridge}"
-MCORE_PATH="${MCORE_PATH:-/opt/megatron-lm}"
+MODEL_NAME=deepseek_v4_flash
+HF_CONFIG=deepseek-ai/DeepSeek-V4-Flash
+RECIPE_NAME=deepseek_v4_flash_pretrain_mxfp8_config       # Adam MXFP8
+# RECIPE_NAME=deepseek_v4_flash_pretrain_muon_config      # Muon BF16
 
-# Hugging Face model id or local path. Use a local path for offline clusters.
-HF_CONFIG="${HF_CONFIG:-deepseek-ai/DeepSeek-V4-Flash}"
-HF_HOME="${HF_HOME:-${WORKSPACE}/hf_home}"
-HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-0}"
+DATASET_NAME=dclm  # set to "mock" for mock data
+SEQ_LENGTH=4096
 
-# Add colon-separated paths for dependencies not included in the container, e.g.
-# external Megatron-LM checkout, FlashMLA, cuDNN frontend, fast-hadamard-transform,
-# transformers preview wheels, or emerging-optimizers for Muon.
-EXTRA_PYTHONPATH="${EXTRA_PYTHONPATH:-}"
+# When DATASET_NAME=dclm, set DCLM_DATA_DIR and DCLM_CACHE so the recipe uses DCLM.
+if [ "$DATASET_NAME" = "dclm" ]; then
+    # export DCLM_DATA_DIR="/path/to/dclm/preprocessed"
+    # export DCLM_CACHE="/path/to/cache"
+    :
+else
+    unset DCLM_DATA_DIR
+    unset DCLM_CACHE
+fi
 
-MODEL_NAME="${MODEL_NAME:-deepseek_v4_flash}"
-RECIPE_NAME="${RECIPE_NAME:-deepseek_v4_flash_pretrain_mxfp8_config}"
-DATASET_NAME="${DATASET_NAME:-dclm}"  # set to "mock" for mock data
-DATASET_TYPE="${DATASET_TYPE:-llm-pretrain}"
-STEP_FUNC="${STEP_FUNC:-gpt_step}"
-MOE_TOKEN_DISPATCHER_TYPE="${MOE_TOKEN_DISPATCHER_TYPE:-alltoall}"
+TRAIN_ITERS=1000
+GLOBAL_BATCH_SIZE=128
+MICRO_BATCH_SIZE=1
+EVAL_INTERVAL=100
+EVAL_ITERS=10
+LR_WARMUP_ITERS=50
+SAVE_INTERVAL=300
+LOG_INTERVAL=1
+WANDB_PROJECT=megatron-bridge-dsv4
 
-SEQ_LENGTH="${SEQ_LENGTH:-4096}"
-TRAIN_ITERS="${TRAIN_ITERS:-1000}"
-LR_WARMUP_ITERS="${LR_WARMUP_ITERS:-50}"
-LR_DECAY_ITERS="${LR_DECAY_ITERS:-$TRAIN_ITERS}"
-GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-128}"
-MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-1}"
-EVAL_INTERVAL="${EVAL_INTERVAL:-100}"
-EVAL_ITERS="${EVAL_ITERS:-10}"
-SAVE_INTERVAL="${SAVE_INTERVAL:-300}"
-SAVE_CHECKPOINTS="${SAVE_CHECKPOINTS:-true}"
-FULLY_PARALLEL_SAVE="${FULLY_PARALLEL_SAVE:-}"
-LOG_INTERVAL="${LOG_INTERVAL:-1}"
-LOAD_CHECKPOINT="${LOAD_CHECKPOINT:-}"
+# TP,PP,EP,CP. The default targets 8 GB200 nodes with 4 GPUs per node.
+PARALLELISM_CONFIG="1,4,8,1"
 
-TP="${TP:-1}"
-PP="${PP:-4}"
-CP="${CP:-1}"
-EP="${EP:-8}"
-NPROC_PER_NODE="${NPROC_PER_NODE:-${SLURM_GPUS_PER_NODE:-4}}"
-NNODES="${SLURM_JOB_NUM_NODES:-${NNODES:-8}}"
-MASTER_PORT="${MASTER_PORT:-29571}"
-
-NCCL_PXN_DISABLE="${NCCL_PXN_DISABLE:-1}"
-RECOMPUTE_OVERRIDES="${RECOMPUTE_OVERRIDES:-model.recompute_granularity=full model.recompute_method=uniform model.recompute_num_layers=1}"
-EXTRA_OVERRIDES="${EXTRA_OVERRIDES:-}"
-RECIPE_OVERRIDES=""
-
-# When DATASET_NAME=dclm, set these to preprocessed DCLM paths. Leave unset for
-# mock data or if dataset.blend is supplied through EXTRA_OVERRIDES.
-DCLM_DATA_DIR="${DCLM_DATA_DIR:-}"
-DCLM_CACHE="${DCLM_CACHE:-${WORKSPACE}/cache}"
-
-WANDB_PROJECT="${WANDB_PROJECT:-megatron-bridge-dsv4}"
-WANDB_ENTITY="${WANDB_ENTITY:-}"
-WANDB_EXP_NAME="${WANDB_EXP_NAME:-}"
-WANDB_SAVE_DIR="${WANDB_SAVE_DIR:-${WORKSPACE}/wandb}"
-WANDB_MODE="${WANDB_MODE:-online}"
-
-# Container image (required).
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
-# Container mounts (optional, comma-separated for srun --container-mounts).
-CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
+CONTAINER_MOUNTS=""
 # CONTAINER_MOUNTS="/data:/data,/workspace:/workspace"
 
-CASE_NAME="${CASE_NAME:-${RECIPE_NAME}}"
-JOB_ID="${SLURM_JOB_ID:-manual}"
-OUTDIR="${OUTDIR:-${WORKSPACE}/results/${MODEL_NAME}_${CASE_NAME}_${JOB_ID}}"
-
 # ==============================================================================
-# Recipe-specific overrides
+# Environment Setup
 # ==============================================================================
 
-case "$RECIPE_NAME" in
-    deepseek_v4_flash_pretrain_mxfp8_config)
-        # TE FusedAdam optimizer-state materialization can OOM at this scale.
-        # Save model/train state by default; pass explicit checkpoint overrides
-        # through EXTRA_OVERRIDES when testing full optimizer-state checkpointing.
-        RECIPE_OVERRIDES="checkpoint.save_optim=false checkpoint.load_optim=false"
-        ;;
-    deepseek_v4_flash_pretrain_muon_config)
-        RECIPE_OVERRIDES=""
-        ;;
-    *)
-        echo "ERROR: slurm_pretrain.sh release pretrain recipes are deepseek_v4_flash_pretrain_mxfp8_config and deepseek_v4_flash_pretrain_muon_config."
-        echo "       Use a custom script or explicit recipe test harness for experimental recipes."
-        exit 1
-        ;;
-esac
+export TORCH_NCCL_AVOID_RECORD_STREAMS=1
+export NCCL_NVLS_ENABLE=0
+export NCCL_PXN_DISABLE=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export CUDA_DEVICE_MAX_CONNECTIONS=1
 
-if [ "$DATASET_NAME" = "mock" ]; then
-    DATASET_TYPE="mock"
-    unset DCLM_DATA_DIR
-fi
-
-if [ -z "$WANDB_EXP_NAME" ]; then
-    WANDB_EXP_NAME="${CASE_NAME}_tp${TP}_pp${PP}_ep${EP}_cp${CP}_seq${SEQ_LENGTH}_gbs${GLOBAL_BATCH_SIZE}_${JOB_ID}"
-fi
+# Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
+# export UV_CACHE_DIR="/path/to/shared/uv_cache"
+# export HF_HOME="/path/to/shared/HF_HOME"
+# export HF_TOKEN="hf_your_token_here"
+# export WANDB_API_KEY="your_wandb_key_here"
 
 # ==============================================================================
-# Environment setup and validation
+# Job Execution
 # ==============================================================================
 
-mkdir -p logs "$OUTDIR" "$WANDB_SAVE_DIR" "$DCLM_CACHE"
+mkdir -p logs
 
 if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
     exit 1
 fi
 
-if [ -n "$LOAD_CHECKPOINT" ] && [ ! -e "$LOAD_CHECKPOINT" ]; then
-    echo "ERROR: LOAD_CHECKPOINT does not exist: $LOAD_CHECKPOINT"
-    exit 1
-fi
-
-MASTER_ADDR=$(python3 - <<'PY'
-import os
-import re
-
-s = os.environ.get("SLURM_NODELIST", "")
-m = re.match(r"([\w-]+)\[(\d+)", s)
-print(m.group(1) + m.group(2) if m else (s.split(",")[0] if s else "localhost"))
-PY
-)
-
-DATASET_OVERRIDES=""
-if [ "$DATASET_TYPE" = "llm-pretrain" ] && [ "$DATASET_NAME" = "dclm" ]; then
-    if [ -n "$DCLM_DATA_DIR" ]; then
-        BLEND_PATHS=""
-        for i in $(seq 1 10); do
-            pad=$(printf "%02d" "$i")
-            prefix="${DCLM_DATA_DIR}/dclm_01_${pad}_text_document"
-            if [ -f "${prefix}.bin" ]; then
-                BLEND_PATHS="${BLEND_PATHS}\"${prefix}\","
-            fi
-        done
-        BLEND_PATHS="${BLEND_PATHS%,}"
-        if [ -n "$BLEND_PATHS" ]; then
-            DATASET_OVERRIDES="dataset.blend=[[${BLEND_PATHS}],null] dataset.split='\"9999,8,2\"' dataset.path_to_cache=${DCLM_CACHE}"
-        else
-            echo "WARNING: No DCLM data found in ${DCLM_DATA_DIR}."
-        fi
-    else
-        echo "WARNING: DCLM_DATA_DIR is not set. Set DATASET_NAME=mock for mock data or pass dataset.blend through EXTRA_OVERRIDES."
-    fi
-fi
-
-CHECKPOINT_OVERRIDES="checkpoint.save=null checkpoint.load=null checkpoint.save_interval=0"
-if [ "$SAVE_CHECKPOINTS" = "true" ]; then
-    CHECKPOINT_OVERRIDES="checkpoint.save=${OUTDIR}/checkpoints checkpoint.load=null checkpoint.save_interval=${SAVE_INTERVAL}"
-fi
-if [ -n "$LOAD_CHECKPOINT" ]; then
-    CHECKPOINT_OVERRIDES="$CHECKPOINT_OVERRIDES checkpoint.load=${LOAD_CHECKPOINT}"
-fi
-if [ -n "$FULLY_PARALLEL_SAVE" ]; then
-    CHECKPOINT_OVERRIDES="$CHECKPOINT_OVERRIDES checkpoint.fully_parallel_save=${FULLY_PARALLEL_SAVE}"
-fi
-
-LOGGER_OVERRIDES="logger.wandb_project=$WANDB_PROJECT logger.wandb_exp_name=$WANDB_EXP_NAME logger.wandb_save_dir=$WANDB_SAVE_DIR logger.log_interval=$LOG_INTERVAL"
-if [ -n "$WANDB_ENTITY" ]; then
-    LOGGER_OVERRIDES="$LOGGER_OVERRIDES logger.wandb_entity=$WANDB_ENTITY"
+if [ "$DATASET_NAME" = "mock" ]; then
+    DATASET_TYPE=mock
+else
+    DATASET_TYPE=llm-pretrain
 fi
 
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
@@ -228,59 +118,81 @@ if [ -n "$CONTAINER_MOUNTS" ]; then
     SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
 fi
 
-PYTHONPATH_ENTRIES="$BRIDGE_PATH/src:$MCORE_PATH"
-if [ -n "$EXTRA_PYTHONPATH" ]; then
-    PYTHONPATH_ENTRIES="$EXTRA_PYTHONPATH:$PYTHONPATH_ENTRIES"
+DCLM_DATASET_OVERRIDES=""
+if [ -n "${DCLM_DATA_DIR:-}" ] && [ -n "${DCLM_CACHE:-}" ]; then
+    BLEND_PATHS=""
+    for i in $(seq 1 10); do
+        pad=$(printf "%02d" "$i")
+        PREFIX="${DCLM_DATA_DIR}/dclm_01_${pad}_text_document"
+        if [ -f "${PREFIX}.bin" ]; then
+            BLEND_PATHS="${BLEND_PATHS}\"${PREFIX}\","
+        fi
+    done
+    BLEND_PATHS="${BLEND_PATHS%,}"
+
+    if [ -n "$BLEND_PATHS" ]; then
+        DCLM_DATASET_OVERRIDES="dataset.blend=[[${BLEND_PATHS}],null] dataset.split='\"9999,8,2\"' dataset.path_to_cache=${DCLM_CACHE}"
+    else
+        echo "WARNING: No DCLM data found in ${DCLM_DATA_DIR}!"
+    fi
 fi
 
-# ==============================================================================
-# Job execution
-# ==============================================================================
+RECIPE_OVERRIDES=""
+case "$RECIPE_NAME" in
+    deepseek_v4_flash_pretrain_mxfp8_config)
+        # Adam MXFP8 model/train-state checkpoints are enabled; optimizer-state
+        # checkpointing can OOM at this scale until the distributed optimizer save path is fixed.
+        RECIPE_OVERRIDES="checkpoint.save_optim=false checkpoint.load_optim=false"
+        ;;
+    deepseek_v4_flash_pretrain_muon_config)
+        ;;
+    *)
+        echo "ERROR: Unsupported RECIPE_NAME: $RECIPE_NAME"
+        exit 1
+        ;;
+esac
 
-echo "======================================"
-echo "DeepSeek-V4-Flash Pretraining"
-echo "======================================"
-echo "Job ID: ${JOB_ID}"
-echo "Nodes: ${NNODES}"
-echo "GPUs per node: ${NPROC_PER_NODE}"
-echo "Recipe: ${RECIPE_NAME}"
-echo "Parallelism: TP=${TP} PP=${PP} CP=${CP} EP=${EP}"
-echo "Sequence length: ${SEQ_LENGTH}"
-echo "Train iters: ${TRAIN_ITERS}"
-echo "Global batch size: ${GLOBAL_BATCH_SIZE}"
-echo "Dataset type/name: ${DATASET_TYPE}/${DATASET_NAME}"
-echo "Bridge path: ${BRIDGE_PATH}"
-echo "MCore path: ${MCORE_PATH}"
-echo "HF config: ${HF_CONFIG}"
-echo "Output dir: ${OUTDIR}"
-echo "Checkpoint overrides: ${CHECKPOINT_OVERRIDES}"
-echo "Recipe overrides: ${RECIPE_OVERRIDES:-<none>}"
-echo "Extra overrides: ${EXTRA_OVERRIDES:-<none>}"
-echo "Extra PYTHONPATH: ${EXTRA_PYTHONPATH:-<none>}"
-echo "SRUN base: ${SRUN_CMD}"
-echo "======================================"
+OLD_IFS=$IFS
+IFS=',' read -r TP PP EP CP <<< "$PARALLELISM_CONFIG"
+IFS=$OLD_IFS
+
+NNODES=${SLURM_JOB_NUM_NODES:-8}
+NPROC_PER_NODE=${SLURM_GPUS_PER_NODE:-4}
+MASTER_PORT=${MASTER_PORT:-29571}
+MASTER_ADDR=$(python3 - <<'PY'
+import os
+import re
+
+nodelist = os.environ.get("SLURM_NODELIST", "")
+match = re.match(r"([\w-]+)\[(\d+)", nodelist)
+print(match.group(1) + match.group(2) if match else (nodelist.split(",")[0] if nodelist else "localhost"))
+PY
+)
+
+RUN_NAME=${MODEL_NAME}_${DATASET_NAME}_${RECIPE_NAME}_tp${TP}_pp${PP}_ep${EP}_cp${CP}_${SLURM_JOB_ID:-manual}
+CHECKPOINT_DIR=${WORKSPACE}/results/${RUN_NAME}/checkpoints
 
 CLI_OVERRIDES=" \
-    train.train_iters=$TRAIN_ITERS \
-    train.micro_batch_size=$MICRO_BATCH_SIZE \
-    train.global_batch_size=$GLOBAL_BATCH_SIZE \
-    dataset.sequence_length=$SEQ_LENGTH \
     model.seq_length=$SEQ_LENGTH \
-    model.tensor_model_parallel_size=$TP \
-    model.pipeline_model_parallel_size=$PP \
-    model.context_parallel_size=$CP \
-    model.expert_model_parallel_size=$EP \
-    model.moe_token_dispatcher_type=$MOE_TOKEN_DISPATCHER_TYPE \
+    dataset.sequence_length=$SEQ_LENGTH \
+    train.train_iters=$TRAIN_ITERS \
+    train.global_batch_size=$GLOBAL_BATCH_SIZE \
+    train.micro_batch_size=$MICRO_BATCH_SIZE \
     validation.eval_interval=$EVAL_INTERVAL \
     validation.eval_iters=$EVAL_ITERS \
     scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
-    scheduler.lr_decay_iters=$LR_DECAY_ITERS \
-    $CHECKPOINT_OVERRIDES \
-    $LOGGER_OVERRIDES \
-    $RECOMPUTE_OVERRIDES \
+    scheduler.lr_decay_iters=$TRAIN_ITERS \
+    checkpoint.save=$CHECKPOINT_DIR \
+    checkpoint.save_interval=$SAVE_INTERVAL \
+    logger.log_interval=$LOG_INTERVAL \
+    logger.wandb_project=$WANDB_PROJECT \
+    logger.wandb_exp_name=$RUN_NAME \
+    model.tensor_model_parallel_size=$TP \
+    model.pipeline_model_parallel_size=$PP \
+    model.expert_model_parallel_size=$EP \
+    model.context_parallel_size=$CP \
     $RECIPE_OVERRIDES \
-    $DATASET_OVERRIDES \
-    $EXTRA_OVERRIDES"
+    $DCLM_DATASET_OVERRIDES"
 
 CMD="uv run --no-sync python -m torch.distributed.run \
     --nproc_per_node=$NPROC_PER_NODE \
@@ -288,32 +200,37 @@ CMD="uv run --no-sync python -m torch.distributed.run \
     --node_rank=\$SLURM_PROCID \
     --master_addr=$MASTER_ADDR \
     --master_port=$MASTER_PORT \
-    $BRIDGE_PATH/scripts/training/run_recipe.py \
+    /opt/Megatron-Bridge/scripts/training/run_recipe.py \
     --recipe $RECIPE_NAME \
     --dataset $DATASET_TYPE \
-    --step_func $STEP_FUNC \
+    --step_func gpt_step \
     --hf_path $HF_CONFIG \
     $CLI_OVERRIDES"
 
-echo "Executing command..."
+echo "======================================"
+echo "DeepSeek-V4-Flash Pretraining"
+echo "======================================"
+echo "Job ID: ${SLURM_JOB_ID:-manual}"
+echo "Recipe: $RECIPE_NAME"
+echo "Dataset: $DATASET_TYPE/$DATASET_NAME"
+echo "Parallelism: TP=$TP PP=$PP EP=$EP CP=$CP"
+echo "Run name: $RUN_NAME"
+echo "Checkpoint dir: $CHECKPOINT_DIR"
+echo "SRUN base: $SRUN_CMD"
+echo "======================================"
 echo "$CMD"
 echo "======================================"
 
 $SRUN_CMD bash -lc "
     set -euo pipefail
-    export HF_HOME=$HF_HOME
-    export HF_HUB_OFFLINE=$HF_HUB_OFFLINE
-    export WANDB_MODE=$WANDB_MODE
     export NCCL_DEBUG=WARN
     export TORCH_NCCL_AVOID_RECORD_STREAMS=1
     export NCCL_NVLS_ENABLE=0
-    export NCCL_PXN_DISABLE=$NCCL_PXN_DISABLE
+    export NCCL_PXN_DISABLE=1
     export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-    export NCCL_TIMEOUT=1800000
     export CUDA_DEVICE_MAX_CONNECTIONS=1
-    export PYTHONPATH=$PYTHONPATH_ENTRIES:\${PYTHONPATH:-}
-    cd $BRIDGE_PATH
-    echo \"$CMD\"
+    export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/megatron-lm:\${PYTHONPATH:-}
+    cd /opt/Megatron-Bridge
     $CMD
 "
 

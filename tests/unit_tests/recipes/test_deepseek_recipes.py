@@ -28,7 +28,10 @@ import pytest
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
-from megatron.bridge.recipes.deepseek import set_deepseek_v3_pipeline_model_parallel_layout
+from megatron.bridge.recipes.deepseek import (
+    set_deepseek_v3_pipeline_model_parallel_layout,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
 from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
 
 
@@ -45,6 +48,7 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
 )
 _DEEPSEEK_EXPORTED_NAMES = set(getattr(_deepseek_module, "__all__", ()))
 assert _DEEPSEEK_RECIPE_NAMES <= _DEEPSEEK_EXPORTED_NAMES
+assert {"set_deepseek_v4_pipeline_model_parallel_layout"} <= _DEEPSEEK_EXPORTED_NAMES
 _DEEPSEEK_RECIPE_FUNCS = [getattr(_deepseek_module, name) for name in sorted(_DEEPSEEK_RECIPE_NAMES)]
 assert all(callable(recipe_func) for recipe_func in _DEEPSEEK_RECIPE_FUNCS)
 
@@ -135,6 +139,32 @@ def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():
     assert parsed_layout.validate_layer_layout(model_cfg.num_layers, model_cfg.mtp_num_layers)
     assert parsed_layout.layout[6][1] == [LayerType.mtp]
     assert parsed_layout.layout[7][1] == [LayerType.loss]
+
+
+def test_deepseek_v4_pipeline_layout_distributes_decoder_layers_and_places_mtp_loss():
+    model_cfg = _FakeModelCfg()
+    model_cfg.num_layers = 7
+    model_cfg.mtp_num_layers = 2
+    model_cfg.pipeline_model_parallel_size = 3
+
+    set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
+
+    assert model_cfg.pipeline_model_parallel_layout == [
+        ["embedding", "decoder", "decoder", "decoder"],
+        ["decoder", "decoder"],
+        ["decoder", "decoder", "mtp", "mtp", "loss"],
+    ]
+
+
+def test_deepseek_v4_pipeline_layout_disables_layout_for_single_stage():
+    model_cfg = _FakeModelCfg()
+    model_cfg.num_layers = 7
+    model_cfg.mtp_num_layers = 2
+    model_cfg.pipeline_model_parallel_size = 1
+
+    set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
+
+    assert model_cfg.pipeline_model_parallel_layout is None
 
 
 def test_build_standalone_mtp_layout_rejects_too_few_total_stages():
@@ -250,3 +280,22 @@ def test_deepseek_v4_muon_bf16_recipe_uses_validated_optimizer_defaults(monkeypa
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.model.csa_backend == "cudnn_dsa"
     assert cfg.model.use_fused_mhc is True
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.mixed_precision.fp8 is None
+    assert cfg.mixed_precision.fp8_param_gather is False
+
+
+def test_deepseek_v4_rejects_muon_mxfp8(monkeypatch: pytest.MonkeyPatch):
+    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    with pytest.raises(ValueError, match="Muon \\+ MXFP8"):
+        mod._deepseek_v4_flash_pretrain_config(optimizer_type="muon", mxfp8=True)
+
+
+def test_deepseek_v4_rejects_invalid_optimizer(monkeypatch: pytest.MonkeyPatch):
+    mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+    with pytest.raises(ValueError, match="Invalid DeepSeek-V4 optimizer type"):
+        mod._deepseek_v4_flash_pretrain_config(optimizer_type="sgd")
