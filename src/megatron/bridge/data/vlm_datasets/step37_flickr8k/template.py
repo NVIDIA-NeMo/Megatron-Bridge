@@ -27,12 +27,12 @@ determines the token sequence produced for a given input dialog.
 from __future__ import annotations
 
 import copy
+import logging
 from collections.abc import Callable
 from typing import Any, Optional
 
 import numpy as np
 import torch
-from loguru import logger
 
 from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
     IMAGE_ITEM_TYPE,
@@ -49,6 +49,7 @@ PATCH_START_TOKEN = "<patch_start>"
 PATCH_END_TOKEN = "<patch_end>"
 IMAGE_TOKEN_COUNT = 169
 PATCH_TOKEN_COUNT = 81
+logger = logging.getLogger(__name__)
 
 
 def _identity_path(path: str) -> str:
@@ -223,7 +224,7 @@ class Step37MultimodalTemplate:
 
         if len(all_tokens) > self.max_sequence_length + 1:
             logger.warning(
-                "Tokenized Step3.7 multimodal sample length {} exceeds max_sequence_length+1={}; "
+                "Tokenized Step3.7 multimodal sample length %s exceeds max_sequence_length+1=%s; "
                 "the packed dataloader oversize policy will decide whether to drop it.",
                 len(all_tokens),
                 self.max_sequence_length + 1,
