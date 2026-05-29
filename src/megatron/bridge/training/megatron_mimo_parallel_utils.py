@@ -36,6 +36,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _get_dp_size_from_grid(grid: "HyperCommGrid") -> int:
+    """Get the DP dimension size from a grid's shape metadata.
+
+    Uses grid.shape / grid.dim_names rather than process groups so that
+    it works on ALL ranks, including those outside the grid.
+    """
+    dp_idx = grid.dim_names.index("dp")
+    return grid.shape[dp_idx]
+
+
 def unwrap_megatron_mimo_model(model) -> MimoModel:
     """Unwrap Float16Module/DDP wrappers to get the underlying MimoModel.
 
@@ -205,6 +215,13 @@ def finalize_model_grads_multimodule(
     The `infra` and `module_to_grid_tuple` parameters are pre-bound via partial().
     We ignore the schedule-provided `pg_collection` and use per-module PGs.
 
+    When encoder DP > LLM DP (heterogeneous), the LLM's loss normalization
+    divides by tokens for ALL samples it processes, but after bridge fan-out
+    each encoder DP rank only carries gradient for (encoder_dp / llm_dp) fewer
+    samples.  This makes encoder gradients too small by a factor of
+    encoder_dp / llm_dp.  We compensate after DDP finalization by scaling
+    encoder gradients back up.
+
     Args:
         model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
         num_tokens: Token count for gradient scaling.
@@ -213,18 +230,85 @@ def finalize_model_grads_multimodule(
         infra: MegatronMIMOInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """
-    for module, grid in module_to_grid_tuple:
-        if module is not None and is_current_rank_in_grid(grid):
-            # Get the module's pg_collection from infra
-            # Find the module name by matching the grid
-            module_pg = None
-            for module_name, mod_grid in infra.module_to_grid_map.items():
-                if mod_grid is grid:
-                    module_pg = infra.pg_collections.get(module_name)
-                    break
+    llm_grid = infra.module_to_grid_map.get(MIMO_LANGUAGE_MODULE_KEY)
+    llm_dp = _get_dp_size_from_grid(llm_grid) if llm_grid is not None else 1
 
-            if module_pg is not None:
-                _finalize_model_grads([module], num_tokens=num_tokens, pg_collection=module_pg)
+    def _find_module(grid):
+        for mn, mg in infra.module_to_grid_map.items():
+            if mg is grid:
+                return mn, infra.pg_collections.get(mn)
+        return None, None
+
+    if num_tokens is not None and llm_grid is not None:
+        # calculate_per_token_loss=True path.
+        #
+        # Only LLM last-PP-stage ranks accumulated non-zero num_tokens.
+        # _finalize_model_grads does PP broadcast + DP all-reduce on
+        # num_tokens internally, which works correctly for the LLM because
+        # each DP rank still holds its own distinct accumulated count.
+        #
+        # We must NOT broadcast num_tokens globally before calling
+        # _finalize_model_grads — that would overwrite every rank with one
+        # DP rank's value, and the subsequent DP all-reduce would sum
+        # dp_size identical copies instead of distinct per-rank counts.
+        #
+        # Encoder ranks have num_tokens=0 (they don't compute loss).  We
+        # pass num_tokens=None for them to skip the broken normalization,
+        # then broadcast the correct total from LLM and apply it manually.
+        #
+        # With gradient_scaling_factor=1.0 (calculate_per_token_loss=True),
+        # DDP does a plain SUM.  After dividing by the global token count
+        # the gradient is correct — no DP compensation factor needed.
+
+        # Phase 1: gradient all-reduce for each module.  Only the LLM gets
+        # num_tokens so _finalize_model_grads can PP-broadcast + DP-all-reduce
+        # the per-rank counts into the correct global total.
+        for module, grid in module_to_grid_tuple:
+            if module is not None and is_current_rank_in_grid(grid):
+                module_name, module_pg = _find_module(grid)
+                if module_pg is not None:
+                    if module_name == MIMO_LANGUAGE_MODULE_KEY:
+                        _finalize_model_grads(
+                            [module],
+                            num_tokens=num_tokens,
+                            pg_collection=module_pg,
+                        )
+                    else:
+                        _finalize_model_grads(
+                            [module],
+                            num_tokens=None,
+                            pg_collection=module_pg,
+                        )
+
+        # Phase 2: broadcast the correct global total from LLM to encoder
+        # ranks.  _finalize_model_grads updated num_tokens in-place on LLM
+        # ranks (PP broadcast + DP all-reduce → true global total).
+        llm_last_rank = llm_grid.rank_offset + llm_grid.size - 1
+        dist.broadcast(num_tokens, src=llm_last_rank)
+
+        # Phase 3: scale encoder gradients by 1 / global_total.
+        for module, grid in module_to_grid_tuple:
+            if module is not None and is_current_rank_in_grid(grid):
+                module_name, _ = _find_module(grid)
+                if module_name != MIMO_LANGUAGE_MODULE_KEY and num_tokens > 0:
+                    module.scale_gradients(1.0 / num_tokens.float().item())
+    else:
+        # calculate_per_token_loss=False path.
+        #
+        # Loss was already divided by num_tokens and num_microbatches in the
+        # forward pass.  DDP pre-scales gradients by 1/dp_size, producing an
+        # effective MEAN across DP ranks.  When encoder_dp > llm_dp the
+        # encoder mean is over fewer samples, making encoder gradients too
+        # small by encoder_dp / llm_dp.  Compensate after finalization.
+        for module, grid in module_to_grid_tuple:
+            if module is not None and is_current_rank_in_grid(grid):
+                _, module_pg = _find_module(grid)
+                if module_pg is not None:
+                    _finalize_model_grads([module], num_tokens=None, pg_collection=module_pg)
+
+                    module_dp = _get_dp_size_from_grid(grid)
+                    if module_dp != llm_dp:
+                        module.scale_gradients(float(module_dp) / float(llm_dp))
 
 
 def zero_grad_buffer_for_multimodule(module_to_grid_tuple: List[Tuple]):
