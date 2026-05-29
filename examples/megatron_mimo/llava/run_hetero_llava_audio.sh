@@ -2,7 +2,7 @@
 # Heterogeneous MIMO LLaVA smoke test against the mini audio-augmented dataset.
 # LLM on ranks 0-3 (TP=4), CLIP on ranks 4-5 (TP=2), Whisper on ranks 6-7 (TP=2).
 #
-# Assumes ./prepare_llava_pretrain_audio.sh has been run.
+# Assumes ./prepare_llava_pretrain_audio.sh has been run, or will auto-build via prepare_dataset().
 
 set -euo pipefail
 
