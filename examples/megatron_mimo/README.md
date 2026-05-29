@@ -19,7 +19,9 @@ documents what is currently supported for that model and what is not.
 
 Current example coverage:
 
-- LLaVA: MegatronMIMO training, conversion, and checkpoint/resume workflows.
+- [LLaVA](llava/README.md): heterogeneous MIMO training (Vicuna-7B + CLIP, with
+  an optional Whisper audio encoder), HF→Megatron conversion, and parallelism
+  test sweeps.
 - Qwen3.5-VL: coming soon.
 
 Model-specific READMEs and scripts document supported layouts, data paths,
