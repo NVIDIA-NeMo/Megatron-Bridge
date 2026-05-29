@@ -30,6 +30,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
     --tp 1 --pp 1 --ep 1 --etp 1 \
+    --use-legacy-generation \
     --trust-remote-code
 
 if [ -d "$MEGATRON_MODEL_PATH" ]; then
@@ -40,6 +41,7 @@ if [ -d "$MEGATRON_MODEL_PATH" ]; then
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
         --tp 1 --pp 1 --ep 1 --etp 1 \
+        --use-legacy-generation \
         --trust-remote-code
 fi
 
@@ -50,5 +52,6 @@ if [ -d "$HF_EXPORT_PATH" ]; then
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
         --tp 1 --pp 1 --ep 1 --etp 1 \
+        --use-legacy-generation \
         --trust-remote-code
 fi

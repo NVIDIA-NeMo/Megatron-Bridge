@@ -40,7 +40,8 @@ model is constructed.
 ## Model-Specific Examples
 
 The model wrapper scripts show tested arguments for specific model families.
-Falcon H1 runs as a one-GPU dynamic inference example:
+Falcon H1 runs as a one-GPU static generation example because it uses Mamba
+layers:
 
 ```bash
 bash examples/models/falcon_h1/inference.sh
