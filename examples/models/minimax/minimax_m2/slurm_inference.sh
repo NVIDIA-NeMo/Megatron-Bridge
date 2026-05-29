@@ -85,7 +85,7 @@ fi
 
 # Sync dependencies once per node, then run inference
 CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
-CMD="${CMD}uv run --no-sync python examples/inference/text_generation.py"
+CMD="${CMD}uv run --no-sync python scripts/inference/text_generation.py"
 CMD="$CMD --hf_model_path $HF_MODEL_ID"
 CMD="$CMD --prompt '$PROMPT'"
 CMD="$CMD --max_new_tokens $MAX_NEW_TOKENS"

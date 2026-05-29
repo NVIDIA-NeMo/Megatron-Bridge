@@ -5,9 +5,9 @@ Megatron-Core inference.
 
 ## Offline Text Generation with Bridge Loading
 
-`text_generation.py` is the Bridge-backed synchronous entrypoint. It uses
-`AutoBridge` for Hugging Face config/model support and optional Megatron Bridge
-checkpoint loading, then runs `MegatronLLM.generate`.
+`scripts/inference/text_generation.py` is the Bridge-backed synchronous
+entrypoint. It uses `AutoBridge` for Hugging Face config/model support and
+optional Megatron Bridge checkpoint loading, then runs `MegatronLLM.generate`.
 
 ```bash
 bash examples/inference/run_text_generation.sh --nproc 1 \
@@ -82,9 +82,10 @@ launching, such as `WORKSPACE`, `HF_MODEL_ID`, `MEGATRON_MODEL_PATH`,
 
 ## Concurrent Async Generation
 
-`async_text_generation.py` is intentionally direct MCore-style. It does not use
-`AutoBridge`; pass normal Megatron training/inference arguments such as
-`--load`, tokenizer args, model provider, and parallelism settings.
+`scripts/inference/async_text_generation.py` is intentionally direct
+MCore-style. It does not use `AutoBridge`; pass normal Megatron
+training/inference arguments such as `--load`, tokenizer args, model provider,
+and parallelism settings.
 
 ```bash
 bash examples/inference/run_async_text_generation.sh --nproc 8 \
@@ -101,7 +102,7 @@ multiple prompts concurrently from the primary rank.
 
 ## OpenAI-Compatible Server
 
-`openai_server.py` is also direct MCore-style and uses
+`scripts/inference/openai_server.py` is also direct MCore-style and uses
 `MegatronAsyncLLM.serve(...)`.
 
 ```bash

@@ -22,7 +22,7 @@ MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/sarvam-30b/iter_0
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/sarvam-30b-hf-export}
 
 # Inference with Hugging Face checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
     --hf_model_path sarvamai/sarvam-30b \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
@@ -33,7 +33,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/tex
 
 # Inference with imported Megatron checkpoints
 if [ -d "$MEGATRON_MODEL_PATH" ]; then
-    uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
         --hf_model_path sarvamai/sarvam-30b \
         --megatron_model_path "$MEGATRON_MODEL_PATH" \
         --prompt "$PROMPT" \
@@ -46,7 +46,7 @@ fi
 
 # Inference with exported HF checkpoints
 if [ -d "$HF_EXPORT_PATH" ]; then
-    uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
         --hf_model_path "$HF_EXPORT_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \

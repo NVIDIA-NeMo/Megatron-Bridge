@@ -149,7 +149,7 @@ See [inference.sh](inference.sh) for text generation with:
 - **SFT (finetuned) checkpoint**: set `SFT_CHECKPOINT` to your [slurm_sft.sh](slurm_sft.sh) result dir and run:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/inference/text_generation.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
     --hf_model_path unsloth/gpt-oss-20b-BF16 \
     --megatron_model_path ${WORKSPACE}/results/gpt_oss_20b_finetune_tp2_pp2_ep4_spTrue_cp1 \
     --prompt "Hello, how are you?" \

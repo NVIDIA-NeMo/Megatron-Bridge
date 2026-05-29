@@ -25,7 +25,7 @@ MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/${MODEL_NAME}/ite
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
 
 uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/inference/text_generation.py \
+    scripts/inference/text_generation.py \
     --hf_model_path "$HF_MODEL_ID" \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
@@ -35,7 +35,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
 
 if [ -d "$MEGATRON_MODEL_PATH" ]; then
     uv run python -m torch.distributed.run --nproc_per_node=1 \
-        examples/inference/text_generation.py \
+        scripts/inference/text_generation.py \
         --hf_model_path "$HF_MODEL_ID" \
         --megatron_model_path "$MEGATRON_MODEL_PATH" \
         --prompt "$PROMPT" \
@@ -47,7 +47,7 @@ fi
 
 if [ -d "$HF_EXPORT_PATH" ]; then
     uv run python -m torch.distributed.run --nproc_per_node=1 \
-        examples/inference/text_generation.py \
+        scripts/inference/text_generation.py \
         --hf_model_path "$HF_EXPORT_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \

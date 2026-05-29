@@ -25,7 +25,7 @@ Example:
     --prompt "Megatron Bridge inference is" \
     --max_new_tokens 32
 
-Pass any examples/inference/text_generation.py argument after --nproc.
+Pass any scripts/inference/text_generation.py argument after --nproc.
 USAGE
 }
 
@@ -50,4 +50,4 @@ while [[ $# -gt 0 ]]; do
 done
 
 uv run --no-sync python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
-    examples/inference/text_generation.py "${ARGS[@]}"
+    scripts/inference/text_generation.py "${ARGS[@]}"

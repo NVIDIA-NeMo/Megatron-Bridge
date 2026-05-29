@@ -53,4 +53,4 @@ while [[ $# -gt 0 ]]; do
 done
 
 uv run --no-sync python -m torch.distributed.run --standalone --nproc_per_node "${NPROC}" \
-    examples/inference/async_text_generation.py "${ARGS[@]}"
+    scripts/inference/async_text_generation.py "${ARGS[@]}"
