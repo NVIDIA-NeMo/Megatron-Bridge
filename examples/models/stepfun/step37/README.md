@@ -1,6 +1,6 @@
 # Step 3.7 Flash Examples
 
-Step37 is a multimodal LLM. Its text backbone is
+Step 3.7 Flash is a multimodal LLM. Its text backbone is
 byte-identical Step-3.5 (45 layers, hybrid full/sliding 64/96 GQA, MoE
 288×top-8, head-wise attention gate, MTP 3 layers). The vision tower is
 Perception-Encoder G/14 followed by two Conv2d downsamplers
@@ -17,7 +17,7 @@ The Megatron-Bridge implementation works end-to-end as follows:
 
 ## MCore Dev Branch Requirement
 
-Step37 imports require MCore changes that are not yet on a tagged release: PR [#4473](https://github.com/NVIDIA/Megatron-LM/pull/4473), PR [#4841](https://github.com/NVIDIA/Megatron-LM/pull/4841). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
+Step 3.7 Flash imports require MCore changes that are not yet on a tagged release: PR [#4473](https://github.com/NVIDIA/Megatron-LM/pull/4473), PR [#4841](https://github.com/NVIDIA/Megatron-LM/pull/4841). Until these merge to Megatron-LM `main` and the bridge submodule pin advances, point `3rdparty/Megatron-LM` at the Megatron-LM `dev` branch:
 
 ```bash
 ./scripts/switch_mcore.sh dev
