@@ -26,6 +26,35 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 _lora_seq_stats_cache: dict = {}
 
 
+def flops_accumulator_to_int(value) -> int:
+    """Convert a FLOPs accumulator value to ``int`` at step/logging boundaries."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return 0
+        return int(value.detach().cpu().item())
+    return 0
+
+
+def _add_flops_accumulator(state, name: str, delta) -> None:
+    """Add an int or scalar tensor to a state accumulator."""
+    current = getattr(state, name, 0)
+    if not isinstance(current, (int, torch.Tensor)):
+        current = 0
+    setattr(state, name, current + delta)
+
+
+def _scalar_sum_for_accumulator(value: torch.Tensor) -> int | torch.Tensor:
+    """Return a scalar sum without forcing a CUDA host sync inside forward_step."""
+    total = value.sum()
+    if total.device.type == "cuda":
+        return total
+    return int(total.item())
+
+
 def _real_subseq_lengths(
     cu_seqlens: torch.Tensor | None,
     cu_seqlens_argmin: torch.Tensor | None = None,
@@ -95,20 +124,18 @@ def accumulate_flops_metadata(
 
     mbs = tokens.shape[0]
     seq_len = tokens.shape[1]
-    state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
+    _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
 
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        sq_delta = int((sub_seq_lens.long() ** 2).sum().item())
+        sq_delta = _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
     else:
         sq_delta = mbs * seq_len**2
-    state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + sq_delta
+    _add_flops_accumulator(state, "_flops_seqlen_sq_sum", sq_delta)
 
     for grid in (image_grid_thw, video_grid_thw):
         if grid is not None and grid.numel() > 0:
-            state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
-                grid.prod(dim=-1).sum().item()
-            )
+            _add_flops_accumulator(state, "_flops_vision_patches", _scalar_sum_for_accumulator(grid.prod(dim=-1)))
 
 
 def vit_flops(
@@ -293,17 +320,19 @@ def num_floating_point_operations(
         num_heads,
         gqa_groups=8,
         kv_channels=None,
+        core_attn_seq_factor=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
+        core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
         return (
             4
             * batch_size
             * seq_len
             * hidden_size
             * p
-            * (hidden_size + (hidden_size * (g / num_heads)) + (seq_len / 2))
+            * (hidden_size + (hidden_size * (g / num_heads)) + (core_seq / 2))
         )
 
     def mamba_layer_flops(
@@ -383,6 +412,7 @@ def num_floating_point_operations(
         gdn_conv_kernel_dim=4,
         vocab_size=256000,
         mtp_num_layers=0,
+        core_attn_seq_factor=None,
     ):
         """Calculate total FLOPs for the hybrid model."""
         flops_fwd = (
@@ -394,6 +424,7 @@ def num_floating_point_operations(
                 num_attn_heads,
                 gqa_groups,
                 kv_channels,
+                core_attn_seq_factor,
             )
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
@@ -833,6 +864,7 @@ def num_floating_point_operations(
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
+            core_attn_seq_factor=core_attn_seq_factor,
         )
         return llm_flops + _compute_vit_flops()
     else:

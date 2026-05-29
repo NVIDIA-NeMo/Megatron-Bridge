@@ -36,7 +36,7 @@ from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
+from megatron.bridge.training.utils.flop_utils import flops_accumulator_to_int, num_floating_point_operations
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -1088,17 +1088,9 @@ def training_log(
             # per microbatch, so the accumulators over-count by vp_size. Divide
             # them back so the FLOPS formula (which already covers all layers)
             # receives the correct per-microbatch totals.
-            # Coerce accumulators to int — getattr on MagicMock test doubles
-            # returns a MagicMock (not the default), which breaks numeric ops.
-            local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
-            local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
-            local_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
-            if not isinstance(local_seqlen_sum, int):
-                local_seqlen_sum = 0
-            if not isinstance(local_seqlen_sq_sum, int):
-                local_seqlen_sq_sum = 0
-            if not isinstance(local_vision_patches, int):
-                local_vision_patches = 0
+            local_seqlen_sum = flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sum", 0))
+            local_seqlen_sq_sum = flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sq_sum", 0))
+            local_vision_patches = flops_accumulator_to_int(getattr(global_state, "_flops_vision_patches", 0))
             num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
 
             vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None)

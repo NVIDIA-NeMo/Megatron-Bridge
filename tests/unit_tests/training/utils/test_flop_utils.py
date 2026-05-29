@@ -418,6 +418,49 @@ class TestHybridLayerCounting:
         )
         assert flops_swiglu == expected_swiglu, f"SwiGLU: expected {expected_swiglu:.2e} but got {flops_swiglu:.2e}"
 
+    def test_hybrid_attention_term_scales_with_seqlen_squared_sum(self):
+        """Hybrid attention core FLOPs must use Σ L², not only average sequence length."""
+        batch_size = 4
+        seq_len = 1024
+        hidden_size = 1024
+        num_heads = 8
+        kv_channels = 128
+        cfg = MockConfigContainer(
+            model=MockModelConfig(
+                is_hybrid_model=True,
+                hybrid_layer_pattern="*",
+                num_layers=1,
+                hidden_size=hidden_size,
+                seq_length=seq_len,
+                ffn_hidden_size=4096,
+                num_attention_heads=num_heads,
+                num_query_groups=num_heads,
+                kv_channels=kv_channels,
+                vocab_size=32000,
+                gated_linear_unit=False,
+            )
+        )
+        seqlen_sum = batch_size * seq_len
+        sq_base = batch_size * seq_len**2
+        sq_bumped = sq_base + 1_000_000
+
+        flops_base = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_base,
+        )
+        flops_bumped = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_bumped,
+        )
+
+        query_projection_size = kv_channels * num_heads
+        expected_delta = 3 * 2 * query_projection_size * (sq_bumped - sq_base)
+        assert flops_bumped - flops_base == expected_delta
+
 
 @pytest.mark.unit
 class TestGDNLayerFlops:
@@ -1738,6 +1781,13 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens)
         assert state._flops_seqlen_sum == 2 * 512
         assert state._flops_seqlen_sq_sum == 2 * 512**2
+
+    def test_mock_state_accumulators_start_at_zero(self):
+        state = MagicMock()
+        tokens = torch.zeros(1, 8)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 8
+        assert state._flops_seqlen_sq_sum == 64
 
     def test_thd_cu_seqlens_uses_sum_of_squares(self):
         # cu_seqlens = [0, 256, 512, 4096] → sub-seq lengths [256, 256, 3584].
