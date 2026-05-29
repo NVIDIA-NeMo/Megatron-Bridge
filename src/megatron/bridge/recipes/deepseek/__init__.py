@@ -28,6 +28,7 @@ from .deepseek_v2 import (
 from .deepseek_v3 import (
     deepseek_v3_pretrain_config,
     deepseek_v3_pretrain_config_32nodes,
+    set_deepseek_v3_pipeline_model_parallel_layout,
 )
 
 
@@ -38,4 +39,5 @@ __all__ = [
     # DeepSeek V3
     "deepseek_v3_pretrain_config",
     "deepseek_v3_pretrain_config_32nodes",
+    "set_deepseek_v3_pipeline_model_parallel_layout",
 ]

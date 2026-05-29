@@ -18,7 +18,7 @@ import torch
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
-from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider1_3B, WanModelProvider14B
+from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -49,7 +49,14 @@ def wan_1_3b_pretrain_config() -> ConfigContainer:
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Model configuration
-    model_cfg = WanModelProvider1_3B()
+    model_cfg = WanModelProvider(
+        num_layers=30,
+        hidden_size=1536,
+        ffn_hidden_size=8960,
+        num_attention_heads=12,
+        crossattn_emb_size=1536,
+        seq_length=1024,
+    )
     model_cfg.tensor_model_parallel_size = 1
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16
@@ -148,7 +155,14 @@ def wan_14b_pretrain_config() -> ConfigContainer:
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     # Model configuration
-    model_cfg = WanModelProvider14B()
+    model_cfg = WanModelProvider(
+        num_layers=40,
+        hidden_size=5120,
+        ffn_hidden_size=13824,
+        num_attention_heads=40,
+        crossattn_emb_size=5120,
+        seq_length=1024,
+    )
     model_cfg.tensor_model_parallel_size = 2
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16
@@ -274,4 +288,37 @@ def wan_14b_sft_config(pretrained_checkpoint: str | None = None) -> ConfigContai
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )
+    return cfg
+
+
+def wan_1_3b_text2image_pretrain_config() -> ConfigContainer:
+    """Return a Wan 1.3B pretraining configuration tuned for text-to-image data.
+
+    Wraps wan_1_3b_pretrain_config and overrides sequence length on both the
+    model and the dataset for spatial-only inputs.
+    """
+    cfg = wan_1_3b_pretrain_config()
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.context_parallel_size = 1
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 1e-4
+    cfg.optimizer.weight_decay = 0.001
+    return cfg
+
+
+def wan_1_3b_text2video_pretrain_config() -> ConfigContainer:
+    """Return a Wan 1.3B pretraining configuration tuned for text-to-video data.
+
+    Wraps wan_1_3b_pretrain_config and overrides sequence length on both the
+    model and the dataset for spatio-temporal inputs, with context parallelism
+    reduced to 4 to fit the longer sequence.
+    """
+    cfg = wan_1_3b_pretrain_config()
+    cfg.model.seq_length = 43008
+    cfg.dataset.seq_length = 43008
+    cfg.model.context_parallel_size = 4
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 1e-4
+    cfg.optimizer.weight_decay = 0.001
     return cfg

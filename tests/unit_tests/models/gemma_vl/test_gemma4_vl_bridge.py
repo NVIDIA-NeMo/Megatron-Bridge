@@ -101,6 +101,64 @@ def mock_hf_pretrained_moe(mock_hf_config_moe):
 
 
 @pytest.fixture
+def mock_text_config_dense():
+    """Mock text config for Gemma 4 26B-A4B (MoE model)."""
+    config = Mock(spec=[])
+    config.num_hidden_layers = 62
+    config.hidden_size = 2816
+    config.intermediate_size = 2112  # shared expert FFN size
+    config.moe_intermediate_size = 704  # routed expert FFN size
+    config.num_attention_heads = 8
+    config.num_key_value_heads = 4
+    config.head_dim = 256
+    config.global_head_dim = 512
+    config.num_global_key_value_heads = 2
+    config.initializer_range = 0.02
+    config.rms_norm_eps = 1e-6
+    config.vocab_size = 262144
+    config.max_position_embeddings = 131072
+    config.sliding_window = 1024
+    config.rope_theta = 1000000.0
+    config.query_pre_attn_scalar = 1.0  # not used for scale (softmax_scale=1.0)
+    config.rope_scaling = None
+    config.rope_local_base_freq = 10000.0
+    config.rope_parameters = {"rope_local_base_freq": 10000.0}
+    config.hidden_act = "gelu_pytorch_tanh"
+    config.torch_dtype = "bfloat16"
+    config.hidden_size_per_layer_input = 0
+    # MoE fields
+    config.enable_moe_block = False
+
+    # Attention pattern
+    config.layer_types = (
+        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    )
+    config.final_logit_softcapping = 30.0
+    return config
+
+
+@pytest.fixture
+def mock_hf_config_dense(mock_text_config_dense, mock_vision_config):
+    config = Mock()
+    config.text_config = mock_text_config_dense
+    config.vision_config = mock_vision_config
+    config.vision_soft_tokens_per_image = 280
+    config.bos_token_id = 2
+    config.eos_token_id = 1
+    config.image_token_id = 258_880
+    config.video_token_id = 258_884
+    return config
+
+
+@pytest.fixture
+def mock_hf_pretrained_dense(mock_hf_config_dense):
+    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained.config = mock_hf_config_dense
+    pretrained.generation_config = GenerationConfig()
+    return pretrained
+
+
+@pytest.fixture
 def bridge():
     return Gemma4VLBridge()
 
@@ -187,23 +245,29 @@ class TestGemma4VLBridgeProviderBridgeMoE:
 
 
 # ---------------------------------------------------------------------------
-# provider_bridge — dense model rejected
+# provider_bridge — dense model
 # ---------------------------------------------------------------------------
 
 
-class TestGemma4VLBridgeProviderBridgeDenseRejected:
-    def test_raises_for_dense_model(self, bridge):
-        """provider_bridge must raise ValueError for non-MoE (dense) models."""
+class TestGemma4VLBridgeProviderBridgeDense:
+    def test_raises_for_dense_with_hidden_size_per_layer_model(self, bridge):
+        """provider_bridge must raise ValueError for dense models with per-layer hidden size."""
         dense_text_config = Mock(spec=[])
         dense_text_config.enable_moe_block = False
+        dense_text_config.torch_dtype = "bfloat16"
+        dense_text_config.hidden_size_per_layer_input = 1
         hf_config = Mock()
         hf_config.text_config = dense_text_config
         hf_config.vision_config = Mock()
         hf_config._name_or_path = "google/gemma-4-e2b-it"
         pretrained = Mock(spec=PreTrainedVLM)
         pretrained.config = hf_config
-        with pytest.raises(ValueError, match="enable_moe_block=False"):
+        with pytest.raises(ValueError, match="hidden_size_per_layer_input=1"):
             bridge.provider_bridge(pretrained)
+
+    def test_returns_provider(self, bridge, mock_hf_pretrained_dense):
+        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
+        assert isinstance(provider, Gemma4VLModelProvider)
 
 
 # ---------------------------------------------------------------------------
