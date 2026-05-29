@@ -51,6 +51,18 @@ def test_prepare_finetuning_batch_basic():
         assert mb["loss_mask"].shape == (2, 128)
 
 
+def test_prepare_finetuning_batch_none_iterator():
+    """Test non-data-parallel ranks with no local data iterator."""
+    microbatch_iter, seq_len = prepare_finetuning_batch(
+        data_iterator=None,
+        num_microbatches=4,
+        default_seq_length=2048,
+    )
+
+    assert microbatch_iter is None
+    assert seq_len == 2048
+
+
 def test_prepare_finetuning_batch_single_microbatch():
     """Test when num_microbatches=1 (no splitting)."""
     global_batch = {

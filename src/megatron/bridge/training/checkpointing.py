@@ -1505,6 +1505,13 @@ def save_tokenizer_assets(
             logger.error(traceback.format_exc())
 
 
+def _get_model_for_sharded_state_dict(model_module: torch.nn.Module) -> torch.nn.Module:
+    """Return the module that exposes the Megatron sharded-state-dict API."""
+    if HAVE_MEGATRON_FSDP and isinstance(model_module, MegatronFSDP):
+        return unwrap_model(model_module.module)
+    return model_module
+
+
 def _generate_model_state_dict(
     model: list[MegatronModule],
     model_sd_kwargs: Optional[dict[str, Any]] = None,
@@ -1528,13 +1535,15 @@ def _generate_model_state_dict(
 
     if len(model) == 1:
         if ckpt_format == "torch_dist":
-            state_dict["model"] = model[0].sharded_state_dict(**(model_sd_kwargs or {}))
+            model_module = _get_model_for_sharded_state_dict(model[0])
+            state_dict["model"] = model_module.sharded_state_dict(**(model_sd_kwargs or {}))
         else:  # fsdp_dtensor and other formats
             state_dict["model"] = model[0].state_dict_for_save_checkpoint()
     else:
         for i in range(len(model)):
             if ckpt_format == "torch_dist":
-                state_dict["model%d" % i] = model[i].sharded_state_dict(**(model_sd_kwargs or {}))
+                model_module = _get_model_for_sharded_state_dict(model[i])
+                state_dict["model%d" % i] = model_module.sharded_state_dict(**(model_sd_kwargs or {}))
             else:  # fsdp_dtensor and other formats
                 state_dict["model%d" % i] = model[i].state_dict_for_save_checkpoint()
 

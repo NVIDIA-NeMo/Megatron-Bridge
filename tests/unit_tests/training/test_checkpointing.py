@@ -30,6 +30,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointType,
     DefaultCheckpointManager,
     _extract_megatron_lm_args_from_state_dict,
+    _generate_model_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
@@ -248,6 +249,29 @@ class TestCheckpointUtilities:
 
             ensure_directory_exists(f"msc://default{temp_dir}/checkpoints/iter_0000001", check_parent=False)
             assert os.path.exists(f"{temp_dir}/checkpoints/iter_0000001")
+
+    def test_generate_model_state_dict_unwraps_megatron_fsdp_for_torch_dist(self):
+        """Test torch_dist template generation for raw MegatronFSDP modules."""
+
+        class _FakeMegatronFSDP:
+            def __init__(self, module):
+                self.module = module
+
+        inner_model = Mock()
+        inner_model.sharded_state_dict.return_value = {"param": "value"}
+        wrapped_model = _FakeMegatronFSDP(inner_model)
+        metadata = {"dp_cp_group": object()}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.HAVE_MEGATRON_FSDP", True),
+            patch("megatron.bridge.training.checkpointing.MegatronFSDP", _FakeMegatronFSDP, create=True),
+            patch("megatron.bridge.training.checkpointing.unwrap_model", return_value=inner_model) as mock_unwrap,
+        ):
+            state_dict = _generate_model_state_dict([wrapped_model], {"metadata": metadata}, "torch_dist")
+
+        assert state_dict == {"model": {"param": "value"}}
+        mock_unwrap.assert_called_once_with(inner_model)
+        inner_model.sharded_state_dict.assert_called_once_with(metadata=metadata)
 
 
 class TestCheckpointTypes:
