@@ -267,6 +267,15 @@ def kubeflow_executor(
         pod_spec_overrides=pod_spec_overrides or {},
         container_kwargs=container_kwargs or {},
         labels=labels or {},
-        packager=run.GitArchivePackager(include_submodules=False),
+        # include_submodules=True: KubeflowExecutor.package() ships the packager
+        # tarball to <workdir_pvc_path>/<user>/code, which the launcher overlays
+        # onto /opt/Megatron-Bridge in the trainer container. The trainer
+        # needs both mbridge AND the pinned 3rdparty/Megatron-LM submodule,
+        # so the tarball must include both. (On SLURM where the host
+        # checkout is bind-mounted directly via CUSTOM_MOUNTS, submodules
+        # come from the host filesystem and the packager output is unused
+        # for the /opt/Megatron-Bridge path — so the extra archive bytes
+        # are harmless cost there.)
+        packager=run.GitArchivePackager(include_submodules=True),
     )
     return executor
