@@ -506,57 +506,6 @@ def parse_cli_args():
         default=True,
     )
 
-    # DGXCloud
-    dgxc_args = parser.add_argument_group("DGXCloud arguments")
-    dgxc_args.add_argument(
-        "--dgxc_cluster",
-        type=str,
-        help="DGXCloud cluster to use for experiment",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_base_url",
-        type=str,
-        help="DGXCloud base url",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_kube_apiserver_url",
-        type=str,
-        help="DGXCloud kube apiserver url",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_app_id",
-        type=str,
-        help="DGXCloud app id",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_app_secret",
-        type=str,
-        help="DGXCloud app secret",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_project_name",
-        type=str,
-        help="DGXCloud project name",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_pvc_claim_name",
-        type=str,
-        help="DGXCloud pvc claim name",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_pvc_mount_path",
-        type=str,
-        help="DGXCloud pvc mount path",
-        required=False,
-    )
-
     # Kubeflow
     kubeflow_args = parser.add_argument_group("Kubeflow arguments")
     kubeflow_args.add_argument(
@@ -584,6 +533,66 @@ def parse_cli_args():
         help="Comma-separated list of Kubernetes image pull secret names.",
         required=False,
         default=[],
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_tolerations_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Toleration dicts applied to the training pods. "
+        "Required for landing on lease-tainted GPU nodes (e.g. gpu-wrangler.nvidia.com/lease).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_affinity_json",
+        type=str,
+        help="JSON-encoded Kubernetes Affinity dict applied to the training pods. "
+        "Used to pin pods to GPULease-allocated nodes via nodeAffinity.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_env_list_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes EnvVar dicts (e.g. valueFrom.secretKeyRef entries) "
+        "appended to the training container in addition to flat env_vars.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_extra_resource_requests_json",
+        type=str,
+        help="JSON-encoded dict of extra container resource requests (e.g. {'vpc.amazonaws.com/efa': '32'}).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_extra_resource_limits_json",
+        type=str,
+        help="JSON-encoded dict of extra container resource limits.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_pod_spec_overrides_json",
+        type=str,
+        help="JSON-encoded dict merged into the pod spec (escape hatch for nodeSelector, hostNetwork, etc.).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_container_kwargs_json",
+        type=str,
+        help="JSON-encoded dict of extra fields set on the training container "
+        "(e.g. {'securityContext': {'privileged': true}} for EFA/RDMA).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_labels_json",
+        type=str,
+        help="JSON-encoded dict of labels applied to the TrainJob's pods.",
+        required=False,
+        default=None,
     )
 
     # For performance

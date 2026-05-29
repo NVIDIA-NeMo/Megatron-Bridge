@@ -15,6 +15,7 @@
 # limitations under the License.
 
 import glob
+import json
 import logging
 import os
 import re
@@ -31,12 +32,12 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
+    from utils.executors import kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
+    from .utils.executors import kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -48,10 +49,8 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-    from resiliency_plugins import FaultTolerancePlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-    from .resiliency_plugins import FaultTolerancePlugin
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -275,18 +274,18 @@ def main(
     performance_params: Dict[str, Any],
     memory_params: Dict[str, Any],
     max_retries: int,
-    dgxc_base_url: str,
-    dgxc_cluster: str,
-    dgxc_kube_apiserver_url: str,
-    dgxc_app_id: str,
-    dgxc_app_secret: str,
-    dgxc_project_name: str,
-    dgxc_pvc_claim_name: str,
-    dgxc_pvc_mount_path: str,
     kubeflow_namespace: str,
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
     kubeflow_image_pull_secrets: List[str],
+    kubeflow_tolerations_json: Optional[str],
+    kubeflow_affinity_json: Optional[str],
+    kubeflow_env_list_json: Optional[str],
+    kubeflow_extra_resource_requests_json: Optional[str],
+    kubeflow_extra_resource_limits_json: Optional[str],
+    kubeflow_pod_spec_overrides_json: Optional[str],
+    kubeflow_container_kwargs_json: Optional[str],
+    kubeflow_labels_json: Optional[str],
     deterministic: bool = False,
     config_variant: str = "v1",
     gres: Optional[str] = None,
@@ -364,7 +363,7 @@ def main(
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
 
-    if not dgxc_cluster and save_dir:
+    if save_dir:
         save_dir_path = Path(save_dir).resolve()
         save_dir_path.mkdir(parents=True, exist_ok=True)
         save_dir_mount = f"{save_dir_path}:{save_dir_path}"
@@ -400,23 +399,20 @@ def main(
             custom_env_vars=custom_env_vars,
             wandb_key=wandb_key,
             hf_token=hf_token,
-        )
-    elif dgxc_cluster:
-        executor = dgxc_executor(
-            dgxc_base_url=dgxc_base_url,
-            dgxc_cluster=dgxc_cluster,
-            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
-            dgxc_app_id=dgxc_app_id,
-            dgxc_app_secret=dgxc_app_secret,
-            dgxc_project_name=dgxc_project_name,
-            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
-            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
-            custom_env_vars=custom_env_vars,
-            nodes=-(num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
-            container_image=container_image,
-            wandb_key=wandb_key,
-            hf_token=hf_token,
+            tolerations=json.loads(kubeflow_tolerations_json) if kubeflow_tolerations_json else None,
+            affinity=json.loads(kubeflow_affinity_json) if kubeflow_affinity_json else None,
+            env_list=json.loads(kubeflow_env_list_json) if kubeflow_env_list_json else None,
+            extra_resource_requests=(
+                json.loads(kubeflow_extra_resource_requests_json) if kubeflow_extra_resource_requests_json else None
+            ),
+            extra_resource_limits=(
+                json.loads(kubeflow_extra_resource_limits_json) if kubeflow_extra_resource_limits_json else None
+            ),
+            pod_spec_overrides=(
+                json.loads(kubeflow_pod_spec_overrides_json) if kubeflow_pod_spec_overrides_json else None
+            ),
+            container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
+            labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
         )
     else:
         executor = slurm_executor(
@@ -491,18 +487,6 @@ def main(
             )
         )
 
-    if use_recipes and dgxc_cluster is not None:
-        plugins.append(
-            FaultTolerancePlugin(
-                enable_ft_package=True,
-                calc_ft_timeouts=True,
-                num_in_job_restarts=10,
-                num_job_retries_on_failure=10,
-                initial_rank_heartbeat_timeout=1800,
-                rank_heartbeat_timeout=300,
-            )
-        )
-
     nemorun_script = run.Script(
         path=str(run_script_path),
         entrypoint="python",
@@ -517,7 +501,7 @@ def main(
     error_msg = None
     n_attempts = 0
     exp_name = (
-        exp_name[:33] if (dgxc_cluster is not None or kubeflow_namespace is not None) else exp_name
+        exp_name[:33] if kubeflow_namespace is not None else exp_name
     )  # Some k8s clusters have a limit on the length of the experiment name.
     wandb_run_id = None
     while n_attempts <= max_retries:
@@ -771,18 +755,18 @@ if __name__ == "__main__":
             "memory_threshold": args.memory_threshold,
         },
         max_retries=args.max_retries,
-        dgxc_base_url=args.dgxc_base_url,
-        dgxc_cluster=args.dgxc_cluster,
-        dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
-        dgxc_app_id=args.dgxc_app_id,
-        dgxc_app_secret=args.dgxc_app_secret,
-        dgxc_project_name=args.dgxc_project_name,
-        dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
-        dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
         kubeflow_namespace=args.kubeflow_namespace,
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
+        kubeflow_tolerations_json=args.kubeflow_tolerations_json,
+        kubeflow_affinity_json=args.kubeflow_affinity_json,
+        kubeflow_env_list_json=args.kubeflow_env_list_json,
+        kubeflow_extra_resource_requests_json=args.kubeflow_extra_resource_requests_json,
+        kubeflow_extra_resource_limits_json=args.kubeflow_extra_resource_limits_json,
+        kubeflow_pod_spec_overrides_json=args.kubeflow_pod_spec_overrides_json,
+        kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
+        kubeflow_labels_json=args.kubeflow_labels_json,
         deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,

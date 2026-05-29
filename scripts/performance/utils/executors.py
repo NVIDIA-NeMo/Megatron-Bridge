@@ -187,10 +187,51 @@ def kubeflow_executor(
     wandb_key: str = None,
     hf_token: str = None,
     custom_env_vars: Dict[str, str] = None,
+    tolerations: Optional[List[Dict[str, Any]]] = None,
+    affinity: Optional[Dict[str, Any]] = None,
+    env_list: Optional[List[Dict[str, Any]]] = None,
+    extra_resource_requests: Optional[Dict[str, str]] = None,
+    extra_resource_limits: Optional[Dict[str, str]] = None,
+    pod_spec_overrides: Optional[Dict[str, Any]] = None,
+    container_kwargs: Optional[Dict[str, Any]] = None,
+    labels: Optional[Dict[str, Any]] = None,
 ) -> run.KubeflowExecutor:
-    """
-    Kubeflow Training Operator executor definition with appropriate cluster params and NeMo container
-    params needed for pre-training and fine-tuning experiments on Kubernetes.
+    """Build a Kubeflow Training Operator executor.
+
+    Wires NeMo container settings, secret-backed env vars (``env_list``), GPU lease
+    affinity / toleration metadata, and EFA-style extra resource requests through to
+    ``run.KubeflowExecutor``. The keyword arguments after ``custom_env_vars`` are pass-through
+    to the underlying executor — they map onto fields of the same name on
+    ``nemo_run.core.execution.kubeflow.KubeflowExecutor`` and are required when scheduling
+    onto lease-allocated nodes (tolerations + node affinity) or onto AWS clusters with
+    EFA devices (extra_resource_requests / extra_resource_limits + privileged container).
+
+    Args:
+        namespace: Kubernetes namespace for the TrainJob.
+        nodes: Number of replica nodes.
+        num_gpus_per_node: GPUs requested per replica.
+        container_image: Training container image.
+        volumes: Pod-level volumes.
+        volume_mounts: Container volume mounts.
+        workdir_pvc: PVC to sync the run workdir into.
+        workdir_pvc_path: Mount path for the workdir PVC inside the container.
+        image_pull_secrets: Image pull secret names.
+        wandb_key: WANDB_API_KEY to inject as a flat env var (use ``env_list`` for
+            ``secretKeyRef`` instead in production).
+        hf_token: HF_TOKEN to inject as a flat env var (use ``env_list`` for
+            ``secretKeyRef`` instead in production).
+        custom_env_vars: Additional flat env vars merged into the container env.
+        tolerations: Pod tolerations (e.g. ``gpu-wrangler.nvidia.com/lease``).
+        affinity: Pod affinity dict (e.g. node affinity onto lease-allocated nodes).
+        env_list: Kubernetes ``EnvVar`` dicts (supports ``valueFrom.secretKeyRef``).
+        extra_resource_requests: Extra container resource requests (e.g. EFA).
+        extra_resource_limits: Extra container resource limits.
+        pod_spec_overrides: Dict merged into the pod spec.
+        container_kwargs: Extra container fields (e.g. ``securityContext``).
+        labels: Pod labels.
+
+    Returns:
+        Configured ``run.KubeflowExecutor`` instance.
     """
     env_vars = dict(PERF_ENV_VARS)
     if wandb_key is not None:
@@ -211,78 +252,14 @@ def kubeflow_executor(
         workdir_pvc_path=workdir_pvc_path,
         image_pull_secrets=image_pull_secrets or [],
         env_vars=env_vars,
+        env_list=env_list or [],
+        tolerations=tolerations or [],
+        affinity=affinity or {},
+        extra_resource_requests=extra_resource_requests or {},
+        extra_resource_limits=extra_resource_limits or {},
+        pod_spec_overrides=pod_spec_overrides or {},
+        container_kwargs=container_kwargs or {},
+        labels=labels or {},
         packager=run.GitArchivePackager(include_submodules=False),
-    )
-    return executor
-
-
-def dgxc_executor(
-    dgxc_base_url: str,
-    dgxc_cluster: str,
-    dgxc_kube_apiserver_url: str,
-    dgxc_app_id: str,
-    dgxc_app_secret: str,
-    dgxc_project_name: str,
-    dgxc_pvc_claim_name: str,
-    nodes: int,
-    num_gpus_per_node: int,
-    wandb_key: str = None,
-    hf_token: str = None,
-    custom_env_vars: Dict[str, str] = None,
-    dgxc_pvc_mount_path: str = "/nemo-workspace",
-    container_image: str = "nvcr.io/nvidia/nemo:dev",
-):
-    """
-    DGXCloud cluster definition with appropriate cluster params and NeMo container params needed for pre-training
-    and fine-tuning experiments
-    """
-
-    env_vars = {
-        "TORCH_HOME": "/nemo-workspace/.cache",
-        "FI_EFA_USE_HUGE_PAGE": "0",
-        "NCCL_BUFFSIZE": "8388608",
-        "NCCL_P2P_NET_CHUNKSIZE": "524288",
-        "NCCL_TUNER_PLUGIN": "/opt/gcp-ofi-nccl/install/lib/libnccl-ofi-tuner.so",
-        "WANDB_API_KEY": wandb_key,
-        "HF_TOKEN": hf_token,
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-        "NCCL_NVLS_ENABLE": "0",
-        "NVTE_DP_AMAX_REDUCE_INTERVAL": "0",
-        "NVTE_ASYNC_AMAX_REDUCTION": "1",
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TOKENIZERS_PARALLELISM": "False",
-        "TRANSFORMERS_OFFLINE": "1",
-        "HF_HOME": "/nemo-workspace/pagaray/hf_cache",
-    }
-    if custom_env_vars:
-        env_vars.update(custom_env_vars)
-    executor = run.DGXCloudExecutor(
-        base_url=dgxc_base_url,
-        kube_apiserver_url=dgxc_kube_apiserver_url,
-        app_id=dgxc_app_id,
-        app_secret=dgxc_app_secret,
-        project_name=dgxc_project_name,
-        nodes=nodes,
-        gpus_per_node=num_gpus_per_node,
-        container_image=container_image,
-        pvc_nemo_run_dir=get_nemorun_home(),
-        launched_from_cluster=True,
-        pvcs=[
-            {
-                "name": "workspace",
-                "path": dgxc_pvc_mount_path,
-                "existingPvc": True,
-                "claimName": dgxc_pvc_claim_name,
-            }
-        ],
-        custom_spec=(
-            {
-                "annotations": [{"name": "runai.dgxc.nvidia.com/gcp-nccl", "value": "none", "exclude": False}],
-            }
-            if dgxc_cluster == "dgxcloud-gcp" and nodes == 1
-            else {}
-        ),
-        env_vars=env_vars,
-        launcher="torchrun",
     )
     return executor
