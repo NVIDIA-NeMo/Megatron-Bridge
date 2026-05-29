@@ -54,6 +54,45 @@ def _retrieve_tokenized(dataset, num_workers):
         return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
 
 
+def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int, pad_id: int) -> None:
+    """Pad a single data point in place so its sequences are divisible by the requested multiple.
+
+    Pads ``input_ids``/``context_ids`` with ``pad_id`` and ``loss_mask`` with ``0`` (no loss on
+    pad positions). The chat preprocessing path (``_chat_preprocess``) returns ``torch`` tensors
+    rather than plain lists, so values are normalized to lists before concatenating; this avoids a
+    ``TypeError`` from ``tensor + list`` and keeps ``loss_mask`` the same length as ``input_ids`` so
+    that grouped samples do not produce a ragged array in ``fill_packing_strategy``.
+
+    Args:
+        data: A single tokenized example. Mutated in place.
+        max_seq_length: Hard upper bound; sequences longer than this are truncated.
+        max_length_to_pad: Target length to pad up to (a multiple of ``pad_seq_to_mult``).
+        pad_id: Token id used to pad ``input_ids``/``context_ids``.
+    """
+    assert max_seq_length >= max_length_to_pad
+    # loss_mask must be padded too (with 0), otherwise samples that round to the same padded
+    # input_ids length but had different original lengths keep mismatched loss_mask lengths.
+    pad_values = {"input_ids": pad_id, "context_ids": pad_id, "loss_mask": 0}
+    for key, pad_value in pad_values.items():
+        if key not in data:
+            continue
+        val = data[key]
+        # _chat_preprocess returns torch tensors / numpy arrays; normalize to a plain list.
+        val = val.tolist() if hasattr(val, "tolist") else list(val)
+        if len(val) <= max_length_to_pad:
+            # input_ids are truncated by 1 for labels; add 1 extra pad token
+            val = val + [pad_value] * (max_length_to_pad - len(val) + 1)
+        elif len(val) > max_seq_length:
+            logging.info(
+                "Sequence length %d is larger than max_seq_length %d; truncating for packing.",
+                len(val),
+                max_seq_length,
+            )
+            val = val[:max_seq_length]
+        data[key] = val
+    return
+
+
 def tokenize_dataset(
     path: Path,
     tokenizer: MegatronTokenizer,
@@ -120,33 +159,12 @@ def tokenize_dataset(
 
     if pad_seq_to_mult > 1:
 
-        def pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id):
-            """
-            Pad each individual data point to the length of max_length_to_pad.
-            This keeps packed samples divisible by the requested multiple (used for CP/THD).
-            """
-            assert max_seq_length >= max_length_to_pad
-            for key, val in data.items():
-                if key in {"input_ids", "context_ids"}:
-                    if len(val) <= max_length_to_pad:
-                        # input_ids are truncated by 1 for labels; add 1 extra pad token
-                        val = val + [pad_id] * (max_length_to_pad - len(val) + 1)
-                    elif len(val) > max_seq_length:
-                        logging.info(
-                            "Sequence length %d is larger than max_seq_length %d; truncating for packing.",
-                            len(val),
-                            max_seq_length,
-                        )
-                        val = val[:max_seq_length]
-                    data[key] = val
-            return
-
         def ceil_to_nearest(n, m):
             return (n + m - 1) // m * m
 
         for data in dataset:
             max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
-            pre_pad_dataset(data, max_seq_length, max_length_to_pad, pad_id)
+            _pre_pad_data_point(data, max_seq_length, max_length_to_pad, pad_id)
 
     return dataset
 
