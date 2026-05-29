@@ -83,7 +83,7 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int,
             # input_ids are truncated by 1 for labels; add 1 extra pad token
             val = val + [pad_value] * (max_length_to_pad - len(val) + 1)
         elif len(val) > max_seq_length:
-            logging.info(
+            logger.info(
                 "Sequence length %d is larger than max_seq_length %d; truncating for packing.",
                 len(val),
                 max_seq_length,
