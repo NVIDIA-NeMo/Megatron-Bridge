@@ -128,6 +128,7 @@ def gpt_oss_20b_pretrain_config_b300(
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -148,6 +149,7 @@ def gpt_oss_20b_pretrain_config_b300(
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -192,6 +194,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -217,6 +220,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -229,6 +233,7 @@ def gpt_oss_20b_pretrain_config_gb200(
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
@@ -274,6 +279,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     elif precision == "fp8_mx" and config_variant == "v1":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.calculate_per_token_loss = False
         cfg.model.moe_expert_rank_capacity_factor = 2
@@ -296,6 +302,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     elif precision == "fp8_mx" and config_variant == "v2":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 5
         cfg.model.moe_mlp_glu_interleave_size = 32
@@ -308,6 +315,7 @@ def gpt_oss_20b_pretrain_config_gb300(
     elif precision == "fp8_mx" and config_variant == "v3":
         cfg.model.cuda_graph_impl = "local"
         cfg.model.cuda_graph_modules = "full_iteration"
+        cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
         cfg.model.moe_expert_rank_capacity_factor = 7
         cfg.model.sequence_parallel = True
