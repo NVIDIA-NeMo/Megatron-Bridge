@@ -206,6 +206,78 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     _pg_collection: Optional[ProcessGroupCollection] = None
 
+    # ========== Determinism Debug Configuration ==========
+    determinism_debug_enabled: bool = False
+    """Enable within-step two-rerun determinism verification (DeterminismDebugPlugin)."""
+
+    determinism_check_layers: Optional[list[str]] = None
+    """Regex patterns of layer names to check. None = all layers."""
+
+    determinism_layers_to_skip: list[str] = field(default_factory=lambda: [r".*dropout.*", r".*Dropout.*"])
+    """Regex patterns of layer names to skip."""
+
+    determinism_check_backward: bool = True
+    """Track backward activations for cross-run comparison."""
+
+    determinism_check_param_grad: bool = True
+    """Track parameter gradients for cross-run comparison."""
+
+    determinism_check_interval: int = 1
+    """Run cross-run check every N steps."""
+
+    determinism_num_repeats: int = 2
+    """Repeat count per checked step (>=2)."""
+
+    determinism_verbose: bool = False
+    """Print per-layer mismatch logs."""
+
+    determinism_layer_sample_rate: float = 0.05
+    """Fraction of layers to sample for memory efficiency on large models."""
+
+    def _setup_determinism_plugin(self) -> None:
+        """Construct the DeterminismDebugPlugin and register its pre-wrap hook."""
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            from megatron.bridge.training.utils.determinism import (
+                DeterminismConfig,
+                DeterminismDebugPlugin,
+            )
+        except ImportError as e:
+            logger.warning(f"Determinism debug plugin unavailable: {e}")
+            self._determinism_plugin = None
+            return
+        debug_config = DeterminismConfig(
+            enabled=True,
+            check_layers=self.determinism_check_layers,
+            layers_to_skip=self.determinism_layers_to_skip,
+            check_backward=self.determinism_check_backward,
+            check_param_grad=self.determinism_check_param_grad,
+            verbose=self.determinism_verbose,
+            layer_sample_rate=self.determinism_layer_sample_rate,
+        )
+        self._determinism_plugin = DeterminismDebugPlugin(config=debug_config)
+
+        def register_determinism_hooks(models):
+            for model in models:
+                self._determinism_plugin.register_hooks(model)
+            return models
+
+        self.register_pre_wrap_hook(register_determinism_hooks)
+        logger.info("Determinism debug plugin enabled")
+
+    def get_determinism_plugin(self):
+        """Lazily construct and return the DeterminismDebugPlugin, or None."""
+        if self.determinism_debug_enabled and not hasattr(self, "_determinism_plugin"):
+            self._setup_determinism_plugin()
+        return getattr(self, "_determinism_plugin", None)
+
+    def finalize_determinism_debug(self) -> None:
+        """End-of-training: print determinism summary."""
+        plugin = self.get_determinism_plugin()
+        if plugin is not None:
+            plugin.print_summary()
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
 

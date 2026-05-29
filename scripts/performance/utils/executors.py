@@ -181,7 +181,7 @@ def kubeflow_executor(
     wandb_key: str = None,
     hf_token: str = None,
     custom_env_vars: Dict[str, str] = None,
-) -> run.KubeflowExecutor:
+) -> "run.KubeflowExecutor":
     """
     Kubeflow Training Operator executor definition with appropriate cluster params and NeMo container
     params needed for pre-training and fine-tuning experiments on Kubernetes.
