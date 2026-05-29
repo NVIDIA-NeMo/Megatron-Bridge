@@ -11,7 +11,7 @@ For tuning knobs, hardware-specific configs, and benchmark-oriented guidance, se
 - [skills/perf-moe-long-context/SKILL.md](../skills/perf-moe-long-context/SKILL.md)
 - [skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md](../skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md)
 - [skills/perf-moe-vlm-training/SKILL.md](../skills/perf-moe-vlm-training/SKILL.md)
-- [skills/perf-moe-comm-overlap/SKILL.md](../skills/perf-moe-comm-overlap/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md](../skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md)
 
 ## The Three Walls
 
