@@ -1,15 +1,15 @@
 # Evaluation Report
 
-Evaluation of the `mbridge-recipe-recommender` skill before publication through NVSkills-Eval.
+Evaluation of the `nemo-mbridge-mlm-bridge-training` skill before publication through NVSkills-Eval.
 
 This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the skill. The goal is to document whether the skill is safe, discoverable, effective, and useful for agents before it is published for broader workflow use.
 
 ## Evaluation Summary
 
-- Skill: `mbridge-recipe-recommender`
+- Skill: `nemo-mbridge-mlm-bridge-training`
 - Evaluation date: 2026-05-28
 - NVSkills-Eval profile: `external`
-- Overall verdict: FAIL
+- Overall verdict: PASS
 - Tier 3 live agent evaluation: not available in this report
 
 ## Agents Used
@@ -40,26 +40,25 @@ Tier 3 dimension rollup was not available in this report.
 
 ## Tier 1: Static Validation Summary
 
-Tier 1 validation reported findings. NVSkills-Eval ran 9 checks and found 14 total findings.
+Tier 1 validation passed with observations. NVSkills-Eval ran 9 checks and found 12 total findings.
 
 Top findings:
 
-- MEDIUM QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.author' (`skills/mbridge-recipe-recommender/SKILL.md`)
-- MEDIUM QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/mbridge-recipe-recommender/SKILL.md`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/mbridge-recipe-recommender/SKILL.md`)
-- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/mbridge-recipe-recommender/SKILL.md`)
-- MEDIUM SCHEMA/author_missing: Author not specified in metadata (`skills/mbridge-recipe-recommender/SKILL.md`)
+- MEDIUM QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.author' (`skills/nemo-mbridge-mlm-bridge-training/SKILL.md`)
+- MEDIUM QUALITY/quality_correctness: SKILL_SPEC recommended field missing: 'metadata.tags' (`skills/nemo-mbridge-mlm-bridge-training/SKILL.md`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Instructions' (`skills/nemo-mbridge-mlm-bridge-training/SKILL.md`)
+- MEDIUM SCHEMA/body_recommended_section: Missing recommended section: '## Examples' (`skills/nemo-mbridge-mlm-bridge-training/SKILL.md`)
+- MEDIUM SCHEMA/author_missing: Author not specified in metadata (`skills/nemo-mbridge-mlm-bridge-training/SKILL.md`)
 
 ## Tier 2: Deduplication Summary
 
-Tier 2 validation reported findings. NVSkills-Eval ran 2 checks and found 1 total findings.
+Tier 2 validation passed. NVSkills-Eval ran 2 checks and found 0 total findings.
 
-Top findings:
+Notable observations:
 
-- HIGH DUPLICATE/duplicate: Duplicate content found within SKILL.md:
-  "### Performance recipes (throughput benchmarks)" in SKILL.md (lines 39-55)
-  vs "## Performance Recipe Index" in SKILL.md (lines 207-216) (`SKILL.md:39`)
+- Context Deduplication: Collected 1 file(s)
+- Inter-Skill Deduplication: Parsed skill 'nemo-mbridge-mlm-bridge-training': 145 char description
 
 ## Publication Recommendation
 
-The skill should be reviewed before NVSkills-Eval publication. Skill owners should address the findings above and rerun NVSkills-Eval to refresh this benchmark.
+The skill is suitable to proceed toward NVSkills-Eval publication based on this benchmark. Skill owners should keep this file with the skill and refresh it when the evaluation dataset, skill behavior, or target agents materially change.
