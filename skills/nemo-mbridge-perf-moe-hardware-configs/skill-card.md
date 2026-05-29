@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers seeking hardware-specific MoE training configurations, throughput estimates, and parallelism patterns for NVIDIA GPU platforms (H100, B200, GB200, GB300). <br>
+Developers and performance engineers selecting optimized Mixture-of-Experts training configurations and parallelism strategies for specific NVIDIA hardware platforms (H100, B200, GB200, GB300) and model families (DSV3, Qwen3, Qwen3-Next). <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,19 +19,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [MoE Optimization Guide](docs/training/moe-optimization.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Performance Summary](docs/performance-summary.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Format:** [Markdown with tables and code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
-
-## Evaluation Tasks: <br>
-NVSkills-Eval 3-Tier evaluation with external profile. Tier 1 static validation: 9 checks, 12 findings (passed with observations). Tier 2 deduplication: 2 checks, 0 findings (passed). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -44,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-bb8cb7d6 (source: git SHA, committed 2026-05-28) <br>
+a2403698 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

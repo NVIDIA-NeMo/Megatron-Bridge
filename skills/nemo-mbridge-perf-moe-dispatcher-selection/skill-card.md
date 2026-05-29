@@ -1,5 +1,5 @@
 ## Description: <br>
-Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. <br>
+Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage, summarizing patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers selecting or debugging MoE token dispatchers for large-scale distributed training on NVIDIA GPU systems. <br>
+Developers and engineers selecting MoE token dispatchers for optimal GPU training performance across NVIDIA hardware platforms (H100, B200, GB200, GB300). <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,19 +19,16 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [MoE Optimization Documentation](docs/training/moe-optimization.md) <br>
+- [MoE Dispatcher Selection Guide (SKILL.md)](skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md) <br>
+- [Dispatcher Recommendations (card.yaml)](skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Type(s):** [Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
-
-## Evaluation Tasks: <br>
-NVSkills-Eval 3-Tier Evaluation with external profile. Tier 1 static validation (9 checks), Tier 2 deduplication (2 checks). Tier 3 live agent evaluation not available. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -44,7 +41,7 @@ Reported benchmark dimensions: <br>
 
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-gbb8cb7d6 (source: git tag) <br>
+a2403698 (source: git SHA, committed 2026-05-28) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

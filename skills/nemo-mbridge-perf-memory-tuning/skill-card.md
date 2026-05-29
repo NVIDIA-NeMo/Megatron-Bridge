@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers diagnosing and resolving GPU out-of-memory errors during large language model training with Megatron Bridge. <br>
+Developers and engineers diagnosing GPU out-of-memory errors during distributed LLM training with Megatron Bridge, applying memory reduction techniques such as expandable segments, parallelism resizing, and activation recompute to eliminate OOM failures and optimize GPU memory utilization. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,19 +19,19 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Parallelisms Documentation](docs/parallelisms.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Skill Technical Card](skills/nemo-mbridge-perf-memory-tuning/card.yaml) <br>
+- [Megatron Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Parallelisms Documentation](docs/parallelisms.md) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Format:** [Markdown with inline bash and Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Tasks: <br>
-Evaluated via NVSkills-Eval 3-Tier framework (profile: external): Tier 1 static validation (9 checks, passed with observations), Tier 2 deduplication (2 checks, passed). Tier 3 live agent evaluation not available. <br>
+Evaluated via NVSkills-Eval 3-Tier framework with external profile. Tier 1 static validation (9 checks), Tier 2 deduplication (2 checks). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -43,8 +43,15 @@ Reported benchmark dimensions: <br>
 
 
 
+## Evaluation Results: <br>
+| Tier | Checks | Findings | Status |
+|---|---:|---:|---|
+| Tier 1 Static Validation | 9 | 13 | Findings reported |
+| Tier 2 Deduplication | 2 | 0 | Passed |
+| Tier 3 Live Agent | — | — | Not available |
+
 ## Skill Version(s): <br>
-v0.2.0rc6-1465-gbb8cb7d6 (source: git describe) <br>
+v0.2.0rc6-1468-ga2403698 (source: git describe) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
