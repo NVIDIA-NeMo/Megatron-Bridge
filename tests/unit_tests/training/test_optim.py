@@ -16,9 +16,11 @@
 
 from unittest.mock import MagicMock, patch
 
+import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
 from megatron.bridge.training.config import SchedulerConfig
+from megatron.bridge.training.optim import sync_hybrid_device_optimizer_fp32_master_copies
 
 
 class TestSetupOptimizerMuP:
@@ -146,3 +148,132 @@ class TestSetupOptimizerMuP:
         )
 
         mock_get_model_config.assert_called_once_with(model1)
+
+
+class _FakeHDO:
+    """Stand-in for HybridDeviceOptimizer used to satisfy the isinstance check."""
+
+
+class _FakeParamRange:
+    def __init__(self, start: int, end: int):
+        self.start = start
+        self.end = end
+
+
+class _FakeDistribOpt:
+    """Stand-in for DistributedOptimizer wrapping an HDO-like inner optimizer."""
+
+    def __init__(self, *, model_param: torch.Tensor, shard_main_param: torch.Tensor | None, inner: object):
+        self.optimizer = inner
+        self.model_float16_groups = [[model_param]]
+        self.shard_fp32_from_float16_groups = [[shard_main_param]]
+        self._numel = model_param.numel()
+
+    def _get_model_param_range_map(self, _param: torch.Tensor) -> dict:
+        return {"param": _FakeParamRange(0, self._numel)}
+
+
+class _PlainDistribOpt:
+    """Stand-in for a DistributedOptimizer that does not wrap an HDO."""
+
+    def __init__(self) -> None:
+        self.optimizer = object()
+
+
+class _ChainedOpt:
+    """Stand-in for a ChainedOptimizer exposing the ``chained_optimizers`` attribute."""
+
+    def __init__(self, sub_opts: list[object]) -> None:
+        self.chained_optimizers = sub_opts
+
+
+class TestSyncHybridDeviceOptimizerFp32MasterCopies:
+    """Tests for the post-load FP32 master sync workaround helper."""
+
+    def test_none_optimizer_is_noop(self):
+        """A ``None`` optimizer is a no-op and returns ``False``."""
+        assert sync_hybrid_device_optimizer_fp32_master_copies(None) is False
+
+    def test_walks_all_three_fp32_levels(self):
+        """The helper refreshes level-1 shard, level-2 CPU clone, and level-3 working copy."""
+        model_param = torch.full((4,), 1.0, dtype=torch.bfloat16)
+        shard_main_param = torch.zeros(4, dtype=torch.float32)
+        cpu_clone = torch.zeros(4, dtype=torch.float32)
+        fp32_working = torch.zeros(4, dtype=torch.float32)
+
+        inner = _FakeHDO()
+        inner.gpu_params_map_cpu_copy = {model_param: cpu_clone}
+
+        update_calls: list[bool] = []
+
+        def _fake_update_fp32() -> None:
+            update_calls.append(True)
+            fp32_working.data.copy_(model_param.data)
+
+        inner.update_fp32_param_by_new_param = _fake_update_fp32
+
+        distrib_opt = _FakeDistribOpt(
+            model_param=model_param,
+            shard_main_param=shard_main_param,
+            inner=inner,
+        )
+
+        with patch(
+            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
+            _FakeHDO,
+        ):
+            synced = sync_hybrid_device_optimizer_fp32_master_copies(distrib_opt)
+
+        ones = torch.ones(4, dtype=torch.float32)
+        assert synced is True
+        assert torch.allclose(shard_main_param, ones)
+        assert torch.allclose(cpu_clone, ones)
+        assert update_calls == [True]
+        assert torch.allclose(fp32_working, ones)
+
+    def test_no_op_when_inner_is_not_hdo(self):
+        """A DistributedOptimizer that does not wrap an HDO is left untouched."""
+        with patch(
+            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
+            _FakeHDO,
+        ):
+            assert sync_hybrid_device_optimizer_fp32_master_copies(_PlainDistribOpt()) is False
+
+    def test_chained_optimizer_walks_each_sub_opt(self):
+        """A ChainedOptimizer dispatches to every sub-optimizer, syncing HDO ones."""
+        model_param = torch.full((2,), 7.0, dtype=torch.bfloat16)
+        shard_main_param = torch.zeros(2, dtype=torch.float32)
+
+        # No level-2/level-3 attrs: helper should still sync level 1 and return True.
+        hdo_distrib_opt = _FakeDistribOpt(
+            model_param=model_param,
+            shard_main_param=shard_main_param,
+            inner=_FakeHDO(),
+        )
+        chained = _ChainedOpt([_PlainDistribOpt(), hdo_distrib_opt])
+
+        with patch(
+            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
+            _FakeHDO,
+        ):
+            synced = sync_hybrid_device_optimizer_fp32_master_copies(chained)
+
+        assert synced is True
+        assert torch.allclose(shard_main_param, torch.full((2,), 7.0, dtype=torch.float32))
+
+    def test_skips_none_shard_main_param(self):
+        """Level-1 entries with a ``None`` shard_main_param are skipped without raising."""
+        model_param = torch.full((4,), 3.0, dtype=torch.bfloat16)
+        distrib_opt = _FakeDistribOpt(
+            model_param=model_param,
+            shard_main_param=None,
+            inner=_FakeHDO(),
+        )
+
+        with patch(
+            "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
+            _FakeHDO,
+        ):
+            synced = sync_hybrid_device_optimizer_fp32_master_copies(distrib_opt)
+
+        assert synced is True
