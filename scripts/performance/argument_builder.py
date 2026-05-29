@@ -46,16 +46,22 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
             env_var_name = normalize_arg_name(long_arg_name)
             env_value = os.getenv(env_var_name)
 
-            if env_value is not None:
+            if env_value:
+                # Truthy check rather than `is not None`: an empty env value
+                # would emit `--flag ""`, which the consumer shell collapses
+                # via word-splitting in `$(python -m argument_builder)` —
+                # argparse then sees `--flag` with no following value and
+                # errors out (e.g. `argument -a/--account: expected one
+                # argument`). Treating empty env vars as "unset" matches
+                # caller intent.
                 if isinstance(action, argparse._StoreTrueAction):
                     is_true = env_value.lower() in ("true", "1", "yes", "on")
                     if is_true:
                         cli_arg_string.append(long_arg_name)
                     continue
                 elif action.type is list_of_strings:
-                    if env_value:
-                        cli_arg_string.append(long_arg_name)
-                        cli_arg_string.append(env_value)
+                    cli_arg_string.append(long_arg_name)
+                    cli_arg_string.append(env_value)
                     continue
                 else:
                     cli_arg_string.append(long_arg_name)
