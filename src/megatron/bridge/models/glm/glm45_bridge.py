@@ -303,7 +303,13 @@ class GLM45Bridge(MegatronModelBridge):
 
     def _hf_source_and_keys(self):
         """Return HF state source and cached key order for expert-mapping helpers."""
-        hf_source = self.hf_pretrained.state.source
+        hf_state = getattr(self.hf_pretrained, "state", None)
+        hf_source = getattr(hf_state, "source", None)
+        if hf_source is None:
+            self._cached_hf_state_source = None
+            self._cached_hf_keys = []
+            return None, self._cached_hf_keys
+
         if getattr(self, "_cached_hf_state_source", None) is not hf_source:
             self._cached_hf_state_source = hf_source
             self._cached_hf_keys = hf_source.get_all_keys()

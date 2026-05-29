@@ -17,6 +17,7 @@ from unittest.mock import Mock
 import pytest
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.param_mapping import FusedExpertMapping, FusedGatedExpertMapping
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -336,6 +337,17 @@ class TestGLM45VBridgeMappingRegistry:
         # Should contain expert mappings
         has_experts = any("experts" in name for name in mapping_names)
         assert has_experts, "Should contain MoE expert mappings"
+
+    def test_mapping_registry_config_only_uses_fused_expert_mappings(self, mock_hf_config):
+        """Test config-only export path handles missing HF state and uses fused GLM-4.5V expert mappings."""
+        bridge = GLM45VBridge()
+        bridge.hf_pretrained = mock_hf_config
+        bridge.hf_config = mock_hf_config
+
+        registry = bridge.mapping_registry()
+
+        assert any(isinstance(mapping, FusedGatedExpertMapping) for mapping in registry.mappings)
+        assert any(isinstance(mapping, FusedExpertMapping) for mapping in registry.mappings)
 
     def test_mapping_registry_shared_expert_mappings(self, glm_45v_bridge):
         """Test mapping_registry contains shared expert parameter mappings."""

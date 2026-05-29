@@ -14,9 +14,11 @@
 
 import pytest
 
+import megatron.bridge.recipes as recipes
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.diffusion.recipes.wan.wan import (
+    wan_1_3B_pretrain_config,
     wan_1_3b_pretrain_config,
     wan_1_3b_sft_config,
     wan_1_3b_text2image_pretrain_config,
@@ -47,6 +49,10 @@ class TestWan1_3BPretrainConfig:
         assert hasattr(config, "ddp")
         assert hasattr(config, "logger")
         assert hasattr(config, "checkpoint")
+
+    def test_legacy_pretrain_recipe_name_is_exported(self):
+        assert wan_1_3B_pretrain_config is wan_1_3b_pretrain_config
+        assert recipes.wan_1_3B_pretrain_config is wan_1_3b_pretrain_config
 
     def test_pretrain_config_directory_structure(self):
         config = wan_1_3b_pretrain_config()

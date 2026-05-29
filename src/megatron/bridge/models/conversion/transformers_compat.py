@@ -14,6 +14,9 @@
 
 """Compatibility utilities for HuggingFace transformers 5.0+ configs."""
 
+from collections.abc import Iterable, Mapping
+
+import transformers.modeling_utils as _hf_modeling_utils
 import transformers.utils.import_utils as _hf_import_utils
 
 
@@ -22,6 +25,37 @@ import transformers.utils.import_utils as _hf_import_utils
 # torch.fx has been stable since PyTorch 1.10, so always return True.
 if not hasattr(_hf_import_utils, "is_torch_fx_available"):
     _hf_import_utils.is_torch_fx_available = lambda: True
+
+
+def _iter_tied_weight_keys(tied: object) -> Iterable[str]:
+    """Yield tied weight key strings from HF's historical key container formats."""
+    if isinstance(tied, str):
+        yield tied
+        return
+
+    if isinstance(tied, Mapping):
+        items = tied.keys()
+    else:
+        try:
+            items = iter(tied)
+        except TypeError:
+            return
+
+    for item in items:
+        yield from _iter_tied_weight_keys(item)
+
+
+def _get_tied_weight_keys_compat(module) -> list[str]:
+    """Return tied weight keys while tolerating nested list formats from custom models."""
+    tied_weight_keys: list[str] = []
+    for name, submodule in module.named_modules():
+        tied = getattr(submodule, "_tied_weights_keys", {}) or {}
+        tied_weight_keys.extend(f"{name}.{key}" if name else key for key in _iter_tied_weight_keys(tied))
+    return tied_weight_keys
+
+
+if hasattr(_hf_modeling_utils, "_get_tied_weight_keys"):
+    _hf_modeling_utils._get_tied_weight_keys = _get_tied_weight_keys_compat
 
 
 def rope_theta_from_hf(config) -> float:

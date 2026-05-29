@@ -23,6 +23,7 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import FusedExpertMapping, FusedGatedExpertMapping
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -230,6 +231,17 @@ class TestGLM45Bridge:
         # Check LM head mapping
         assert "output_layer.weight" in mapping_dict
         assert mapping_dict["output_layer.weight"] == "lm_head.weight"
+
+    def test_mapping_registry_config_only_uses_fused_expert_mappings(self, mock_pretrained_355b):
+        """Test config-only export path handles missing HF state and uses fused GLM expert mappings."""
+        bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b.config
+        bridge.hf_config = mock_pretrained_355b.config
+
+        registry = bridge.mapping_registry()
+
+        assert any(isinstance(mapping, FusedGatedExpertMapping) for mapping in registry.mappings)
+        assert any(isinstance(mapping, FusedExpertMapping) for mapping in registry.mappings)
 
     def test_dtype_mapping_fp16(self, glm45_355b_config):
         """Test dtype mapping for FP16 models."""

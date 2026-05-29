@@ -204,7 +204,13 @@ class GLM45VBridge(MegatronModelBridge):
 
     def _hf_source_and_keys(self):
         """Return HF state source and cached key order for expert-mapping helpers."""
-        hf_source = self.hf_pretrained.state.source
+        hf_state = getattr(self.hf_pretrained, "state", None)
+        hf_source = getattr(hf_state, "source", None)
+        if hf_source is None:
+            self._cached_hf_state_source = None
+            self._cached_hf_keys = []
+            return None, self._cached_hf_keys
+
         if getattr(self, "_cached_hf_state_source", None) is not hf_source:
             self._cached_hf_state_source = hf_source
             self._cached_hf_keys = hf_source.get_all_keys()
@@ -221,7 +227,9 @@ class GLM45VBridge(MegatronModelBridge):
         if hf_source is not None:
             return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
 
-        return False
+        # Config-only export has no HF key source to inspect. GLM-4.5V HF experts
+        # use fused gate_up_proj/down_proj tensors, so keep the export mapping fused.
+        return True
 
     def _hf_expert_suffix(self, base_name: str) -> str:
         hf_source, hf_keys = self._hf_source_and_keys()
@@ -231,4 +239,6 @@ class GLM45VBridge(MegatronModelBridge):
         if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
             return ".weight"
 
+        # Config-only export has no HF key source to inspect. GLM-4.5V fused
+        # expert tensors are bare Parameters, so they have no .weight suffix.
         return ""
