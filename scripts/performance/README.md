@@ -203,6 +203,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--kubeflow_namespace`: Kubernetes namespace for the Kubeflow TrainJob. Setting this routes the experiment through the Kubeflow executor instead of Slurm.
 - `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
 - `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
+- `--kubeflow_workdir_local_path`: Local directory whose contents nemo-run's `KubeflowExecutor.package()` rsyncs into the workdir PVC via a temporary alpine pod before launch. Used to overlay a `--mbridge-ref` checkout onto `/opt/Megatron-Bridge` in the trainer container without rebuilding the image.
 - `--kubeflow_image_pull_secrets`: Comma-separated list of Kubernetes image pull secret names.
 - `--kubeflow_volumes_json`: JSON-encoded list of Kubernetes `Volume` dicts attached to the training pod (PVC, emptyDir, hostPath).
 - `--kubeflow_volume_mounts_json`: JSON-encoded list of Kubernetes `VolumeMount` dicts applied to the training container (must match a name in `--kubeflow_volumes_json`).

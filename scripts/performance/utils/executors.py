@@ -183,6 +183,7 @@ def kubeflow_executor(
     volume_mounts: List[Dict[str, Any]] = None,
     workdir_pvc: Optional[str] = None,
     workdir_pvc_path: str = "/nemo_run",
+    workdir_local_path: Optional[str] = None,
     image_pull_secrets: List[str] = None,
     wandb_key: str = None,
     hf_token: str = None,
@@ -215,6 +216,11 @@ def kubeflow_executor(
         volume_mounts: Container volume mounts.
         workdir_pvc: PVC to sync the run workdir into.
         workdir_pvc_path: Mount path for the workdir PVC inside the container.
+        workdir_local_path: Local directory whose contents nemo-run's
+            ``KubeflowExecutor.package()`` rsyncs into the workdir PVC via
+            a temporary alpine pod before launch. Used to overlay a
+            ``--mbridge-ref`` checkout onto the trainer's
+            ``/opt/Megatron-Bridge`` without rebuilding the image.
         image_pull_secrets: Image pull secret names.
         wandb_key: WANDB_API_KEY to inject as a flat env var (use ``env_list`` for
             ``secretKeyRef`` instead in production).
@@ -250,6 +256,7 @@ def kubeflow_executor(
         volume_mounts=volume_mounts or [],
         workdir_pvc=workdir_pvc,
         workdir_pvc_path=workdir_pvc_path,
+        workdir_local_path=workdir_local_path,
         image_pull_secrets=image_pull_secrets or [],
         env_vars=env_vars,
         env_list=env_list or [],

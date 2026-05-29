@@ -528,6 +528,16 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_workdir_local_path",
+        type=str,
+        help="Local directory whose contents nemo-run's KubeflowExecutor.package() "
+        "rsyncs into the workdir PVC via a temporary alpine pod before launch. "
+        "Used to overlay a --mbridge-ref checkout onto /opt/Megatron-Bridge in the "
+        "trainer container without rebuilding the image.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_image_pull_secrets",
         type=list_of_strings,
         help="Comma-separated list of Kubernetes image pull secret names.",
