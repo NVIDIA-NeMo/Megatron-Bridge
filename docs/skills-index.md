@@ -34,12 +34,13 @@ skills/nemo-rl-e2e-testing/SKILL
 :caption: Performance Techniques
 :maxdepth: 1
 
+
 skills/nemo-mbridge-perf-parallelism-strategies/SKILL
 skills/nemo-mbridge-perf-cuda-graphs/SKILL
 skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL
-skills/perf-megatron-fsdp/SKILL
-skills/perf-sequence-packing/SKILL
-skills/perf-hierarchical-context-parallel/SKILL
+skills/nemo-mbridge-perf-megatron-fsdp/SKILL
+skills/nemo-mbridge-perf-sequence-packing/SKILL
+skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL
 skills/perf-expert-parallel-overlap/SKILL
 skills/perf-moe-comm-overlap/SKILL
 skills/perf-activation-recompute/SKILL
