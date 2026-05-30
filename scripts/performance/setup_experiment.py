@@ -63,7 +63,25 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 
 
 def _filter_run_script_args(argv: List[str]) -> List[str]:
-    """Drop launcher-only args before forwarding argv to the rank-local script."""
+    """Drop launcher-only args before forwarding argv to the rank-local script.
+
+    The launcher (this script) and the rank-local entrypoint (run_recipe.py /
+    run_script.py) share one parser, but some args are meaningful only to the
+    launcher and must not reach the rank-local script:
+
+    * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
+      carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
+      shell in the generated launch command, corrupting argv and leaking tokens
+      into run_recipe.py's Hydra override parser.
+
+    All of these take a value, passed either as ``--flag value`` (two tokens) or
+    ``--flag=value`` (one token).
+    """
+
+    def _is_launcher_only(flag: str) -> bool:
+        return flag == "--additional_slurm_params" or flag.startswith("--kubeflow_")
+
     filtered_args = []
     skip_next = False
 
@@ -71,10 +89,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         if skip_next:
             skip_next = False
             continue
-        if arg == "--additional_slurm_params":
-            skip_next = True
-            continue
-        if arg.startswith("--additional_slurm_params="):
+        if _is_launcher_only(arg.split("=", 1)[0]):
+            skip_next = "=" not in arg
             continue
         filtered_args.append(arg)
 
