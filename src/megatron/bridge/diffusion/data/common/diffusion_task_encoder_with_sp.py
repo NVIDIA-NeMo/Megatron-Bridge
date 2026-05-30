@@ -25,6 +25,7 @@ from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSamp
 from megatron.bridge.diffusion.data.common.sequence_packing_utils import first_fit_decreasing
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.

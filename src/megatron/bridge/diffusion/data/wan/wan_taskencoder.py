@@ -30,6 +30,7 @@ from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import
 from megatron.bridge.diffusion.models.wan.utils import grid_sizes_calculation, patchify
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.

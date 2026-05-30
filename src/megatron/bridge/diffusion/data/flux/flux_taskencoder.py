@@ -29,6 +29,7 @@ from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import
 )
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.
