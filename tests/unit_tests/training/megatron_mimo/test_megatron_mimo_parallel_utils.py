@@ -1,9 +1,14 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 """Unit tests for MegatronMIMO parallel utilities."""
 
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
+
+
+MODULE = "megatron.bridge.training.megatron_mimo_parallel_utils"
 
 
 class TestIsCurrentRankInGrid:
@@ -281,3 +286,154 @@ class TestZeroGradBufferForMultimodule:
         zero_grad_buffer_for_multimodule(module_to_grid_tuple)
 
         mock_module.zero_grad_buffer.assert_not_called()
+
+
+def _build_two_module_setup(llm_dp, encoder_dp, *, llm_rank_offset=4, llm_size=4):
+    """Build an encoder + language MIMO setup for finalize_model_grads tests.
+
+    The same grid objects are shared between ``module_to_grid_map`` and
+    ``module_to_grid_tuple`` because the function matches modules to grids by
+    identity (``mg is grid``).
+    """
+    import megatron.bridge.training.megatron_mimo_parallel_utils as mpu
+
+    llm_key = mpu.MIMO_LANGUAGE_MODULE_KEY
+    encoder_key = "encoder"
+
+    llm_grid = MagicMock(name="llm_grid")
+    llm_grid.rank_offset = llm_rank_offset
+    llm_grid.size = llm_size
+    encoder_grid = MagicMock(name="encoder_grid")
+
+    llm_module = MagicMock(name="llm_module")
+    encoder_module = MagicMock(name="encoder_module")
+    llm_pg = MagicMock(name="llm_pg")
+    encoder_pg = MagicMock(name="encoder_pg")
+
+    infra = MagicMock()
+    infra.module_to_grid_map = {encoder_key: encoder_grid, llm_key: llm_grid}
+    infra.pg_collections = {encoder_key: encoder_pg, llm_key: llm_pg}
+
+    # Encoder listed first to verify per-module routing is independent of order.
+    module_to_grid_tuple = [(encoder_module, encoder_grid), (llm_module, llm_grid)]
+
+    dp_by_grid = {id(llm_grid): llm_dp, id(encoder_grid): encoder_dp}
+
+    return types.SimpleNamespace(
+        infra=infra,
+        module_to_grid_tuple=module_to_grid_tuple,
+        llm_grid=llm_grid,
+        encoder_grid=encoder_grid,
+        llm_module=llm_module,
+        encoder_module=encoder_module,
+        llm_pg=llm_pg,
+        encoder_pg=encoder_pg,
+        dp_by_grid=dp_by_grid,
+    )
+
+
+class TestFinalizeModelGradsMultimodule:
+    """Test cases for finalize_model_grads_multimodule().
+
+    The function selects its gradient-normalization branch on
+    ``num_tokens is not None``, which is exactly ``calculate_per_token_loss``:
+    Megatron-Core's schedule passes ``total_num_tokens if
+    config.calculate_per_token_loss else None`` to ``finalize_model_grads_func``.
+    These tests pin that equivalence so the branch keying stays correct.
+    """
+
+    @patch(f"{MODULE}.dist")
+    @patch(f"{MODULE}.is_current_rank_in_grid")
+    @patch(f"{MODULE}._get_dp_size_from_grid")
+    @patch(f"{MODULE}._finalize_model_grads")
+    def test_per_token_loss_path(self, mock_finalize, mock_dp, mock_in_grid, mock_dist):
+        """num_tokens is not None (calculate_per_token_loss=True) path.
+
+        Only the LLM receives num_tokens (so MCore can PP-broadcast + DP-all-reduce
+        the per-rank counts); encoder grads are normalized manually by 1/total with
+        no DP compensation factor.
+        """
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
+        mock_in_grid.return_value = True
+        mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+
+        num_tokens = torch.tensor(100)
+
+        finalize_model_grads_multimodule(
+            [MagicMock()],  # model arg is ignored
+            num_tokens,
+            infra=s.infra,
+            module_to_grid_tuple=s.module_to_grid_tuple,
+        )
+
+        # Phase 1: LLM finalized with num_tokens, encoder with num_tokens=None.
+        finalize_by_module = {call.args[0][0]: call.kwargs for call in mock_finalize.call_args_list}
+        assert finalize_by_module[s.llm_module]["num_tokens"] is num_tokens
+        assert finalize_by_module[s.llm_module]["pg_collection"] is s.llm_pg
+        assert finalize_by_module[s.encoder_module]["num_tokens"] is None
+        assert finalize_by_module[s.encoder_module]["pg_collection"] is s.encoder_pg
+
+        # Phase 2: broadcast the global total from the LLM's last rank (4 + 4 - 1).
+        mock_dist.broadcast.assert_called_once()
+        assert mock_dist.broadcast.call_args.args[0] is num_tokens
+        assert mock_dist.broadcast.call_args.kwargs["src"] == 7
+
+        # Phase 3: encoder scaled by 1/total only; LLM already normalized by DDP.
+        s.encoder_module.scale_gradients.assert_called_once_with(1.0 / 100)
+        s.llm_module.scale_gradients.assert_not_called()
+
+    @patch(f"{MODULE}.dist")
+    @patch(f"{MODULE}.is_current_rank_in_grid")
+    @patch(f"{MODULE}._get_dp_size_from_grid")
+    @patch(f"{MODULE}._finalize_model_grads")
+    def test_non_per_token_loss_path_applies_dp_compensation(self, mock_finalize, mock_dp, mock_in_grid, mock_dist):
+        """num_tokens is None (calculate_per_token_loss=False) path.
+
+        Every module is finalized with num_tokens=None, no broadcast happens, and
+        modules whose DP differs from the LLM's are rescaled by module_dp/llm_dp.
+        """
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
+        mock_in_grid.return_value = True
+        mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+
+        finalize_model_grads_multimodule(
+            [MagicMock()],
+            None,
+            infra=s.infra,
+            module_to_grid_tuple=s.module_to_grid_tuple,
+        )
+
+        # All modules finalized without num_tokens (DDP does a plain mean).
+        for call in mock_finalize.call_args_list:
+            assert call.kwargs["num_tokens"] is None
+        assert mock_dist.broadcast.call_count == 0
+
+        # encoder_dp (4) != llm_dp (2) -> scale by 4/2; LLM matches llm_dp -> no scale.
+        s.encoder_module.scale_gradients.assert_called_once_with(2.0)
+        s.llm_module.scale_gradients.assert_not_called()
+
+    @patch(f"{MODULE}.dist")
+    @patch(f"{MODULE}.is_current_rank_in_grid")
+    @patch(f"{MODULE}._get_dp_size_from_grid")
+    @patch(f"{MODULE}._finalize_model_grads")
+    def test_per_token_loss_path_skips_scaling_when_zero_tokens(self, mock_finalize, mock_dp, mock_in_grid, mock_dist):
+        """Zero global tokens must not trigger a divide-by-zero in encoder scaling."""
+        from megatron.bridge.training.megatron_mimo_parallel_utils import finalize_model_grads_multimodule
+
+        s = _build_two_module_setup(llm_dp=2, encoder_dp=4)
+        mock_in_grid.return_value = True
+        mock_dp.side_effect = lambda grid: s.dp_by_grid[id(grid)]
+
+        finalize_model_grads_multimodule(
+            [MagicMock()],
+            torch.tensor(0),
+            infra=s.infra,
+            module_to_grid_tuple=s.module_to_grid_tuple,
+        )
+
+        s.encoder_module.scale_gradients.assert_not_called()
+        s.llm_module.scale_gradients.assert_not_called()
