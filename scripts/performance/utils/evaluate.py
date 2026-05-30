@@ -75,13 +75,17 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     metrics: Dict[str, List] = {k: [] for k in patterns}
     all_lines = []
     handles = []
-    # SLURM srun writes one log per rank plus an aggregated all-ranks file;
-    # reading both would double-count every metric, so prefer the per-rank logs
-    # and drop the aggregate. On Kubeflow the only capture nemo-run produces is
-    # the all-ranks aggregate, so fall back to it instead of reading nothing.
+    # Prefer the aggregated all-ranks capture when present: it already contains
+    # every rank (rank-0 memory line + rank-last "iteration | lm loss" line), and
+    # the per-step dict + first/max scalar reductions below make any duplication
+    # harmless. This is robust on Kubeflow, where nemo-run's log glob can also
+    # surface a stray/empty per-rank log alongside the all-ranks file — reading
+    # the per-rank one yielded an empty golden for longer-running recipes
+    # (e.g. nemotron). Fall back to whatever logs exist when no all-ranks file is
+    # present (e.g. some SLURM layouts that only write per-rank logs).
     candidate_paths = list(set(log_paths))
-    per_rank_paths = [p for p in candidate_paths if "allranks" not in p]
-    chosen_paths = per_rank_paths or candidate_paths
+    allranks_paths = [p for p in candidate_paths if "allranks" in p]
+    chosen_paths = allranks_paths or candidate_paths
     for log_path in chosen_paths:
         logger.info(f"Reading log file: {log_path}")
         handles.append(open(log_path))
