@@ -32,6 +32,14 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.ernie import (
+    Ernie45Bridge,
+)
+from megatron.bridge.models.ernie_vl import (
+    Ernie45VLBridge,
+    Ernie45VLModel,
+    Ernie45VLModelProvider,
+)
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
     FalconH1ModelProvider,
@@ -173,6 +181,12 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    # ERNIE Text-Only Models
+    "Ernie45Bridge",
+    # ERNIE VL Models
+    "Ernie45VLBridge",
+    "Ernie45VLModel",
+    "Ernie45VLModelProvider",
     "FalconH1Bridge",
     "FalconH1ModelProvider",
     "Gemma3ModelProvider",

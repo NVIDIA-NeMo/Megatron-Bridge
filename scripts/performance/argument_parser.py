@@ -889,6 +889,19 @@ def _testing_args(parser):
         default=False,
     )
     testing_args.add_argument(
+        "--retry_on_testing_failure",
+        action="store_true",
+        help=(
+            "If true, when the post-training convergence/perf check fails, the "
+            "experiment is retrained from scratch and re-tested in the next "
+            "outer-loop iteration (bounded by --max_retries). Off by default: "
+            "a single failed test surfaces immediately as AssertionError, "
+            "which is the right behavior for CI."
+        ),
+        required=False,
+        default=False,
+    )
+    testing_args.add_argument(
         "--golden_values_path",
         type=str,
         help="Path to golden values file",

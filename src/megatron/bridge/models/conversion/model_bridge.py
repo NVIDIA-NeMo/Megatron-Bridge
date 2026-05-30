@@ -281,8 +281,8 @@ def _megatron_local_name_to_global(
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
     # For now adapters are not sharded across EP ranks.
-    is_grouped_expert_param = ".mlp.experts.linear_fc" in param_name
-    is_local_expert_param = ".mlp.experts.local_experts." in param_name
+    is_grouped_expert_param = ".experts.linear_fc" in param_name
+    is_local_expert_param = ".experts.local_experts." in param_name
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
@@ -315,6 +315,7 @@ def _megatron_local_name_to_global(
             param_name = _update_grouped_expert_number(param_name, "weight")
         elif re.search(r"\.bias\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "bias")
+
     return param_name
 
 

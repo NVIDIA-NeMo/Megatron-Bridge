@@ -290,6 +290,7 @@ def main(
     performance_params: Dict[str, Any],
     memory_params: Dict[str, Any],
     max_retries: int,
+    retry_on_testing_failure: bool,
     kubeflow_namespace: str,
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
@@ -666,9 +667,28 @@ def main(
             logger.removeHandler(_dup_handler)
             _dup_file.close()
 
-            if not is_long_convergence_run:
+            if not retry_on_testing_failure:
+                # Train-then-test: each experiment runs the convergence/perf
+                # check exactly once. Force-exit the outer loop here — the
+                # post-loop block raises AssertionError(error_msg) when testing
+                # failed. Without this, a long-convergence run whose testing
+                # fails would otherwise spin re-evaluating the same finished
+                # training forever until the slurm walltime cap killed it.
                 n_attempts = max_retries + 1
-                is_finished_experiment = True
+            elif not is_testing_passed:
+                # Opt-in retry: redo training + testing in the next outer-loop
+                # iteration. Bump n_attempts so the outer loop bounds the
+                # retries. Reset is_finished_experiment so the inner training
+                # loop runs again; clear wandb_run_id so the retry logs to a
+                # fresh wandb run instead of resuming the failed one.
+                n_attempts += 1
+                if n_attempts <= max_retries:
+                    is_finished_experiment = False
+                    wandb_run_id = None
+                    logger.error(
+                        f"Testing failed; retrying full train+test "
+                        f"({n_attempts + 1} of {max_retries + 1}) for {exp_name}"
+                    )
 
         if is_finished_experiment and is_testing_passed:
             break
@@ -796,6 +816,7 @@ if __name__ == "__main__":
             "memory_threshold": args.memory_threshold,
         },
         max_retries=args.max_retries,
+        retry_on_testing_failure=args.retry_on_testing_failure,
         kubeflow_namespace=args.kubeflow_namespace,
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
