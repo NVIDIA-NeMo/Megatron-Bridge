@@ -435,6 +435,7 @@ def main(
             workdir_pvc=kubeflow_workdir_pvc,
             workdir_pvc_path=kubeflow_workdir_pvc_path,
             workdir_local_path=kubeflow_workdir_local_path,
+            train_job_basename=f"mb-{model_recipe_name}",
             image_pull_secrets=kubeflow_image_pull_secrets,
             custom_env_vars=custom_env_vars,
             wandb_key=wandb_key,
@@ -542,9 +543,9 @@ def main(
     is_testing_passed = False  # Whether the testing passed convergence and performance validation.
     error_msg = None
     n_attempts = 0
-    exp_name = (
-        exp_name[:33] if kubeflow_namespace is not None else exp_name
-    )  # Some k8s clusters have a limit on the length of the experiment name.
+    # The K8s TrainJob name is generated independently by the executor
+    # (mb-<model>-<uuid6>), so the experiment name is no longer length-bound by
+    # k8s — keep it full and descriptive for nemo-run bookkeeping + wandb.
     wandb_run_id = None
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
