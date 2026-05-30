@@ -75,9 +75,14 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     metrics: Dict[str, List] = {k: [] for k in patterns}
     all_lines = []
     handles = []
-    for log_path in list(set(log_paths)):
-        if "allranks" in log_path:
-            continue
+    # SLURM srun writes one log per rank plus an aggregated all-ranks file;
+    # reading both would double-count every metric, so prefer the per-rank logs
+    # and drop the aggregate. On Kubeflow the only capture nemo-run produces is
+    # the all-ranks aggregate, so fall back to it instead of reading nothing.
+    candidate_paths = list(set(log_paths))
+    per_rank_paths = [p for p in candidate_paths if "allranks" not in p]
+    chosen_paths = per_rank_paths or candidate_paths
+    for log_path in chosen_paths:
         logger.info(f"Reading log file: {log_path}")
         handles.append(open(log_path))
 
