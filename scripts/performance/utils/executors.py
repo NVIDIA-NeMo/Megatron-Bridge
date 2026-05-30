@@ -254,6 +254,11 @@ def kubeflow_executor(
         # group is formed. Without this the entrypoint runs as a lone python
         # process per node (WORLD_SIZE=1), failing data-parallel sizing.
         launcher=run.Torchrun(),
+        # Pin the Kubeflow Trainer runtime + per-replica CPU/memory requests to
+        # the same values the verified standalone launch (real_trainjob.py) uses.
+        runtime_ref="torch-distributed",
+        cpu_requests="8",
+        memory_requests="32Gi",
         namespace=namespace,
         image=container_image,
         num_nodes=nodes,
