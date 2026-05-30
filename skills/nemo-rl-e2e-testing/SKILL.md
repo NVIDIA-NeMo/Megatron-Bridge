@@ -465,7 +465,7 @@ If an attach helper enters a container that no longer sees the expected checkout
 
 Attach helpers that use `--no-container-mount-home` can enter a minimal `/home/$USER` in follow-up steps even when the original run saw the real checkout. Keep metric dumping and assertions in the same container step as the run when possible. If a follow-up step must inspect compute-local artifacts, use paths under the node-local run directory and do not assume `$NEMO_RL_REPO` is visible.
 
-For general Slurm debugging and multi-node patterns, read @skills/multi-node-slurm/SKILL.md.
+For general Slurm debugging and multi-node patterns, read @skills/nemo-mbridge-multi-node-slurm/SKILL.md.
 
 ## Pass Criteria
 

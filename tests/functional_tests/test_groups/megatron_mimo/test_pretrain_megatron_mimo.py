@@ -304,7 +304,7 @@ def _build_config(
         checkpoint=CheckpointConfig(),
     )
     # Mirrors the --deterministic flag plumbing in
-    # examples/megatron_mimo/megatron_mimo_training_llava.py: fp32 grad
+    # examples/megatron_mimo/llava/megatron_mimo_training_llava.py: fp32 grad
     # reduction is the part of "deterministic mode" that lives on DDP rather
     # than TransformerConfig.
     cfg.ddp.grad_reduce_in_fp32 = deterministic
@@ -485,7 +485,7 @@ class TestMegatronMIMOTraining:
         Trains for 5 iterations with synthetic data and verifies completion.
 
         Parametrized over the ``--deterministic`` code path exposed by
-        ``examples/megatron_mimo/megatron_mimo_training_llava.py`` to
+        ``examples/megatron_mimo/llava/megatron_mimo_training_llava.py`` to
         guard against regressions in the deterministic config knobs (FP32
         dtypes, unfused attention, deterministic_mode, recompute, fp32 grad
         reduction, and process-wide torch deterministic algorithms).

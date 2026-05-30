@@ -452,9 +452,9 @@ class TestQwen35VLMoEBridgeExport:
         )
         monkeypatch.setattr(
             "megatron.bridge.models.conversion.model_bridge.unwrap_model",
-            lambda model, *_args, **_kwargs: [model[0]]
-            if isinstance(model, list)
-            else getattr(model, "module", model),
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
         )
 
         weights = list(
@@ -511,9 +511,9 @@ class TestQwen35VLMoEBridgeExport:
         )
         monkeypatch.setattr(
             "megatron.bridge.models.conversion.model_bridge.unwrap_model",
-            lambda model, *_args, **_kwargs: [model[0]]
-            if isinstance(model, list)
-            else getattr(model, "module", model),
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
         )
 
         weights = list(
@@ -572,9 +572,9 @@ class TestQwen35VLMoEBridgeExport:
         )
         monkeypatch.setattr(
             "megatron.bridge.models.conversion.model_bridge.unwrap_model",
-            lambda model, *_args, **_kwargs: [model[0]]
-            if isinstance(model, list)
-            else getattr(model, "module", model),
+            lambda model, *_args, **_kwargs: (
+                [model[0]] if isinstance(model, list) else getattr(model, "module", model)
+            ),
         )
 
         weights = list(
