@@ -386,6 +386,19 @@ def main(
         logger.error(f"Specified run script not found: {run_script_path}")
         sys.exit(1)
 
+    # Script path + PYTHONPATH as seen INSIDE the execution environment. On
+    # SLURM the launcher's SCRIPT_DIR is bind-mounted into the container (see
+    # custom_mounts below), so the launcher-local path resolves there. On
+    # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
+    # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
+    # /tmp path does not exist in the pod; use the image's script path instead.
+    if kubeflow_namespace:
+        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        in_container_script_path = f"{in_container_script_dir}/{script_name}"
+    else:
+        in_container_script_dir = str(SCRIPT_DIR)
+        in_container_script_path = str(run_script_path)
+
     custom_mounts.extend(
         [
             f"{run_script_path}:{run_script_path}",
@@ -500,9 +513,9 @@ def main(
         )
 
     nemorun_script = run.Script(
-        path=str(run_script_path),
+        path=in_container_script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
+        env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
         args=_filter_run_script_args(sys.argv[1:]),
     )
 
