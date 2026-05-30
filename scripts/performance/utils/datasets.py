@@ -77,7 +77,7 @@ def create_squad_dataset_config(
         packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return HFDatasetConfig(
-        dataset_name="rajpurkar/squad",  # Hugging Face dataset name (canonical namespaced id)
+        dataset_name="squad",  # Hugging Face dataset name
         process_example_fn=process_squad_example,  # Processing function
         dataset_root=dataset_root,  # Local cache/processed files location
         seq_length=seq_length,
