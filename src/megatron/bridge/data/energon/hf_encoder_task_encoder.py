@@ -345,7 +345,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         keys = [s.__key__ for s in samples]
         batch_kwargs: Dict = dict(
             **batch_metadata_kwargs(keys=keys),
-            __keys__=[s.__key__ for s in samples],
+            __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
             input_ids=tokens,
             labels=labels,
