@@ -24,6 +24,7 @@ import torch
 from megatron.energon import Batch, DefaultTaskEncoder, SkipSample
 from transformers import BatchEncoding
 
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
     ChatMLSample,
@@ -474,8 +475,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
 
         loss_mask[labels < 0] = 0.0
 
+        keys = [s.__key__ for s in samples]
         batch = QwenVLTaskBatch(
-            __keys__=[s.__key__ for s in samples],
+            **batch_metadata_kwargs(keys=keys),
+            __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
             pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
             pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
