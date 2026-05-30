@@ -355,7 +355,7 @@ def num_floating_point_operations(
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
+        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) == "squad"
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
         packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)

@@ -88,7 +88,7 @@ def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_
     dataloader_type = "batch"
 
     return HFDatasetConfig(
-        dataset_name="rajpurkar/squad",
+        dataset_name="squad",
         process_example_fn=process_squad_example,
         seq_length=seq_length,
         seed=5678,  # Different from pretrain seed

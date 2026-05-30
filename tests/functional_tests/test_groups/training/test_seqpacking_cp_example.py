@@ -74,7 +74,7 @@ class TestPeftSftExample:
 
         # Use a small packed SQuAD dataset to exercise THD/context-parallel slicing
         cfg.dataset = HFDatasetConfig(
-            dataset_name="rajpurkar/squad",
+            dataset_name="squad",
             process_example_fn=process_squad_example,
             seq_length=256,
             dataloader_type="batch",
