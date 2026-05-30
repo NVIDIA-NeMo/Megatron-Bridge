@@ -248,6 +248,12 @@ def kubeflow_executor(
         env_vars.update(custom_env_vars)
 
     executor = run.KubeflowExecutor(
+        # Launch each replica's entrypoint under torchrun so the torch-distributed
+        # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
+        # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
+        # group is formed. Without this the entrypoint runs as a lone python
+        # process per node (WORLD_SIZE=1), failing data-parallel sizing.
+        launcher=run.Torchrun(),
         namespace=namespace,
         image=container_image,
         num_nodes=nodes,
