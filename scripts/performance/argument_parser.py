@@ -605,6 +605,14 @@ def parse_cli_args():
         default=None,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_pod_annotations_json",
+        type=str,
+        help="JSON-encoded dict of annotations applied to the trainer pod template metadata "
+        "(e.g. networking.gke.io/interfaces to attach GKE RDMA NICs for gIB).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_container_kwargs_json",
         type=str,
         help="JSON-encoded dict of extra fields set on the training container "

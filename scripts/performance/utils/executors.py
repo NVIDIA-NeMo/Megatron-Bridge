@@ -197,6 +197,7 @@ def kubeflow_executor(
     pod_spec_overrides: Optional[Dict[str, Any]] = None,
     container_kwargs: Optional[Dict[str, Any]] = None,
     labels: Optional[Dict[str, Any]] = None,
+    pod_annotations: Optional[Dict[str, Any]] = None,
 ) -> run.KubeflowExecutor:
     """Build a Kubeflow Training Operator executor.
 
@@ -236,6 +237,8 @@ def kubeflow_executor(
         pod_spec_overrides: Dict merged into the pod spec.
         container_kwargs: Extra container fields (e.g. ``securityContext``).
         labels: Pod labels.
+        pod_annotations: Annotations applied to the trainer pod template metadata
+            (e.g. ``networking.gke.io/interfaces`` for GKE RDMA NIC attachment).
 
     Returns:
         Configured ``run.KubeflowExecutor`` instance.
@@ -286,6 +289,9 @@ def kubeflow_executor(
         pod_spec_overrides=pod_spec_overrides or {},
         container_kwargs=container_kwargs or {},
         labels=labels or {},
+        # pod_annotations land on the trainer pod template metadata (e.g. GKE
+        # networking.gke.io/interfaces to attach the RDMA NICs for gIB).
+        pod_annotations=pod_annotations or {},
         # include_submodules=True: KubeflowExecutor.package() ships the packager
         # tarball to <workdir_pvc_path>/<user>/code, which the launcher overlays
         # onto /opt/Megatron-Bridge in the trainer container. The trainer
