@@ -34,6 +34,11 @@ from megatron.bridge.utils.common_utils import print_rank_0
 
 logger = logging.getLogger(__name__)
 
+# Canonicalize legacy short names that may break with newer huggingface_hub URI parsing.
+_HF_DATASET_NAME_ALIASES = {
+    "squad": "rajpurkar/squad",
+}
+
 
 class ProcessExampleOutput(TypedDict):
     """Legacy output structure for input/output-style processors.
@@ -217,6 +222,18 @@ def preprocess_and_split_data(
                 p.unlink()
 
 
+def _resolve_hf_dataset_name(dataset_name: str) -> str:
+    """Resolve legacy shorthand dataset IDs to canonical HF Hub IDs."""
+    resolved = _HF_DATASET_NAME_ALIASES.get(dataset_name, dataset_name)
+    if resolved != dataset_name:
+        logger.warning(
+            "Resolved legacy dataset id '%s' to canonical id '%s' for HF loading.",
+            dataset_name,
+            resolved,
+        )
+    return resolved
+
+
 class HFDatasetBuilder(FinetuningDatasetBuilder):
     """Builder class for Hugging Face datasets.
 
@@ -347,9 +364,10 @@ class HFDatasetBuilder(FinetuningDatasetBuilder):
     def _load_dataset(self) -> DatasetDict:
         """Load the dataset from Hugging Face or use the provided dataset."""
         if isinstance(self.dataset_name, str):
-            logger.info(f"Loading HF dataset from {self.dataset_name} to {self.dataset_root}")
+            resolved_dataset_name = _resolve_hf_dataset_name(self.dataset_name)
+            logger.info(f"Loading HF dataset from {resolved_dataset_name} to {self.dataset_root}")
             dataset = load_dataset(
-                self.dataset_name,
+                resolved_dataset_name,
                 name=self.dataset_subset,
                 cache_dir=str(self.dataset_root),
                 split=self.split,
