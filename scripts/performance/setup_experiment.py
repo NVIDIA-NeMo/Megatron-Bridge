@@ -52,6 +52,11 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
+try:
+    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+except (ImportError, ModuleNotFoundError):
+    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
@@ -321,6 +326,7 @@ def main(
     max_retries: int,
     retry_on_testing_failure: bool,
     kubeflow_namespace: str,
+    csp: Optional[str],
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
     kubeflow_workdir_local_path: Optional[str],
@@ -486,9 +492,7 @@ def main(
             ),
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
-            pod_annotations=(
-                json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None
-            ),
+            pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
     else:
         executor = slurm_executor(
@@ -515,6 +519,14 @@ def main(
         )
 
     plugins = []
+
+    # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
+    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
+    # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
+    if csp == "aws":
+        plugins.append(EKSEnvPlugin())
+    elif csp == "gcp":
+        plugins.append(GKEEnvPlugin())
 
     if not use_recipes:
         plugins.append(
@@ -862,6 +874,7 @@ if __name__ == "__main__":
         max_retries=args.max_retries,
         retry_on_testing_failure=args.retry_on_testing_failure,
         kubeflow_namespace=args.kubeflow_namespace,
+        csp=args.csp,
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
         kubeflow_workdir_local_path=args.kubeflow_workdir_local_path,

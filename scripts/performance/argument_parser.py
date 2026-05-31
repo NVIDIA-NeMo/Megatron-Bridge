@@ -515,6 +515,16 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--csp",
+        type=str,
+        choices=["aws", "gcp"],
+        default=None,
+        help="Cloud provider of the Kubeflow cluster. Selects the CSP fabric plugin "
+        "(aws -> EKSEnvPlugin/EFA, gcp -> GKEEnvPlugin/gIB). Omit on Slurm or when no "
+        "CSP-specific fabric config is needed.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_workdir_pvc",
         type=str,
         help="PVC name for syncing job workdir (launch scripts, packaged code) to the cluster before launch.",
