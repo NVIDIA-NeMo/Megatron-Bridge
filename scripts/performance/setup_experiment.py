@@ -104,6 +104,37 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     return filtered_args
 
 
+def wait_for_logs_to_settle(
+    glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3
+) -> List[str]:
+    """Re-glob ``glob_pattern`` and wait until the matched log files stop growing.
+
+    On Kubeflow the all-ranks log is aggregated from the per-rank pods and can
+    keep growing after ``run.run()`` returns; parsing too early sees only the
+    live lm-loss rank and misses the rank-0 memory / GPU-util lines, which makes
+    the golden-values check crash on a ``None`` current metric. Polling for
+    size-stability lets the metric parse see the fully merged log. Returns the
+    globbed paths (whatever exists at timeout).
+    """
+    deadline = time.time() + timeout_s
+    prev_sizes: Dict[str, int] = {}
+    stable_since: Optional[float] = None
+    while time.time() < deadline:
+        paths = sorted(glob.glob(glob_pattern))
+        sizes = {p: os.path.getsize(p) for p in paths if os.path.exists(p)}
+        if sizes and sizes == prev_sizes:
+            stable_since = stable_since if stable_since is not None else time.time()
+            if time.time() - stable_since >= stable_s:
+                logger.info(f"Logs settled ({len(sizes)} file(s)) after size-stability wait")
+                return paths
+        else:
+            stable_since = None
+        prev_sizes = sizes
+        time.sleep(poll_s)
+    logger.warning(f"Logs did not settle within {timeout_s}s; parsing what exists")
+    return sorted(glob.glob(glob_pattern))
+
+
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
     """Check if training is finished.
 
@@ -675,9 +706,8 @@ def main(
                 break
 
         if is_finished_experiment is True and detach is False:
-            log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
-            )
+            log_glob = f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"
+            log_paths = sorted(glob.glob(log_glob))
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
 
@@ -699,8 +729,11 @@ def main(
                     resume="allow",
                 )
 
-                logger.info("Waiting 10 seconds for I/O to settle")
-                time.sleep(10)
+                # The K8s all-ranks log is aggregated from the per-rank pods and
+                # can keep growing after run.run() returns; parse too early and the
+                # rank-0 memory / GPU-util lines are missing (only the live lm-loss
+                # rank is present). Wait for the files to stop growing, then re-glob.
+                log_paths = wait_for_logs_to_settle(log_glob)
 
                 is_testing_passed, error_msg = calc_convergence_and_performance(
                     model_family_name=model_family_name,

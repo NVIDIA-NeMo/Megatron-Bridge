@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import itertools
 import json
 import logging
 import math
@@ -85,9 +86,12 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
         handles.append(open(log_path))
 
     try:
-        for lines in zip(*handles):
-            for line in lines:
-                all_lines.append(line)
+        # chain (not zip): read every line from every handle. zip iterates the
+        # handles in lockstep and stops at the shortest file, which silently
+        # drops metrics when more than one log is chosen (e.g. a torchrun restart
+        # produces multiple log-allranks_<n>.out).
+        for line in itertools.chain(*handles):
+            all_lines.append(line)
     finally:
         for f in handles:
             f.close()
