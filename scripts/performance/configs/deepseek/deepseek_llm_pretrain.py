@@ -25,6 +25,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,23 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
+
+
+def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    """Apply defaults required by full-iteration CUDA graph capture with dropless MoE.
+
+    Dropless MoE produces variable-shaped per-expert tensors that CG cannot
+    capture; we pad to a fixed capacity (pad_experts + capacity factor) and use
+    MCore PR #4247 paged stashing to recover memory. Callers should gate on
+    `is_full_iteration_cuda_graph(cfg.model)`.
+    """
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    if cfg.model.moe_expert_rank_capacity_factor is None:
+        cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.cuda_graph_warmup_steps = 2
 
 
 def deepseek_v3_pretrain_config_gb300(
@@ -74,6 +92,8 @@ def deepseek_v3_pretrain_config_gb300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -109,6 +129,8 @@ def deepseek_v3_pretrain_config_gb200(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -144,6 +166,8 @@ def deepseek_v3_pretrain_config_vr200(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -176,6 +200,8 @@ def deepseek_v3_pretrain_config_b300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -208,6 +234,8 @@ def deepseek_v3_pretrain_config_b200(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -245,6 +273,8 @@ def deepseek_v3_pretrain_config_h100(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
