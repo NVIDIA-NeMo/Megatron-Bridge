@@ -23,8 +23,10 @@ import torch
 
 from megatron.bridge.recipes.deepseek import (
     deepseek_v2_lite_pretrain_config as deepseek_v2_lite_config,
-    deepseek_v4_flash_pretrain_mxfp8_config,
+)
+from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_pretrain_muon_config,
+    deepseek_v4_flash_pretrain_mxfp8_config,
 )
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
