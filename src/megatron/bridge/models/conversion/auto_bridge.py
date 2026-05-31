@@ -74,6 +74,44 @@ HF_ARCHITECTURE_ALIASES: dict[str, str] = {
     "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
 }
 
+MTP_CONFIG_FIELDS: tuple[str, ...] = ("num_nextn_predict_layers", "mtp_num_hidden_layers", "mtp_num_layers")
+_MISSING = object()
+
+
+def _get_config_field(config: Any, field: str) -> Any:
+    if isinstance(config, dict):
+        return config.get(field, _MISSING)
+
+    return getattr(config, "__dict__", {}).get(field, _MISSING)
+
+
+def _config_disables_mtp(config: Any) -> bool:
+    """Return True when a config object or dict explicitly disables MTP layers."""
+    if config is None:
+        return False
+
+    for field in MTP_CONFIG_FIELDS:
+        value = _get_config_field(config, field)
+        if value is _MISSING or value is None:
+            continue
+
+        return int(value) == 0
+
+    text_config = _get_config_field(config, "text_config")
+    return text_config is not _MISSING and _config_disables_mtp(text_config)
+
+
+def _saved_config_disables_mtp(path: str | Path) -> bool:
+    """Check the final config.json written for an HF export."""
+    import json
+
+    config_path = Path(path) / "config.json"
+    if not config_path.exists():
+        return False
+    with open(config_path) as f:
+        return _config_disables_mtp(json.load(f))
+
+
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
@@ -841,12 +879,20 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(
+            source = self.hf_pretrained.state.source
+            model_config = getattr(model_instance, "config", None)
+            hf_config = getattr(self.hf_pretrained, "config", self.hf_pretrained)
+            mtp_disabled = _saved_config_disables_mtp(path) or any(
+                _config_disables_mtp(config) for config in (hf_config, model_config)
+            )
+            ignored_source_key_prefixes = ("mtp.",) if mtp_disabled and source.has_glob("mtp.*") else None
+            source.save_generator(
                 generator,
                 path,
                 strict=strict,
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
             )
         else:
             # Config-only path: shard and write safetensors directly
