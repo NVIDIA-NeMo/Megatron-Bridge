@@ -200,7 +200,7 @@ GPT_OSS_120B_PRETRAIN_CONFIG_H100_BF16_V2 = replace(
 
 GPT_OSS_120B_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
     GPT_OSS_120B_PRETRAIN_CONFIG_GB300_BF16_V2,
-    expert_model_parallel_size=8,
+    expert_model_parallel_size=1,
     cuda_graph_impl="full_iteration",
     cuda_graph_scope=[],
     moe_flex_dispatcher_backend="hybridep",
