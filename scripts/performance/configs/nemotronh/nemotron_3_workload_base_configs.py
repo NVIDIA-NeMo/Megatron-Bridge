@@ -108,7 +108,15 @@ BASE_NEMOTRON_3_SUPER_CONFIG = WorkloadBaseConfig(
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
+    BASE_NEMOTRON_3_SUPER_CONFIG,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=[],
+)
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB300_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG
 
 
@@ -118,7 +126,15 @@ BASE_NEMOTRON_3_SUPER_CONFIG_GB200 = replace(
 )
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
+    BASE_NEMOTRON_3_SUPER_CONFIG_GB200,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=[],
+)
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_NVFP4_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_GB200
 
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_VR200_BF16_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_GB200_BF16_V1
@@ -134,7 +150,15 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG_B300,
     recompute_modules=["moe_act", "layernorm"],
 )
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B300
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
+    BASE_NEMOTRON_3_SUPER_CONFIG_B300,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=[],
+)
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_NVFP4_V1 = NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B300_BF16_V1
 
 
@@ -149,7 +173,15 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_BF16_V1 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG_B200,
     recompute_modules=["moe_act", "moe", "layernorm", "core_attn"],
 )
-NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1 = BASE_NEMOTRON_3_SUPER_CONFIG_B200
+NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_FP8_MX_V1 = replace(
+    BASE_NEMOTRON_3_SUPER_CONFIG_B200,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=[],
+)
 NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
     BASE_NEMOTRON_3_SUPER_CONFIG_B200,
     tensor_model_parallel_size=2,
