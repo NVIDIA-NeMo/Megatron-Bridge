@@ -29,12 +29,12 @@ model (already on CUDA, with ``images`` = ``list[ImageForInsert]``):
 
 from __future__ import annotations
 
+import logging
 from io import BytesIO
 from typing import Any
 
 import numpy as np
 import torch
-from loguru import logger
 from PIL import Image
 
 from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
@@ -46,6 +46,7 @@ from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
 
 _CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 _CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
+logger = logging.getLogger(__name__)
 
 
 def _load_image(path: str) -> Image.Image:
@@ -60,7 +61,7 @@ def _load_image(path: str) -> Image.Image:
                 return Image.open(BytesIO(f.read())).convert("RGB")
         return Image.open(path).convert("RGB")
     except Exception as exc:  # noqa: BLE001
-        logger.warning(f"Image from {path} is broken or unavailable; using zero-image. Error: {exc}")
+        logger.warning("Image from %s is broken or unavailable; using zero-image. Error: %s", path, exc)
         return Image.new(size=(224, 224), mode="RGB")
 
 
