@@ -19,7 +19,6 @@ the training step receives ``sound_clips`` / ``sound_length`` alongside the
 standard vision + language tensors.
 """
 
-import dataclasses
 import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -28,6 +27,7 @@ import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
     ChatMLSample,
@@ -609,8 +609,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         all_num_image_tiles = [s.num_image_tiles for s in samples if s.num_image_tiles is not None]
         num_image_tiles_batch = torch.cat(all_num_image_tiles, dim=0) if all_num_image_tiles else None
 
+        keys = [s.__key__ for s in samples]
         batch_kwargs: Dict = dict(
-            __keys__=[s.__key__ for s in samples],
+            **batch_metadata_kwargs(keys=keys),
+            __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
             input_ids=tokens,
             labels=labels,
@@ -629,11 +631,6 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             cu_seqlens_argmin=cu_seqlens_argmin_t,
             max_seqlen=max_seqlen_t,
         )
-        _batch_fields = {f.name for f in dataclasses.fields(NemotronOmniTaskBatch)}
-        if "__key__" in _batch_fields:
-            batch_kwargs["__key__"] = samples[0].__key__
-        if "__restore_key__" in _batch_fields:
-            batch_kwargs["__restore_key__"] = ()
 
         return NemotronOmniTaskBatch(**batch_kwargs)
 
