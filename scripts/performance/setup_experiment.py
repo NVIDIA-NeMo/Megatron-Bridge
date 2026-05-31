@@ -153,6 +153,7 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "illegal memory access" in log
         or "illegal instruction" in log
         or "torch.distributed.DistNetworkError" in log
+        or "ncclRemoteError" in log
         or "Segmentation fault" in log
         or "found NaN in" in log
         or "For debugging consider passing CUDA_LAUNCH_BLOCKING=1" in log
@@ -214,20 +215,48 @@ def get_job_dir_and_status_from_run(exp_name: str):
     return job_dir, job_status
 
 
+def max_iteration_in_logs(log_file_paths: List[str]) -> int:
+    """Return the highest training iteration number found across the logs (0 if none)."""
+    max_iter = 0
+    for log_path in log_file_paths:
+        try:
+            with open(log_path, "r", errors="replace") as f:
+                for line in f:
+                    m = re.search(r"iteration\s+(\d+)/\s*\d+", line)
+                    if m:
+                        max_iter = max(max_iter, int(m.group(1)))
+        except OSError:
+            continue
+    return max_iter
+
+
 def maybe_increase_n_attempts_on_flaky_failure(
     n_attempts: int,
     max_retries: int,
     is_finished_experiment: bool,
     is_long_convergence_run: bool,
     log_file_paths: List[str],
+    made_progress: bool = True,
 ):
-    """Maybe increase number of attempts."""
-    if not is_finished_experiment and not is_long_convergence_run:
-        if is_flaky_failure(log_file_paths[-1]):
-            n_attempts += 1
-        else:
-            n_attempts = max_retries  # On non-flaky failures, we don't need to restart the experiment.
+    """Maybe increase number of attempts.
 
+    Long-convergence runs resume across walltime slices, so an attempt that made
+    forward progress (advanced the training step count) is a legitimate resume
+    and must not consume the retry budget. An attempt that made NO forward
+    progress — e.g. a crash during initialization before any step — would
+    otherwise resume from the same point and loop forever, so it is bounded
+    exactly like a normal run's failure.
+    """
+    if is_finished_experiment:
+        return n_attempts
+    if is_long_convergence_run and made_progress:
+        return n_attempts
+    if is_flaky_failure(log_file_paths[-1]):
+        n_attempts += 1  # flaky: retry, bounded by max_retries
+    else:
+        # non-flaky: give up now. max_retries + 1 (not max_retries) so the outer
+        # `while n_attempts <= max_retries` loop actually exits.
+        n_attempts = max_retries + 1
     return n_attempts
 
 
@@ -547,6 +576,7 @@ def main(
     # (mb-<model>-<uuid6>), so the experiment name is no longer length-bound by
     # k8s — keep it full and descriptive for nemo-run bookkeeping + wandb.
     wandb_run_id = None
+    max_iter_so_far = 0
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
             if HAVE_WANDB:
@@ -603,12 +633,21 @@ def main(
             if terminal_failure and not is_finished_experiment and not is_long_convergence_run:
                 raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
+            # Forward-progress check: a long-convergence attempt that advanced the
+            # training step count is a legitimate walltime-slice resume; one that
+            # did not (e.g. crashed in init before any step) must be bounded so it
+            # cannot resume-loop forever.
+            attempt_max_iter = max_iteration_in_logs(log_file_paths)
+            made_progress = attempt_max_iter > max_iter_so_far
+            max_iter_so_far = max(max_iter_so_far, attempt_max_iter)
+
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
                 max_retries=max_retries,
                 is_finished_experiment=is_finished_experiment,
                 is_long_convergence_run=is_long_convergence_run,
                 log_file_paths=log_file_paths,
+                made_progress=made_progress,
             )
 
             if not is_finished_experiment and n_attempts <= max_retries:
