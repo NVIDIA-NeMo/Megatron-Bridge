@@ -240,7 +240,13 @@ def kubeflow_executor(
     Returns:
         Configured ``run.KubeflowExecutor`` instance.
     """
-    env_vars = dict(PERF_ENV_VARS)
+    # K8s/Kubeflow jobs deliberately do NOT inherit PERF_ENV_VARS. That dict was
+    # tuned for the Slurm perf-benchmark path; the verified standalone K8s launch
+    # (real_trainjob.py) carried its own minimal env. On Kubeflow the cluster
+    # supplies all NCCL/fabric/perf tuning explicitly via KUBEFLOW_ENV_LIST_JSON
+    # (-> custom_env_vars / env_list) in ci_cluster_config.yml, so start empty and
+    # only layer on secrets + whatever the cluster passed in.
+    env_vars: Dict[str, str] = {}
     if wandb_key is not None:
         env_vars["WANDB_API_KEY"] = wandb_key
     if hf_token is not None:
