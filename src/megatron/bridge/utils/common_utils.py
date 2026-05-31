@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,15 +21,15 @@ from pathlib import Path
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
-from megatron.core._rank_utils import safe_get_rank as get_rank_safe  # noqa: F401
-from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
-from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
 
 from megatron.bridge.utils.slurm_utils import (
+    resolve_slurm_local_rank,
     resolve_slurm_master_addr,
     resolve_slurm_master_port,
+    resolve_slurm_rank,
+    resolve_slurm_world_size,
 )
 
 
@@ -39,6 +39,77 @@ try:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, torch_FSDP, Float16Module)
 except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
+
+
+def get_rank_safe() -> int:
+    """Get the current distributed rank without requiring initialized torch.distributed.
+
+    Fallback order is initialized torch.distributed, ``RANK``, ``SLURM_PROCID``,
+    then rank 0.
+
+    Returns:
+        The current global rank.
+    """
+    if torch.distributed.is_initialized():
+        return torch.distributed.get_rank()
+
+    try:
+        if "RANK" in os.environ:
+            return int(os.environ["RANK"])
+
+        slurm_rank = resolve_slurm_rank()
+        if slurm_rank is not None:
+            return slurm_rank
+
+        warnings.warn("Could not determine rank from torch.distributed, RANK, or SLURM_PROCID. Defaulting to rank 0.")
+        return 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def get_world_size_safe() -> int:
+    """Get world size without requiring initialized torch.distributed.
+
+    Fallback order is initialized torch.distributed, ``WORLD_SIZE``,
+    ``SLURM_NTASKS``, then 1.
+
+    Returns:
+        The current world size.
+    """
+    if torch.distributed.is_initialized():
+        return torch.distributed.get_world_size()
+
+    if "WORLD_SIZE" in os.environ:
+        return int(os.environ["WORLD_SIZE"])
+
+    slurm_world_size = resolve_slurm_world_size()
+    if slurm_world_size is not None:
+        return slurm_world_size
+
+    warnings.warn(
+        "Could not determine world size from torch.distributed, WORLD_SIZE, or SLURM_NTASKS. "
+        "Defaulting to world size 1."
+    )
+    return 1
+
+
+def get_local_rank_preinit() -> int:
+    """Get the local rank before full distributed initialization.
+
+    Fallback order is ``LOCAL_RANK``, ``SLURM_LOCALID``, then 0.
+
+    Returns:
+        The current node-local rank.
+    """
+    if "LOCAL_RANK" in os.environ:
+        return int(os.environ["LOCAL_RANK"])
+
+    slurm_local_rank = resolve_slurm_local_rank()
+    if slurm_local_rank is not None:
+        return slurm_local_rank
+
+    warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
+    return 0
 
 
 def get_last_rank() -> int:

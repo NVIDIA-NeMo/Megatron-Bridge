@@ -146,7 +146,7 @@ class TestSetupLogging:
 
     def test_setup_logging_with_filter_warnings_true(self):
         """Test that setup_logging adds warning filter when filter_warning=True."""
-        with patch("megatron.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
+        with patch("megatron.bridge.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
             setup_logging(filter_warning=True)
 
             # Should call add_filter_to_all_loggers once for the warning filter
@@ -160,7 +160,7 @@ class TestSetupLogging:
 
     def test_setup_logging_with_filter_warnings_false(self):
         """Test that setup_logging doesn't add warning filter when filter_warning=False."""
-        with patch("megatron.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
+        with patch("megatron.bridge.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
             setup_logging(filter_warning=False, modules_to_filter=None)
 
             # Should not call add_filter_to_all_loggers for warning filter
@@ -170,7 +170,7 @@ class TestSetupLogging:
         """Test that setup_logging adds module filter when modules_to_filter is provided."""
         modules = ["test_module1", "test_module2"]
 
-        with patch("megatron.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
+        with patch("megatron.bridge.training.utils.log_utils.add_filter_to_all_loggers") as mock_add_filter:
             setup_logging(filter_warning=False, modules_to_filter=modules)
 
             # Should call add_filter_to_all_loggers once for the module filter

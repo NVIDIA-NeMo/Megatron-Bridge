@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,12 +21,47 @@ distributed training configuration from SLURM environment variables.
 import os
 import warnings
 
-from megatron.core._slurm_utils import (
-    is_slurm_job,  # noqa: F401
-    resolve_slurm_local_rank,  # noqa: F401
-    resolve_slurm_rank,  # noqa: F401
-    resolve_slurm_world_size,  # noqa: F401
-)
+
+def is_slurm_job() -> bool:
+    """Detect whether the current process is running under SLURM.
+
+    Returns:
+        True if SLURM job variables are present, otherwise False.
+    """
+    return "SLURM_NTASKS" in os.environ
+
+
+def resolve_slurm_rank() -> int | None:
+    """Get the global rank from SLURM environment variables.
+
+    Returns:
+        The global rank, or None if SLURM rank information is unavailable.
+    """
+    if not is_slurm_job():
+        return None
+    return int(os.environ["SLURM_PROCID"]) if "SLURM_PROCID" in os.environ else None
+
+
+def resolve_slurm_world_size() -> int | None:
+    """Get the world size from SLURM environment variables.
+
+    Returns:
+        The SLURM task count, or None if SLURM world-size information is unavailable.
+    """
+    if not is_slurm_job():
+        return None
+    return int(os.environ["SLURM_NTASKS"]) if "SLURM_NTASKS" in os.environ else None
+
+
+def resolve_slurm_local_rank() -> int | None:
+    """Get the local rank from SLURM environment variables.
+
+    Returns:
+        The node-local rank, or None if SLURM local-rank information is unavailable.
+    """
+    if not is_slurm_job():
+        return None
+    return int(os.environ["SLURM_LOCALID"]) if "SLURM_LOCALID" in os.environ else None
 
 
 def resolve_slurm_master_addr() -> str | None:
