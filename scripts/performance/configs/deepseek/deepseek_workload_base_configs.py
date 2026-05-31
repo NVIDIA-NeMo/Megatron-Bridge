@@ -201,11 +201,11 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2,
-    cuda_graph_impl="full_iteration",
+    # cuda_graph_impl="full_iteration",
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
     fp8_dot_product_attention=True,
-    # recompute_modules=[],
+    recompute_modules=[],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
 
@@ -231,6 +231,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V2,
+    micro_batch_size=1,
     cuda_graph_impl="full_iteration",
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
