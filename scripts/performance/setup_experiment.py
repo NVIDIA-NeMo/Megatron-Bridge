@@ -75,6 +75,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     launcher and must not reach the rank-local script:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
+      script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
@@ -85,7 +87,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     """
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag == "--additional_slurm_params" or flag.startswith("--kubeflow_")
+        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
 
     filtered_args = []
     skip_next = False
