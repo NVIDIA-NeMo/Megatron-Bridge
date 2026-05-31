@@ -60,6 +60,7 @@ class EKSEnvPlugin(Plugin):
         executor.extra_resource_limits = {**executor.extra_resource_limits, **efa}
         # libfabric EFA provider; NCCL loads the aws-ofi net plugin from ldconfig.
         executor.env_vars.setdefault("FI_PROVIDER", "efa")
+        executor.env_vars.setdefault("FI_EFA_USE_HUGE_PAGE", "0")
         # EFA requires a privileged container and the host /dev/infiniband nodes.
         security_context = {**executor.container_kwargs.get("securityContext", {}), "privileged": True}
         executor.container_kwargs = {**executor.container_kwargs, "securityContext": security_context}
