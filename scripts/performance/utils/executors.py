@@ -257,6 +257,20 @@ def kubeflow_executor(
     if custom_env_vars:
         env_vars.update(custom_env_vars)
 
+    # EFA-backed AWS clusters: select the libfabric EFA provider here in code
+    # rather than per-cluster CI YAML. Keyed off the EFA device request so it is
+    # set exactly when the job asks for EFA NICs (AWS); GCP / other clusters never
+    # request ``vpc.amazonaws.com/efa`` and must NOT force ``FI_PROVIDER=efa``
+    # (libfabric would fail to bring up the efa provider there). ``setdefault``
+    # lets an explicit ``custom_env_vars`` value win. NCCL discovers the aws-ofi
+    # plugin via the image's ldconfig, so no ``LD_LIBRARY_PATH`` is needed.
+    _efa_requested = any(
+        "efa" in str(key).lower()
+        for key in {**(extra_resource_requests or {}), **(extra_resource_limits or {})}
+    )
+    if _efa_requested:
+        env_vars.setdefault("FI_PROVIDER", "efa")
+
     executor = run.KubeflowExecutor(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
