@@ -26,7 +26,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text
     --hf_model_path inclusionAI/Ling-flash-2.0 \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
-    --tp 2 --ep 4 \
+    --tp 1 --ep 8 \
     --use-coordinator \
     --coordinator-host "${COORDINATOR_HOST}" \
     --trust-remote-code
@@ -38,7 +38,7 @@ if [ -d "$MEGATRON_MODEL_PATH" ]; then
         --megatron_model_path "$MEGATRON_MODEL_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
-        --tp 2 --ep 4 \
+        --tp 1 --ep 8 \
         --use-coordinator \
         --coordinator-host "${COORDINATOR_HOST}" \
         --trust-remote-code
@@ -50,7 +50,7 @@ if [ -d "$HF_EXPORT_PATH" ]; then
         --hf_model_path "$HF_EXPORT_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
-        --tp 2 --ep 4 \
+        --tp 1 --ep 8 \
         --use-coordinator \
         --coordinator-host "${COORDINATOR_HOST}" \
         --trust-remote-code
