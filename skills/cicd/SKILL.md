@@ -10,9 +10,9 @@ when_to_use: Investigating a CI failure, understanding the pipeline structure, w
 
 - **Never commit directly to `main`** — always create a feature branch.
 - **Always sign commits**: `git commit -s -m "message"`.
-- **PR title format**: `[{areas}] {type}: {description}`
-  (e.g., `[model] feat: Add Qwen3 model bridge`).
-See @CONTRIBUTING.md for the full PR workflow, area/type labels, and DCO requirements.
+- **PR title format**: [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) — `<type>(<scope>): <description>`
+  (e.g., `feat(model): add Qwen3 model bridge`).
+See @CONTRIBUTING.md for the full PR workflow, type/scope taxonomy, and DCO requirements.
 
 ## How CI Is Triggered
 

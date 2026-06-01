@@ -41,7 +41,7 @@ test = ["coverage>=7.8.1"]
 
 [tool.uv.sources]
 "nemo-export-deploy" = { path = "/opt/Export-Deploy", editable = true }
-"nemo-evaluator" = { path = "/opt/Evaluator/packages/nemo-evaluator", editable = true }
+"nemo-evaluator" = { path = "/opt/Evaluator", editable = true }
 "nemo-run" = { path = "/opt/Run", editable = true }
 "lightning" = { path = "stubs/lightning" }
 

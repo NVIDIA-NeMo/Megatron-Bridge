@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Tuple, Type, TypeVar, Union
 
 import torch
 import torch.distributed as dist
@@ -73,6 +74,44 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
 HF_ARCHITECTURE_ALIASES: dict[str, str] = {
     "Qwen2_5OmniModel": "Qwen2_5OmniForConditionalGeneration",
 }
+
+MTP_CONFIG_FIELDS: tuple[str, ...] = ("num_nextn_predict_layers", "mtp_num_hidden_layers", "mtp_num_layers")
+_MISSING = object()
+
+
+def _get_config_field(config: Any, field: str) -> Any:
+    if isinstance(config, dict):
+        return config.get(field, _MISSING)
+
+    return getattr(config, "__dict__", {}).get(field, _MISSING)
+
+
+def _config_disables_mtp(config: Any) -> bool:
+    """Return True when a config object or dict explicitly disables MTP layers."""
+    if config is None:
+        return False
+
+    for field in MTP_CONFIG_FIELDS:
+        value = _get_config_field(config, field)
+        if value is _MISSING or value is None:
+            continue
+
+        return int(value) == 0
+
+    text_config = _get_config_field(config, "text_config")
+    return text_config is not _MISSING and _config_disables_mtp(text_config)
+
+
+def _saved_config_disables_mtp(path: str | Path) -> bool:
+    """Check the final config.json written for an HF export."""
+    import json
+
+    config_path = Path(path) / "config.json"
+    if not config_path.exists():
+        return False
+    with open(config_path) as f:
+        return _config_disables_mtp(json.load(f))
+
 
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
@@ -509,6 +548,34 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights=merge_adapter_weights,
         )
 
+    def export_hf_weights_quant(
+        self,
+        model: list[MegatronModelT],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+        cpu: bool = False,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = False,
+    ) -> Iterable["HFWeightTuple"]:
+        """
+        Export Megatron model weights to HuggingFace format with quantization.
+        """
+        dispatch_instance = (self._causal_lm_architecture, self._get_model_instance(model))
+        return model_bridge.stream_weights_megatron_to_hf_quant(
+            dispatch_instance,
+            model,
+            self.hf_pretrained,
+            quantization_checker,
+            quant_fn,
+            quant_block_size=quant_block_size,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
     def export_adapter_weights(
         self,
         model: list[MegatronModelT],
@@ -841,12 +908,20 @@ class AutoBridge(Generic[MegatronModelT]):
             and hasattr(self.hf_pretrained.state, "source")
             and isinstance(self.hf_pretrained.state.source, SafeTensorsStateSource)
         ):
-            self.hf_pretrained.state.source.save_generator(
+            source = self.hf_pretrained.state.source
+            model_config = getattr(model_instance, "config", None)
+            hf_config = getattr(self.hf_pretrained, "config", self.hf_pretrained)
+            mtp_disabled = _saved_config_disables_mtp(path) or any(
+                _config_disables_mtp(config) for config in (hf_config, model_config)
+            )
+            ignored_source_key_prefixes = ("mtp.",) if mtp_disabled and source.has_glob("mtp.*") else None
+            source.save_generator(
                 generator,
                 path,
                 strict=strict,
                 distributed_save=distributed_save,
                 save_every_n_ranks=save_every_n_ranks,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
             )
         else:
             # Config-only path: shard and write safetensors directly
