@@ -257,6 +257,21 @@ def kubeflow_executor(
     if custom_env_vars:
         env_vars.update(custom_env_vars)
 
+    # Tag the TrainJob + its pods with their CI origin so a stray/orphaned job can
+    # be traced back to (and cancelled via) its GitLab pipeline/job — e.g.
+    # `kubectl get trainjob -L nemo-ci/job-id`. K8s label values must be <=63 chars
+    # of [A-Za-z0-9._-]; the CI ids are numeric, so they are safe as-is.
+    ci_labels = {
+        f"nemo-ci/{name}": os.environ[env]
+        for name, env in (
+            ("pipeline-id", "CI_PIPELINE_ID"),
+            ("job-id", "CI_JOB_ID"),
+            ("parent-pipeline-id", "PARENT_PIPELINE_ID"),
+        )
+        if os.environ.get(env)
+    }
+    labels = {**ci_labels, **(labels or {})}
+
     executor = run.KubeflowExecutor(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
@@ -288,7 +303,10 @@ def kubeflow_executor(
         extra_resource_limits=extra_resource_limits or {},
         pod_spec_overrides=pod_spec_overrides or {},
         container_kwargs=container_kwargs or {},
-        labels=labels or {},
+        labels=labels,
+        # Mirror the CI-origin labels onto the trainer pods too, so both
+        # `kubectl get trainjob -l` and `kubectl get pods -l` resolve the origin.
+        pod_labels=labels,
         # pod_annotations land on the trainer pod template metadata (e.g. GKE
         # networking.gke.io/interfaces to attach the RDMA NICs for gIB).
         pod_annotations=pod_annotations or {},
