@@ -14,7 +14,8 @@
 
 """Unit tests for ERNIE 4.5 VL (Vision-Language) MoE bridge."""
 
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -28,6 +29,10 @@ from megatron.bridge.models.ernie_vl.ernie45_vl_bridge import (
     _OffsetRowParallelMapping,
 )
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
+    ErnieMultiTypeMoE,
+    MultiTypeMoeSubmodules,
+)
 
 
 def _make_vision_config():
@@ -477,3 +482,50 @@ class TestErnie45VLModelProvider:
         assert hasattr(provider, "num_layers")
         assert hasattr(provider, "hidden_size")
         assert hasattr(provider, "num_attention_heads")
+
+
+class TestErnieMultiTypeMoE:
+    """Test ERNIE VL dual-pool MoE construction."""
+
+    def test_accepts_transformer_layer_kwargs(self):
+        config = SimpleNamespace(moe_intermediate_size=(64, 32), moe_shared_expert_intermediate_size=128)
+        submodules = MultiTypeMoeSubmodules(
+            text_moe_layer=object(),
+            vision_moe_layer=object(),
+            shared_experts=object(),
+        )
+        pg_collection = object()
+
+        with patch("megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer.build_module") as build_module:
+            build_module.side_effect = [Mock(), Mock(), Mock()]
+            layer = ErnieMultiTypeMoE(
+                config=config,
+                submodules=submodules,
+                layer_number=2,
+                pg_collection=pg_collection,
+                is_mtp_layer=True,
+                name="decoder.layers.1.mlp",
+            )
+
+        assert layer.layer_number == 2
+        assert layer.is_mtp_layer is True
+
+        text_call, vision_call, shared_call = build_module.call_args_list
+        assert text_call.args[0] is submodules.text_moe_layer
+        assert text_call.args[1].moe_ffn_hidden_size == 64
+        assert text_call.kwargs["pg_collection"] is pg_collection
+        assert text_call.kwargs["is_mtp_layer"] is True
+        assert text_call.kwargs["name"] == "decoder.layers.1.mlp.text_moe_layer"
+
+        assert vision_call.args[0] is submodules.vision_moe_layer
+        assert vision_call.args[1].moe_ffn_hidden_size == 32
+        assert vision_call.kwargs["pg_collection"] is pg_collection
+        assert vision_call.kwargs["is_mtp_layer"] is True
+        assert vision_call.kwargs["name"] == "decoder.layers.1.mlp.vision_moe_layer"
+
+        assert shared_call.args[0] is submodules.shared_experts
+        assert shared_call.kwargs["config"] is config
+        assert shared_call.kwargs["pg_collection"] is pg_collection
+        assert shared_call.kwargs["gate"] is False
+        assert shared_call.kwargs["name"] == "decoder.layers.1.mlp.shared_experts"
+        assert "is_mtp_layer" not in shared_call.kwargs

@@ -25,30 +25,33 @@ MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/${MODEL_NAME}/ite
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
 
 uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/hf_to_megatron_generate_text.py \
+    scripts/inference/text_generation.py \
     --hf_model_path "$HF_MODEL_ID" \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
     --tp 1 --pp 1 --ep 1 --etp 1 \
+    --use-legacy-generation \
     --trust-remote-code
 
 if [ -d "$MEGATRON_MODEL_PATH" ]; then
     uv run python -m torch.distributed.run --nproc_per_node=1 \
-        examples/conversion/hf_to_megatron_generate_text.py \
+        scripts/inference/text_generation.py \
         --hf_model_path "$HF_MODEL_ID" \
         --megatron_model_path "$MEGATRON_MODEL_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
         --tp 1 --pp 1 --ep 1 --etp 1 \
+        --use-legacy-generation \
         --trust-remote-code
 fi
 
 if [ -d "$HF_EXPORT_PATH" ]; then
     uv run python -m torch.distributed.run --nproc_per_node=1 \
-        examples/conversion/hf_to_megatron_generate_text.py \
+        scripts/inference/text_generation.py \
         --hf_model_path "$HF_EXPORT_PATH" \
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
         --tp 1 --pp 1 --ep 1 --etp 1 \
+        --use-legacy-generation \
         --trust-remote-code
 fi

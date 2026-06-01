@@ -125,13 +125,13 @@ class Qwen3NextBridge(MegatronModelBridge):
             "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
             "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
             # MTP MoE
-            "mtp.layers.0.transformer_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
-            "mtp.layers.0.transformer_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
+            "mtp.layers.0.mtp_model_layer.mlp.router.weight": "mtp.layers.0.mlp.gate.weight",
+            "mtp.layers.0.mtp_model_layer.pre_mlp_layernorm.weight": "mtp.layers.0.post_attention_layernorm.weight",
             # MTP standard attention
-            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
         }
 
         mapping_list = []
@@ -153,7 +153,7 @@ class Qwen3NextBridge(MegatronModelBridge):
                     v="model.layers.*.self_attn.v_proj.weight",
                 ),
                 QKVMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
+                    megatron_param="mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
                     q="mtp.layers.*.self_attn.q_proj.weight",
                     k="mtp.layers.*.self_attn.k_proj.weight",
                     v="mtp.layers.*.self_attn.v_proj.weight",
@@ -180,12 +180,12 @@ class Qwen3NextBridge(MegatronModelBridge):
                     hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc1.weight*",
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*",
                     gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
                     up="mtp.layers.*.mlp.experts.*.up_proj.weight",
                 ),
                 AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.experts.linear_fc2.weight*",
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
                     hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
                 ),
                 # Gated MLP of shared expert
@@ -199,12 +199,12 @@ class Qwen3NextBridge(MegatronModelBridge):
                     hf_param="model.layers.*.mlp.shared_expert.down_proj.weight",
                 ),
                 GatedMLPMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc1.weight",
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc1.weight",
                     gate="mtp.layers.*.mlp.shared_expert.gate_proj.weight",
                     up="mtp.layers.*.mlp.shared_expert.up_proj.weight",
                 ),
                 AutoMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.mlp.shared_experts.linear_fc2.weight",
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.shared_experts.linear_fc2.weight",
                     hf_param="mtp.layers.*.mlp.shared_expert.down_proj.weight",
                 ),
                 # Shared expert gate
@@ -213,7 +213,7 @@ class Qwen3NextBridge(MegatronModelBridge):
                     hf_param="model.layers.*.mlp.shared_expert_gate.weight",
                 ),
                 ReplicatedMapping(
-                    megatron_param="mtp.layers.0.transformer_layer.mlp.shared_experts.gate_weight",
+                    megatron_param="mtp.layers.0.mtp_model_layer.mlp.shared_experts.gate_weight",
                     hf_param="mtp.layers.0.mlp.shared_expert_gate.weight",
                 ),
                 # Qwen3-Next implements the output norm as a standard RMSNorm while initializing weight to ones,

@@ -76,6 +76,20 @@ def test_local_expert_name_maps_to_global_expert_rank(monkeypatch) -> None:
     assert global_name == "decoder.layers.0.mlp.experts.local_experts.5.linear_fc1.weight"
 
 
+def test_nested_local_expert_name_maps_to_global_expert_rank(monkeypatch) -> None:
+    monkeypatch.setattr(model_bridge, "get_pg_size", lambda group: group.size())
+    model = _FakeModel(ep_size=2, ep_rank=1)
+    config = SimpleNamespace(num_moe_experts=4)
+
+    global_name = model_bridge._megatron_local_name_to_global(
+        [model],
+        config,
+        "decoder.layers.0.mlp.vision_moe_layer.experts.local_experts.1.linear_fc1.weight",
+    )
+
+    assert global_name == "decoder.layers.0.mlp.vision_moe_layer.experts.local_experts.3.linear_fc1.weight"
+
+
 def test_local_expert_name_mapping_skips_adapter_params(monkeypatch) -> None:
     monkeypatch.setattr(model_bridge, "get_pg_size", lambda group: group.size())
     model = _FakeModel(ep_size=4, ep_rank=2)
