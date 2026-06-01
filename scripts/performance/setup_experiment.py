@@ -104,9 +104,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     return filtered_args
 
 
-def wait_for_logs_to_settle(
-    glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3
-) -> List[str]:
+def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
     """Re-glob ``glob_pattern`` and wait until the matched log files stop growing.
 
     On Kubeflow the all-ranks log is aggregated from the per-rank pods and can
