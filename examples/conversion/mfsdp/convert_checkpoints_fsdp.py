@@ -148,25 +148,18 @@ def import_hf_to_megatron_fsdp(
 
     bridge.load_hf_weights(megatron_model)
 
-    hf_tokenizer_kwargs = {}
-    if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
-        hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
-    if trust_remote_code:
-        hf_tokenizer_kwargs["trust_remote_code"] = True
-
     effective_low_memory_save = low_memory_save
     if ckpt_format == "fsdp_dtensor" and low_memory_save:
         # fsdp_dtensor save path requires the live model object.
         print_rank_0("low_memory_save is not supported with fsdp_dtensor. Forcing low_memory_save=False.")
         effective_low_memory_save = False
 
+    # Skip tokenizer save to match `examples/conversion/convert_checkpoints.py`.
     print_rank_0(f"Saving Megatron checkpoint to: {megatron_path}")
     save_native_megatron_model(
         megatron_model,
         megatron_path,
         ckpt_format=ckpt_format,
-        hf_tokenizer_path=hf_model,
-        hf_tokenizer_kwargs=hf_tokenizer_kwargs,
         low_memory_save=effective_low_memory_save,
     )
     print_rank_0(f"Import complete: {megatron_path}")

@@ -58,6 +58,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeightConversionTask,
     MegatronPeftBridge,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -281,8 +282,8 @@ def _megatron_local_name_to_global(
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
     # For now adapters are not sharded across EP ranks.
-    is_grouped_expert_param = ".mlp.experts.linear_fc" in param_name
-    is_local_expert_param = ".mlp.experts.local_experts." in param_name
+    is_grouped_expert_param = ".experts.linear_fc" in param_name
+    is_local_expert_param = ".experts.local_experts." in param_name
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
@@ -315,10 +316,13 @@ def _megatron_local_name_to_global(
             param_name = _update_grouped_expert_number(param_name, "weight")
         elif re.search(r"\.bias\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "bias")
+
     return param_name
 
 
-class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(
+    MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]
+):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 
@@ -1984,6 +1988,23 @@ def stream_weights_megatron_to_hf(
 
 
 @dispatch
+def stream_weights_megatron_to_hf_quant(
+    dispatch_instance: MegatronModel,
+    megatron_model: Union[MegatronModel, List[MegatronModel]],
+    hf_pretrained: HFPreTrained,
+    quantization_checker: Callable[[str], bool],
+    quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+    quant_block_size: Optional[Tuple[int, int]] = None,
+    cpu: bool = True,
+    show_progress: bool = True,
+    conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    merge_adapter_weights: bool = False,
+) -> Iterable[HFWeightTuple]:
+    """Bridge Megatron model state to HuggingFace format with quantization."""
+    ...
+
+
+@dispatch
 def stream_adapter_weights_megatron_to_hf(
     dispatch_instance: MegatronModel,
     megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -2039,6 +2060,35 @@ def register_bridge_implementation(
         return bridge.stream_weights_megatron_to_hf(
             megatron_model,
             hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    @stream_weights_megatron_to_hf_quant.impl((source, target))
+    def _megatron_to_hf_quant_registered_impl(
+        _,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = False,
+    ) -> Iterable[HFWeightTuple]:
+        bridge = bridge_class()
+
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
+        return bridge.stream_weights_megatron_to_hf_quant(
+            megatron_model,
+            hf_pretrained,
+            quantization_checker,
+            quant_fn,
+            quant_block_size=quant_block_size,
             cpu=cpu,
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,

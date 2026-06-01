@@ -934,27 +934,27 @@ def save_checkpoint(
             pg_collection=pg_collection,
         )
 
-    # De-interleave GLU weights/biases if model has interleaved weights in memory
-    # Checkpoints are always saved in contiguous format
-    from megatron.core.utils import get_model_config
-
-    model_interleave_size = None
-    try:
-        if len(model) > 0:
-            model_config = get_model_config(model[0])
-            model_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
-    except Exception:
-        model_interleave_size = getattr(cfg.model, "moe_mlp_glu_interleave_size", None)
-
-    model_is_interleaved = model_interleave_size is not None
-    if model_is_interleaved:
+    # De-interleave GLU weights/biases if model has interleaved weights in memory.
+    # Checkpoints are always saved in contiguous format.
+    routed_interleave_size, shared_interleave_size = _get_model_glu_interleave_sizes(model, cfg)
+    if routed_interleave_size is not None:
         print_rank_0(
-            f"[GLU Interleaving] De-interleaving GLU weights on save: model has interleaved weights (size={model_interleave_size}), converting to contiguous format for checkpoint"
+            "[GLU Interleaving] De-interleaving routed/dense GLU weights on save: "
+            f"model has interleaved weights (size={routed_interleave_size}), "
+            "converting to contiguous format for checkpoint"
         )
+    if shared_interleave_size is not None:
+        print_rank_0(
+            "[GLU Interleaving] De-interleaving shared expert GLU weights on save: "
+            f"model has interleaved weights (size={shared_interleave_size}), "
+            "converting to contiguous format for checkpoint"
+        )
+    if routed_interleave_size is not None or shared_interleave_size is not None:
         if len(model) == 1:
-            state_dict["model"] = _process_state_dict_for_glu_interleaving(
+            state_dict["model"] = _process_state_dict_for_model_glu_interleaving(
                 state_dict["model"],
-                model_interleave_size,
+                routed_interleave_size,
+                shared_interleave_size,
                 interleave=False,
                 use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
             )
@@ -962,9 +962,10 @@ def save_checkpoint(
             for i in range(len(model)):
                 model_key = "model%d" % i
                 if model_key in state_dict:
-                    state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                    state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
                         state_dict[model_key],
-                        model_interleave_size,
+                        routed_interleave_size,
+                        shared_interleave_size,
                         interleave=False,
                         use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                     )
@@ -1892,22 +1893,36 @@ def _interleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.
     return x.reshape(shape)
 
 
-def _is_swiglu_fc1_checkpoint_key(key: str) -> bool:
-    """True for MoE local-expert SwiGLU linear_fc1 weights/biases (not shared_experts).
+def _is_swiglu_fc1_checkpoint_key(
+    key: str,
+    *,
+    include_routed_experts: bool = True,
+    include_shared_experts: bool = False,
+    include_dense: bool = True,
+) -> bool:
+    """True for selected SwiGLU linear_fc1 weights/biases.
 
-    Dense ``mlp.linear_fc1`` is included only when ``USE_ACT_FUSION_FOR_DENSE=1`` (same block layout
-    as fused experts); otherwise dense weights stay contiguous and must not be permuted.
+    Dense ``mlp.linear_fc1`` is included only when ``USE_ACT_FUSION_FOR_DENSE=1``.
+    Shared experts are enabled separately by ``moe_shared_expert_glu_interleave_size``
+    before this helper is called.
     """
     is_swiglu_fc1_dense = (
-        os.environ.get("USE_ACT_FUSION_FOR_DENSE", "0") == "1"
+        include_dense
+        and os.environ.get("USE_ACT_FUSION_FOR_DENSE", "0") == "1"
         and "experts" not in key
         and "mlp" in key
         and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
     )
-    is_swiglu_fc1_moe = (
-        "shared_experts" not in key and "experts" in key and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+    is_swiglu_fc1_shared = (
+        include_shared_experts and "shared_experts" in key and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
     )
-    return is_swiglu_fc1_dense or is_swiglu_fc1_moe
+    is_swiglu_fc1_moe = (
+        include_routed_experts
+        and "shared_experts" not in key
+        and "experts" in key
+        and ("linear_fc1.weight" in key or "linear_fc1.bias" in key)
+    )
+    return is_swiglu_fc1_dense or is_swiglu_fc1_shared or is_swiglu_fc1_moe
 
 
 def _apply_glu_interleave_to_tensor_data(tensor: torch.Tensor, interleave_size: int, interleave: bool) -> torch.Tensor:
@@ -1924,6 +1939,9 @@ def _process_state_dict_for_glu_interleaving(
     interleave_size: int,
     interleave: bool = True,
     use_megatron_fsdp: bool = False,
+    include_routed_experts: bool = True,
+    include_shared_experts: bool = False,
+    include_dense: bool = True,
 ) -> dict[str, Any]:
     """Process GLU weights and biases in state dict for interleaving or de-interleaving.
 
@@ -1949,7 +1967,12 @@ def _process_state_dict_for_glu_interleaving(
     for key in sorted_keys:
         # Get model state.
         value = model_state_dict[key]
-        if not _is_swiglu_fc1_checkpoint_key(key):
+        if not _is_swiglu_fc1_checkpoint_key(
+            key,
+            include_routed_experts=include_routed_experts,
+            include_shared_experts=include_shared_experts,
+            include_dense=include_dense,
+        ):
             processed_state_dict[key] = value
             continue
 
@@ -2011,6 +2034,70 @@ def _process_state_dict_for_glu_interleaving(
         )
 
     return processed_state_dict
+
+
+def _get_model_glu_interleave_sizes(
+    model: list[MegatronModule], cfg: ConfigContainer
+) -> tuple[Optional[int], Optional[int]]:
+    """Return routed/dense and shared-expert GLU interleave sizes for this model."""
+    from megatron.core.utils import get_model_config
+
+    model_config = getattr(cfg, "model", None)
+    try:
+        if len(model) > 0:
+            model_config = get_model_config(model[0])
+    except Exception:
+        pass
+
+    routed_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
+    shared_interleave_size = getattr(model_config, "moe_shared_expert_glu_interleave_size", None)
+    return routed_interleave_size, shared_interleave_size
+
+
+def _process_state_dict_for_model_glu_interleaving(
+    model_state_dict: dict[str, Any],
+    routed_interleave_size: Optional[int],
+    shared_interleave_size: Optional[int],
+    interleave: bool = True,
+    use_megatron_fsdp: bool = False,
+) -> dict[str, Any]:
+    """Apply GLU interleaving transforms for each model component that needs them."""
+    if (
+        routed_interleave_size is not None
+        and shared_interleave_size is not None
+        and routed_interleave_size == shared_interleave_size
+    ):
+        return _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            routed_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=True,
+            include_shared_experts=True,
+            include_dense=True,
+        )
+
+    if routed_interleave_size is not None:
+        model_state_dict = _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            routed_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=True,
+            include_shared_experts=False,
+            include_dense=True,
+        )
+    if shared_interleave_size is not None:
+        model_state_dict = _process_state_dict_for_glu_interleaving(
+            model_state_dict,
+            shared_interleave_size,
+            interleave=interleave,
+            use_megatron_fsdp=use_megatron_fsdp,
+            include_routed_experts=False,
+            include_shared_experts=True,
+            include_dense=False,
+        )
+    return model_state_dict
 
 
 def _load_model_state_dict(module: torch.nn.Module, state_dict: dict[str, Any], strict: bool):
@@ -2382,39 +2469,39 @@ def _load_checkpoint_from_path(
 
     # Load model weights
     if not skip_load_to_model_and_opt:
-        # Process state dict for GLU interleaving if needed
-        # Assumption: checkpoints are always in contiguous (non-interleaved) format
-        from megatron.core.utils import get_model_config
+        # Process state dict for GLU interleaving if needed.
+        # Assumption: checkpoints are always in contiguous (non-interleaved) format.
+        routed_interleave_size, shared_interleave_size = _get_model_glu_interleave_sizes(model, cfg)
 
-        # Check if model expects interleaved weights - get from model config
-        model_interleave_size = None
-        try:
-            if len(model) > 0:
-                model_config = get_model_config(model[0])
-                model_interleave_size = getattr(model_config, "moe_mlp_glu_interleave_size", None)
-        except Exception:
-            # Fallback to cfg if model config not available
-            model_interleave_size = getattr(cfg.model, "moe_mlp_glu_interleave_size", None)
-        model_expects_interleaving = model_interleave_size is not None
-
-        # Interleave if model expects interleaved weights (checkpoints are always contiguous)
-        if model_expects_interleaving:
+        # Interleave if model expects interleaved weights.
+        if routed_interleave_size is not None:
             print_rank_0(
-                f"[GLU Interleaving] Interleaving GLU weights on load: model expects interleaving (size={model_interleave_size}), converting checkpoint from contiguous to interleaved format"
+                "[GLU Interleaving] Interleaving routed/dense GLU weights on load: "
+                f"model expects interleaving (size={routed_interleave_size}), "
+                "converting checkpoint from contiguous to interleaved format"
             )
+        if shared_interleave_size is not None:
+            print_rank_0(
+                "[GLU Interleaving] Interleaving shared expert GLU weights on load: "
+                f"model expects interleaving (size={shared_interleave_size}), "
+                "converting checkpoint from contiguous to interleaved format"
+            )
+        if routed_interleave_size is not None or shared_interleave_size is not None:
             if len(model) == 1:
-                state_dict["model"] = _process_state_dict_for_glu_interleaving(
+                state_dict["model"] = _process_state_dict_for_model_glu_interleaving(
                     state_dict["model"],
-                    model_interleave_size,
+                    routed_interleave_size,
+                    shared_interleave_size,
                     use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                 )
             else:
                 for i in range(len(model)):
                     model_key = "model%d" % i
                     if model_key in state_dict:
-                        state_dict[model_key] = _process_state_dict_for_glu_interleaving(
+                        state_dict[model_key] = _process_state_dict_for_model_glu_interleaving(
                             state_dict[model_key],
-                            model_interleave_size,
+                            routed_interleave_size,
+                            shared_interleave_size,
                             use_megatron_fsdp=cfg.ddp.use_megatron_fsdp,
                         )
 

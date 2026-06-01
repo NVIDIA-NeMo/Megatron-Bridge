@@ -70,8 +70,10 @@ IGNORE_PRECISION_PARAMS = [
     # MiniMax-M2: QK norms stored as bf16 in HF, loaded as fp32 by Megatron config.params_dtype
     "q_norm.weight",
     "k_norm.weight",
-    # MiniMax-M2: router gate stored as fp32 in HF, loaded as bf16 via autocast_dtype
+    # MoE router gate stored as fp32 in Megatron, may be bf16 in HF
     "block_sparse_moe.gate.weight",
+    "mlp.gate.weight",
+    "moe.gate.weight",
 ]
 
 # FP8 dtypes whose dequantisation is inherently lossy — allclose is meaningless.
