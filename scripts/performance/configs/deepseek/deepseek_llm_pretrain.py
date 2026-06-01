@@ -61,6 +61,8 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.cuda_graph_warmup_steps = 2
+    if cfg.model.offload_modules is None:
+        cfg.model.offload_modules = []
 
 
 def deepseek_v3_pretrain_config_gb300(
