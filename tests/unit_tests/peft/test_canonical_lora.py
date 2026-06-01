@@ -14,6 +14,7 @@
 
 import datetime
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -464,6 +465,7 @@ class TestCanonicalLoRA:
         for module in model.modules():
             if hasattr(module, "config"):
                 module.config.expert_tensor_parallel_size = 2
+                module.config._pg_collection = SimpleNamespace(expt_tp=SimpleNamespace(size=lambda: 2))
         lora = CanonicalLoRA(
             target_modules=["linear_fc1_up", "linear_fc1_gate"],
             dim=8,
