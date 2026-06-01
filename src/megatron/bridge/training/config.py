@@ -1204,6 +1204,24 @@ class ConfigContainer(Container):
             )
         assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
 
+    def _validate_hf_checkpoint_export_source(self) -> None:
+        """Validate that HF sidecar export has a source for HF config/tokenizer assets."""
+        if not self.checkpoint.also_save_hf_checkpoint:
+            return
+        if self.checkpoint.hf_source_path:
+            return
+        if getattr(self.model, "hf_model_id", None):
+            return
+        if getattr(self.tokenizer, "tokenizer_model", None):
+            return
+
+        raise ValueError(
+            "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
+            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
+            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
+            "an HF model id."
+        )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1319,6 +1337,7 @@ class ConfigContainer(Container):
             )
 
         # Checkpoint
+        self._validate_hf_checkpoint_export_source()
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
             if self.checkpoint.ckpt_format == "fsdp_dtensor":
