@@ -1101,6 +1101,7 @@ class TestPackedSequenceWithChatEndToEnd:
                 max_seq_length=512,
                 seed=1234,
                 dataset_kwargs=dataset_kwargs,
+                num_tokenizer_workers=1,
             )
 
             # Verify result is array of items with loss_mask
