@@ -354,6 +354,96 @@ def test_auto_bridge_modelopt_export_quantizes_matching_weights(monkeypatch):
     assert export_calls[0][1]["conversion_tasks"] is conversion_tasks
 
 
+def test_auto_bridge_modelopt_export_accepts_single_model_and_builds_tasks(monkeypatch):
+    model = object()
+    conversion_tasks = [
+        _task(
+            "decoder.embedding.word_embeddings.weight",
+            "model.embed_tokens.weight",
+        )
+    ]
+    build_calls = []
+    export_calls = []
+
+    class FakeModelBridge:
+        def build_conversion_tasks(self, hf_pretrained, model_arg):
+            build_calls.append((hf_pretrained, model_arg))
+            return conversion_tasks
+
+    class FakeBridge:
+        hf_pretrained = object()
+        _model_bridge = FakeModelBridge()
+
+        def export_hf_weights(self, model_arg, **kwargs):
+            export_calls.append((model_arg, kwargs))
+            yield "model.embed_tokens.weight", torch.tensor([4.0])
+
+    fake_bridge = FakeBridge()
+    monkeypatch.setattr(modelopt_utils, "collect_modelopt_quant_metadata", lambda _tasks: {})
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        lambda _model: None,
+    )
+
+    output = list(
+        AutoBridge.export_hf_weights_modelopt(
+            fake_bridge,
+            model,
+            show_progress=False,
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert [(name, tensor.tolist()) for name, tensor in output] == [("model.embed_tokens.weight", [4.0])]
+    assert build_calls == [(fake_bridge.hf_pretrained, [model])]
+    assert export_calls[0][0] == [model]
+    assert export_calls[0][1]["show_progress"] is False
+    assert export_calls[0][1]["merge_adapter_weights"] is False
+    assert export_calls[0][1]["conversion_tasks"] is conversion_tasks
+
+
+def test_auto_bridge_modelopt_export_streams_base_weights_lazily(monkeypatch):
+    conversion_tasks = [
+        _task(
+            "decoder.layers.0.mlp.up_proj.weight",
+            "model.layers.0.mlp.up_proj.weight",
+        )
+    ]
+    events = []
+
+    class FakeBridge:
+        hf_pretrained = object()
+        _model_bridge = SimpleNamespace(build_conversion_tasks=lambda *_args, **_kwargs: conversion_tasks)
+
+        def export_hf_weights(self, _model, **_kwargs):
+            events.append("start")
+            yield "model.layers.0.mlp.up_proj.weight", torch.tensor([1.0])
+            events.append("after-first")
+            yield "model.layers.0.mlp.down_proj.weight", torch.tensor([2.0])
+
+    monkeypatch.setattr(modelopt_utils, "collect_modelopt_quant_metadata", lambda _tasks: {})
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        lambda _model: None,
+    )
+
+    weights = AutoBridge.export_hf_weights_modelopt(
+        FakeBridge(),
+        [object()],
+        conversion_tasks=conversion_tasks,
+    )
+
+    assert events == []
+    first = next(weights)
+    assert first.param_name == "model.layers.0.mlp.up_proj.weight"
+    torch.testing.assert_close(first.weight, torch.tensor([1.0]))
+    assert events == ["start"]
+    second = next(weights)
+    assert second.param_name == "model.layers.0.mlp.down_proj.weight"
+    torch.testing.assert_close(second.weight, torch.tensor([2.0]))
+    assert events == ["start", "after-first"]
+
+
 def test_auto_bridge_modelopt_export_leaves_ignored_weights_unquantized(monkeypatch):
     conversion_tasks = [
         _task(
