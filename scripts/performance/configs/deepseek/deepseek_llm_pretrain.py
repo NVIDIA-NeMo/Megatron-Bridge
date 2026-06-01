@@ -42,7 +42,7 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model.moe_router_force_load_balancing = True
+    # cfg.model.moe_router_force_load_balancing = True
 
 
 def deepseek_v3_pretrain_config_gb300(

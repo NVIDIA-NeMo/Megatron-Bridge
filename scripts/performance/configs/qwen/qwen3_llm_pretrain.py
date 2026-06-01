@@ -41,7 +41,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model.moe_router_force_load_balancing = True  # required for token dropless
+    # cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
 
 def qwen3_235b_a22b_pretrain_config_gb300(
