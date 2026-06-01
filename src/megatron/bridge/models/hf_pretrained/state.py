@@ -463,6 +463,19 @@ class SafeTensorsStateSource(StateSource):
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
 
+    @staticmethod
+    def _ignore_source_key_prefixes(
+        key_to_filename_map: Mapping[str, str] | None,
+        ignored_source_key_prefixes: Iterable[str] | None,
+    ) -> Dict[str, str]:
+        if not key_to_filename_map:
+            return {}
+        if not ignored_source_key_prefixes:
+            return dict(key_to_filename_map)
+
+        prefixes = tuple(ignored_source_key_prefixes)
+        return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
+
     @property
     def path(self) -> Path:
         """
@@ -693,6 +706,7 @@ class SafeTensorsStateSource(StateSource):
         strict: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -719,11 +733,17 @@ class SafeTensorsStateSource(StateSource):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
+                source sharding map when saving.
 
         """
         if distributed_save:
             return self._save_generator_distributed(
-                generator, output_path, strict, save_every_n_ranks=save_every_n_ranks
+                generator,
+                output_path,
+                strict,
+                save_every_n_ranks=save_every_n_ranks,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -743,7 +763,7 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self.key_to_filename_map
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
         all_expected_keys = set(key_to_filename_map.keys())
 
         if not key_to_filename_map:
@@ -893,6 +913,7 @@ class SafeTensorsStateSource(StateSource):
         output_path: Union[str, Path],
         strict: bool = True,
         save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -919,7 +940,7 @@ class SafeTensorsStateSource(StateSource):
         if is_distributed:
             torch.distributed.barrier()
 
-        key_to_filename_map = self.key_to_filename_map
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:

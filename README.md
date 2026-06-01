@@ -11,6 +11,10 @@
 </div>
 
 ## 📣 News
+- [05/28/2026] [**Step-3.7-Flash**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37/README.md) for sft training details.
+
+- [05/26/2026] [**DeepSeek V4**](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) FP8 support is now available in Megatron Bridge, including HF↔Megatron conversion, quantized checkpoint export with regenerated scale tensors, and downstream verification with Megatron-backend GRPO.
+
 - [05/20/2026] [**DeepSeek V4**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/deepseek_v4/README.md) for conversion and inference details.
 
 - [05/20/2026] [**Nemotron-3 Nano Omni**](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16) day-0 branch support is now merged on **main**! The 30B-A3B MoE multimodal model supports image, video, audio, and text workflows with checkpoint conversion, inference, SFT, and PEFT (LoRA) examples. Read the [NVIDIA Blog](https://blogs.nvidia.com/blog/nemotron-3-nano-omni-multimodal-ai-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md) for the full walkthrough.

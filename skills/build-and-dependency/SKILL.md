@@ -115,7 +115,7 @@ Commit both modified files:
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -s -m "[build] chore: add <package>"
+git commit -s -m "build: add <package>"
 ```
 
 ### Regenerating uv.lock

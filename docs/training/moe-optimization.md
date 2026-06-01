@@ -6,12 +6,12 @@ training Mixture-of-Experts models with Megatron-Core. It is based on
 
 For tuning knobs, hardware-specific configs, and benchmark-oriented guidance, see:
 
-- [skills/perf-moe-optimization-workflow/SKILL.md](../skills/perf-moe-optimization-workflow/SKILL.md)
-- [skills/perf-moe-dispatcher-selection/SKILL.md](../skills/perf-moe-dispatcher-selection/SKILL.md)
-- [skills/perf-moe-long-context/SKILL.md](../skills/perf-moe-long-context/SKILL.md)
-- [skills/perf-moe-hardware-configs/SKILL.md](../skills/perf-moe-hardware-configs/SKILL.md)
-- [skills/perf-moe-vlm-training/SKILL.md](../skills/perf-moe-vlm-training/SKILL.md)
-- [skills/perf-moe-comm-overlap/SKILL.md](../skills/perf-moe-comm-overlap/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL.md](../skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-long-context/SKILL.md](../skills/nemo-mbridge-perf-moe-long-context/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md](../skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md](../skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md](../skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md)
+- [skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md](../skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md)
 
 ## The Three Walls
 
