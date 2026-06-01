@@ -201,6 +201,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 ##### Kubeflow arguments
 
 - `--kubeflow_namespace`: Kubernetes namespace for the Kubeflow TrainJob. Setting this routes the experiment through the Kubeflow executor instead of Slurm.
+- `--csp`: cloud provider whose fabric plugin to apply to the Kubeflow executor — `aws` applies `EKSEnvPlugin` (EFA: `FI_PROVIDER=efa`, `FI_EFA_USE_HUGE_PAGE=0`, EFA device requests + privileged container) and `gcp` applies `GKEEnvPlugin` (gIB RDMA-NIC pod annotations). No-op for the Slurm executor.
 - `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
 - `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
 - `--kubeflow_workdir_local_path`: Local directory whose contents nemo-run's `KubeflowExecutor.package()` rsyncs into the workdir PVC via a temporary alpine pod before launch. Used to overlay a `--mbridge-ref` checkout onto `/opt/Megatron-Bridge` in the trainer container without rebuilding the image.
@@ -214,6 +215,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--kubeflow_extra_resource_limits_json`: JSON-encoded dict of extra container resource limits (paired with the requests above).
 - `--kubeflow_pod_spec_overrides_json`: JSON-encoded dict merged into the pod spec — escape hatch for `nodeSelector`, `hostNetwork`, etc.
 - `--kubeflow_container_kwargs_json`: JSON-encoded dict of extra fields set on the training container (e.g. `{"securityContext": {"privileged": true}}` for EFA / RDMA).
+- `--kubeflow_pod_annotations_json`: JSON-encoded dict of annotations applied to the trainer pod template metadata (e.g. GKE `networking.gke.io/interfaces` to attach the RDMA NICs for gIB). Usually set for you by `--csp gcp`.
 - `--kubeflow_labels_json`: JSON-encoded dict of labels applied to the TrainJob's pods.
 
 ##### Performance arguments
