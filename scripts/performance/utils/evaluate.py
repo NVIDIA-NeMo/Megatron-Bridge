@@ -83,7 +83,13 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     chosen_paths = allranks_paths or candidate_paths
     for log_path in chosen_paths:
         logger.info(f"Reading log file: {log_path}")
-        handles.append(open(log_path))
+        # errors="replace" — log files mix structured Python output with NCCL
+        # debug, DeepEP startup, and ANSI-coloured wandb/comet_ml banners.
+        # Those non-Python writers occasionally emit a non-UTF-8 byte that
+        # crashes the whole convergence check (UnicodeDecodeError aborts the
+        # itertools.chain iterator below, losing every metric). Replacing the
+        # bad byte with U+FFFD keeps every line readable for the regex match.
+        handles.append(open(log_path, encoding="utf-8", errors="replace"))
 
     try:
         # chain (not zip): read every line from every handle. zip iterates the
