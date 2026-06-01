@@ -847,6 +847,7 @@ class MegatronPeftBridge:
         / shared-outer) by :meth:`_select_adapter_emitter` and emitted by the
         matching ``_emit_*_adapter`` method. The loop holds no per-topology logic.
         """
+        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 
         if not isinstance(megatron_model, list):
             megatron_model = [megatron_model]
