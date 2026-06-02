@@ -53,10 +53,7 @@ python scripts/performance/run_script.py \
     --data mock
 ```
 
-> **Perf recipes are NOT fully validated for correctness.** Most conversations
-> and testing were on mock data. They are designed for **upper-bound throughput
-> measurement**, not production training. Always validate loss curves and
-> convergence independently.
+See the Performance Recipe Index for important caveats before using these for anything beyond throughput benchmarking.
 
 ---
 
