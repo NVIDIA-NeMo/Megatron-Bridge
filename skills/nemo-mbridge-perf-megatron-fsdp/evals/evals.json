@@ -1,16 +1,17 @@
 [
   {
     "id": "megatron-fsdp-positive-enable-smoke",
-    "question": "Use the nemo-mbridge-perf-megatron-fsdp skill. How should I enable Megatron FSDP in Megatron Bridge, and what pitfalls should I check before running a large model? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-megatron-fsdp skill. Give the minimal Megatron Bridge Megatron-FSDP override, the required checkpoint format, and the pitfalls that distinguish Megatron FSDP from Torch FSDP2. Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-megatron-fsdp",
     "expected_script": null,
-    "ground_truth": "The answer should use Megatron FSDP guidance, summarize the relevant enablement/configuration flow, and call out pitfalls such as compatibility with parallelism choices, memory expectations, and verification from logs or config. It should not substitute generic PyTorch FSDP advice without mapping back to Megatron Bridge.",
+    "ground_truth": "The answer should use the Megatron FSDP skill. It should set cfg.dist.use_megatron_fsdp=True, cfg.ddp.use_megatron_fsdp=True, cfg.ddp.data_parallel_sharding_strategy=\"optim_grads_params\", and cfg.checkpoint.ckpt_format=\"fsdp_dtensor\" when save/load is enabled. It should mention use_torch_fsdp2 is mutually exclusive with Megatron FSDP and is not the validated path, use_tp_pp_dp_mapping is not supported with Megatron FSDP, and Hopper or earlier may need attention to CUDA_DEVICE_MAX_CONNECTIONS because FSDP and TP/CP prefer different settings.",
     "expected_behavior": [
       "Read the nemo-mbridge-perf-megatron-fsdp skill before answering.",
       "Identify the request as Megatron Bridge Megatron FSDP enablement.",
-      "Describe the enablement path at a high level.",
-      "Mention compatibility or memory pitfalls.",
-      "Include verification guidance."
+      "List cfg.dist.use_megatron_fsdp and cfg.ddp.use_megatron_fsdp.",
+      "List data_parallel_sharding_strategy=optim_grads_params and ckpt_format=fsdp_dtensor.",
+      "Mention FSDP2 mutual exclusion and use_tp_pp_dp_mapping incompatibility.",
+      "Include a Bridge-specific verification or test path."
     ]
   }
 ]

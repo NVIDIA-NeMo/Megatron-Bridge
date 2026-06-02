@@ -1,16 +1,17 @@
 [
   {
     "id": "expert-parallel-overlap-positive-flex-smoke",
-    "question": "Use the nemo-mbridge-perf-expert-parallel-overlap skill. For a Megatron Bridge MoE model using expert parallelism, how do I enable expert-parallel communication overlap with DeepEP or HybridEP, and what should I verify? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-expert-parallel-overlap skill. For a Megatron Bridge MoE model with EP>1, give the exact plain EP-overlap config, the flex-dispatcher activation call for DeepEP/HybridEP, and the main validation constraints before enabling delayed wgrad. Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-expert-parallel-overlap",
     "expected_script": null,
-    "ground_truth": "The answer should route to expert-parallel communication overlap guidance, discuss overlap_moe_expert_parallel_comm and related delayed expert wgrad scheduling, and call out dispatcher/backend choices such as DeepEP or HybridEP. It should include compatibility checks before enabling overlap and advise comparing short-run measurements to the baseline.",
+    "ground_truth": "The answer should use the expert-parallel overlap skill. It should enable cfg.comm_overlap.overlap_moe_expert_parallel_comm=True, start with cfg.comm_overlap.delay_wgrad_compute=False for correctness-first bring-up, set cfg.model.moe_shared_expert_overlap=False, require num_moe_experts>1, and use moe_token_dispatcher_type=\"alltoall\" or \"flex\". For flex dispatch it should call apply_flex_dispatcher_backend(cfg.model, moe_flex_dispatcher_backend=\"deepep\" or \"hybridep\") rather than setting only the backend string. It should state that PP>1 requires virtual_pipeline_model_parallel_size, full recompute must be off, delayed wgrad requires overlap_moe_expert_parallel_comm, and delayed wgrad with overlap_grad_reduce or gradient_accumulation_fusion needs TE>=2.7.0.",
     "expected_behavior": [
       "Read the nemo-mbridge-perf-expert-parallel-overlap skill before answering.",
       "Identify expert-parallel communication overlap as the requested feature.",
-      "Mention relevant knobs such as overlap_moe_expert_parallel_comm or delayed expert gradient scheduling.",
-      "Discuss DeepEP or HybridEP backend considerations.",
-      "Recommend validating compatibility and measuring against a baseline."
+      "List overlap_moe_expert_parallel_comm, delay_wgrad_compute, and moe_shared_expert_overlap settings.",
+      "Use apply_flex_dispatcher_backend for DeepEP or HybridEP activation.",
+      "Mention PP/VPP, full recompute, and delayed-wgrad prerequisite constraints.",
+      "Recommend validating logs/tests and measuring against a baseline."
     ]
   }
 ]
