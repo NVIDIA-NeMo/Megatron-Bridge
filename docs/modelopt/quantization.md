@@ -2,6 +2,11 @@
 
 This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, including post-training quantization (PTQ) and quantization-aware training (QAT).
 
+> **Note**: The scripts referenced in this guide are minimal, hard-coded reference examples. For more
+> comprehensive, production-quality quantization, export, and Quantization Aware Distillation (QAD)
+> scripts, see the NVIDIA Model Optimizer repository:
+> [examples/megatron_bridge/](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge).
+
 ## Table of Contents
 
 - [Overview](#overview)
