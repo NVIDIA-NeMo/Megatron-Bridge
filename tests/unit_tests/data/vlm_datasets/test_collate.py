@@ -109,8 +109,8 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
                 "feature_attention_mask": torch.ones(n, 16),
             }
 
-    # Stub _gather_assistant_text_segments to return a findable text
-    monkeypatch.setattr(collate, "_gather_assistant_text_segments", lambda ex: ["dummy"])
+    # Stub assistant text extraction to return a findable text.
+    monkeypatch.setattr(collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
 
     proc = _AudioProcessor()
     examples = [
@@ -337,7 +337,7 @@ def test_gemma4_registered_fn_matches_alias():
 class _Gemma4ProcessorBase:
     """Minimal Gemma4Processor stub for ministral3_collate_fn tests.
 
-    create_multiturn_loss_mask_by_search calls tokenizer(text, add_special_tokens=False)
+    build_assistant_loss_mask calls tokenizer(text, add_special_tokens=False)
     so _Tok must be callable.
     """
 
@@ -476,14 +476,14 @@ class _NemotronOmniProcessor:
         return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
 
 
-def _zero_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
-    return [0] * int(input_ids.shape[0])
+def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+    return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
 
 
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(9, 128))
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
@@ -510,7 +510,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
     loaded_paths = []
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
         "load_audio",
@@ -541,7 +541,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
 def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
 
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(vl_utils, "maybe_path_or_url_to_data_urls", lambda *args, **kwargs: (["frame-1"], {"fps": 1}))
     monkeypatch.setattr(vl_utils, "pil_image_from_base64", lambda data_url: f"decoded-{data_url}")
 

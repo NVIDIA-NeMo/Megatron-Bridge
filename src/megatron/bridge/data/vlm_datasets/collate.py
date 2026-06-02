@@ -49,29 +49,6 @@ except ImportError:
     HAVE_QWEN_VL_UTILS = False
 
 
-def _gather_assistant_text_segments(example: dict) -> list[str]:
-    """Extract assistant text segments from the structured conversation example.
-
-    The example schema is expected to be {"conversation": [{"role": ..., "content": [...]} ...]} where
-    content is a list of items like {"type": "text"|"image"|..., "text": "..."}.
-    Returns a list of concatenated text strings, one per assistant turn.
-    """
-    return gather_assistant_text_segments(example)
-
-
-def create_multiturn_loss_mask_by_search(
-    example: dict, input_ids, processor, skipped_tokens: torch.Tensor
-) -> list[int]:
-    """Tokenizer-agnostic masking via substring search of assistant texts.
-
-    - Tokenize full conversation with processor already done -> input_ids
-    - Extract assistant text strings from the structured example
-    - For each assistant text, tokenize without special tokens and search sequentially
-    - On success, unmask that span; otherwise leave masked
-    """
-    return build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int).tolist()
-
-
 def phi4_mm_collate_fn(examples, processor):
     """Collate function for Phi-4 MM model audio input"""
 
@@ -264,17 +241,19 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
             return_tensors="pt",
             return_dict=True,
         )
-    loss_mask = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
-    ]
+    loss_mask = torch.stack(
+        [
+            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int)
+            for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
+        ]
+    )
 
     img_start_token_id = 131073  # tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = 131074  # tokenizer.convert_tokens_to_ids("</img>")
     adjusted_batch = adjust_image_tokens(
         {
             "input_ids": batch["input_ids"],
-            "loss_mask": torch.tensor(loss_mask),
+            "loss_mask": loss_mask,
         },
         batch["num_patches"],
         img_start_token_id,
@@ -307,7 +286,7 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     labels[torch.isin(labels, skipped_tokens)] = IGNORE_INDEX
     batch["labels"] = labels
 
-    loss_mask_t = torch.tensor(loss_mask, dtype=torch.float, device=batch["input_ids"].device)
+    loss_mask_t = loss_mask.to(dtype=torch.float, device=batch["input_ids"].device)
     # Shift loss mask to align with next-token labels timeline
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
@@ -557,10 +536,12 @@ def nemotron_omni_collate_fn(
         batch["sound_length"] = mel_lengths_t
 
     # --- Loss mask (same pattern as nemotron_vl) ---
-    loss_mask = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])
-    ]
+    loss_mask = torch.stack(
+        [
+            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int)
+            for example, input_ids in zip(examples, batch["input_ids"])
+        ]
+    )
 
     # --- Image token adjustment (only when images are present) ---
     img_start_token_id = processor.tokenizer.convert_tokens_to_ids("<img>")
@@ -583,13 +564,13 @@ def nemotron_omni_collate_fn(
         else:
             num_tiles_for_adjust = batch.get("num_patches", torch.zeros(len(examples), dtype=torch.long))
         adjusted_batch = adjust_image_tokens(
-            {"input_ids": batch["input_ids"], "loss_mask": torch.tensor(loss_mask)},
+            {"input_ids": batch["input_ids"], "loss_mask": loss_mask},
             num_tiles_for_adjust,
             img_start_token_id,
             img_end_token_id,
         )
     else:
-        adjusted_batch = {"input_ids": batch["input_ids"], "loss_mask": torch.tensor(loss_mask)}
+        adjusted_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
 
     if is_video:
         video_token_id = processor.tokenizer.convert_tokens_to_ids("<video>")
@@ -660,7 +641,7 @@ def nemotron_omni_collate_fn(
     labels[torch.isin(labels, skipped_tokens)] = IGNORE_INDEX
     batch["labels"] = labels
 
-    loss_mask_t = torch.tensor(loss_mask, dtype=torch.float, device=batch["input_ids"].device)
+    loss_mask_t = loss_mask.to(dtype=torch.float, device=batch["input_ids"].device)
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
@@ -921,7 +902,7 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
 
     for i, example in enumerate(examples):
         ids = input_ids[i].tolist()
-        assistant_texts = _gather_assistant_text_segments(example)
+        assistant_texts = gather_assistant_text_segments(example)
 
         # Find assistant span using backward search (like HF's Qwen2AudioCollator)
         found = -1
