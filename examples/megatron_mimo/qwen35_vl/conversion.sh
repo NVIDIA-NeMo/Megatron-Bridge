@@ -23,11 +23,11 @@
 # (src/megatron/bridge/models/megatron_mimo/conversion/adapters/qwen35_vl.py).
 #
 # Usage:
-#   bash examples/megatron_mimo/qwen35_vl_conversion.sh
+#   bash examples/megatron_mimo/qwen35_vl/conversion.sh
 #
 # Override defaults via environment variables, e.g.:
-#   MODEL_NAME=Qwen3.5-0.8B LANGUAGE_TP=2 VISION_TP=1 NPROC_PER_NODE=2 \
-#     bash examples/megatron_mimo/qwen35_vl_conversion.sh
+#   MODEL_NAME=Qwen3.5-27B LANGUAGE_TP=4 VISION_TP=1 \
+#     bash examples/megatron_mimo/qwen35_vl/conversion.sh
 #
 # Mirrors the non-MIMO Qwen3.5-VL entry point at
 #   examples/models/qwen/qwen35_vl/conversion.sh
@@ -58,10 +58,14 @@ esac
 # cause validate_route_table to reject the run.
 LANGUAGE_TP=${LANGUAGE_TP:-1}
 VISION_TP=${VISION_TP:-1}
+LANGUAGE_DP=${LANGUAGE_DP:-1}
+VISION_DP=${VISION_DP:-1}
+LANGUAGE_RANK_OFFSET=${LANGUAGE_RANK_OFFSET:-0}
+VISION_RANK_OFFSET=${VISION_RANK_OFFSET:-$((LANGUAGE_RANK_OFFSET + LANGUAGE_TP * LANGUAGE_DP))}
 
-# torchrun world size. Default 2: two ranks colocated across the two
-# components; minimum that exercises NCCL paths in the orchestrator.
-NPROC_PER_NODE=${NPROC_PER_NODE:-2}
+# torchrun world size. By default, allocate exactly the ranks covered by the
+# explicit non-colocated component layout.
+NPROC_PER_NODE=${NPROC_PER_NODE:-$((VISION_RANK_OFFSET + VISION_TP * VISION_DP))}
 
 TORCH_DTYPE=${TORCH_DTYPE:-bfloat16}
 
@@ -74,8 +78,8 @@ uv run python -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE}" \
     examples/conversion/convert_megatron_mimo.py import \
         --hf-model "Qwen/${MODEL_NAME}" \
         --megatron-path "${MEGATRON_PATH}" \
-        --component "language=tp=${LANGUAGE_TP}" \
-        --component "images=tp=${VISION_TP}" \
+        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
+        --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=${VISION_RANK_OFFSET}" \
         --torch-dtype "${TORCH_DTYPE}"
 
 # Export MIMO → HF.
@@ -86,6 +90,6 @@ uv run python -m torch.distributed.run --nproc_per_node="${NPROC_PER_NODE}" \
         --hf-model "Qwen/${MODEL_NAME}" \
         --megatron-path "${MEGATRON_PATH}" \
         --hf-path "${HF_PATH}" \
-        --component "language=tp=${LANGUAGE_TP}" \
-        --component "images=tp=${VISION_TP}" \
+        --component "language=tp=${LANGUAGE_TP},dp=${LANGUAGE_DP},rank_offset=${LANGUAGE_RANK_OFFSET}" \
+        --component "images=tp=${VISION_TP},dp=${VISION_DP},rank_offset=${VISION_RANK_OFFSET}" \
         --torch-dtype "${TORCH_DTYPE}"
