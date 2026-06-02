@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "memory-tuning-positive-oom-smoke",
+    "question": "My Megatron Bridge training run is OOM on H100. How should I systematically reduce peak GPU memory before changing the model?",
+    "expected_skill": "nemo-mbridge-perf-memory-tuning",
+    "expected_script": null,
+    "ground_truth": "The answer should use the memory tuning skill and propose a systematic memory-reduction path: verify the eager baseline and memory profile, consider expandable segments, adjust parallelism or micro-batch sizing, use activation recompute, consider CPU offloading only when appropriate, and check known incompatibilities. It should avoid jumping directly to a single feature without diagnosis.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-memory-tuning skill before answering.",
+      "Identify this as an OOM or peak GPU memory tuning problem.",
+      "Give a prioritized, systematic set of memory-reduction options.",
+      "Mention activation recompute and parallelism or micro-batch adjustments.",
+      "Call out feature compatibility checks before applying changes."
+    ]
+  },
+  {
+    "id": "memory-tuning-negative-resiliency",
+    "question": "How do I configure fault tolerance and straggler detection so my job can survive preemption?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a resiliency and fault-tolerance task, not a memory tuning task. The memory tuning skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-memory-tuning skill.",
+      "Do not answer primarily with OOM or memory-reduction settings.",
+      "Route the request to resiliency guidance."
+    ]
+  }
+]

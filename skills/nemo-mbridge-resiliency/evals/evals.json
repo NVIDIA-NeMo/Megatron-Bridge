@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "resiliency-positive-preemption-smoke",
+    "question": "How do I configure Megatron Bridge resiliency features like fault tolerance, straggler detection, in-process restart, preemption handling, and the rerun state machine?",
+    "expected_skill": "nemo-mbridge-resiliency",
+    "expected_script": null,
+    "ground_truth": "The answer should use resiliency guidance, explain relevant Megatron Bridge fault-tolerance features such as straggler detection, in-process restart, preemption support, and rerun state machine checks, and advise verifying logs and failure behavior. It should not treat the request as a performance tuning or memory optimization task.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-resiliency skill before answering.",
+      "Identify the task as resiliency or fault-tolerance configuration.",
+      "Mention straggler detection, in-process restart, preemption, or rerun state machine features as relevant.",
+      "Include verification guidance for logs or failure behavior.",
+      "Avoid focusing on throughput or memory tuning unless the user asks for it."
+    ]
+  },
+  {
+    "id": "resiliency-negative-parallelism",
+    "question": "How should I choose tensor, pipeline, data, context, and expert parallelism for a model on 64 GPUs?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a parallelism strategy selection task, not a resiliency task. The resiliency skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-resiliency skill.",
+      "Do not answer primarily with fault-tolerance settings.",
+      "Route the request to parallelism strategy guidance."
+    ]
+  }
+]

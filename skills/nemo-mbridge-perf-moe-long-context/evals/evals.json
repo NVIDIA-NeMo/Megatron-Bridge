@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "moe-long-context-positive-cp-smoke",
+    "question": "I need to train a long-context MoE model in Megatron Bridge. How should I size context parallelism and combine it with recompute and dispatcher choices?",
+    "expected_skill": "nemo-mbridge-perf-moe-long-context",
+    "expected_script": null,
+    "ground_truth": "The answer should use long-context MoE guidance, explain that long sequence length changes memory and communication pressure, discuss context-parallel sizing rules of thumb, and mention interactions with selective recompute, dispatcher choice, and CUDA graph suitability. It should recommend validating on the target model and hardware.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-long-context skill before answering.",
+      "Identify the task as long-context MoE training guidance.",
+      "Discuss context parallelism sizing.",
+      "Mention recompute and dispatcher interactions.",
+      "Include practical validation or pitfall guidance."
+    ]
+  },
+  {
+    "id": "moe-long-context-negative-recipe-recommender",
+    "question": "Which library recipe should I start from for SFT versus PEFT on my model?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a recipe selection task, not long-context MoE performance guidance. The long-context MoE skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-moe-long-context skill.",
+      "Do not answer primarily with context-parallel sizing.",
+      "Route the request to recipe recommendation guidance."
+    ]
+  }
+]

@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "recipe-recommender-positive-sft-peft-smoke",
+    "question": "I have a model name, GPU count, and training goal. Help me choose a Megatron Bridge pretrain, SFT, or PEFT recipe and explain what I need to adjust.",
+    "expected_skill": "nemo-mbridge-recipe-recommender",
+    "expected_script": null,
+    "ground_truth": "The answer should use recipe recommender guidance, ask for or use model, GPU count, and training goal, recommend an appropriate library or performance recipe, and explain likely adjustments such as parallelism, precision, data path, checkpoint, and performance settings. It should avoid choosing a recipe without stating assumptions.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-recipe-recommender skill before answering.",
+      "Identify the task as recipe selection or customization.",
+      "Use model, GPU count, and training goal as decision inputs.",
+      "Recommend a starting recipe and explain key adjustments.",
+      "State assumptions or ask for missing inputs when needed."
+    ]
+  },
+  {
+    "id": "recipe-recommender-negative-nccl-slurm",
+    "question": "My Slurm job hangs during NCCL setup across two nodes. How do I debug the sbatch file?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a multi-node Slurm debugging task, not a recipe recommendation task. The recipe recommender skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-recipe-recommender skill.",
+      "Do not answer by recommending SFT, PEFT, or pretrain recipes.",
+      "Route the request to multi-node Slurm guidance."
+    ]
+  }
+]

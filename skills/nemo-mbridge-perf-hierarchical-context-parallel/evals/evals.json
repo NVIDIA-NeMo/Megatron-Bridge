@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "hierarchical-context-parallel-positive-long-context-smoke",
+    "question": "I want to train a long-context Megatron Bridge model using hierarchical context parallelism. Which config knobs and verification checks should I look at?",
+    "expected_skill": "nemo-mbridge-perf-hierarchical-context-parallel",
+    "expected_script": null,
+    "ground_truth": "The answer should focus on hierarchical context parallelism, describe enabling the relevant context-parallel hierarchy knobs at a high level, and direct the user to verify group sizing, sequence-length divisibility, communication topology, and runtime logs. It should distinguish hierarchical CP from ordinary tensor or data parallel sizing.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-hierarchical-context-parallel skill before answering.",
+      "Identify hierarchical context parallelism as the requested feature.",
+      "Mention context-parallel hierarchy or group-size configuration at a high level.",
+      "Call out sequence-length and topology constraints.",
+      "Include verification steps for runtime configuration or logs."
+    ]
+  },
+  {
+    "id": "hierarchical-context-parallel-negative-cpu-offload",
+    "question": "Can I offload optimizer state to CPU with HybridDeviceOptimizer to reduce GPU memory?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a CPU offloading question, not a hierarchical context parallelism question. The hierarchical CP skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-hierarchical-context-parallel skill.",
+      "Do not answer primarily with context-parallel group sizing.",
+      "Route the request to CPU offloading guidance."
+    ]
+  }
+]

@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "cpu-offloading-positive-optimizer-smoke",
+    "question": "I need to reduce GPU memory in Megatron Bridge by offloading activations or optimizer state to CPU. What CPU offloading options should I consider and what constraints should I check?",
+    "expected_skill": "nemo-mbridge-perf-cpu-offloading",
+    "expected_script": null,
+    "ground_truth": "The answer should discuss Megatron Bridge CPU offloading options such as activation offloading and fractional optimizer state offloading with HybridDeviceOptimizer. It should highlight memory relief versus host-transfer overhead, note that CPU offloading is incompatible with CUDA graphs, and advise validating throughput and memory impact on the target stack.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-cpu-offloading skill before answering.",
+      "Identify both activation offloading and optimizer-state offloading as relevant options.",
+      "Explain the memory versus performance tradeoff.",
+      "Mention that CPU offloading is incompatible with CUDA graphs.",
+      "Recommend validating on the user's target hardware and recipe."
+    ]
+  },
+  {
+    "id": "cpu-offloading-negative-slurm",
+    "question": "My two-node Slurm job hangs during NCCL initialization. How should I debug the sbatch and srun setup?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a multi-node Slurm and NCCL debugging task, not a CPU offloading task. The CPU offloading skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-cpu-offloading skill.",
+      "Do not answer with CPU offload configuration knobs.",
+      "Route the request to multi-node Slurm debugging guidance."
+    ]
+  }
+]

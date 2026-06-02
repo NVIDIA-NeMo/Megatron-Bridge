@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "megatron-fsdp-positive-enable-smoke",
+    "question": "How should I enable Megatron FSDP in Megatron Bridge, and what pitfalls should I check before running a large model?",
+    "expected_skill": "nemo-mbridge-perf-megatron-fsdp",
+    "expected_script": null,
+    "ground_truth": "The answer should use Megatron FSDP guidance, summarize the relevant enablement/configuration flow, and call out pitfalls such as compatibility with parallelism choices, memory expectations, and verification from logs or config. It should not substitute generic PyTorch FSDP advice without mapping back to Megatron Bridge.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-megatron-fsdp skill before answering.",
+      "Identify the request as Megatron Bridge Megatron FSDP enablement.",
+      "Describe the enablement path at a high level.",
+      "Mention compatibility or memory pitfalls.",
+      "Include verification guidance."
+    ]
+  },
+  {
+    "id": "megatron-fsdp-negative-sequence-packing",
+    "question": "How do I use packed sequences for SFT and what context-parallel constraints apply?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a sequence packing and long-context SFT question, not a Megatron FSDP enablement question. The Megatron FSDP skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-megatron-fsdp skill.",
+      "Do not answer primarily with FSDP configuration.",
+      "Route the request to sequence packing guidance."
+    ]
+  }
+]

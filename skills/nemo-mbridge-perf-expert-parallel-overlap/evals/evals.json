@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "expert-parallel-overlap-positive-flex-smoke",
+    "question": "For a Megatron Bridge MoE model using expert parallelism, how do I enable expert-parallel communication overlap with DeepEP or HybridEP, and what should I verify?",
+    "expected_skill": "nemo-mbridge-perf-expert-parallel-overlap",
+    "expected_script": null,
+    "ground_truth": "The answer should route to expert-parallel communication overlap guidance, discuss overlap_moe_expert_parallel_comm and related delayed expert wgrad scheduling, and call out dispatcher/backend choices such as DeepEP or HybridEP. It should include compatibility checks before enabling overlap and advise comparing short-run measurements to the baseline.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-expert-parallel-overlap skill before answering.",
+      "Identify expert-parallel communication overlap as the requested feature.",
+      "Mention relevant knobs such as overlap_moe_expert_parallel_comm or delayed expert gradient scheduling.",
+      "Discuss DeepEP or HybridEP backend considerations.",
+      "Recommend validating compatibility and measuring against a baseline."
+    ]
+  },
+  {
+    "id": "expert-parallel-overlap-negative-fsdp",
+    "question": "How do I enable Megatron FSDP and choose between FSDP and data parallel sharding for a dense model?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a Megatron FSDP question, not an expert-parallel MoE communication-overlap question. The expert-parallel overlap skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-expert-parallel-overlap skill.",
+      "Do not answer with MoE dispatcher or expert overlap knobs.",
+      "Route the request to Megatron FSDP guidance."
+    ]
+  }
+]

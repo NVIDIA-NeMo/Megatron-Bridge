@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "moe-hardware-configs-positive-platform-smoke",
+    "question": "Give me a Megatron Bridge MoE training playbook for H100 versus GB200, including likely parallelism patterns and tuning stack choices.",
+    "expected_skill": "nemo-mbridge-perf-moe-hardware-configs",
+    "expected_script": null,
+    "ground_truth": "The answer should use MoE hardware configuration guidance, summarize platform-specific playbooks for H100 or GB200, and discuss representative parallelism, dispatcher, overlap, and throughput-pattern considerations. It should avoid claiming exact throughput without target-stack validation.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-hardware-configs skill before answering.",
+      "Identify the task as a hardware-platform MoE playbook request.",
+      "Discuss representative parallelism patterns by hardware platform.",
+      "Mention dispatcher or overlap stack choices where relevant.",
+      "Avoid over-precise performance guarantees and recommend validation."
+    ]
+  },
+  {
+    "id": "moe-hardware-configs-negative-fsdp",
+    "question": "How do I enable Megatron FSDP for a dense model and verify it is active?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a Megatron FSDP enablement question, not a MoE hardware playbook. The MoE hardware configs skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-moe-hardware-configs skill.",
+      "Do not answer with MoE hardware platform playbooks.",
+      "Route the request to Megatron FSDP guidance."
+    ]
+  }
+]

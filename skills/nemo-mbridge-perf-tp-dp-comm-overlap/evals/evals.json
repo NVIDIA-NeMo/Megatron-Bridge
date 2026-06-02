@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "tp-dp-comm-overlap-positive-smoke",
+    "question": "How do I enable tensor-parallel, data-parallel, and pipeline communication overlap in Megatron Bridge, and how should I verify it is active?",
+    "expected_skill": "nemo-mbridge-perf-tp-dp-comm-overlap",
+    "expected_script": null,
+    "ground_truth": "The answer should use TP/DP/PP communication overlap guidance, summarize relevant overlap knobs at a high level, call out compatibility pitfalls, and include verification steps from config or logs. It should distinguish TP/DP/PP overlap from MoE expert communication overlap.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-tp-dp-comm-overlap skill before answering.",
+      "Identify TP, DP, and PP communication overlap as the target feature.",
+      "Mention relevant enablement knobs at a high level.",
+      "Call out compatibility or ordering pitfalls.",
+      "Include verification guidance."
+    ]
+  },
+  {
+    "id": "tp-dp-comm-overlap-negative-moe-dispatcher",
+    "question": "Should my MoE model use alltoall, DeepEP, or HybridEP as its token dispatcher?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a MoE token dispatcher selection question, not a TP/DP/PP communication overlap question. The TP/DP communication overlap skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-tp-dp-comm-overlap skill.",
+      "Do not answer primarily with TP/DP/PP overlap knobs.",
+      "Route the request to MoE dispatcher selection guidance."
+    ]
+  }
+]

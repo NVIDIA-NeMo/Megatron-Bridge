@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "moe-optimization-workflow-positive-three-walls-smoke",
+    "question": "I have a Megatron Bridge MoE model that is slow and memory constrained. Can you give me a systematic optimization workflow covering memory, parallelism, dispatcher choice, overlap, and CUDA graphs?",
+    "expected_skill": "nemo-mbridge-perf-moe-optimization-workflow",
+    "expected_script": null,
+    "ground_truth": "The answer should use the systematic MoE optimization workflow, organize work into phases such as making the run memory-feasible, choosing parallelism for scale, profiling the bottleneck, then applying dispatcher, overlap, FP8, or CUDA graph optimizations as appropriate. It should avoid isolated one-off tuning advice without a workflow.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-optimization-workflow skill before answering.",
+      "Present a phased MoE optimization workflow.",
+      "Start with memory feasibility before throughput tuning.",
+      "Include parallelism, dispatcher, overlap, and CUDA graph considerations.",
+      "Recommend profiling and validating each optimization against a baseline."
+    ]
+  },
+  {
+    "id": "moe-optimization-workflow-negative-slurm",
+    "question": "My sbatch job hangs across two nodes. How should I configure srun and NCCL debugging?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a multi-node Slurm launch/debugging task, not a systematic MoE optimization workflow. The MoE optimization workflow skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-moe-optimization-workflow skill.",
+      "Do not answer with MoE optimization phases.",
+      "Route the request to multi-node Slurm guidance."
+    ]
+  }
+]

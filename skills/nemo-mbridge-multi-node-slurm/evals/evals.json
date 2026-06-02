@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "multi-node-slurm-positive-sbatch-smoke",
+    "question": "Convert my single-node Megatron Bridge launch into a two-node Slurm sbatch job. I need guidance on srun-native launch, container mounts, NCCL variables, and debugging timeouts.",
+    "expected_skill": "nemo-mbridge-multi-node-slurm",
+    "expected_script": null,
+    "ground_truth": "The answer should use the multi-node Slurm skill, recommend the srun-native approach as the preferred pattern, explain cluster/container setup considerations, and include practical checks for NCCL timeouts and multi-node debugging. It should not default to a local single-node torchrun-only recipe.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-multi-node-slurm skill before answering.",
+      "Identify the task as multi-node Slurm launch conversion.",
+      "Recommend the srun-native approach unless the user explicitly needs the legacy torch.distributed path.",
+      "Mention container, mount, and environment setup considerations.",
+      "Include debugging advice for NCCL or node-communication failures."
+    ]
+  },
+  {
+    "id": "multi-node-slurm-negative-recipe-selection",
+    "question": "Which Megatron Bridge recipe should I choose for SFT versus PEFT on a single H100 node?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is a recipe recommendation task, not a multi-node Slurm conversion or debugging task. The multi-node Slurm skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-multi-node-slurm skill.",
+      "Do not provide sbatch or srun templates for a single-node recipe selection question.",
+      "Route the request to recipe recommendation guidance."
+    ]
+  }
+]

@@ -1,1 +1,28 @@
-[]
+[
+  {
+    "id": "moe-dispatcher-selection-positive-smoke",
+    "question": "For a Megatron Bridge MoE run, how do I choose between alltoall, DeepEP, and HybridEP token dispatchers for my hardware and EP degree?",
+    "expected_skill": "nemo-mbridge-perf-moe-dispatcher-selection",
+    "expected_script": null,
+    "ground_truth": "The answer should use MoE dispatcher selection guidance and compare alltoall, DeepEP, and HybridEP based on hardware, expert parallel degree, optimization maturity, and model-family patterns. It should tell the user to validate dispatcher choice with short-run measurements and known interactions such as overlap or long-context settings.",
+    "expected_behavior": [
+      "Read the nemo-mbridge-perf-moe-dispatcher-selection skill before answering.",
+      "Compare alltoall, DeepEP, and HybridEP rather than recommending one blindly.",
+      "Consider hardware and expert-parallel degree.",
+      "Mention model-family or optimization-stage patterns.",
+      "Recommend validating the selected dispatcher with measurements."
+    ]
+  },
+  {
+    "id": "moe-dispatcher-selection-negative-activation-recompute",
+    "question": "My dense model is OOM. Should I enable selective or full activation recompute?",
+    "expected_skill": null,
+    "expected_script": null,
+    "ground_truth": "This is an activation recompute question, not a MoE token dispatcher selection question. The dispatcher selection skill should not trigger.",
+    "expected_behavior": [
+      "Do not select the nemo-mbridge-perf-moe-dispatcher-selection skill.",
+      "Do not answer with MoE dispatcher choices.",
+      "Route the request to activation recompute guidance."
+    ]
+  }
+]
