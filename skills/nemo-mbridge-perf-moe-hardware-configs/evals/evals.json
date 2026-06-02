@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-hardware-configs-positive-platform-smoke",
-    "question": "Use the nemo-mbridge-perf-moe-hardware-configs skill. Compare DSV3 and Qwen3 235B MoE playbooks on H100 versus GB200: give representative TP/EP/PP/VPP, dispatcher choices, CUDA graph scopes, and the environment knobs called out by the skill. Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-moe-hardware-configs skill as an implementation checklist. I am choosing MoE training playbooks for DSV3 and Qwen3 235B on H100 versus GB200/GB300. Give the representative TP/EP/PP/VPP layouts, dispatcher choices, CUDA graph scopes, environment knobs, GB200/GB300 CPU-side tuning note, and the main warning about copying tracker rows.",
     "expected_skill": "nemo-mbridge-perf-moe-hardware-configs",
     "expected_script": null,
     "ground_truth": "The answer should use MoE hardware configuration guidance. It should state DSV3 on H100 uses DeepEP with TP=2, EP=64, PP=8, VPP=4, while DSV3 on GB200 or GB300 uses HybridEP with TP=1, EP=64, PP=4, VPP=4 and CUDA graph scopes attn + moe_router + moe_preprocess. It should state Qwen3 235B on H100 uses DeepEP with TP=2, EP=32, PP=8, VPP=4, while Qwen3 235B on GB200 uses HybridEP with TP=1 or 2, EP=32-64, PP=4 and the same TE-scoped graph path. It should mention CUDA_DEVICE_MAX_CONNECTIONS=1 or 32 depending on overlap/graphs, PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True, NCCL_GRAPH_REGISTER=0, CPU-side tuning on GB200/GB300, and warn not to cargo-cult throughput rows.",
