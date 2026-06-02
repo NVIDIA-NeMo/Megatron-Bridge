@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 try:
     from scripts.performance.argument_parser import _testing_args
 except (ImportError, ModuleNotFoundError):
-    from .scripts.performance.argument_parser import _testing_args
+    from argument_parser import _testing_args
 
 try:
     import numpy as np
