@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling CUDA graph capture in Megatron Bridge training workloads to reduce host-driver overhead and improve GPU throughput for pretraining and fine-tuning recipes. <br>
+Developers and engineers reducing host-driver overhead in Megatron Bridge training workloads via CUDA graph capture, or diagnosing crashes and regressions related to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -21,7 +21,6 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
@@ -31,13 +30,13 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- `claude-code` <br>
+- `codex` <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 evaluation tasks (2 positive skill-activation cases, 1 negative case) with 2 attempts per task and a 50% pass threshold. <br>
+Evaluated against 1 evaluation task (1 positive activation case, 0 negative) with 2 attempts per task; pass threshold 50%. NVSkills-Eval profile: external. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -61,19 +60,14 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 92% (-2%) | 94% (+13%) |
-| Discoverability | 6 | 100% (+0%) | 77% (-2%) |
-| Effectiveness | 6 | 91% (-2%) | 95% (+6%) |
-| Efficiency | 6 | 92% (-0%) | 67% (-3%) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
+| Security | 2 | 100% (+0%) | 100% (+0%) |
+| Correctness | 2 | 100% (+0%) | 88% (+0%) |
+| Discoverability | 2 | 100% (+0%) | 62% (+0%) |
+| Effectiveness | 2 | 94% (-4%) | 91% (-2%) |
+| Efficiency | 2 | 92% (-0%) | 60% (-0%) |
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1520-g91d60f3f (source: git describe) <br>
+b0f64d72 (source: git SHA, committed 2026-06-02) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

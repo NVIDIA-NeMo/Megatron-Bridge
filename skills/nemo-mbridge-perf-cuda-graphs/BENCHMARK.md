@@ -7,10 +7,10 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemo-mbridge-perf-cuda-graphs`
-- Evaluation date: 2026-06-01
+- Evaluation date: 2026-06-02
 - NVSkills-Eval profile: `external`
 - Environment: `local`
-- Dataset: 3 evaluation tasks
+- Dataset: 1 evaluation tasks
 - Attempts per task: 2
 - Pass threshold: 50%
 - Overall verdict: PASS
@@ -42,10 +42,10 @@ Underlying evaluation signals used in this run:
 
 ## Test Tasks
 
-The benchmark dataset contained 3 evaluation tasks:
+The benchmark dataset contained 1 evaluation tasks:
 
-- Positive tasks: 2 tasks where the skill was expected to activate.
-- Negative tasks: 1 task where no skill was expected.
+- Positive tasks: 1 tasks where the skill was expected to activate.
+- Negative tasks: 0 tasks where no skill was expected.
 - Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
 
 Task composition is derived from the evaluation dataset when possible. Entries with `expected_skill` set are treated as positive skill-activation cases, while entries with `expected_skill: null` are treated as negative activation cases.
@@ -54,11 +54,11 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 6 | 100% (+0%) | 100% (+0%) |
-| Correctness | 6 | 92% (-2%) | 94% (+13%) |
-| Discoverability | 6 | 100% (+0%) | 77% (-2%) |
-| Effectiveness | 6 | 91% (-2%) | 95% (+6%) |
-| Efficiency | 6 | 92% (-0%) | 67% (-3%) |
+| Security | 2 | 100% (+0%) | 100% (+0%) |
+| Correctness | 2 | 100% (+0%) | 88% (+0%) |
+| Discoverability | 2 | 100% (+0%) | 62% (+0%) |
+| Effectiveness | 2 | 94% (-4%) | 91% (-2%) |
+| Efficiency | 2 | 92% (-0%) | 60% (-0%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
