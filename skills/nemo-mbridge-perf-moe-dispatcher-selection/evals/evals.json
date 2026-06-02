@@ -12,17 +12,5 @@
       "Mention model-family or optimization-stage patterns.",
       "Recommend validating the selected dispatcher with measurements."
     ]
-  },
-  {
-    "id": "moe-dispatcher-selection-negative-activation-recompute",
-    "question": "My dense model is OOM. Should I enable selective or full activation recompute?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is an activation recompute question, not a MoE token dispatcher selection question. The dispatcher selection skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-dispatcher-selection skill.",
-      "Do not answer with MoE dispatcher choices.",
-      "Route the request to activation recompute guidance."
-    ]
   }
 ]

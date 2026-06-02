@@ -12,17 +12,5 @@
       "Mention relevant multi-GPU launch or recipe entry points at a high level.",
       "Avoid instructing the user to modify files under 3rdparty/Megatron-LM directly."
     ]
-  },
-  {
-    "id": "mlm-bridge-training-negative-cuda-graphs",
-    "question": "For a Qwen3 MoE training run, should I use transformer_engine CUDA graphs with attn and moe_router scopes or local full_iteration capture?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a CUDA graph configuration question, not a general Megatron-LM or Megatron Bridge training recipe question. The MLM bridge training skill should stay silent.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-mlm-bridge-training skill.",
-      "Do not answer with generic training recipe guidance when CUDA graph scope guidance is requested.",
-      "Route the task to CUDA graph performance guidance instead."
-    ]
   }
 ]

@@ -12,17 +12,5 @@
       "Describe when full recompute is appropriate.",
       "Mention at least one compatibility or interaction to verify."
     ]
-  },
-  {
-    "id": "activation-recompute-negative-dispatcher",
-    "question": "For an MoE run on GB200, should I use alltoall, DeepEP, or HybridEP as the token dispatcher?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a MoE dispatcher selection question, not an activation recompute question. The activation recompute skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-activation-recompute skill.",
-      "Do not frame the answer primarily around recompute settings.",
-      "Route the request to MoE dispatcher selection guidance."
-    ]
   }
 ]

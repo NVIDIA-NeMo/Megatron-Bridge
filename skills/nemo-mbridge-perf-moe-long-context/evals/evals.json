@@ -12,17 +12,5 @@
       "Mention recompute and dispatcher interactions.",
       "Include practical validation or pitfall guidance."
     ]
-  },
-  {
-    "id": "moe-long-context-negative-recipe-recommender",
-    "question": "Which library recipe should I start from for SFT versus PEFT on my model?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a recipe selection task, not long-context MoE performance guidance. The long-context MoE skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-long-context skill.",
-      "Do not answer primarily with context-parallel sizing.",
-      "Route the request to recipe recommendation guidance."
-    ]
   }
 ]

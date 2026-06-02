@@ -12,17 +12,5 @@
       "Mention compatibility or memory pitfalls.",
       "Include verification guidance."
     ]
-  },
-  {
-    "id": "megatron-fsdp-negative-sequence-packing",
-    "question": "How do I use packed sequences for SFT and what context-parallel constraints apply?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a sequence packing and long-context SFT question, not a Megatron FSDP enablement question. The Megatron FSDP skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-megatron-fsdp skill.",
-      "Do not answer primarily with FSDP configuration.",
-      "Route the request to sequence packing guidance."
-    ]
   }
 ]

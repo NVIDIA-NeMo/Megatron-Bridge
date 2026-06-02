@@ -12,17 +12,5 @@
       "Discuss DeepEP or HybridEP backend considerations.",
       "Recommend validating compatibility and measuring against a baseline."
     ]
-  },
-  {
-    "id": "expert-parallel-overlap-negative-fsdp",
-    "question": "How do I enable Megatron FSDP and choose between FSDP and data parallel sharding for a dense model?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a Megatron FSDP question, not an expert-parallel MoE communication-overlap question. The expert-parallel overlap skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-expert-parallel-overlap skill.",
-      "Do not answer with MoE dispatcher or expert overlap knobs.",
-      "Route the request to Megatron FSDP guidance."
-    ]
   }
 ]

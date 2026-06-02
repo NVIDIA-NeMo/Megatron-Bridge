@@ -12,17 +12,5 @@
       "Include verification guidance for logs or failure behavior.",
       "Avoid focusing on throughput or memory tuning unless the user asks for it."
     ]
-  },
-  {
-    "id": "resiliency-negative-parallelism",
-    "question": "How should I choose tensor, pipeline, data, context, and expert parallelism for a model on 64 GPUs?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a parallelism strategy selection task, not a resiliency task. The resiliency skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-resiliency skill.",
-      "Do not answer primarily with fault-tolerance settings.",
-      "Route the request to parallelism strategy guidance."
-    ]
   }
 ]

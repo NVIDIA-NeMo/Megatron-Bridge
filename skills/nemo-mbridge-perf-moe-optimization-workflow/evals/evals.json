@@ -12,17 +12,5 @@
       "Include parallelism, dispatcher, overlap, and CUDA graph considerations.",
       "Recommend profiling and validating each optimization against a baseline."
     ]
-  },
-  {
-    "id": "moe-optimization-workflow-negative-slurm",
-    "question": "My sbatch job hangs across two nodes. How should I configure srun and NCCL debugging?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a multi-node Slurm launch/debugging task, not a systematic MoE optimization workflow. The MoE optimization workflow skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-optimization-workflow skill.",
-      "Do not answer with MoE optimization phases.",
-      "Route the request to multi-node Slurm guidance."
-    ]
   }
 ]

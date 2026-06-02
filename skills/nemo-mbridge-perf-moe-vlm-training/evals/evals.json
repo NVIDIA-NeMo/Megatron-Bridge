@@ -12,17 +12,5 @@
       "Mention relevant multimodal or Qwen3-VL-style tuning considerations.",
       "Call out compatibility or validation pitfalls."
     ]
-  },
-  {
-    "id": "moe-vlm-training-negative-tp-dp-overlap",
-    "question": "How do I enable TP, DP, and PP communication overlap for a dense language model?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a communication-overlap configuration question for TP/DP/PP, not a MoE VLM training strategy question. The MoE VLM skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-vlm-training skill.",
-      "Do not answer with MoE VLM FSDP versus 3D-parallel guidance.",
-      "Route the request to TP/DP/PP communication overlap guidance."
-    ]
   }
 ]

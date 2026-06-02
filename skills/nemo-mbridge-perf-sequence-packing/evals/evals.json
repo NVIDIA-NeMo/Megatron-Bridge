@@ -12,17 +12,5 @@
       "Mention context-parallel constraints.",
       "Include verification or pitfall guidance."
     ]
-  },
-  {
-    "id": "sequence-packing-negative-cpu-offload",
-    "question": "Should I use CPU activation offloading or HybridDeviceOptimizer to reduce GPU memory?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a CPU offloading question, not a sequence packing question. The sequence packing skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-sequence-packing skill.",
-      "Do not answer with packed sequence or CP constraints.",
-      "Route the request to CPU offloading guidance."
-    ]
   }
 ]

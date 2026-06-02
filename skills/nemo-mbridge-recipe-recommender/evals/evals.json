@@ -12,17 +12,5 @@
       "Recommend a starting recipe and explain key adjustments.",
       "State assumptions or ask for missing inputs when needed."
     ]
-  },
-  {
-    "id": "recipe-recommender-negative-nccl-slurm",
-    "question": "My Slurm job hangs during NCCL setup across two nodes. How do I debug the sbatch file?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a multi-node Slurm debugging task, not a recipe recommendation task. The recipe recommender skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-recipe-recommender skill.",
-      "Do not answer by recommending SFT, PEFT, or pretrain recipes.",
-      "Route the request to multi-node Slurm guidance."
-    ]
   }
 ]

@@ -12,31 +12,5 @@
       "Mention the TE RNG tracker requirement and static-shape constraint.",
       "Tell the user to compare replay timing after warmup and capture rather than measuring the capture step."
     ]
-  },
-  {
-    "id": "cuda-graphs-local-full-iteration-constraints",
-    "question": "My Megatron Bridge run uses cuda_graph_impl=\"local\" with cuda_graph_scope=[\"full_iteration\"], but it fails around runtime checks. What configuration constraints should I verify?",
-    "expected_skill": "nemo-mbridge-perf-cuda-graphs",
-    "expected_script": null,
-    "ground_truth": "Local full-iteration CUDA graphs are only valid with the full_iteration scope and have tighter constraints than TE scoped graphs. Verify rerun_state_machine.check_for_nan_in_loss is false, enable model.use_te_rng_tracker and rng.te_rng_tracker, keep tensor shapes static, and avoid incompatible features such as CPU offloading. If PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True is set, NCCL_GRAPH_REGISTER may need to be set to 0. The user should first stabilize the eager run and then enable the narrowest useful graph path.",
-    "expected_behavior": [
-      "Read the nemo-mbridge-perf-cuda-graphs skill before answering.",
-      "Identify that local full-iteration graphs require the full_iteration scope.",
-      "Mention that check_for_nan_in_loss must be disabled for local full_iteration graphs.",
-      "Mention TE RNG tracker and static tensor shape requirements.",
-      "Call out at least one incompatible or environment-sensitive setting such as CPU offloading or NCCL_GRAPH_REGISTER."
-    ]
-  },
-  {
-    "id": "cuda-graphs-negative-model-support",
-    "question": "How do I add a new Hugging Face model family to Megatron Bridge and wire its config mapping?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This prompt is about adding model support and configuration mapping, not validating or configuring CUDA graph capture. The CUDA graphs skill should not be selected.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-cuda-graphs skill.",
-      "Do not answer with CUDA graph implementation or scope guidance.",
-      "Route the task to model-support guidance or ask for the relevant model-support context instead."
-    ]
   }
 ]

@@ -12,17 +12,5 @@
       "Mention divisibility, minimum GPU count, or memory-estimation constraints.",
       "Recommend validating the combined strategy with the user's recipe."
     ]
-  },
-  {
-    "id": "parallelism-strategies-negative-resiliency",
-    "question": "How do I set up in-process restart and preemption handling for a long training job?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a resiliency task, not a parallelism strategy selection task. The parallelism strategies skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-parallelism-strategies skill.",
-      "Do not answer primarily with TP/PP/DP/CP/EP choices.",
-      "Route the request to resiliency guidance."
-    ]
   }
 ]

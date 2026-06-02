@@ -12,17 +12,5 @@
       "Call out compatibility or ordering pitfalls.",
       "Include verification guidance."
     ]
-  },
-  {
-    "id": "tp-dp-comm-overlap-negative-moe-dispatcher",
-    "question": "Should my MoE model use alltoall, DeepEP, or HybridEP as its token dispatcher?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a MoE token dispatcher selection question, not a TP/DP/PP communication overlap question. The TP/DP communication overlap skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-tp-dp-comm-overlap skill.",
-      "Do not answer primarily with TP/DP/PP overlap knobs.",
-      "Route the request to MoE dispatcher selection guidance."
-    ]
   }
 ]

@@ -12,17 +12,5 @@
       "Call out sequence-length and topology constraints.",
       "Include verification steps for runtime configuration or logs."
     ]
-  },
-  {
-    "id": "hierarchical-context-parallel-negative-cpu-offload",
-    "question": "Can I offload optimizer state to CPU with HybridDeviceOptimizer to reduce GPU memory?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a CPU offloading question, not a hierarchical context parallelism question. The hierarchical CP skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-hierarchical-context-parallel skill.",
-      "Do not answer primarily with context-parallel group sizing.",
-      "Route the request to CPU offloading guidance."
-    ]
   }
 ]

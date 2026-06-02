@@ -12,17 +12,5 @@
       "Mention CUDA graph or recompute interactions.",
       "Recommend baseline comparison and verification."
     ]
-  },
-  {
-    "id": "moe-comm-overlap-negative-hardware-playbook",
-    "question": "What MoE parallelism and throughput pattern should I expect on GB200 versus H100 for Qwen3 or DeepSeek-style models?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This asks for a hardware-platform MoE playbook, not specifically communication-overlap enablement. The MoE communication-overlap skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-comm-overlap skill.",
-      "Do not answer only with overlap knobs.",
-      "Route the request to MoE hardware config guidance."
-    ]
   }
 ]

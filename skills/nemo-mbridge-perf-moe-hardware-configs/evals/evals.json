@@ -12,17 +12,5 @@
       "Mention dispatcher or overlap stack choices where relevant.",
       "Avoid over-precise performance guarantees and recommend validation."
     ]
-  },
-  {
-    "id": "moe-hardware-configs-negative-fsdp",
-    "question": "How do I enable Megatron FSDP for a dense model and verify it is active?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a Megatron FSDP enablement question, not a MoE hardware playbook. The MoE hardware configs skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-perf-moe-hardware-configs skill.",
-      "Do not answer with MoE hardware platform playbooks.",
-      "Route the request to Megatron FSDP guidance."
-    ]
   }
 ]

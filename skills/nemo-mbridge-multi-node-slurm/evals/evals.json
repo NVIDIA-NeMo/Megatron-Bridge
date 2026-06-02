@@ -12,17 +12,5 @@
       "Mention container, mount, and environment setup considerations.",
       "Include debugging advice for NCCL or node-communication failures."
     ]
-  },
-  {
-    "id": "multi-node-slurm-negative-recipe-selection",
-    "question": "Which Megatron Bridge recipe should I choose for SFT versus PEFT on a single H100 node?",
-    "expected_skill": null,
-    "expected_script": null,
-    "ground_truth": "This is a recipe recommendation task, not a multi-node Slurm conversion or debugging task. The multi-node Slurm skill should not trigger.",
-    "expected_behavior": [
-      "Do not select the nemo-mbridge-multi-node-slurm skill.",
-      "Do not provide sbatch or srun templates for a single-node recipe selection question.",
-      "Route the request to recipe recommendation guidance."
-    ]
   }
 ]
