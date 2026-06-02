@@ -17,26 +17,25 @@ import logging
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Any, Dict, List
 
-import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder, SkipSample
-from transformers import BatchEncoding
 
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
-    IGNORE_INDEX,
     ChatMLSample,
     ChatMLWebdataset,  # noqa: F401  -- re-exported for backward compat
-    _images_to_pil,
+    _images_to_pil,  # noqa: F401  -- re-exported for backward compat
     _tensor_to_pil,  # noqa: F401  -- re-exported for backward compat
-    _videos_to_pil,
-    cook_chatml_sample,
-    find_pattern_indices,
-    get_ltor_masks_and_position_ids,
+    _videos_to_pil,  # noqa: F401  -- re-exported for backward compat
+    cook_chatml_sample,  # noqa: F401  -- re-exported for backward compat
+    find_pattern_indices,  # noqa: F401  -- re-exported for backward compat
+    get_ltor_masks_and_position_ids,  # noqa: F401  -- re-exported for backward compat
     videohandler,  # noqa: F401  -- re-exported for backward compat
 )
+from megatron.bridge.data.vlm_datasets.collate import qwen2_5_collate_fn
+from megatron.bridge.data.vlm_processing import normalize_energon_vlm_sample, normalized_vlm_sample_to_hf_example
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 
@@ -93,42 +92,37 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
 
 @dataclass
 class QwenVLTaskSample:
-    """Encoded Sample Format For QwenVL"""
+    """HF-style Qwen VLM sample produced from an Energon ``ChatMLSample``.
+
+    Expected input format:
+        Produced by ``QwenVLTaskEncoder.encode_sample`` from an Energon
+        ``ChatMLSample``.  ``example`` follows the HF VLM collate schema:
+        ``{"conversation": [{"role": ..., "content": [...]}, ...]}`` with
+        inline ``{"type": "image"|"video", ...}`` media parts.
+
+    Output format:
+        Consumed by ``QwenVLTaskEncoder.batch``, which passes the ``example``
+        dictionaries to the same Qwen collate function used by HF-style VLM
+        datasets.
+    """
 
     __key__: str
     __subflavors__: Dict
-
-    imgs: List[torch.Tensor]  # (c, h, w)
-    videos: List[torch.Tensor]  # (c, h, w)
-
-    image_thw_grids: List[torch.Tensor]
-    video_thw_grids: List[torch.Tensor]
-    image_input_mask: torch.Tensor
-    video_input_mask: torch.Tensor
-    text: torch.Tensor
-    target: torch.Tensor
+    example: Dict[str, Any]
 
 
 @dataclass
 class QwenVLTaskBatch(Batch):
-    """Encoded Batch Format For QwenVL"""
+    """Batched Qwen VLM tensors produced by the shared HF collate function."""
 
     __keys__: List[str]
     __subflavors__: List[Dict]
-    # (num_tiles, c, h, w)
-    pixel_values: torch.Tensor
-    pixel_values_videos: torch.Tensor
-    image_grid_thw: torch.Tensor
-    video_grid_thw: torch.Tensor
-    image_input_mask: torch.Tensor
-    video_input_mask: torch.Tensor
-    # (n, seq_len)
     input_ids: torch.Tensor
-    # (n, seq_len)
-    attention_mask: torch.Tensor
     position_ids: torch.Tensor
     labels: torch.Tensor
     loss_mask: torch.Tensor
+    visual_inputs: Qwen2_5_VLVisualInputs | None
+    attention_mask: torch.Tensor | None = None
 
 
 def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", video_pattern: str = "<video>"):
@@ -195,23 +189,24 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.image_token_id, self.video_token_id = _resolve_hf_mm_token_ids(self.hf_tokenizer)
 
     def encode_sample(self, sample: ChatMLSample):
-        """
-        Encode sample to meet training requirement.
+        """Normalize one Energon sample into the HF-style Qwen collate schema.
 
-        Args:
-            sample.imgs: list[PIL.Image.Image]
-            sample.videos: list[Tensor]
+        Expected input format:
+            ``sample`` is an Energon ``ChatMLSample`` with JSON
+            ``conversation`` and optional decoded ``imgs`` / ``videos`` media
+            payloads.
 
-        Returns:
-            sample with necessary fields
+        Output format:
+            Returns ``QwenVLTaskSample`` whose ``example`` is a HF-style VLM
+            collate dictionary:
+            ``{"conversation": [{"role": ..., "content": [{"type": ...}, ...]}]}``.
+            Tokenization, image/video preprocessing, labels, and loss masks are
+            intentionally deferred to ``self.collate_fn`` so HF and Energon data
+            paths share the same Qwen model processing.
         """
-        # NOTE: Convert WDS tensor images to PIL to match HF flow format.
-        #     WDS imagehandler decodes JPEG to float tensors in [0,1], but the processor
-        #     expects PIL images (uint8 [0,255]) for correct rescaling and normalization.
-        imgs_for_processing = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
-        videos_for_processing = (
-            _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
-        )
+        normalized_sample = normalize_energon_vlm_sample(sample)
+        imgs_for_processing = normalized_sample.images
+        videos_for_processing = normalized_sample.videos
 
         if self.max_num_images is not None and imgs_for_processing is not None:
             if len(imgs_for_processing) > self.max_num_images:
@@ -238,273 +233,72 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     clipped.append(v)
             videos_for_processing = clipped
 
-        processed_vision = process_vision(
-            self.image_processor,
-            imgs_for_processing,
-            videos_for_processing,
-            min_pixels=self.min_pixels,
-            max_pixels=self.max_pixels,
+        normalized_sample = dataclasses.replace(
+            normalized_sample,
+            images=imgs_for_processing,
+            videos=videos_for_processing,
         )
-        image_thw_grids = processed_vision["image_grid_thw"]
-        video_thw_grids = processed_vision["video_grid_thw"]
-        flattened_imgs = processed_vision["image_inputs"]
-        flattened_videos = processed_vision["video_inputs"]
-
-        merge_length = self.merge_size**2
-        image_tokens = int(image_thw_grids.prod(-1).sum()) // merge_length if image_thw_grids is not None else 0
-        video_tokens = int(video_thw_grids.prod(-1).sum()) // merge_length if video_thw_grids is not None else 0
-        total_visual_tokens = image_tokens + video_tokens
-        if self.max_visual_tokens is not None:
-            if total_visual_tokens > self.max_visual_tokens:
-                logging.warning(
-                    "Skipping sample %s: %d visual tokens exceeds max_visual_tokens=%d",
-                    sample.__key__,
-                    total_visual_tokens,
-                    self.max_visual_tokens,
-                )
-                raise SkipSample()
-
-        # Normalize conversation to [{"role": ..., "content": ...}, ...]
-        conversation = cook_chatml_sample(sample.conversation)
-
-        # Apply Qwen-specific content formatting for user turns:
-        # convert_to_qwenvl_content splits text around <image>/<video> placeholders,
-        # then media items are reordered first for PreloadedVLMConversationProvider.
-        for turn in conversation:
-            if turn["role"] == "user":
-                content = convert_to_qwenvl_content(turn["content"])
-                media_content = [c for c in content if c.get("type") in ("image", "video")]
-                text_content = [c for c in content if c.get("type") == "text"]
-                turn["content"] = media_content + text_content
-
-        # NOTE: we need to mask all system/user input tokens and assistant generation prefix tokens
-        # In transformers >= 5.0, apply_chat_template returns BatchEncoding when tokenize=True
-        chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
-        input_ids = chat_output["input_ids"][0] if isinstance(chat_output, BatchEncoding) else chat_output[0]
-        pad_token_id = self.hf_tokenizer.pad_token_id
-        target = [pad_token_id for _ in range(len(input_ids))]
-        search_start_index = 0
-        for turn_idx, turn in enumerate(conversation[1:]):
-            if turn["role"] == "assistant":
-                answer = turn["content"]
-                answer_tokens = self.hf_tokenizer.encode(answer, add_special_tokens=False)
-                answer_start, answer_end = find_pattern_indices(input_ids, answer_tokens, search_start_index)
-                assert answer_start > 0, "Not found valid answer in conversation."
-                target[answer_start:answer_end] = input_ids[answer_start:answer_end]
-                search_start_index = answer_end
-
-        # NOTE: expand image_pad & video_pad
-        merge_length = self.merge_size**2
-        image_token_id, video_token_id = self.image_token_id, self.video_token_id
-
-        image_token_indices = np.where(input_ids == image_token_id)[0]
-        if image_token_indices is not None and image_thw_grids is not None:
-            assert len(image_token_indices) == len(image_thw_grids), (
-                f"With {len(image_thw_grids)} images in the sample, but {len(image_token_indices)} image placeholders!"
-            )
-        video_token_indices = np.where(input_ids == video_token_id)[0]
-        if video_token_indices is not None and video_thw_grids is not None:
-            assert len(video_token_indices) == len(video_thw_grids), (
-                f"With {len(video_thw_grids)} videos in the sample, but {len(video_token_indices)} video placeholders!"
-            )
-        if image_thw_grids is not None and video_thw_grids is not None:
-            image_thw_grids, video_thw_grids = (
-                np.array(image_thw_grids, dtype=np.int64),
-                np.array(video_thw_grids, dtype=np.int64),
-            )
-            # xxx_thw_grids.shape[0] indicates how many '<image>' or '<video>' inside conversation text,
-            # minus it and then get patch number, this would get exact number of visual padding size
-            target_length = (
-                input_ids.shape[0]
-                - image_thw_grids.shape[0]
-                + image_thw_grids.prod(axis=-1).sum() // merge_length
-                - video_thw_grids.shape[0]
-                + video_thw_grids.prod(axis=-1).sum() // merge_length
-            )
-        elif image_thw_grids is not None:
-            image_thw_grids = np.array(image_thw_grids, dtype=np.int64)
-
-            target_length = (
-                input_ids.shape[0] - image_thw_grids.shape[0] + image_thw_grids.prod(axis=-1).sum() // merge_length
-            )
-        elif video_thw_grids is not None:
-            video_thw_grids = np.array(video_thw_grids, dtype=np.int64)
-
-            target_length = (
-                input_ids.shape[0] - video_thw_grids.shape[0] + video_thw_grids.prod(axis=-1).sum() // merge_length
-            )
-        else:
-            target_length = input_ids.shape[0]
-
-        if target_length > self.seq_len:
-            if total_visual_tokens > self.seq_len:
-                logging.warning(
-                    "Sample %s: target_length=%d with visual_tokens=%d exceeds seq_len=%d; "
-                    "truncation would corrupt visual tokens, dropping sample.",
-                    sample.__key__,
-                    target_length,
-                    total_visual_tokens,
-                    self.seq_len,
-                )
-                raise SkipSample()
-            logging.warning(
-                "Sample %s: target_length=%d exceeds seq_len=%d; text will be truncated.",
-                sample.__key__,
-                target_length,
-                self.seq_len,
-            )
-        final_input_ids = np.zeros(target_length, dtype=input_ids.dtype)
-        final_input_masks = final_input_ids.copy()
-
-        image_idx, video_idx = 0, 0
-        indices = np.sort(np.concatenate([image_token_indices, video_token_indices]))
-
-        cur_x, cur_y = 0, 0
-        for idx in indices:
-            token_id = input_ids[idx]
-            if token_id == image_token_id:
-                size = image_thw_grids[image_idx].prod() // merge_length
-                image_idx += 1
-            elif token_id == video_token_id:
-                size = video_thw_grids[video_idx].prod() // merge_length
-                video_idx += 1
-            # NOTE:
-            # input_ids[cur_x:idx] -> final_input_ids[cur_y:cur_y + idx - cur_x]
-            # input_ids[idx] -> final_input_ids[cur_y + idx - cur_x: cur_y + idx - cur_x + size]
-            final_input_ids[cur_y : cur_y + idx - cur_x] = input_ids[cur_x:idx]
-            final_input_masks[cur_y : cur_y + idx - cur_x] = target[cur_x:idx]
-            cur_y += idx - cur_x
-            final_input_ids[cur_y : cur_y + size] = token_id
-            final_input_masks[cur_y : cur_y + size] = pad_token_id
-            cur_y += size
-            cur_x = idx + 1
-
-        if cur_x < len(input_ids):
-            final_input_ids[cur_y:] = input_ids[cur_x:]
-            final_input_masks[cur_y:] = target[cur_x:]
-
-        # left shift token by one for labels.
-        target = np.roll(final_input_masks, shift=-1)
-        target[-1] = pad_token_id
-
-        if (target == pad_token_id).all():
-            logging.warning("Sample with all masked label, dropped.")
-
-        image_input_mask = torch.from_numpy(final_input_ids == image_token_id)
-        video_input_mask = torch.from_numpy(final_input_ids == video_token_id)
-        # collect data
+        example = normalized_vlm_sample_to_hf_example(normalized_sample, media_first=True)
         return QwenVLTaskSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
-            imgs=flattened_imgs["pixel_values"] if flattened_imgs else [],
-            videos=flattened_videos["pixel_values_videos"] if flattened_videos else [],
-            image_thw_grids=image_thw_grids if flattened_imgs else [],
-            video_thw_grids=video_thw_grids if flattened_videos else [],
-            image_input_mask=image_input_mask,
-            video_input_mask=video_input_mask,
-            text=torch.from_numpy(final_input_ids),
-            target=torch.from_numpy(target),
+            example=example,
+        )
+
+    def collate_fn(self, examples: List[Dict[str, Any]]) -> dict[str, torch.Tensor]:
+        """Collate Qwen HF-style examples with the shared HF dataset collator.
+
+        Expected input format:
+            ``examples`` is a list of dictionaries in the same schema returned
+            by HF-style VLM datasets: each item has ``conversation`` messages
+            with multimodal ``content`` parts.
+
+        Output format:
+            Returns the exact dictionary produced by ``qwen2_5_collate_fn``:
+            ``input_ids``, ``labels``, ``loss_mask``, ``position_ids``, optional
+            ``attention_mask``, and ``visual_inputs``.
+        """
+        return qwen2_5_collate_fn(
+            examples,
+            self.image_processor,
+            min_pixels=self.min_pixels,
+            max_pixels=self.max_pixels,
         )
 
     def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:
+        """Collate normalized Energon samples with the shared Qwen HF collator.
+
+        Expected input format:
+            ``samples`` are ``QwenVLTaskSample`` objects whose ``example`` fields
+            follow the HF VLM collate schema.
+
+        Output format:
+            Returns ``QwenVLTaskBatch`` carrying the same tensors as
+            ``qwen2_5_collate_fn`` plus Energon batch metadata.
         """
-        Put encoded sample into Batch, do padding, add labels and visual input masks
+        examples = [sample.example for sample in samples]
+        collated = self.collate_fn(examples)
 
-        Args:
-            samples: List of encoded samples
-
-        Returns:
-            Batch with necessary fields
-        """
-        imgs, image_thw_grids = [], []
-        for s in samples:
-            if len(s.imgs) > 0:
-                s_imgs = [img for img in s.imgs.unsqueeze(0)]
-                cat_imgs = torch.cat([img for img in s_imgs])
-                imgs.append(cat_imgs)
-            if len(s.image_thw_grids) > 0:
-                s_image_thw_grids = [thw_grids for thw_grids in s.image_thw_grids]
-                image_thw_grids.extend(s_image_thw_grids)
-        videos, video_thw_grids = [], []
-        for s in samples:
-            if len(s.videos) > 0:
-                s_videos = [video for video in s.videos.unsqueeze(0)]
-                cat_videos = torch.cat([video for video in s_videos])
-                videos.append(cat_videos)
-            if len(s.video_thw_grids) > 0:
-                s_video_thw_grids = [thw_grids for thw_grids in s.video_thw_grids]
-                video_thw_grids.extend(s_video_thw_grids)
-                # assert s_video_thw_grids.prod(dim=-1).sum() == s_videos.shape[0]
-
-        # use the max sample lengths in the batch.
-        max_seq_len = max(len(s.text) for s in samples)
-        if max_seq_len > self.seq_len:
+        if collated["input_ids"].shape[1] > self.seq_len:
             logging.warning("max sequence length larger than passed parameter")
 
-        text_mat = np.full((len(samples), max_seq_len), self.hf_tokenizer.pad_token_id, dtype=np.int64)
-        target_mat = np.full((len(samples), max_seq_len), self.hf_tokenizer.pad_token_id, dtype=np.int64)
-
-        image_input_masks = np.zeros_like(text_mat, dtype=bool)
-        video_input_masks = np.zeros_like(text_mat, dtype=bool)
-        for i, s in enumerate(samples):
-            # If the sample/target length exceeds the target sequence length, then truncate.
-            text_len = min(max_seq_len, len(s.text))
-            target_len = min(max_seq_len, len(s.target))
-
-            text_mat[i, :text_len] = np.array(s.text)[:text_len]
-            # NOTE: we should assert user input sequence will not be truncated
-            if s.image_input_mask is not None:
-                image_input_masks[i, :text_len] = np.array(s.image_input_mask)[:text_len]
-            if s.video_input_mask is not None:
-                video_input_masks[i, :text_len] = np.array(s.video_input_mask)[:text_len]
-            target_mat[i, :target_len] = np.array(s.target)[:target_len]
-
-        tokens = torch.from_numpy(text_mat)
-        tokens[tokens == self.hf_tokenizer.pad_token_id] = 0
-
-        labels = torch.from_numpy(target_mat)
-        labels[labels == self.hf_tokenizer.pad_token_id] = IGNORE_INDEX
-
-        attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
-            data=tokens,
-            eod_token=self.hf_tokenizer.eos_token_id,
-            eod_mask_loss=False,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-        )
-
-        loss_mask[labels < 0] = 0.0
-
         keys = [s.__key__ for s in samples]
-        batch = QwenVLTaskBatch(
+        return QwenVLTaskBatch(
             **batch_metadata_kwargs(keys=keys),
             __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
-            pixel_values=torch.vstack(imgs) if len(imgs) > 0 else None,
-            pixel_values_videos=torch.vstack(videos) if len(videos) > 0 else None,
-            image_grid_thw=torch.from_numpy(np.array(image_thw_grids)) if len(image_thw_grids) > 0 else None,
-            video_grid_thw=torch.from_numpy(np.array(video_thw_grids)) if len(video_thw_grids) > 0 else None,
-            image_input_mask=torch.from_numpy(image_input_masks),
-            video_input_mask=torch.from_numpy(video_input_masks),
-            input_ids=tokens,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            labels=labels,
-            loss_mask=loss_mask,
+            input_ids=collated["input_ids"],
+            attention_mask=collated.get("attention_mask"),
+            position_ids=collated["position_ids"],
+            labels=collated["labels"],
+            loss_mask=collated["loss_mask"],
+            visual_inputs=collated.get("visual_inputs"),
         )
-        return batch
 
     def encode_batch(self, batch: QwenVLTaskBatch) -> dict:
         """Encode batch in dict"""
 
-        raw = dataclasses.asdict(batch)
+        raw = {field.name: getattr(batch, field.name) for field in dataclasses.fields(batch)}
         del raw["__subflavors__"]
-
-        raw["visual_inputs"] = Qwen2_5_VLVisualInputs(
-            pixel_values=batch.pixel_values,
-            pixel_values_videos=batch.pixel_values_videos,
-            image_grid_thw=batch.image_grid_thw,
-            video_grid_thw=batch.video_grid_thw,
-        )
 
         return raw

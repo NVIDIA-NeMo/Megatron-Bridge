@@ -24,6 +24,7 @@ import torch
 from megatron.energon import SkipSample
 from PIL import Image
 
+import megatron.bridge.recipes.qwen_vl.data.energon.task_encoder as task_encoder_module
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     ChatMLSample,
@@ -37,6 +38,7 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     process_vision,
     videohandler,
 )
+from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 
 @pytest.fixture(autouse=True)
@@ -182,30 +184,6 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.assertIn("video_grid_thw", res)
 
     def test_encode_sample(self):
-        # Mock process_vision return via image_processor
-        def processor_side_effect(images=None, videos=None, **kwargs):
-            res = {}
-            if images:
-                res["image_grid_thw"] = np.array([[1, 28, 28]])  # 1 tile, 28x28
-                res["pixel_values"] = torch.randn(1, 3, 28, 28)
-            if videos:
-                res["video_grid_thw"] = np.array([[1, 28, 28]])
-                res["pixel_values_videos"] = torch.randn(1, 3, 28, 28)
-            return res
-
-        self.image_processor.side_effect = processor_side_effect
-
-        # Mock apply_chat_template
-        # The encoder expects numpy array return from apply_chat_template
-        # It creates input_ids with placeholders for images/videos
-        # <image> is 151655
-        self.tokenizer.apply_chat_template.return_value = [
-            np.array([10, 11, 151655, 12, 13])  # dummy tokens with image placeholder
-        ]
-
-        # Mock encode for finding answer
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
         sample = ChatMLSample(
             **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=[MagicMock(spec=Image.Image)],
@@ -221,39 +199,15 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         encoded = self.encoder.encode_sample(sample)
 
         self.assertIsInstance(encoded, QwenVLTaskSample)
-        self.assertTrue(torch.is_tensor(encoded.text))
-        self.assertTrue(torch.is_tensor(encoded.target))
-        # Check if image mask is set correctly around the placeholder
-        # The logic in encode_sample expands the placeholder based on grid size
-        # 28x28 with merge_size=2 means (28/14)*(28/14) = 4 patches? No.
-        # merge_size=2.
-        # Logic: size = image_thw_grids[idx].prod() // merge_length
-        # 1*28*28 = 784. merge_length = 2**2 = 4. size = 196.
-        # So the single token 151655 should be replaced by 196 tokens.
-
-        # Verify length expansion
-        original_len = 5
-        expanded_len = original_len - 1 + 196
-        self.assertEqual(len(encoded.text), expanded_len)
+        user_content = encoded.example["conversation"][0]["content"]
+        # Qwen Energon keeps media parts before text while using the HF collate schema.
+        self.assertEqual(user_content[0]["type"], "image")
+        self.assertIn("image", user_content[0])
+        self.assertEqual(user_content[1], {"type": "text", "text": "Look"})
+        self.assertEqual(encoded.example["conversation"][1]["content"], "Nice")
 
     def test_encode_sample_from_value_format(self):
         """Test encode_sample with 'from'/'value' conversation format."""
-
-        def processor_side_effect(images=None, videos=None, **kwargs):
-            res = {}
-            if images:
-                res["image_grid_thw"] = np.array([[1, 28, 28]])
-                res["pixel_values"] = torch.randn(1, 3, 28, 28)
-            if videos:
-                res["video_grid_thw"] = np.array([[1, 28, 28]])
-                res["pixel_values_videos"] = torch.randn(1, 3, 28, 28)
-            return res
-
-        self.image_processor.side_effect = processor_side_effect
-
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
         sample = ChatMLSample(
             **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=[MagicMock(spec=Image.Image)],
@@ -268,16 +222,12 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
         encoded = self.encoder.encode_sample(sample)
         self.assertIsInstance(encoded, QwenVLTaskSample)
-        self.assertTrue(torch.is_tensor(encoded.text))
-        self.assertTrue(torch.is_tensor(encoded.target))
-        # Same expansion as role/content format: 5 - 1 + 196 = 200
-        self.assertEqual(len(encoded.text), 200)
+        self.assertEqual(encoded.example["conversation"][0]["role"], "user")
+        self.assertEqual(encoded.example["conversation"][1]["role"], "assistant")
+        self.assertEqual(encoded.example["conversation"][0]["content"][0]["type"], "image")
 
     def test_encode_sample_text_only(self):
         """Test encode_sample with no images or videos."""
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Hello" else [999]
-
         sample = ChatMLSample(
             **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=None,
@@ -292,15 +242,16 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
         encoded = self.encoder.encode_sample(sample)
         self.assertIsInstance(encoded, QwenVLTaskSample)
-        self.assertEqual(len(encoded.text), 4)  # no expansion
-        self.assertEqual(len(encoded.imgs), 0)
-        self.assertEqual(len(encoded.videos), 0)
+        self.assertEqual(
+            encoded.example["conversation"],
+            [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"},
+            ],
+        )
 
-    def test_encode_sample_preserves_legacy_assistant_target_spans(self):
-        """Assistant targets should use the legacy answer-token span search."""
-        self.tokenizer.apply_chat_template.return_value = [np.array([1, 2, 7, 8, 3, 4, 7, 8, 5])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [7, 8] if x == "Ok" else [999]
-
+    def test_encode_sample_preserves_multiturn_assistant_content(self):
+        """Assistant turns should remain available for shared collate masking."""
         sample = ChatMLSample(
             **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=None,
@@ -317,40 +268,45 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
 
         encoded = self.encoder.encode_sample(sample)
 
-        self.assertEqual(encoded.text.tolist(), [1, 2, 7, 8, 3, 4, 7, 8, 5])
-        self.assertEqual(encoded.target.tolist(), [0, 7, 8, 0, 0, 7, 8, 0, 0])
+        self.assertEqual(
+            [turn["role"] for turn in encoded.example["conversation"]], ["user", "assistant", "user", "assistant"]
+        )
+        self.assertEqual(encoded.example["conversation"][1]["content"], "Ok")
+        self.assertEqual(encoded.example["conversation"][3]["content"], "Ok")
 
     def test_batch(self):
-        # Create dummy encoded samples
+        seen_examples = []
+
+        def _fake_qwen_collate(examples, processor, **kwargs):  # noqa: ARG001 - processor is part of collate contract
+            seen_examples.extend(examples)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3], [4, 5, 0]], dtype=torch.long),
+                "position_ids": torch.tensor([[0, 1, 2], [0, 1, 2]], dtype=torch.long),
+                "labels": torch.tensor([[2, 3, -100], [5, -100, -100]], dtype=torch.long),
+                "loss_mask": torch.tensor([[1.0, 1.0, 0.0], [1.0, 0.0, 0.0]]),
+                "attention_mask": torch.ones(2, 3, dtype=torch.long),
+                "visual_inputs": None,
+            }
+
         s1 = QwenVLTaskSample(
             __key__="k1",
             __subflavors__={},
-            imgs=torch.randn(1, 3, 14, 14),
-            videos=torch.tensor([]),
-            image_thw_grids=[torch.tensor([1, 14, 14])],
-            video_thw_grids=[],
-            image_input_mask=torch.tensor([True] * 5),
-            video_input_mask=torch.tensor([False] * 5),
-            text=torch.tensor([1, 2, 3, 4, 5]),
-            target=torch.tensor([1, 2, 3, 4, 5]),
+            example={"conversation": [{"role": "user", "content": "one"}]},
         )
         s2 = QwenVLTaskSample(
             __key__="k2",
             __subflavors__={},
-            imgs=torch.tensor([]),
-            videos=torch.tensor([]),
-            image_thw_grids=[],
-            video_thw_grids=[],
-            image_input_mask=torch.tensor([False] * 3),
-            video_input_mask=torch.tensor([False] * 3),
-            text=torch.tensor([1, 2, 3]),
-            target=torch.tensor([1, 2, 3]),
+            example={"conversation": [{"role": "user", "content": "two"}]},
         )
 
-        batch = self.encoder.batch([s1, s2])
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(task_encoder_module, "qwen2_5_collate_fn", _fake_qwen_collate)
+            batch = self.encoder.batch([s1, s2])
+
         self.assertIsInstance(batch, QwenVLTaskBatch)
-        self.assertEqual(batch.input_ids.shape, (2, 5))  # padded to max length
-        self.assertEqual(batch.labels.shape, (2, 5))
+        self.assertEqual(batch.input_ids.shape, (2, 3))
+        self.assertEqual(batch.labels.shape, (2, 3))
+        self.assertEqual(seen_examples, [s1.example, s2.example])
 
     def test_encode_batch(self):
         # Create a dummy batch
@@ -358,17 +314,15 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             **batch_metadata_kwargs(keys=["k1"]),
             __keys__=["k1"],
             __subflavors__=[{}],
-            pixel_values=torch.randn(1, 3, 14, 14),
-            pixel_values_videos=None,
-            image_grid_thw=torch.tensor([[1, 14, 14]]),
-            video_grid_thw=None,
-            image_input_mask=torch.randn(1, 5),
-            video_input_mask=torch.randn(1, 5),
             input_ids=torch.randn(1, 5),
-            attention_mask=torch.randn(1, 1, 5, 5),
             position_ids=torch.randn(1, 5),
             labels=torch.randn(1, 5),
             loss_mask=torch.randn(1, 5),
+            visual_inputs=Qwen2_5_VLVisualInputs(
+                pixel_values=torch.randn(1, 3, 14, 14),
+                image_grid_thw=torch.tensor([[1, 14, 14]]),
+            ),
+            attention_mask=torch.randn(1, 1, 5, 5),
         )
 
         encoded_dict = self.encoder.encode_batch(batch)
@@ -448,111 +402,43 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
             enc.encode_sample(sample)
 
     def test_max_num_images_none_disables_check(self):
-        # Even with many images, no SkipSample should be raised here — we expect the
-        # call to fail later inside processing instead, which is fine for this test.
+        # Even with many images, no SkipSample should be raised here.
         enc = self._make_encoder(max_num_images=None, max_visual_tokens=None)
         sample = self._make_sample(n_images=50)
-        # A non-SkipSample error is acceptable; we only assert SkipSample is NOT raised.
-        with self.assertRaises(Exception) as cm:
-            enc.encode_sample(sample)
-        self.assertNotIsInstance(cm.exception, SkipSample)
+        encoded = enc.encode_sample(sample)
+        self.assertIsInstance(encoded, QwenVLTaskSample)
 
     def test_max_num_frames_truncates_in_place(self):
-        # process_vision routes videos through processor.video_processor, so we
-        # capture the videos arg there.
-        captured = {}
-
-        def video_processor_side_effect(videos=None, **kwargs):
-            captured["videos"] = videos
-            return {
-                "video_grid_thw": torch.tensor([[1, 14, 14]]),
-                "pixel_values_videos": torch.randn(1, 3, 14, 14),
-            }
-
-        self.image_processor.video_processor.side_effect = video_processor_side_effect
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151656, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
         enc = self._make_encoder(max_num_frames=4, max_visual_tokens=None)
         sample = self._make_sample(n_videos=1, frames_per_video=10, conversation_text="Watch <video>")
-        enc.encode_sample(sample)
+        encoded = enc.encode_sample(sample)
 
-        # videos arg passed to processor should have a single clip of 4 frames.
-        self.assertIsNotNone(captured["videos"])
-        self.assertEqual(len(captured["videos"]), 1)
-        self.assertEqual(len(captured["videos"][0]), 4)
+        video_part = encoded.example["conversation"][0]["content"][0]
+        self.assertEqual(video_part["type"], "video")
+        self.assertEqual(len(video_part["video"]), 4)
 
     def test_max_num_frames_keeps_short_videos_intact(self):
-        captured = {}
-
-        def video_processor_side_effect(videos=None, **kwargs):
-            captured["videos"] = videos
-            return {
-                "video_grid_thw": torch.tensor([[1, 14, 14]]),
-                "pixel_values_videos": torch.randn(1, 3, 14, 14),
-            }
-
-        self.image_processor.video_processor.side_effect = video_processor_side_effect
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151656, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
         enc = self._make_encoder(max_num_frames=10, max_visual_tokens=None)
         sample = self._make_sample(n_videos=1, frames_per_video=3, conversation_text="Watch <video>")
-        enc.encode_sample(sample)
+        encoded = enc.encode_sample(sample)
 
-        self.assertEqual(len(captured["videos"][0]), 3)
+        self.assertEqual(len(encoded.example["conversation"][0]["content"][0]["video"]), 3)
 
-    def test_max_visual_tokens_skip_when_exceeded(self):
-        # 1 image of grid (1, 28, 28); merge_length = 2**2 = 4 -> 1*28*28/4 = 196 tokens.
-        def processor_side_effect(images=None, videos=None, **kwargs):
-            return {
-                "image_grid_thw": torch.tensor([[1, 28, 28]]),
-                "pixel_values": torch.randn(1, 3, 28, 28),
-            }
-
-        self.image_processor.side_effect = processor_side_effect
-
-        enc = self._make_encoder(max_visual_tokens=100)  # 196 > 100 -> skip
-        sample = self._make_sample(n_images=1)
-        with self.assertRaises(SkipSample):
-            enc.encode_sample(sample)
+    def test_max_visual_tokens_is_configurable(self):
+        enc = self._make_encoder(max_visual_tokens=100)
+        self.assertEqual(enc.max_visual_tokens, 100)
 
     def test_max_visual_tokens_none_disables_check(self):
-        # 196 visual tokens — would trigger the limit at 100, but None disables it.
-        def processor_side_effect(images=None, videos=None, **kwargs):
-            return {
-                "image_grid_thw": torch.tensor([[1, 28, 28]]),
-                "pixel_values": torch.randn(1, 3, 28, 28),
-            }
-
-        self.image_processor.side_effect = processor_side_effect
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
         enc = self._make_encoder(max_visual_tokens=None)
         sample = self._make_sample(n_images=1)
         encoded = enc.encode_sample(sample)
         self.assertIsInstance(encoded, QwenVLTaskSample)
 
-    def test_visual_tokens_exceeding_seq_len_raises_skip(self):
-        # The post-expansion length depends on visual tokens, so a small seq_len
-        # paired with many visual tokens triggers the SkipSample branch.
-        def processor_side_effect(images=None, videos=None, **kwargs):
-            return {
-                "image_grid_thw": torch.tensor([[1, 28, 28]]),  # 196 visual tokens
-                "pixel_values": torch.randn(1, 3, 28, 28),
-            }
-
-        self.image_processor.side_effect = processor_side_effect
-        self.tokenizer.apply_chat_template.return_value = [np.array([10, 11, 151655, 12, 13])]
-        self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
-
-        # max_visual_tokens=None to bypass that earlier guard, seq_len small so the
-        # later branch fires.
+    def test_small_seq_len_defers_to_collate_and_training_padding(self):
         enc = self._make_encoder(max_padding_length=50, max_visual_tokens=None)
         sample = self._make_sample(n_images=1)
-        with self.assertRaises(SkipSample):
-            enc.encode_sample(sample)
+        encoded = enc.encode_sample(sample)
+        self.assertIsInstance(encoded, QwenVLTaskSample)
 
 
 class TestProcessVisionVideoBranch(unittest.TestCase):

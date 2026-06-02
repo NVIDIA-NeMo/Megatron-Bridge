@@ -92,7 +92,12 @@ def phi4_mm_collate_fn(examples, processor):
     return batch
 
 
-def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def qwen2_5_collate_fn(
+    examples: list,
+    processor,
+    min_pixels: int = 200704,
+    max_pixels: int = 1003520,
+) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
@@ -100,20 +105,28 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     skipped_tokens = extract_skipped_token_ids(processor)
 
     texts = [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
-    # Build per-example images (list) and split by presence
+    # Build per-example media (list) and split by presence.  Qwen processors accept
+    # nested per-example image/video lists; splitting avoids passing empty media
+    # kwargs for text-only rows.
     per_example_images = []
-    has_images = []
-    for example in examples:
-        imgs = process_vision_info(example["conversation"])[0]
-        if imgs is None:
-            imgs = []
-        elif not isinstance(imgs, list):
-            imgs = [imgs]
-        per_example_images.append(imgs)
-        has_images.append(len(imgs) > 0)
+    per_example_videos = []
+    has_media = []
 
-    idx_with = [i for i, h in enumerate(has_images) if h]
-    idx_without = [i for i, h in enumerate(has_images) if not h]
+    def _as_list(value):
+        if value is None:
+            return []
+        return value if isinstance(value, list) else [value]
+
+    for example in examples:
+        imgs, videos = process_vision_info(example["conversation"])
+        imgs = _as_list(imgs)
+        videos = _as_list(videos)
+        per_example_images.append(imgs)
+        per_example_videos.append(videos)
+        has_media.append(len(imgs) > 0 or len(videos) > 0)
+
+    idx_with = [i for i, h in enumerate(has_media) if h]
+    idx_without = [i for i, h in enumerate(has_media) if not h]
 
     batch_with = None
     batch_without = None
@@ -121,14 +134,19 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if idx_with:
         texts_with = [texts[i] for i in idx_with]
         images_with = [per_example_images[i] for i in idx_with]
-        batch_with = processor(
-            text=texts_with,
-            images=images_with,
-            padding=True,
-            return_tensors="pt",
-            min_pixels=200704,  # 256*28*28
-            max_pixels=1003520,  # 1280*28*28
-        )
+        videos_with = [per_example_videos[i] for i in idx_with]
+        processor_kwargs = {
+            "text": texts_with,
+            "padding": True,
+            "return_tensors": "pt",
+            "min_pixels": min_pixels,
+            "max_pixels": max_pixels,
+        }
+        if any(images_with):
+            processor_kwargs["images"] = images_with
+        if any(videos_with):
+            processor_kwargs["videos"] = videos_with
+        batch_with = processor(**processor_kwargs)
 
         batch_with = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_with.items()}
 
@@ -154,14 +172,14 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         in_without = batch_without["input_ids"]
         max_len = max(in_with.shape[1], in_without.shape[1])
 
-        def pad_to(x, tgt_len):
+        def pad_to(x, tgt_len, value):
             if x.shape[1] == tgt_len:
                 return x
             pad_len = tgt_len - x.shape[1]
-            return F.pad(x, (0, pad_len), value=pad_id)
+            return F.pad(x, (0, pad_len), value=value)
 
-        in_with = pad_to(in_with, max_len)
-        in_without = pad_to(in_without, max_len)
+        in_with = pad_to(in_with, max_len, pad_id)
+        in_without = pad_to(in_without, max_len, pad_id)
 
         input_ids = torch.full((len(examples), max_len), pad_id, dtype=in_with.dtype)
         # Place rows
@@ -171,11 +189,19 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             input_ids[i] = in_without[row]
 
         batch = {"input_ids": input_ids}
+        if "attention_mask" in batch_with and "attention_mask" in batch_without:
+            attn_with = pad_to(batch_with["attention_mask"], max_len, 0)
+            attn_without = pad_to(batch_without["attention_mask"], max_len, 0)
+            attention_mask = torch.zeros((len(examples), max_len), dtype=attn_with.dtype)
+            for row, i in enumerate(idx_with):
+                attention_mask[i] = attn_with[row]
+            for row, i in enumerate(idx_without):
+                attention_mask[i] = attn_without[row]
+            batch["attention_mask"] = attention_mask
         # Carry over vision tensors if present
-        if "pixel_values" in batch_with:
-            batch["pixel_values"] = batch_with["pixel_values"]
-        if "image_grid_thw" in batch_with:
-            batch["image_grid_thw"] = batch_with["image_grid_thw"]
+        for key in ("pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"):
+            if key in batch_with:
+                batch[key] = batch_with[key]
 
     # Ensure position_ids exist for the model
     ensure_position_ids(batch)
@@ -183,12 +209,13 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
     visual_inputs = Qwen2_5_VLVisualInputs(
         pixel_values=batch.get("pixel_values"),
+        pixel_values_videos=batch.get("pixel_values_videos"),
         image_grid_thw=batch.get("image_grid_thw"),
+        video_grid_thw=batch.get("video_grid_thw"),
     )
-    if "pixel_values" in batch:
-        del batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        del batch["image_grid_thw"]
+    for key in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw"):
+        if key in batch:
+            del batch[key]
     batch["visual_inputs"] = visual_inputs
     return batch
 

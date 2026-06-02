@@ -43,7 +43,7 @@ class _DummyProcessor:
         # Non-tokenized: just a string
         return "dummy"
 
-    def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+    def __call__(self, text=None, images=None, videos=None, padding=True, return_tensors="pt", **kwargs):
         # Minimal shape/value outputs used by qwen2_5_collate_fn
         input_ids = torch.tensor([[1, 2, 3]])
         out = {"input_ids": input_ids}
@@ -52,6 +52,10 @@ class _DummyProcessor:
             n = len(images)
             out["pixel_values"] = torch.randn(1, n, 3, 4, 4)
             out["image_grid_thw"] = torch.tensor([[[1, 2, 2]] * n])
+        if videos is not None:
+            n = len(videos)
+            out["pixel_values_videos"] = torch.randn(1, n, 3, 4, 4)
+            out["video_grid_thw"] = torch.tensor([[[2, 2, 2]] * n])
         return out
 
 
@@ -151,6 +155,31 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     vi = batch["visual_inputs"]
     # Ensure fields exist when images present
     assert hasattr(vi, "pixel_values")
+
+
+def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
+    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+
+    def _fake_pvi(conv):
+        text = str(conv)
+        if "watch" in text:
+            return (None, [[object(), object()]])
+        return (None, None)
+
+    monkeypatch.setattr(collate, "process_vision_info", _fake_pvi)
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "watch"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, proc)
+
+    vi = batch["visual_inputs"]
+    assert vi.pixel_values_videos is not None
+    assert vi.video_grid_thw is not None
+    assert "pixel_values_videos" not in batch
+    assert "video_grid_thw" not in batch
 
 
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():

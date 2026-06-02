@@ -155,6 +155,120 @@ def normalize_hf_vlm_example(example: Mapping[str, Any]) -> NormalizedVLMSample:
     )
 
 
+def normalized_vlm_sample_to_hf_example(
+    sample: NormalizedVLMSample,
+    *,
+    media_first: bool = False,
+) -> dict[str, Any]:
+    """Convert a normalized VLM sample into the HF-style collate example schema.
+
+    Expected input format:
+        ``sample`` follows ``NormalizedVLMSample``: ``conversation`` is a list of
+        chat turns, and optional ``images``/``videos`` contain processor-ready
+        media payloads such as PIL images or decoded video frame lists.  Text
+        turns may contain literal ``<image>`` / ``<video>`` placeholders.
+
+    Output format:
+        Returns a dictionary suitable for VLM HF collate functions::
+
+            {
+                "conversation": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image", "image": image_obj},
+                            {"type": "text", "text": "describe"},
+                        ],
+                    },
+                    {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+                ],
+                "images": [image_obj],   # present when sample.images is not None
+                "videos": [video_obj],   # present when sample.videos is not None
+                "audio": audio_obj,      # present when sample.audio is not None
+            }
+
+        Inline media parts are populated from ``sample.images`` and
+        ``sample.videos`` in placeholder order.  When ``media_first=True``,
+        media parts are moved before text parts within each turn to preserve
+        Qwen Energon's legacy media-before-text ordering while still using the
+        shared HF collate function.
+    """
+    images = list(sample.images) if sample.images is not None else []
+    videos = list(sample.videos) if sample.videos is not None else []
+    image_idx = 0
+    video_idx = 0
+
+    def _media_part(media_type: str) -> dict[str, Any]:
+        nonlocal image_idx, video_idx
+        part: dict[str, Any] = {"type": media_type}
+        if media_type == "image":
+            if image_idx < len(images):
+                part["image"] = images[image_idx]
+                image_idx += 1
+        elif media_type == "video" and video_idx < len(videos):
+            part["video"] = videos[video_idx]
+            video_idx += 1
+        return part
+
+    def _normalize_content(content: Any) -> Any:
+        nonlocal image_idx, video_idx
+        if isinstance(content, list):
+            parts: list[dict[str, Any] | str] = []
+            for item in content:
+                if not isinstance(item, Mapping):
+                    parts.append(item)
+                    continue
+                item_copy = dict(item)
+                item_type = item_copy.get("type")
+                if item_type == "image" and "image" not in item_copy and image_idx < len(images):
+                    item_copy["image"] = images[image_idx]
+                    image_idx += 1
+                elif item_type == "video" and "video" not in item_copy and video_idx < len(videos):
+                    item_copy["video"] = videos[video_idx]
+                    video_idx += 1
+                parts.append(item_copy)
+            if media_first:
+                media_parts = [
+                    part for part in parts if isinstance(part, Mapping) and part.get("type") in ("image", "video")
+                ]
+                other_parts = [part for part in parts if part not in media_parts]
+                return media_parts + other_parts
+            return parts
+
+        if not isinstance(content, str) or ("<image>" not in content and "<video>" not in content):
+            return copy.deepcopy(content)
+
+        pieces = re.split(r"(<image>|<video>)", content)
+        parts = []
+        for piece in pieces:
+            if piece == "<image>":
+                parts.append(_media_part("image"))
+            elif piece == "<video>":
+                parts.append(_media_part("video"))
+            elif piece:
+                parts.append({"type": "text", "text": piece.strip(" ")})
+        if media_first:
+            media_parts = [part for part in parts if part.get("type") in ("image", "video")]
+            text_parts = [part for part in parts if part.get("type") not in ("image", "video")]
+            return media_parts + text_parts
+        return parts
+
+    conversation = []
+    for turn in sample.conversation:
+        turn_copy = dict(turn)
+        turn_copy["content"] = _normalize_content(turn_copy.get("content", ""))
+        conversation.append(turn_copy)
+
+    example: dict[str, Any] = {"conversation": conversation}
+    if sample.images is not None:
+        example["images"] = images
+    if sample.videos is not None:
+        example["videos"] = videos
+    if sample.audio is not None:
+        example["audio"] = sample.audio
+    return example
+
+
 def get_processor_tokenizer(processor: Any) -> Any:
     """Return the tokenizer attached to a processor, or the object itself."""
     return getattr(processor, "tokenizer", processor)

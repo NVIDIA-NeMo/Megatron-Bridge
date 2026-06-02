@@ -21,32 +21,27 @@ in a single ``processor()`` call (e.g. Gemma3-VL, Ministral3, GLM-4.5V).
 import dataclasses
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
-    IGNORE_INDEX,
     ChatMLSample,
-    get_ltor_masks_and_position_ids,
 )
-from megatron.bridge.data.vlm_processing import HFProcessorVLMDataProcessor, normalize_energon_vlm_sample
+from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
+from megatron.bridge.data.vlm_processing import normalize_energon_vlm_sample, normalized_vlm_sample_to_hf_example
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 @dataclass
 class HFEncoderTaskSample:
-    """Encoded sample for a generic HF-encoder VLM."""
+    """HF-style VLM example produced from an Energon ``ChatMLSample``."""
 
     __key__: str
     __subflavors__: Dict
-    input_ids: torch.Tensor  # [seq_len]
-    labels: torch.Tensor  # [seq_len]
-    loss_mask: torch.Tensor  # [seq_len]
-    visual_tensors: Dict[str, torch.Tensor] = field(default_factory=dict)
+    example: Dict[str, Any]
 
 
 @dataclass
@@ -58,9 +53,9 @@ class HFEncoderTaskBatch(Batch):
     input_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     labels: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     loss_mask: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
-    attention_mask: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, 1, seq_len, seq_len]
     position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
-    visual_tensors: Dict[str, Optional[torch.Tensor]] = field(default_factory=dict)
+    visual_inputs: GenericVisualInputs | None = None
+    attention_mask: torch.Tensor | None = None
 
 
 class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSample, HFEncoderTaskBatch, dict]):
@@ -86,6 +81,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         visual_keys: Sequence[str] = ("pixel_values",),
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
+        collate_fn: Callable[[list, Any], dict[str, Any]] | None = None,
     ):
         super().__init__()
         self.processor = processor
@@ -93,123 +89,66 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         self.visual_keys: Tuple[str, ...] = tuple(visual_keys)
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
-        self.data_processor = HFProcessorVLMDataProcessor(
-            processor=processor,
-            seq_length=seq_length,
-            visual_keys=self.visual_keys,
-            min_pixels=min_pixels,
-            max_pixels=max_pixels,
-        )
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @property
-    def _tokenizer(self):
-        """Return the underlying tokenizer from the processor."""
-        return getattr(self.processor, "tokenizer", self.processor)
-
-    @property
-    def _pad_token_id(self) -> int:
-        return self._tokenizer.pad_token_id
-
-    @property
-    def _eos_token_id(self) -> int:
-        return self._tokenizer.eos_token_id
-
-    # ------------------------------------------------------------------
-    # encode_sample
-    # ------------------------------------------------------------------
+        collate_key = type(processor).__name__ if processor is not None else "default"
+        self._collate_impl = collate_fn or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])
 
     def encode_sample(self, sample: ChatMLSample) -> HFEncoderTaskSample:
-        """Encode a single ChatML sample into model-ready tensors.
+        """Normalize a single ChatML sample into a HF-style collate example.
 
         Expected input format:
             ``sample`` is an Energon ``ChatMLSample`` with JSON string
             ``conversation`` plus optional WDS-decoded ``imgs`` and ``videos``.
 
         Output format:
-            Returns ``HFEncoderTaskSample`` with unbatched ``input_ids``,
-            shifted ``labels``, shifted ``loss_mask``, and per-sample visual
-            tensors.  Source-specific normalization is delegated to
-            ``normalize_energon_vlm_sample``; model processing is delegated to
-            ``HFProcessorVLMDataProcessor``.
+            Returns ``HFEncoderTaskSample`` whose ``example`` follows the same
+            dictionary schema consumed by HF VLM dataset collate functions.
+            Tokenization, processor calls, label construction, and visual tensor
+            batching are deferred to ``self.collate_fn``.
         """
         normalized_sample = normalize_energon_vlm_sample(sample)
-        encoded = self.data_processor.encode_normalized(normalized_sample)
+        example = normalized_vlm_sample_to_hf_example(normalized_sample)
 
         return HFEncoderTaskSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
-            input_ids=encoded.input_ids,
-            labels=encoded.labels,
-            loss_mask=encoded.loss_mask,
-            visual_tensors=encoded.visual_tensors,
+            example=example,
         )
+
+    def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
+        """Collate HF-style examples with this encoder's model collator.
+
+        Expected input format:
+            List of HF-style VLM example dictionaries with ``conversation`` and
+            optional modality fields.
+
+        Output format:
+            The exact batch dictionary returned by the selected HF collate
+            function for this processor type.
+        """
+        return self._collate_impl(examples, self.processor)
 
     # ------------------------------------------------------------------
     # batch
     # ------------------------------------------------------------------
 
     def batch(self, samples: List[HFEncoderTaskSample]) -> HFEncoderTaskBatch:
-        """Pad and collate a list of encoded samples into a batch."""
-        max_seq_len = max(s.input_ids.size(0) for s in samples)
-        if max_seq_len > self.seq_length:
-            logging.warning(f"Max batch seq_len {max_seq_len} exceeds seq_length {self.seq_length}")
-
-        pad_id = self._pad_token_id
-        batch_size = len(samples)
-
-        input_ids_mat = np.full((batch_size, max_seq_len), pad_id, dtype=np.int64)
-        labels_mat = np.full((batch_size, max_seq_len), IGNORE_INDEX, dtype=np.int64)
-        loss_mask_mat = np.zeros((batch_size, max_seq_len), dtype=np.float32)
-
-        for i, s in enumerate(samples):
-            seq_len = min(max_seq_len, s.input_ids.size(0))
-            input_ids_mat[i, :seq_len] = s.input_ids.numpy()[:seq_len]
-            labels_mat[i, :seq_len] = s.labels.numpy()[:seq_len]
-            loss_mask_mat[i, :seq_len] = s.loss_mask.numpy()[:seq_len]
-
-        tokens = torch.from_numpy(input_ids_mat)
-        # Replace pad tokens with 0 for model input (consistent with Qwen encoder)
-        tokens[tokens == pad_id] = 0
-
-        labels = torch.from_numpy(labels_mat)
-        loss_mask_t = torch.from_numpy(loss_mask_mat)
-
-        attention_mask, _, position_ids = get_ltor_masks_and_position_ids(
-            data=tokens,
-            eod_token=self._eos_token_id,
-            eod_mask_loss=False,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-        )
-
-        # Aggregate visual tensors across samples
-        all_visual_keys = set()
-        for s in samples:
-            all_visual_keys.update(s.visual_tensors.keys())
-
-        batched_visual: Dict[str, Optional[torch.Tensor]] = {}
-        for key in all_visual_keys:
-            tensors = [s.visual_tensors[key] for s in samples if key in s.visual_tensors]
-            if tensors:
-                batched_visual[key] = torch.cat(tensors, dim=0)
-            else:
-                batched_visual[key] = None
+        """Collate normalized samples with the selected HF VLM collator."""
+        examples = [sample.example for sample in samples]
+        collated = self.collate_fn(examples)
+        if collated["input_ids"].shape[1] > self.seq_length:
+            logging.warning(f"Max batch seq_len {collated['input_ids'].shape[1]} exceeds seq_length {self.seq_length}")
 
         keys = [s.__key__ for s in samples]
         batch_kwargs: Dict = dict(
             **batch_metadata_kwargs(keys=keys),
             __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
-            input_ids=tokens,
-            labels=labels,
-            loss_mask=loss_mask_t,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            visual_tensors=batched_visual,
+            input_ids=collated["input_ids"],
+            labels=collated["labels"],
+            loss_mask=collated["loss_mask"],
+            attention_mask=collated.get("attention_mask"),
+            position_ids=collated["position_ids"],
+            visual_inputs=collated.get("visual_inputs"),
         )
 
         return HFEncoderTaskBatch(**batch_kwargs)
@@ -219,16 +158,11 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
     # ------------------------------------------------------------------
 
     def encode_batch(self, batch: HFEncoderTaskBatch) -> dict:
-        """Convert batch dataclass to dict, wrapping visual tensors in ``GenericVisualInputs``."""
-        raw = dataclasses.asdict(batch)
+        """Convert batch dataclass to dict without expanding ``visual_inputs``."""
+        raw = {field.name: getattr(batch, field.name) for field in dataclasses.fields(batch)}
 
         # Remove Batch base-class metadata not needed downstream
         for meta_key in ("__key__", "__keys__", "__restore_key__", "__subflavors__", "__sources__"):
             raw.pop(meta_key, None)
-
-        # Replace the raw visual_tensors dict with a GenericVisualInputs container
-        vt = batch.visual_tensors if batch.visual_tensors else {}
-        raw["visual_inputs"] = GenericVisualInputs(**{k: v for k, v in vt.items() if v is not None})
-        raw.pop("visual_tensors", None)
 
         return raw

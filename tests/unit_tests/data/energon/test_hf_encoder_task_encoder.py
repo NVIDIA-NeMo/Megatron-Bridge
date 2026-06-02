@@ -24,7 +24,7 @@ from megatron.bridge.data.energon.hf_encoder_task_encoder import (
     HFEncoderVLMTaskEncoder,
 )
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
-from megatron.bridge.data.energon.task_encoder_utils import IGNORE_INDEX, ChatMLSample
+from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -70,28 +70,43 @@ def _make_chatml_sample(conversation, imgs=None, videos=None, key="k1"):
     )
 
 
+def _make_collate_fn(pixel_values=None, seen_examples=None):
+    """Build a tiny collate function with the same output keys as HF VLM collators."""
+
+    def _collate(examples, processor):  # noqa: ARG001 - processor is part of the collate contract
+        if seen_examples is not None:
+            seen_examples.extend(examples)
+        batch_size = len(examples)
+        seq_len = 5
+        visual_inputs = GenericVisualInputs(pixel_values=pixel_values) if pixel_values is not None else None
+        return {
+            "input_ids": torch.arange(batch_size * seq_len, dtype=torch.long).reshape(batch_size, seq_len),
+            "labels": torch.full((batch_size, seq_len), -100, dtype=torch.long),
+            "loss_mask": torch.zeros(batch_size, seq_len),
+            "position_ids": torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1),
+            "attention_mask": torch.ones(batch_size, seq_len, dtype=torch.long),
+            "visual_inputs": visual_inputs,
+        }
+
+    return _collate
+
+
 class TestHFEncoderTaskSample(unittest.TestCase):
     def test_fields(self):
+        example = {"conversation": [{"role": "user", "content": "Hi"}]}
         s = HFEncoderTaskSample(
             __key__="k1",
             __subflavors__={},
-            input_ids=torch.tensor([1, 2, 3]),
-            labels=torch.tensor([2, 3, -100]),
-            loss_mask=torch.tensor([1.0, 1.0, 0.0]),
-            visual_tensors={"pixel_values": torch.randn(1, 3, 4, 4)},
+            example=example,
         )
         self.assertEqual(s.__key__, "k1")
-        self.assertEqual(s.input_ids.shape, (3,))
-        self.assertIn("pixel_values", s.visual_tensors)
+        self.assertEqual(s.example, example)
 
 
 class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
     def test_text_only(self):
-        processor = _make_processor(
-            input_ids=torch.tensor([[10, 11, 12, 13]]),
-            encode_return=[12, 13],
-        )
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
+        processor = _make_processor()
+        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128, collate_fn=_make_collate_fn())
 
         sample = _make_chatml_sample(
             conversation=json.dumps(
@@ -104,19 +119,22 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
 
         encoded = encoder.encode_sample(sample)
         self.assertIsInstance(encoded, HFEncoderTaskSample)
-        self.assertEqual(encoded.input_ids.shape[0], 4)
-        self.assertEqual(encoded.labels.shape[0], 4)
-        self.assertEqual(encoded.loss_mask.shape[0], 4)
-        self.assertEqual(len(encoded.visual_tensors), 0)
+        self.assertEqual(
+            encoded.example["conversation"],
+            [
+                {"role": "user", "content": "Hi"},
+                {"role": "assistant", "content": "Hello"},
+            ],
+        )
 
     def test_with_images(self):
-        pv = torch.randn(1, 3, 224, 224)
-        processor = _make_processor(
-            input_ids=torch.tensor([[10, 11, 12, 13]]),
-            pixel_values=pv,
-            encode_return=[12, 13],
+        processor = _make_processor()
+        encoder = HFEncoderVLMTaskEncoder(
+            processor=processor,
+            seq_length=128,
+            visual_keys=("pixel_values",),
+            collate_fn=_make_collate_fn(),
         )
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128, visual_keys=("pixel_values",))
 
         sample = _make_chatml_sample(
             conversation=json.dumps(
@@ -129,69 +147,32 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         )
 
         encoded = encoder.encode_sample(sample)
-        self.assertIn("pixel_values", encoded.visual_tensors)
-        self.assertEqual(encoded.visual_tensors["pixel_values"].shape, pv.shape)
-
-    def test_truncation(self):
-        long_ids = torch.tensor([list(range(200))])
-        processor = _make_processor(input_ids=long_ids, encode_return=[150, 151])
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=50)
-
-        sample = _make_chatml_sample(
-            conversation=json.dumps(
-                [
-                    {"role": "user", "content": "long prompt"},
-                    {"role": "assistant", "content": "answer"},
-                ]
-            ),
-        )
-        encoded = encoder.encode_sample(sample)
-        self.assertEqual(encoded.input_ids.shape[0], 50)
-
-    def test_loss_mask_only_on_assistant(self):
-        # Tokens: [10, 11, 12, 13, 14]
-        # Assistant answer tokens: [13, 14]  (at positions 3,4)
-        processor = _make_processor(
-            input_ids=torch.tensor([[10, 11, 12, 13, 14]]),
-            encode_return=[13, 14],
-        )
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
-
-        sample = _make_chatml_sample(
-            conversation=json.dumps(
-                [
-                    {"role": "user", "content": "Q"},
-                    {"role": "assistant", "content": "A B"},
-                ]
-            ),
-        )
-        encoded = encoder.encode_sample(sample)
-        self.assertTrue(encoded.loss_mask.sum() > 0, "loss_mask should have nonzero entries for assistant tokens")
-        # The user input region (beginning) should have zero loss
-        self.assertEqual(encoded.loss_mask[0].item(), 0.0)
+        user_content = encoded.example["conversation"][0]["content"]
+        self.assertEqual(user_content[0]["type"], "text")
+        self.assertEqual(user_content[1]["type"], "image")
+        self.assertIn("image", user_content[1])
 
 
 class TestHFEncoderVLMTaskEncoderBatch(unittest.TestCase):
     def setUp(self):
         self.processor = _make_processor()
-        self.encoder = HFEncoderVLMTaskEncoder(processor=self.processor, seq_length=128)
+        self.seen_examples = []
+        self.encoder = HFEncoderVLMTaskEncoder(
+            processor=self.processor,
+            seq_length=128,
+            collate_fn=_make_collate_fn(seen_examples=self.seen_examples),
+        )
 
-    def test_padding(self):
+    def test_batch_uses_collate_fn(self):
         s1 = HFEncoderTaskSample(
             __key__="k1",
             __subflavors__={},
-            input_ids=torch.tensor([1, 2, 3, 4, 5]),
-            labels=torch.tensor([2, 3, 4, 5, IGNORE_INDEX]),
-            loss_mask=torch.tensor([0.0, 0.0, 1.0, 1.0, 0.0]),
-            visual_tensors={},
+            example={"conversation": [{"role": "user", "content": "one"}]},
         )
         s2 = HFEncoderTaskSample(
             __key__="k2",
             __subflavors__={},
-            input_ids=torch.tensor([1, 2, 3]),
-            labels=torch.tensor([2, 3, IGNORE_INDEX]),
-            loss_mask=torch.tensor([0.0, 1.0, 0.0]),
-            visual_tensors={},
+            example={"conversation": [{"role": "user", "content": "two"}]},
         )
 
         batch = self.encoder.batch([s1, s2])
@@ -201,29 +182,23 @@ class TestHFEncoderVLMTaskEncoderBatch(unittest.TestCase):
         self.assertEqual(batch.loss_mask.shape, (2, 5))
         self.assertIsNotNone(batch.attention_mask)
         self.assertEqual(batch.position_ids.shape, (2, 5))
+        self.assertEqual(self.seen_examples, [s1.example, s2.example])
 
-    def test_visual_tensor_aggregation(self):
-        pv1 = torch.randn(1, 3, 4, 4)
-        pv2 = torch.randn(2, 3, 4, 4)
+    def test_visual_inputs_passthrough(self):
+        pv = torch.randn(3, 3, 4, 4)
+        encoder = HFEncoderVLMTaskEncoder(
+            processor=self.processor,
+            seq_length=128,
+            collate_fn=_make_collate_fn(pixel_values=pv),
+        )
         s1 = HFEncoderTaskSample(
             __key__="k1",
             __subflavors__={},
-            input_ids=torch.tensor([1, 2]),
-            labels=torch.tensor([2, IGNORE_INDEX]),
-            loss_mask=torch.tensor([1.0, 0.0]),
-            visual_tensors={"pixel_values": pv1},
+            example={"conversation": [{"role": "user", "content": "one"}]},
         )
-        s2 = HFEncoderTaskSample(
-            __key__="k2",
-            __subflavors__={},
-            input_ids=torch.tensor([3, 4]),
-            labels=torch.tensor([4, IGNORE_INDEX]),
-            loss_mask=torch.tensor([1.0, 0.0]),
-            visual_tensors={"pixel_values": pv2},
-        )
-        batch = self.encoder.batch([s1, s2])
-        self.assertIn("pixel_values", batch.visual_tensors)
-        self.assertEqual(batch.visual_tensors["pixel_values"].shape[0], 3)  # 1 + 2
+        batch = encoder.batch([s1])
+        self.assertIsInstance(batch.visual_inputs, GenericVisualInputs)
+        self.assertEqual(batch.visual_inputs.pixel_values.shape[0], 3)
 
 
 class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
@@ -241,14 +216,13 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
             loss_mask=torch.tensor([[1.0, 0.0], [1.0, 0.0]]),
             attention_mask=torch.randn(2, 1, 2, 2),
             position_ids=torch.tensor([[0, 1], [0, 1]]),
-            visual_tensors={"pixel_values": pv},
+            visual_inputs=GenericVisualInputs(pixel_values=pv),
         )
 
         result = encoder.encode_batch(batch)
         self.assertIsInstance(result, dict)
         self.assertIn("visual_inputs", result)
         self.assertIsInstance(result["visual_inputs"], GenericVisualInputs)
-        self.assertNotIn("visual_tensors", result)
         self.assertNotIn("__subflavors__", result)
         self.assertIn("input_ids", result)
 
@@ -265,14 +239,12 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
             loss_mask=torch.tensor([[1.0, 0.0]]),
             attention_mask=torch.randn(1, 1, 2, 2),
             position_ids=torch.tensor([[0, 1]]),
-            visual_tensors={},
+            visual_inputs=None,
         )
 
         result = encoder.encode_batch(batch)
         self.assertIn("visual_inputs", result)
-        vi = result["visual_inputs"]
-        self.assertIsInstance(vi, GenericVisualInputs)
-        self.assertIsNone(vi.pixel_values)
+        self.assertIsNone(result["visual_inputs"])
 
 
 class TestGenericVisualInputsCompat(unittest.TestCase):
