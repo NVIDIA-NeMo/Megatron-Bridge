@@ -60,7 +60,7 @@ def set_llama31_405b_mlperf_parity_overrides(cfg: ConfigContainer, precision: st
 
     if precision == "nvfp4":
         if hasattr(cfg.mixed_precision, "fp8_dot_product_attention"):
-            cfg.mixed_precision.fp8_dot_product_attention = True
+            cfg.mixed_precision.fp8_dot_product_attention = False
         if hasattr(cfg.ddp, "fp4_param_gather"):
             cfg.ddp.fp4_param_gather = False
         if hasattr(cfg.mixed_precision, "fp4_param_gather"):
