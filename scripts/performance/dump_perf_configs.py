@@ -27,8 +27,10 @@ Usage (run from project root, with uv run):
   diff -ru /tmp/configs_main/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml \
             /tmp/configs_pr/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml
 
-Both modes serialize the ConfigContainer via its to_dict() / dataclasses.asdict path
-(same as save_config_filepath in production), so the YAML is directly comparable.
+Old mode uses config variant ``v2`` by default, matching the performance CLI
+default. Both modes serialize the ConfigContainer via its to_dict() /
+dataclasses.asdict path (same as save_config_filepath in production), so the
+YAML is directly comparable.
 """
 
 import argparse
@@ -195,7 +197,15 @@ def _dump_config_to_yaml(cfg, yaml_path: Path) -> None:
     cfg.to_yaml(str(yaml_path))
 
 
-def load_old_recipe(family: str, recipe: str, task: str, num_gpus: int, gpu: str, precision: str):
+def load_old_recipe(
+    family: str,
+    recipe: str,
+    task: str,
+    num_gpus: int,
+    gpu: str,
+    precision: str,
+    config_variant: str,
+):
     """Load recipe using the OLD scripts/performance/configs/ path (main branch)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from utils.utils import get_perf_optimized_recipe
@@ -206,11 +216,21 @@ def load_old_recipe(family: str, recipe: str, task: str, num_gpus: int, gpu: str
         train_task=task,
         gpu=gpu,
         compute_dtype=precision,
+        config_variant=config_variant,
     )
 
 
-def load_new_recipe(family: str, recipe: str, task: str, num_gpus: int, gpu: str, precision: str):
+def load_new_recipe(
+    family: str,
+    recipe: str,
+    task: str,
+    num_gpus: int,
+    gpu: str,
+    precision: str,
+    config_variant: str,
+):
     """Load recipe using the NEW flat perf recipe path (PR branch)."""
+    del config_variant
     precision_map = {
         "bf16": "bf16",
         "fp8_cs": "fp8cs",
@@ -227,17 +247,17 @@ def load_new_recipe(family: str, recipe: str, task: str, num_gpus: int, gpu: str
     return fn()
 
 
-def dump_configs(mode: str, out_dir: Path):
+def dump_configs(mode: str, out_dir: Path, combos: list[tuple[str, str, str, int, str, str]], config_variant: str):
     """Generate and dump all configs as YAML files."""
     out_dir.mkdir(parents=True, exist_ok=True)
     load_fn = load_old_recipe if mode == "old" else load_new_recipe
 
     passed, failed = [], []
-    for family, recipe, task, num_gpus, gpu, precision in COMBOS:
+    for family, recipe, task, num_gpus, gpu, precision in combos:
         name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{precision}"
         yaml_path = out_dir / f"{name}.yaml"
         try:
-            cfg = load_fn(family, recipe, task, num_gpus, gpu, precision)
+            cfg = load_fn(family, recipe, task, num_gpus, gpu, precision, config_variant)
             _dump_config_to_yaml(cfg, yaml_path)
             print(f"  OK  {name}")
             passed.append(name)
@@ -263,13 +283,18 @@ def main():
     )
     parser.add_argument("--out", type=Path, required=True, help="Output directory for YAML files")
     parser.add_argument("--family", help="Only dump recipes for this model family")
+    parser.add_argument(
+        "--config-variant",
+        default="v2",
+        help="Old-path config variant to compare against. Defaults to v2, matching the performance CLI.",
+    )
     args = parser.parse_args()
 
     combos = COMBOS
     if args.family:
         combos = [(f, r, t, n, g, p) for (f, r, t, n, g, p) in combos if f == args.family]
 
-    dump_configs(args.mode, args.out)
+    dump_configs(args.mode, args.out, combos, args.config_variant)
 
 
 if __name__ == "__main__":

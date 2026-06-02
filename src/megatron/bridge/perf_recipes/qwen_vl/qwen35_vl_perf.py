@@ -76,7 +76,7 @@ def _qwen35_vl_perf_post(cfg: ConfigContainer, *, clear_cuda_graph_scope: bool =
     cfg.model.apply_rope_fusion = False
     cfg.model.cuda_graph_impl = "none"
     if clear_cuda_graph_scope:
-        cfg.model.cuda_graph_scope = None
+        cfg.model.cuda_graph_scope = []
     cfg.optimizer.overlap_param_gather = False
 
 

@@ -45,7 +45,7 @@ def wan_14b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.model.cuda_graph_scope = None
+    cfg.model.cuda_graph_scope = []
     cfg.model.moe_token_dispatcher_type = "alltoall"
     return cfg
 
@@ -74,6 +74,6 @@ def wan_14b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.model.cuda_graph_scope = None
+    cfg.model.cuda_graph_scope = []
     cfg.model.moe_token_dispatcher_type = "alltoall"
     return cfg
