@@ -68,7 +68,7 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash = True
     if cfg.model.moe_expert_rank_capacity_factor is None:
         cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.cuda_graph_warmup_steps = 2
 
