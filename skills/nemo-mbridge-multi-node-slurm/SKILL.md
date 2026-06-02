@@ -9,6 +9,24 @@ when_to_use: Writing or converting Slurm sbatch scripts, scaling to multiple nod
 
 Convert single-node `uv run python -m torch.distributed.run` commands into multi-node Slurm sbatch scripts with Enroot container support, and debug common multi-node failures.
 
+## First Answer Checklist
+
+When converting or debugging Bridge multi-node jobs, answer in this order:
+
+1. Prefer the **srun-native** launch shape for Bridge scripts that reach
+   `initialize.py`: `#SBATCH --ntasks-per-node=8` and a direct `srun ... uv run
+   python <script> ...` launch. Do not wrap these jobs in
+   `python -m torch.distributed.run`.
+2. State that Bridge derives `RANK`, `WORLD_SIZE`, `LOCAL_RANK`,
+   `MASTER_ADDR`, and `MASTER_PORT` from SLURM variables during
+   `initialize.py` distributed init.
+3. Require shared paths and matching container mounts for the repo, data, logs,
+   `HF_HOME`, `UV_CACHE_DIR`, and `NEMO_HOME`.
+4. For NCCL timeout reports, do these first-log checks before speculating:
+   - grep for real errors while filtering warning/frame noise
+   - inspect `Failures:` to find the first failed rank and node
+   - grep for `ncclUniqueId`, `timeout`, or `crash on rank 0`
+
 ## Two Approaches: srun-native vs uv run torch.distributed
 
 | Approach | `ntasks-per-node` | Process spawning | Best for |
