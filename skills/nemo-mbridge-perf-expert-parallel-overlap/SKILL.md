@@ -84,8 +84,10 @@ Steady-window timing from that benchmark:
 | EP overlap | 31.31s | 1.317x |
 | EP overlap plus `delay_wgrad_compute` | 31.20s | 1.322x |
 
-This shows a clear plain-overlap win, but no meaningful independent gain from
-delayed wgrad in that benchmark.
+This is evidence for enabling plain EP overlap on this inter-node all-to-all
+shape. It does not show a meaningful independent win from delayed wgrad, and it
+does not validate fused MoE permutation because that path was disabled for the
+runtime stack.
 
 ## Enablement
 
@@ -155,23 +157,6 @@ cfg.model.bf16 = True
 Use this as the correctness-first starting point. Add delayed wgrad, flex
 dispatch, and CUDA-graph interactions only after the plain overlap path is
 known to work.
-
-## Measured Short-Run Evidence
-
-A 2026-05-18 current-main H100 x16 Qwen3 30B-A3B mock pretraining run used
-`EP=16`, `alltoall`, BF16, global batch size 1024, CUDA graphs disabled, and
-`moe_permute_fusion=false`. With iterations 3-8 as the steady window:
-
-| Case | Steady mean | Relative |
-|---|---:|---:|
-| no EP overlap | 41.25s | 1.000x |
-| EP overlap | 31.31s | 1.317x |
-| EP overlap plus `delay_wgrad_compute` | 31.20s | 1.322x |
-
-This is evidence for enabling plain EP overlap on this inter-node all-to-all
-shape. It does not show a meaningful independent win from delayed wgrad, and it
-does not validate fused MoE permutation because that path was disabled for the
-runtime stack.
 
 ## Minimal Runnable Command
 
