@@ -1269,6 +1269,7 @@ class TestLoadCheckpoint:
         # Should return default values when no checkpoint found
         assert result == (0, 0)
 
+    @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -1319,6 +1320,7 @@ class TestLoadCheckpoint:
         mock_read_config,
         mock_read_state,
         mock_load_base,
+        mock_is_hf_checkpoint_dir,
         load_checkpoint_fixtures,
     ):
         """Test successful checkpoint loading."""
@@ -2306,6 +2308,7 @@ class TestMegatronLMCompatibility:
             mock_extract_args.assert_called_once_with(state_dict)
             mock_read_config.assert_not_called()
 
+    @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing.checkpoint_exists")
@@ -2342,6 +2345,7 @@ class TestMegatronLMCompatibility:
         mock_exists_checkpoint,
         mock_unwrap,
         mock_load_base,
+        mock_is_hf_checkpoint_dir,
     ):
         """Test complete integration of loading a Megatron-LM checkpoint."""
         # Setup for legacy checkpoint loading
@@ -3824,6 +3828,7 @@ class TestLayerWiseOptimizerCheckpointing:
     # Load-side tests
     # -----------------------------------------------------------------------
 
+    @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -3858,6 +3863,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_read_config,
         mock_read_state,
         mock_load_base,
+        mock_is_hf_checkpoint_dir,
         load_checkpoint_fixtures,
     ):
         """load_checkpoint must call load_state_dict_from_file for LOCAL checkpoints.
@@ -3936,6 +3942,7 @@ class TestLayerWiseOptimizerCheckpointing:
         expected_path = f"{local_ckpt_dir}/layer_wise_optimizer_2.pt"
         mock_layer_wise_optim.load_state_dict_from_file.assert_called_once_with(expected_path)
 
+    @patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False)
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     @patch("megatron.bridge.training.checkpointing.read_run_config")
@@ -3970,6 +3977,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_read_config,
         mock_read_state,
         mock_load_base,
+        mock_is_hf_checkpoint_dir,
         load_checkpoint_fixtures,
     ):
         """For GLOBAL checkpoints, optimizer state is loaded via standard load_state_dict.
