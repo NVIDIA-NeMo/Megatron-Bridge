@@ -140,7 +140,6 @@ COMBOS = [
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb200", "fp8_mx"),
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "b300", "fp8_mx"),
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "b200", "fp8_mx"),
-    ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "h100", "fp8_mx"),
     # WAN 14B (diffusion — BF16 only)
     ("wan", "wan_14b", "pretrain", 16, "gb200", "bf16"),
     ("wan", "wan_14b", "pretrain", 32, "h100", "bf16"),
