@@ -19,7 +19,7 @@ documents what is currently supported for that model and what is not.
 
 Current example coverage:
 
-- [Qwen3.5](qwen35_vl/README.md): HF to MegatronMIMO conversion and non-colocated HF-data SFT.
+- [Qwen3.5-VL](qwen35_vl/README.md): HF to MegatronMIMO conversion and non-colocated HF-data SFT.
 - [LLaVA](llava/README.md): heterogeneous MIMO training (Vicuna-7B + CLIP, with
   an optional Whisper audio encoder), HF→Megatron conversion, and parallelism
   test sweeps.

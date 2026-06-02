@@ -18,6 +18,7 @@ scripts to a new layout or dataset.
 |---|---|
 | `conversion.sh` | Converts HF Qwen3.5-VL checkpoints to MegatronMIMO format and exports back to HF for a round-trip check. |
 | `finetune_qwen35_vl.py` | Standalone MegatronMIMO HF-data SFT runner. |
+| `slurm_sft.sh` | Multi-node Slurm launcher for the validated 27B non-colocated SFT layout (33 active ranks on 5 x 8-GPU nodes). |
 
 ## Workspace
 
@@ -88,11 +89,38 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
 
 ## Multi-Node Slurm
 
-A short upstream-friendly multi-node Slurm launcher for the non-colocated
-33-rank layout (32 language ranks + 1 image rank, packed across 5 8-GPU nodes
-via srun MPMD) is coming in a follow-up. In the meantime, see the standard
-Qwen3.5-VL launcher at `examples/models/qwen/qwen35_vl/slurm_sft.sh` for the
-container, mounts, and `CLI_OVERRIDES` pattern.
+`slurm_sft.sh` launches the validated 27B non-colocated SFT layout: 32 language
+ranks (TP=4, PP=4, DP=2) + 1 image rank (TP=1, PP=1, DP=1) = 33 active ranks,
+packed across 5 x 8-GPU nodes via an MPMD srun chain (8 + 8 + 8 + 8 + 1 tasks
+per node; 7 GPUs idle on the 5th node).
+
+Submit with the validated 27B defaults after pointing `WORKSPACE` at your
+converted checkpoint root:
+
+```bash
+WORKSPACE=/path/to/shared/workspace \
+  sbatch examples/megatron_mimo/qwen35_vl/slurm_sft.sh
+```
+
+All user-facing knobs (container image / mounts, tokens and caches, paths,
+hyperparameters, MIMO parallelism layout) live in a single `USER
+CONFIGURATION` block at the top of the script. Every knob is env-overridable,
+so you can change defaults at submit time without editing the file:
+
+```bash
+sbatch --export=ALL,SEQ_LENGTH=2048,TRAIN_ITERS=100 \
+  examples/megatron_mimo/qwen35_vl/slurm_sft.sh
+```
+
+`PRETRAINED_CHECKPOINT` defaults to
+`${EXPERIMENT_ROOT}/models/mimo/Qwen3.5-27B-mimo`, matching the path produced
+by the 27B `conversion.sh` invocation above. Run outputs are written under
+`${EXPERIMENT_ROOT}/results/mimo/${RUN_NAME}`.
+
+Edit the `#SBATCH` directives near the top of the script to match your
+cluster's account, partition, and time limit. Node count is fixed at 5 — that
+is the minimum required for the validated 33-rank MIMO layout under full-node
+exclusive allocations.
 
 ## Current Support
 
