@@ -24,6 +24,7 @@ from utils.overrides import set_cli_overrides, set_user_overrides
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
+from megatron.bridge.training.config import runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -173,6 +174,11 @@ def main():
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        if "WORLD_SIZE" not in os.environ and "SLURM_NTASKS" not in os.environ:
+            os.environ["WORLD_SIZE"] = str(args.num_gpus)
+        if "RANK" not in os.environ and "SLURM_PROCID" not in os.environ:
+            os.environ["RANK"] = "0"
+        runtime_config_update(recipe)
         recipe.to_yaml(save_path)
         logger.info(f"ConfigContainer saved to: {os.path.abspath(save_path)}")
         recipe.print_yaml()
