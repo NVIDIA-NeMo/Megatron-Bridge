@@ -129,6 +129,14 @@ config = deepseek_v3_pretrain_config(
 )
 ```
 
+To place the MTP layer in a standalone PP/VPP stage instead of colocating it with loss, rebuild the recipe layout:
+
+```python
+from megatron.bridge.recipes.deepseek import set_deepseek_v3_pipeline_model_parallel_layout
+
+set_deepseek_v3_pipeline_model_parallel_layout(config.model, mtp_standalone=True)
+```
+
 ### Finetuning Recipes
 
 Finetuning recipes for DeepSeek V3 are not currently available.
@@ -149,4 +157,3 @@ Finetuning recipes for DeepSeek V3 are not currently available.
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

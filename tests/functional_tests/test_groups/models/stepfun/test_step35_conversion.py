@@ -95,6 +95,16 @@ def step35_toy_model_path(tmp_path_factory) -> str:
         num_nextn_predict_layers=0,
         torch_dtype="bfloat16",
         tie_word_embeddings=False,
+        attention_output_gate=True,
+        zero_centered=True,
+        use_qk_norm=True,
+        use_moe_router_bias=True,
+        moe_router_activation="sigmoid",
+        moe_router_scaling_factor=3.0,
+        swiglu_limits=None,
+        swiglu_limits_shared=None,
+        need_fp32_gate=False,
+        partial_rotary_factors=[1.0, 1.0],
     )
     config.architectures = ["Step3p5ForCausalLM"]
     config.save_pretrained(model_dir)

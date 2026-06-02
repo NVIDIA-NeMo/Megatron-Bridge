@@ -50,6 +50,7 @@ models/nemotron/index.md
 models/olmoe/index.md
 models/qwen/index.md
 models/sarvam/index.md
+models/stepfun/index.md
 ```
 
 ```{toctree}
@@ -62,6 +63,7 @@ training/training-loop-settings.md
 training/optimizer-scheduler.md
 training/logging.md
 training/profiling.md
+training/memory-estimator.md
 training/checkpointing.md
 training/megatron-fsdp.md
 training/resiliency.md

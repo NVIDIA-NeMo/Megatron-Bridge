@@ -10,6 +10,14 @@ You can either follow the steps below to set up the environment from scratch, or
 
 **Build and run the Docker container**:
 
+First, set up the third-party modules of this repository so they can be copied into the container:
+
+```bash
+git submodule update --init --recursive
+```
+
+Build the container:
+
 ```bash
 docker build \
     -f docker/Dockerfile.ci \
@@ -152,45 +160,49 @@ If you have write access to the repository (NVIDIA contributors):
 
 ## 📋 Commit and PR Title Format
 
-Format your commit messages and PR titles as:
+We follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/). Format your commit messages and PR titles as:
 
 ```text
-[{areas}] {type}: {description}
+<type>(<scope>): <description>
 ```
 
-**Areas** (use the most relevant ones, separate multiple with `,`):
+The scope is optional. Use the imperative mood, lowercase first letter, and no trailing period in the description.
+
+**Types**:
+- `feat` - New feature
+- `fix` - Bug fix
+- `refactor` - Code refactoring without changing functionality
+- `perf` - Performance optimizations and throughput improvements
+- `docs` - Documentation, examples, and contributor guidance
+- `build` - Dependencies, packaging, and environment setup
+- `ci` - CI, automation, and workflow infrastructure
+- `test` - Adding or updating tests
+- `chore` - Maintenance tasks
+
+**Scopes** (optional, pick the most relevant one):
 - `model` - Model implementations and HF bridge logic
 - `recipe` - Training recipes and launch configs
 - `training` - Training loop, callbacks, and runtime integration
 - `data` - Dataset builders, preprocessing, and samplers
 - `ckpt` - Checkpoint conversion, loading, export, and save paths
 - `peft` - PEFT methods (LoRA, adapters) and adapter export
-- `perf` - Performance optimizations and throughput improvements
 - `distill` - Knowledge distillation
 - `prune` - Pruning and sparsity
 - `quant` - Quantization (PTQ, QAT, FP8 recipes)
 - `diffusion` - Diffusion model implementations and training
-- `ci` - CI, automation, and workflow infrastructure
-- `docs` - Documentation, examples, and contributor guidance
-- `build` - Dependencies, packaging, and environment setup
 - `misc` - Cross-cutting utilities and other changes
 
-**Types**:
-- `feat` - New feature
-- `fix` - Bug fix
-- `refactor` - Code refactoring without changing functionality
-- `chore` - Maintenance tasks
-- `test` - Adding or updating tests
-
-**Breaking Changes**: If your PR breaks any API (CLI arguments, config, function signature, etc.), add `[BREAKING]` to the beginning of the title.
+**Breaking Changes**: If your PR breaks any API (CLI arguments, config, function signature, etc.), append `!` before the colon (e.g. `feat(training)!: …`).
 
 **Examples**:
 ```text
-[model] feat: Add Qwen3 model bridge
-[recipe, docs] feat: Add Llama 3.1 70B recipe with documentation
-[ckpt] fix: Handle missing keys in HF checkpoint conversion
-[BREAKING][training] refactor: Change optimizer config structure
-[ci, build] chore: Update ruff version
+feat(model): add Qwen3 model bridge
+fix(ckpt): handle missing keys in HF checkpoint conversion
+perf(training): reduce backward pass overhead
+docs(recipe): add Llama 3.1 70B recipe walkthrough
+ci: bump runner image
+build: pin transformer-engine to 1.10
+refactor(training)!: change optimizer config structure
 ```
 
 ## 🏷️ Labeling Your PR
@@ -398,7 +410,7 @@ uv lock
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -s -m "[build] chore: Add $DEPENDENCY"
+git commit -s -m "build: add $DEPENDENCY"
 git push
 ```
 
