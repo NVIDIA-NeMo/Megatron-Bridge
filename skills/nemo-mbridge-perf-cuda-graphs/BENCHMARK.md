@@ -45,7 +45,7 @@ Underlying evaluation signals used in this run:
 The benchmark dataset contained 3 evaluation tasks:
 
 - Positive tasks: 2 tasks where the skill was expected to activate.
-- Negative tasks: 1 tasks where no skill was expected.
+- Negative tasks: 1 task where no skill was expected.
 - Unlabeled tasks: 0 tasks where positive/negative intent could not be inferred.
 
 Task composition is derived from the evaluation dataset when possible. Entries with `expected_skill` set are treated as positive skill-activation cases, while entries with `expected_skill: null` are treated as negative activation cases.
