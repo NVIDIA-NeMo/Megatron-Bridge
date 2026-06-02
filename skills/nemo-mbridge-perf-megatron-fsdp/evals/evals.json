@@ -1,7 +1,7 @@
 [
   {
     "id": "megatron-fsdp-positive-enable-smoke",
-    "question": "How should I enable Megatron FSDP in Megatron Bridge, and what pitfalls should I check before running a large model? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-megatron-fsdp skill. How should I enable Megatron FSDP in Megatron Bridge, and what pitfalls should I check before running a large model? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-megatron-fsdp",
     "expected_script": null,
     "ground_truth": "The answer should use Megatron FSDP guidance, summarize the relevant enablement/configuration flow, and call out pitfalls such as compatibility with parallelism choices, memory expectations, and verification from logs or config. It should not substitute generic PyTorch FSDP advice without mapping back to Megatron Bridge.",

@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-long-context-positive-cp-smoke",
-    "question": "I need to train a long-context MoE model in Megatron Bridge. How should I size context parallelism and combine it with recompute and dispatcher choices? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-moe-long-context skill. I need to train a long-context MoE model in Megatron Bridge. How should I size context parallelism and combine it with recompute and dispatcher choices? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-moe-long-context",
     "expected_script": null,
     "ground_truth": "The answer should use long-context MoE guidance, explain that long sequence length changes memory and communication pressure, discuss context-parallel sizing rules of thumb, and mention interactions with selective recompute, dispatcher choice, and CUDA graph suitability. It should recommend validating on the target model and hardware.",

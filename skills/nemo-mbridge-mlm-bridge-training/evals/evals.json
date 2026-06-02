@@ -1,7 +1,7 @@
 [
   {
     "id": "mlm-bridge-training-positive-recipe-smoke",
-    "question": "I need to run a Megatron Bridge training smoke test with mock data on multiple GPUs and compare it against Megatron-LM behavior. Which training entry points and recipe patterns should I use? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-mlm-bridge-training skill. I need to run a Megatron Bridge training smoke test with mock data on multiple GPUs and compare it against Megatron-LM behavior. Which training entry points and recipe patterns should I use? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-mlm-bridge-training",
     "expected_script": null,
     "ground_truth": "The answer should route to Megatron Bridge/Megatron-LM training guidance, describe using the repo's training recipes or examples with mock data for smoke/correlation testing, and point the user toward multi-GPU launch patterns. It should distinguish Bridge recipes from direct Megatron-LM submodule changes and warn that the pinned Megatron-Core submodule should not be edited directly.",

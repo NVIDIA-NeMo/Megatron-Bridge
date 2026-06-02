@@ -1,7 +1,7 @@
 [
   {
     "id": "activation-recompute-positive-memory-smoke",
-    "question": "My Megatron Bridge model is close to OOM. Should I enable selective activation recompute or full activation recompute, and what tradeoff should I expect? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-activation-recompute skill. My Megatron Bridge model is close to OOM. Should I enable selective activation recompute or full activation recompute, and what tradeoff should I expect? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-activation-recompute",
     "expected_script": null,
     "ground_truth": "The answer should explain that activation recompute reduces GPU memory by recomputing activations during backward, at the cost of extra compute. It should recommend selective recompute first when possible, reserve full recompute for tighter memory pressure, and note interactions with other features such as CUDA graphs and parallelism choices.",

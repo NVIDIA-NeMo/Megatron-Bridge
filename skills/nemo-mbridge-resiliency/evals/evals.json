@@ -1,7 +1,7 @@
 [
   {
     "id": "resiliency-positive-preemption-smoke",
-    "question": "How do I enable the recommended Slurm fault-tolerance path in Megatron Bridge? Include the FaultTolerancePlugin settings, restart counts, heartbeat timeouts, and when ft_launcher is required. Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-resiliency skill. How do I enable the recommended Slurm fault-tolerance path in Megatron Bridge? Include the FaultTolerancePlugin settings, restart counts, heartbeat timeouts, and when ft_launcher is required. Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-resiliency",
     "expected_script": null,
     "ground_truth": "The answer should use the resiliency skill and focus on Slurm fault tolerance. It should recommend the NeMo Run FaultTolerancePlugin path with enable_ft_package=True, calc_ft_timeouts=True, num_in_job_restarts=3, num_job_retries_on_failure=2, initial_rank_heartbeat_timeout=1800, and rank_heartbeat_timeout=300. It should mention the direct FaultToleranceConfig plus ft_launcher path when not using the plugin, and warn not to use plain torchrun for that direct launcher path.",

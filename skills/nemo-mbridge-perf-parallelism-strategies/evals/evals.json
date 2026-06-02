@@ -1,7 +1,7 @@
 [
   {
     "id": "parallelism-strategies-positive-model-size-smoke",
-    "question": "Given my model size, GPU count, sequence length, and hardware topology, how should I choose TP, PP, DP, CP, EP, or combined parallelism in Megatron Bridge? Keep the answer to at most five bullets.",
+    "question": "Use the nemo-mbridge-perf-parallelism-strategies skill. Given my model size, GPU count, sequence length, and hardware topology, how should I choose TP, PP, DP, CP, EP, or combined parallelism in Megatron Bridge? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-parallelism-strategies",
     "expected_script": null,
     "ground_truth": "The answer should use parallelism strategy guidance, reason from model size, GPU count, sequence length, and topology, and describe how tensor, pipeline, data, context, and expert parallelism can be combined. It should include minimum GPU/count divisibility or memory-estimation considerations and advise validation on the target recipe.",
