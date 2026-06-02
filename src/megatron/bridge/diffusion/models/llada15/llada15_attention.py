@@ -69,9 +69,13 @@ class LLaDA15TEDotProductAttention(TEDotProductAttention):
             attention_dropout=attention_dropout,
             **kwargs,
         )
-        # Optional extension state for users experimenting with block-diagonal
-        # attention. Default LLaDA1.5 inference does not use these.
+        # Inference state. Both default to None (fully bidirectional, no padding).
+        #   _block_attn_mask: optional [1|B, 1, S, S] mask for users experimenting
+        #       with LLaDA2-style block-diagonal attention (not used by default).
+        #   _pad_key_mask: optional [B, S] boolean key-padding mask (True = padding)
+        #       so padded positions in a batched prompt are never attended to.
         self._block_attn_mask: Optional[Tensor] = None
+        self._pad_key_mask: Optional[Tensor] = None
 
     def set_block_mask(self, mask: Optional[Tensor]) -> None:
         """Install a boolean block-diagonal mask (True = blocked) for experimental use.
@@ -81,9 +85,19 @@ class LLaDA15TEDotProductAttention(TEDotProductAttention):
         """
         self._block_attn_mask = mask
 
+    def set_padding_mask(self, mask: Optional[Tensor]) -> None:
+        """Install a boolean key-padding mask ``[B, S]`` (True = padding token).
+
+        Required for correct **batched** generation: LLaDA1.5 attends fully
+        bidirectionally, so without this every query would attend to left-pad
+        tokens and corrupt short prompts in a mixed-length batch.
+        """
+        self._pad_key_mask = mask
+
     def reset_inference_state(self) -> None:
         """Clear any stored inference state. Safe to call between generations."""
         self._block_attn_mask = None
+        self._pad_key_mask = None
 
     def forward(
         self,
@@ -95,18 +109,28 @@ class LLaDA15TEDotProductAttention(TEDotProductAttention):
         attention_bias: Optional[Tensor] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
     ) -> Tensor:
+        # Combine any active masks into a single boolean [B, 1, S, S] mask where
+        # True = blocked. Passed with AttnMaskType.arbitrary so TE's flash kernel
+        # honours it (a float additive bias would be silently dropped).
+        S, B = query.shape[0], query.shape[1]
+        combined: Optional[Tensor] = None
+
         if self._block_attn_mask is not None:
-            S = query.shape[0]
             block = self._block_attn_mask[:, :, :S, :S]
-            B = query.shape[1]
-            bool_mask = (
-                torch.isinf(block).expand(B, 1, S, S) if block.is_floating_point() else block.expand(B, 1, S, S)
-            )
+            block = torch.isinf(block) if block.is_floating_point() else block.bool()
+            combined = block.expand(B, 1, S, S)
+
+        if self._pad_key_mask is not None:
+            # [B, S] key padding -> block (q, k) whenever key k is padding.
+            pad = self._pad_key_mask[:, :S].bool()[:, None, None, :].expand(B, 1, S, S)
+            combined = pad if combined is None else (combined | pad)
+
+        if combined is not None:
             return super().forward(
                 query,
                 key,
                 value,
-                attention_mask=bool_mask,
+                attention_mask=combined.contiguous(),
                 attn_mask_type=AttnMaskType.arbitrary,
                 attention_bias=None,
                 packed_seq_params=packed_seq_params,

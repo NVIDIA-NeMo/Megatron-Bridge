@@ -31,55 +31,38 @@ attention bias.
 from typing import Optional
 
 import torch
-import torch.nn.functional as F
+
+from megatron.bridge.diffusion.common.dllm import get_num_transfer_tokens, get_transfer_index
+from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
 
 
-def _sample_with_temperature(
-    logits: torch.Tensor,
-    *,
-    temperature: float = 0.0,
-    top_k: Optional[int] = None,
-    top_p: Optional[float] = None,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Sample tokens and return ``(token_ids, token_probs)`` both shaped ``[B, L]``."""
-    B, L, V = logits.shape
-    flat = logits.reshape(-1, V)
-
-    if temperature == 0.0 and (top_k is None or top_k <= 0) and (top_p is None or top_p >= 1.0):
-        probs = F.softmax(flat, dim=-1)
-        tokens = flat.argmax(dim=-1, keepdim=True)
-        token_probs = probs.gather(-1, tokens)
-        return tokens.squeeze(-1).view(B, L), token_probs.squeeze(-1).view(B, L)
-
-    if temperature > 0 and temperature != 1.0:
-        flat = flat / temperature
-    if top_k is not None and top_k > 0:
-        vals, _ = torch.topk(flat, top_k)
-        flat = flat.masked_fill(flat < vals[..., -1:], float("-inf"))
-    if top_p is not None and top_p < 1.0:
-        sorted_logits, sorted_idx = torch.sort(flat, descending=True)
-        cum = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-        remove = cum > top_p
-        remove[..., 1:] = remove[..., :-1].clone()
-        remove[..., 0] = False
-        mask = torch.zeros_like(flat, dtype=torch.bool).scatter(-1, sorted_idx, remove)
-        flat = flat.masked_fill(mask, float("-inf"))
-
-    probs = F.softmax(flat, dim=-1)
-    tokens = torch.multinomial(probs, num_samples=1)
-    token_probs = probs.gather(-1, tokens)
-    return tokens.squeeze(-1).view(B, L), token_probs.squeeze(-1).view(B, L)
+def _unwrap(model):
+    """Unwrap Float16Module / DDP / VLM wrappers to reach the raw GPTModel."""
+    if hasattr(model, "module"):
+        return _unwrap(model.module)
+    if hasattr(model, "language_model"):
+        return _unwrap(model.language_model)
+    return model
 
 
-def _get_transfer_schedule(block_length: int, steps: int) -> torch.Tensor:
-    """Per-step counts of tokens to unmask, summing to ``block_length``."""
-    if steps == 0:
-        return torch.tensor([], dtype=torch.int64)
-    base = block_length // steps
-    rem = block_length % steps
-    sched = torch.full((steps,), base, dtype=torch.int64)
-    sched[:rem] += 1
-    return sched
+def _iter_llada15_attentions(model):
+    """Yield each layer's LLaDA15TEDotProductAttention core-attention module."""
+    for layer in _unwrap(model).decoder.layers:
+        ca = layer.self_attention.core_attention
+        if isinstance(ca, LLaDA15TEDotProductAttention):
+            yield ca
+
+
+def _set_padding_mask(model, mask: Optional[torch.Tensor]) -> None:
+    """Broadcast a boolean key-padding mask ``[B, S]`` to every attention layer."""
+    for attn in _iter_llada15_attentions(model):
+        attn.set_padding_mask(mask)
+
+
+def _clear_attention_state(model) -> None:
+    """Drop any stored mask state so it does not leak into the next batch."""
+    for attn in _iter_llada15_attentions(model):
+        attn.reset_inference_state()
 
 
 @torch.no_grad()
@@ -91,27 +74,48 @@ def generate_block_diffusion(
     block_length: int = 32,
     steps: int = 32,
     temperature: float = 0.0,
-    top_k: Optional[int] = None,
-    top_p: Optional[float] = None,
+    remasking: str = "low_confidence",
+    neg_entropy: bool = False,
+    threshold: Optional[float] = None,
     mask_token_id: int = 126336,
     eos_token_id: Optional[int] = 126081,
     eos_early_stop: bool = False,
+    pad_token_id: Optional[int] = None,
 ) -> torch.Tensor:
     """Sample tokens from a LLaDA1.5 Megatron ``GPTModel`` via block diffusion.
+
+    The model attends **fully bidirectionally** over the entire sequence at every
+    step (LLaDA1.5's reference uses a zero attention bias), so each iteration
+    re-forwards the whole ``x``. The block structure governs only *which*
+    positions are eligible to be unmasked per step, not the attention pattern.
+    Per-step token selection is delegated to the shared diffusion sampler in
+    :mod:`megatron.bridge.diffusion.common.dllm`, the same primitives used by
+    NemotronLabsDiffusion and verified by the generation-parity test.
+
+    The defaults (``remasking="low_confidence"``, ``neg_entropy=False``,
+    ``threshold=None``, ``temperature=0``) reproduce greedy ML-GSAI sampling
+    exactly. Set ``temperature > 0`` for Gumbel sampling, ``neg_entropy=True`` to
+    rank by distribution entropy, or ``threshold`` for confidence-gated transfer.
 
     Args:
         model: Megatron ``GPTModel`` built with :class:`LLaDA15ModelProvider`.
         input_ids: Prompt tokens ``[B, prompt_len]``.
         gen_length: Number of new tokens to generate.
         block_length: Tokens unmasked per outer block iteration.
-        steps: Denoising steps per block.
-        temperature, top_k, top_p: Standard sampling controls (greedy when
-            ``temperature == 0``).
+        steps: Total denoising steps (split evenly across blocks).
+        temperature: Gumbel sampling temperature (``0`` = greedy).
+        remasking: Confidence source, ``"low_confidence"`` or ``"random"``.
+        neg_entropy: Rank by negative entropy instead of chosen-token probability.
+        threshold: Optional confidence threshold for gated transfer.
         mask_token_id: LLaDA1.5 mask token id (default 126336).
-        eos_token_id: EOS id (default 126081) used for early stopping when
-            ``eos_early_stop`` is set.
-        eos_early_stop: Stop as soon as EOS is fully confirmed in the
-            generated region.
+        eos_token_id: EOS id (default 126081) for early stopping.
+        eos_early_stop: Stop as soon as EOS appears in the generated region.
+            Disable for short-answer prompts where the model emits EOS at the
+            first position and would otherwise return empty.
+        pad_token_id: If given and the batched prompt contains padding, a boolean
+            key-padding mask is installed so padded positions are never attended
+            to. Required for correct mixed-length batched generation (LLaDA1.5
+            attends fully bidirectionally and has no implicit padding mask).
 
     Returns:
         Token ids ``[B, prompt_len + gen_length]`` (or shorter if EOS-stopped).
@@ -125,40 +129,58 @@ def generate_block_diffusion(
 
     num_blocks = (gen_length + block_length - 1) // block_length
     steps_per_block = max(1, steps // max(num_blocks, 1))
-    transfer_schedule = _get_transfer_schedule(block_length, steps_per_block)
 
     position_ids = torch.arange(total_length, device=device).unsqueeze(0).expand(B, -1)
 
-    for block_idx in range(num_blocks):
-        block_start = prompt_len + block_idx * block_length
-        block_end = min(block_start + block_length, total_length)
-        cur_block_len = block_end - block_start
+    # Build a key-padding mask over the full sequence: only prompt positions can
+    # be padding (the generated region is filled with mask/real tokens). Install
+    # it on every attention layer so padded keys are blocked.
+    pad_key_mask = None
+    if pad_token_id is not None:
+        prompt_pad = input_ids == pad_token_id
+        if bool(prompt_pad.any()):
+            pad_key_mask = torch.zeros(B, total_length, dtype=torch.bool, device=device)
+            pad_key_mask[:, :prompt_len] = prompt_pad
+    _set_padding_mask(model, pad_key_mask)
 
-        for step_idx in range(steps_per_block):
-            block_slice = x[:, block_start:block_end]
-            if (block_slice != mask_token_id).all():
-                break
+    try:
+        for block_idx in range(num_blocks):
+            block_start = prompt_len + block_idx * block_length
+            block_end = min(block_start + block_length, total_length)
+            block_slice = slice(block_start, block_end)
 
-            output = model(input_ids=x, position_ids=position_ids, attention_mask=None)
-            logits = output if isinstance(output, torch.Tensor) else output[0]
-            block_logits = logits[:, block_start:block_end, :]
+            # Schedule computed once per block from its initial (fully-masked) state.
+            block_mask0 = x[:, block_slice] == mask_token_id
+            num_transfer = get_num_transfer_tokens(block_mask0, steps_per_block)
 
-            x0, x0_p = _sample_with_temperature(block_logits, temperature=temperature, top_k=top_k, top_p=top_p)
+            for step_idx in range(steps_per_block):
+                mask_now = x[:, block_slice] == mask_token_id
+                if mask_now.sum() == 0:
+                    break
 
-            n_to_transfer = min(int(transfer_schedule[step_idx].item()), cur_block_len)
-            active = block_slice == mask_token_id
-            confidence = torch.where(active, x0_p, torch.full_like(x0_p, float("-inf")))
+                output = model(input_ids=x, position_ids=position_ids, attention_mask=None)
+                logits = output if isinstance(output, torch.Tensor) else output[0]
+                block_logits = logits[:, block_slice, :]
 
-            transfer_index = torch.zeros_like(x0, dtype=torch.bool)
-            for b in range(B):
-                n = min(n_to_transfer, int(active[b].sum().item()))
-                if n > 0:
-                    _, idx = torch.topk(confidence[b], k=n)
-                    transfer_index[b, idx] = True
-            x[:, block_start:block_end][transfer_index] = x0[transfer_index]
+                x0, transfer_index = get_transfer_index(
+                    block_logits,
+                    temperature,
+                    remasking,
+                    mask_now,
+                    x[:, block_slice],
+                    num_transfer_tokens=num_transfer[:, step_idx],
+                    threshold=threshold,
+                    neg_entropy=neg_entropy,
+                )
+                cur = x[:, block_slice].clone()
+                cur[transfer_index] = x0[transfer_index]
+                x[:, block_slice] = cur
 
-            if eos_early_stop and eos_token_id is not None:
-                if (x[:, prompt_len:] == eos_token_id).any():
-                    return x
+                if eos_early_stop and eos_token_id is not None:
+                    if (x[:, prompt_len:] == eos_token_id).any():
+                        return x
 
-    return x
+        return x
+    finally:
+        # Always clear stored mask state so it can't leak into the next batch.
+        _clear_attention_state(model)
