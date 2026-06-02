@@ -1,7 +1,7 @@
 [
   {
     "id": "sequence-packing-positive-sft-smoke",
-    "question": "I want to use packed sequences for Megatron Bridge SFT and long-context training. What is the difference between offline packed SFT and in-batch VLM packing, and what CP constraints should I check?",
+    "question": "I want to use packed sequences for Megatron Bridge SFT and long-context training. What is the difference between offline packed SFT and in-batch VLM packing, and what CP constraints should I check? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-sequence-packing",
     "expected_script": null,
     "ground_truth": "The answer should use sequence packing guidance, distinguish offline packed SFT for LLMs from in-batch packing for VLMs, and discuss context-parallel constraints and verification. It should call out packed sequence pitfalls rather than treating this as ordinary fixed-length pretraining.",

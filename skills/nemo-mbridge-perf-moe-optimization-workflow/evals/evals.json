@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-optimization-workflow-positive-three-walls-smoke",
-    "question": "I have a Megatron Bridge MoE model that is slow and memory constrained. Can you give me a systematic optimization workflow covering memory, parallelism, dispatcher choice, overlap, and CUDA graphs?",
+    "question": "I have a Megatron Bridge MoE model that is slow and memory constrained. Can you give me a systematic optimization workflow covering memory, parallelism, dispatcher choice, overlap, and CUDA graphs? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-moe-optimization-workflow",
     "expected_script": null,
     "ground_truth": "The answer should use the systematic MoE optimization workflow, organize work into phases such as making the run memory-feasible, choosing parallelism for scale, profiling the bottleneck, then applying dispatcher, overlap, FP8, or CUDA graph optimizations as appropriate. It should avoid isolated one-off tuning advice without a workflow.",

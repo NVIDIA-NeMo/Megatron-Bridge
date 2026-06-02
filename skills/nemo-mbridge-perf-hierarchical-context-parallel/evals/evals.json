@@ -1,7 +1,7 @@
 [
   {
     "id": "hierarchical-context-parallel-positive-long-context-smoke",
-    "question": "I want to train a long-context Megatron Bridge model using hierarchical context parallelism. Which config knobs and verification checks should I look at?",
+    "question": "I want to train a long-context Megatron Bridge model using hierarchical context parallelism. Which config knobs and verification checks should I look at? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-hierarchical-context-parallel",
     "expected_script": null,
     "ground_truth": "The answer should focus on hierarchical context parallelism, describe enabling the relevant context-parallel hierarchy knobs at a high level, and direct the user to verify group sizing, sequence-length divisibility, communication topology, and runtime logs. It should distinguish hierarchical CP from ordinary tensor or data parallel sizing.",

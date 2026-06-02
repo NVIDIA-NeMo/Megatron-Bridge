@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-dispatcher-selection-positive-smoke",
-    "question": "For a Megatron Bridge MoE run, how do I choose between alltoall, DeepEP, and HybridEP token dispatchers for my hardware and EP degree?",
+    "question": "For a Megatron Bridge MoE run, how do I choose between alltoall, DeepEP, and HybridEP token dispatchers for my hardware and EP degree? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-moe-dispatcher-selection",
     "expected_script": null,
     "ground_truth": "The answer should use MoE dispatcher selection guidance and compare alltoall, DeepEP, and HybridEP based on hardware, expert parallel degree, optimization maturity, and model-family patterns. It should tell the user to validate dispatcher choice with short-run measurements and known interactions such as overlap or long-context settings.",

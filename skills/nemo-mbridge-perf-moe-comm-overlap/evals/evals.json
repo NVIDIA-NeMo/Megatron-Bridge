@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-comm-overlap-positive-dispatch-combine-smoke",
-    "question": "For my Megatron Bridge MoE run, how do I overlap expert-parallel dispatch and combine communication, and how does this interact with CUDA graphs or recompute?",
+    "question": "For my Megatron Bridge MoE run, how do I overlap expert-parallel dispatch and combine communication, and how does this interact with CUDA graphs or recompute? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-moe-comm-overlap",
     "expected_script": null,
     "ground_truth": "The answer should use MoE communication-overlap guidance, describe dispatch/combine overlap and expert wgrad scheduling at a high level, and explicitly discuss interactions with recompute and CUDA graphs. It should recommend measuring a short run against the non-overlap baseline.",

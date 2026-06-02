@@ -1,7 +1,7 @@
 [
   {
     "id": "recipe-recommender-positive-sft-peft-smoke",
-    "question": "I have a model name, GPU count, and training goal. Help me choose a Megatron Bridge pretrain, SFT, or PEFT recipe and explain what I need to adjust.",
+    "question": "I have a model name, GPU count, and training goal. Help me choose a Megatron Bridge pretrain, SFT, or PEFT recipe and explain what I need to adjust. Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-recipe-recommender",
     "expected_script": null,
     "ground_truth": "The answer should use recipe recommender guidance, ask for or use model, GPU count, and training goal, recommend an appropriate library or performance recipe, and explain likely adjustments such as parallelism, precision, data path, checkpoint, and performance settings. It should avoid choosing a recipe without stating assumptions.",

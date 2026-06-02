@@ -1,7 +1,7 @@
 [
   {
     "id": "expert-parallel-overlap-positive-flex-smoke",
-    "question": "For a Megatron Bridge MoE model using expert parallelism, how do I enable expert-parallel communication overlap with DeepEP or HybridEP, and what should I verify?",
+    "question": "For a Megatron Bridge MoE model using expert parallelism, how do I enable expert-parallel communication overlap with DeepEP or HybridEP, and what should I verify? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-expert-parallel-overlap",
     "expected_script": null,
     "ground_truth": "The answer should route to expert-parallel communication overlap guidance, discuss overlap_moe_expert_parallel_comm and related delayed expert wgrad scheduling, and call out dispatcher/backend choices such as DeepEP or HybridEP. It should include compatibility checks before enabling overlap and advise comparing short-run measurements to the baseline.",

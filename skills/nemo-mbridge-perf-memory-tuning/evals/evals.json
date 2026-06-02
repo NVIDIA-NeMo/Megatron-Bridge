@@ -1,7 +1,7 @@
 [
   {
     "id": "memory-tuning-positive-oom-smoke",
-    "question": "My Megatron Bridge training run is OOM on H100. How should I systematically reduce peak GPU memory before changing the model?",
+    "question": "My Megatron Bridge training run is OOM on H100. How should I systematically reduce peak GPU memory before changing the model? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-memory-tuning",
     "expected_script": null,
     "ground_truth": "The answer should use the memory tuning skill and propose a systematic memory-reduction path: verify the eager baseline and memory profile, consider expandable segments, adjust parallelism or micro-batch sizing, use activation recompute, consider CPU offloading only when appropriate, and check known incompatibilities. It should avoid jumping directly to a single feature without diagnosis.",

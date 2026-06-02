@@ -1,7 +1,7 @@
 [
   {
     "id": "moe-vlm-training-positive-fsdp-vs-3d-smoke",
-    "question": "For a MoE VLM in Megatron Bridge, should I use FSDP or a 3D-parallel setup, and what tuning knobs matter for Qwen3-VL-style training?",
+    "question": "For a MoE VLM in Megatron Bridge, should I use FSDP or a 3D-parallel setup, and what tuning knobs matter for Qwen3-VL-style training? Keep the answer to at most five bullets.",
     "expected_skill": "nemo-mbridge-perf-moe-vlm-training",
     "expected_script": null,
     "ground_truth": "The answer should use MoE VLM training guidance, compare FSDP and 3D-parallel approaches, and discuss multimodal-specific tuning considerations such as model-family patterns, parallelism choices, dispatcher/overlap interactions, and compatibility pitfalls. It should not answer as if this were a text-only MoE run.",
