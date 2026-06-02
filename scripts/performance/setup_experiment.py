@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import sys
 import tempfile
 import time
@@ -135,52 +134,17 @@ def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: i
     return sorted(glob.glob(glob_pattern))
 
 
-def _cumulative_golden_values_path(save_dir: Optional[str], golden_values_path: str) -> Optional[str]:
-    """Path to the cross-slice cumulative golden-values file in the persistent dir.
+def _cumulative_golden_values_dir(save_dir: Optional[str]) -> Optional[str]:
+    """Directory holding the cross-slice cumulative golden values in the persistent dir.
 
     ``save_dir`` is the checkpoints dir (``…/<recipe>/checkpoints``); the cumulative
-    file lives one level up — alongside ``checkpoints/`` and ``wandb/`` — so it
+    cache lives one level up — alongside ``checkpoints/`` and ``wandb/`` — so it
     survives across resume slices on the same persistent volume. Returns ``None`` when
     no ``save_dir`` is configured (the run keeps nothing across slices).
     """
     if not save_dir:
         return None
-    persistent_dir = os.path.dirname(os.path.normpath(save_dir))
-    return os.path.join(persistent_dir, "golden_values_cumulative", os.path.basename(golden_values_path))
-
-
-def _pvc_data_mover_cp(executor, direction: str, pvc_path: str, local_path: str, _logger) -> bool:
-    """Copy a single file to/from the workdir PVC via a throw-away data-mover pod.
-
-    The persistent dir lives on the Kubeflow workdir PVC, which is not mounted on the
-    launcher, so a short-lived Alpine pod (the executor's data-mover) bridges the two
-    with ``kubectl cp``. ``direction`` is ``"from"`` (PVC→local) or ``"to"``
-    (local→PVC). Best-effort: returns ``False`` on any failure without raising.
-    """
-    pod = f"gv-cache-{os.environ.get('CI_JOB_ID', 'mover')}"
-    try:
-        executor._start_data_mover_pod(pod)
-    except Exception as e:
-        _logger.warning(f"Could not start data-mover pod for golden-values cache: {e}")
-        return False
-    try:
-        if direction == "from":
-            subprocess.check_call(["kubectl", "cp", "-n", executor.namespace, f"{pod}:{pvc_path}", local_path])
-        else:
-            subprocess.check_call(
-                ["kubectl", "exec", "-n", executor.namespace, pod, "--", "mkdir", "-p", os.path.dirname(pvc_path)]
-            )
-            subprocess.check_call(["kubectl", "cp", "-n", executor.namespace, local_path, f"{pod}:{pvc_path}"])
-        return True
-    except subprocess.CalledProcessError as e:
-        # A missing file on first slice (direction="from") is expected, not an error.
-        _logger.info(f"data-mover cp {direction} {pvc_path} returned non-zero (likely absent): {e}")
-        return False
-    finally:
-        try:
-            executor._delete_data_mover_pod(pod)
-        except Exception:
-            pass
+    return os.path.join(os.path.dirname(os.path.normpath(save_dir)), "golden_values_cumulative")
 
 
 def read_cumulative_golden_values(
@@ -189,28 +153,38 @@ def read_cumulative_golden_values(
     """Read the accumulated per-step golden values carried over from earlier slices.
 
     Reads directly when the persistent dir is visible to the launcher (e.g. Slurm /
-    shared filesystem); otherwise (Kubeflow PVC) pulls the file through a data-mover
-    pod. Best-effort — returns ``None`` when absent (first slice) or unreadable.
+    shared filesystem); otherwise (Kubeflow PVC) pulls the cache through the executor's
+    ``copy_from_workspace`` data-mover. Best-effort — returns ``None`` when absent
+    (first slice) or unreadable.
     """
-    remote = _cumulative_golden_values_path(save_dir, golden_values_path)
-    if not remote:
+    remote_dir = _cumulative_golden_values_dir(save_dir)
+    if not remote_dir:
         return None
-    if os.path.isfile(remote):
+    name = os.path.basename(golden_values_path)
+    direct = os.path.join(remote_dir, name)
+    if os.path.isfile(direct):
         try:
-            with open(remote) as f:
+            with open(direct) as f:
                 return json.load(f)
         except Exception as e:
-            _logger.warning(f"Could not read cumulative golden values {remote}: {e}")
+            _logger.warning(f"Could not read cumulative golden values {direct}: {e}")
             return None
     if isinstance(executor, run.KubeflowExecutor):
         with tempfile.TemporaryDirectory() as td:
-            local = os.path.join(td, "cumulative.json")
-            if _pvc_data_mover_cp(executor, "from", remote, local, _logger) and os.path.isfile(local):
-                try:
-                    with open(local) as f:
-                        return json.load(f)
-                except Exception as e:
-                    _logger.warning(f"Could not parse cumulative golden values from PVC {remote}: {e}")
+            try:
+                executor.copy_from_workspace(remote_dir, td, label="gv-cache-read")
+            except Exception as e:
+                # Absent on the first slice — expected, not an error.
+                _logger.info(f"No cumulative golden values pulled from {remote_dir}: {e}")
+                return None
+            matches = glob.glob(os.path.join(td, "**", name), recursive=True)
+            if not matches:
+                return None
+            try:
+                with open(matches[0]) as f:
+                    return json.load(f)
+            except Exception as e:
+                _logger.warning(f"Could not parse cumulative golden values from PVC {remote_dir}: {e}")
     return None
 
 
@@ -220,25 +194,29 @@ def write_cumulative_golden_values(
     """Persist the merged per-step golden values so the next resume slice extends them.
 
     Writes directly when the persistent dir is launcher-visible; otherwise (Kubeflow
-    PVC) pushes through a data-mover pod. Best-effort — never raises into the run.
+    PVC) pushes the cache through the executor's ``copy_to_workspace`` data-mover.
+    Best-effort — never raises into the run.
     """
-    remote = _cumulative_golden_values_path(save_dir, golden_values_path)
-    if not remote or not values:
+    remote_dir = _cumulative_golden_values_dir(save_dir)
+    if not remote_dir or not values:
         return
+    name = os.path.basename(golden_values_path)
     if isinstance(executor, run.KubeflowExecutor):
         with tempfile.TemporaryDirectory() as td:
-            local = os.path.join(td, os.path.basename(remote))
-            with open(local, "w") as f:
+            with open(os.path.join(td, name), "w") as f:
                 json.dump(values, f)
-            _pvc_data_mover_cp(executor, "to", remote, local, _logger)
+            try:
+                executor.copy_to_workspace(td, remote_dir, label="gv-cache-write")
+            except Exception as e:
+                _logger.warning(f"Could not persist cumulative golden values to {remote_dir}: {e}")
         return
     try:
-        os.makedirs(os.path.dirname(remote), exist_ok=True)
-        with open(remote, "w") as f:
+        os.makedirs(remote_dir, exist_ok=True)
+        with open(os.path.join(remote_dir, name), "w") as f:
             json.dump(values, f)
-        _logger.info(f"Wrote cumulative golden values to {remote}")
+        _logger.info(f"Wrote cumulative golden values to {os.path.join(remote_dir, name)}")
     except Exception as e:
-        _logger.warning(f"Could not write cumulative golden values {remote}: {e}")
+        _logger.warning(f"Could not write cumulative golden values to {remote_dir}: {e}")
 
 
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
