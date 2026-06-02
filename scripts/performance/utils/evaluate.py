@@ -575,6 +575,31 @@ def write_golden_values_to_disk(
     logger.info(f"Golden values were saved for {golden_values_path}.")
 
 
+def merge_golden_values(prior: Optional[Dict[str, Any]], segment: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge per-step golden values across resume slices of a long-convergence run.
+
+    A long-convergence run is split across walltime/resume slices; each slice's log
+    only covers the steps it ran, so the values parsed from a single slice describe a
+    partial curve (only the tail) for a resumed run. ``prior`` holds the per-step
+    values accumulated from earlier slices; ``segment`` holds this slice's values.
+
+    Per-step entries (numeric-string keys) are unioned with the current slice winning
+    on overlap (its checkpoint-continued steps are authoritative); scalar entries
+    (``alloc``/``max_alloc``/``max_reserved``, ``job_id``) are taken from the current
+    slice. Returns ``segment`` unchanged when there is no prior.
+
+    Args:
+        prior: Accumulated per-step values from earlier slices, or ``None``/empty.
+        segment: Per-step values parsed from the current slice's logs.
+
+    Returns:
+        The merged per-step golden values spanning every slice seen so far.
+    """
+    if not prior:
+        return segment
+    return {**prior, **segment}
+
+
 def calc_convergence_and_performance(
     model_family_name: str,
     model_recipe_name: str,
@@ -591,6 +616,7 @@ def calc_convergence_and_performance(
     wandb_run: Optional["wandb.Run"] = None,
     _logger: logging.Logger = None,
     max_reserved_metric: str = "max_reserved",
+    prior_values: Optional[Dict[str, Any]] = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -636,27 +662,35 @@ def calc_convergence_and_performance(
     expected_golden_values_path = os.path.join(pathlib.Path(golden_values_path).parent, golden_values_file_name)
     _logger.info(f"Golden values path: {expected_golden_values_path}")
 
+    # Per-step values parsed from THIS slice's logs only.
+    segment_values = dict(
+        **{
+            step: {
+                k: v
+                for k, v in {
+                    loss_metric: current_train_loss.get(step),
+                    timing_metric: current_iter_time.get(step),
+                    "GPU utilization": current_gpu_util.get(step),
+                }.items()
+                if v is not None
+            }
+            for step in current_train_loss.keys()
+        },
+        **{
+            alloc_metric: current_alloc,
+            max_alloc_metric: current_max_alloc,
+            max_reserved_metric: current_max_reserved,
+        },
+    )
+    # A resumed long-convergence slice only logs its own steps, so persisting this
+    # slice alone records a partial (tail-only) curve. Merge with the per-step values
+    # carried over from earlier slices (read from the persistent dir by the launcher
+    # and passed in via prior_values) so the recorded actuals span the whole run.
+    current_values = merge_golden_values(prior_values, segment_values)
+
     # Always write actuals into experiment directory
     write_golden_values_to_disk(
-        current_values=dict(
-            **{
-                step: {
-                    k: v
-                    for k, v in {
-                        loss_metric: current_train_loss.get(step),
-                        timing_metric: current_iter_time.get(step),
-                        "GPU utilization": current_gpu_util.get(step),
-                    }.items()
-                    if v is not None
-                }
-                for step in current_train_loss.keys()
-            },
-            **{
-                alloc_metric: current_alloc,
-                max_alloc_metric: current_max_alloc,
-                max_reserved_metric: current_max_reserved,
-            },
-        ),
+        current_values=current_values,
         golden_values_path=next_golden_values_path,
         wandb_run=wandb_run,
     )
@@ -858,4 +892,4 @@ def calc_convergence_and_performance(
             error_msg += f'  "{max_reserved_metric}": {current_max_reserved}\n'
 
     _logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
-    return has_validation_failures is False, error_msg
+    return has_validation_failures is False, error_msg, current_values
