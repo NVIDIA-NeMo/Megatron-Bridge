@@ -1,16 +1,17 @@
 [
   {
     "id": "resiliency-positive-preemption-smoke",
-    "question": "How do I configure Megatron Bridge resiliency features like fault tolerance, straggler detection, in-process restart, preemption handling, and the rerun state machine?",
+    "question": "How do I enable the recommended Slurm fault-tolerance path in Megatron Bridge? Include the FaultTolerancePlugin settings, restart counts, heartbeat timeouts, and when ft_launcher is required.",
     "expected_skill": "nemo-mbridge-resiliency",
     "expected_script": null,
-    "ground_truth": "The answer should use resiliency guidance, explain relevant Megatron Bridge fault-tolerance features such as straggler detection, in-process restart, preemption support, and rerun state machine checks, and advise verifying logs and failure behavior. It should not treat the request as a performance tuning or memory optimization task.",
+    "ground_truth": "The answer should use the resiliency skill and focus on Slurm fault tolerance. It should recommend the NeMo Run FaultTolerancePlugin path with enable_ft_package=True, calc_ft_timeouts=True, num_in_job_restarts=3, num_job_retries_on_failure=2, initial_rank_heartbeat_timeout=1800, and rank_heartbeat_timeout=300. It should mention the direct FaultToleranceConfig plus ft_launcher path when not using the plugin, and warn not to use plain torchrun for that direct launcher path.",
     "expected_behavior": [
       "Read the nemo-mbridge-resiliency skill before answering.",
-      "Identify the task as resiliency or fault-tolerance configuration.",
-      "Mention straggler detection, in-process restart, preemption, or rerun state machine features as relevant.",
-      "Include verification guidance for logs or failure behavior.",
-      "Avoid focusing on throughput or memory tuning unless the user asks for it."
+      "Identify the task as Slurm fault-tolerance configuration.",
+      "Recommend FaultTolerancePlugin as the preferred path.",
+      "List num_in_job_restarts and num_job_retries_on_failure.",
+      "List the initial and subsequent heartbeat timeout settings.",
+      "Mention ft_launcher for the direct config path."
     ]
   }
 ]

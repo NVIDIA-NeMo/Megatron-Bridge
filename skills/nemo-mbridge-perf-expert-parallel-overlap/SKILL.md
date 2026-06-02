@@ -7,9 +7,6 @@ when_to_use: Enabling EP overlap to hide dispatch/combine latency, or tracing a 
 
 # MoE Expert-Parallel Overlap Skill
 
-Stable docs: @docs/training/communication-overlap.md
-Card: @skills/nemo-mbridge-perf-expert-parallel-overlap/card.yaml
-
 ## References
 
 - Stable docs: @docs/training/communication-overlap.md
