@@ -284,6 +284,34 @@ class TestLoRA:
             assert isinstance(layer["mlp"]["linear_fc1"], LinearAdapter)
             assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
 
+    def test_lora_grouped_expert_transform_uses_shared_adapter_by_default(self):
+        """Grouped expert linears should keep the cheaper shared adapter path by default."""
+        model = GroupedExpertModel()
+        lora = LoRA(target_modules=["linear_fc2"])
+
+        def mock_get_attrs(module, is_expert=False):
+            return AdapterAttributes(
+                input_is_parallel=True,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_parallel_adapter,
+            patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_grouped_adapter,
+        ):
+            mock_parallel_adapter.return_value = nn.Identity()
+            transformed_model = lora(model, training=True)
+
+        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
+        assert isinstance(adapted, LoRALinear)
+        mock_parallel_adapter.assert_called_once()
+        mock_grouped_adapter.assert_not_called()
+
     def test_lora_grouped_expert_transform_can_use_per_expert_adapters(self):
         """Grouped expert linears should get one LoRA adapter per local expert when requested."""
         model = GroupedExpertModel()
@@ -709,6 +737,9 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_aligns_shared_expert_dim_to_expert_tp(self):
         """Normalized expert fc1 adapters should round up to the expert-TP granularity when needed."""
         model = MoEModel(moe_router_topk=8)
+        for module in model.modules():
+            if hasattr(module, "config"):
+                module.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True)
 
         def mock_get_attrs(module, is_expert=False):
@@ -723,10 +754,6 @@ class TestLoRANormalizeMoE:
 
         with (
             patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
-            patch(
-                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
-            ),
             patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter,
         ):
             mock_adapter.return_value = nn.Linear(1, 1)
@@ -747,6 +774,7 @@ class TestLoRANormalizeMoE:
         """Per-expert grouped adapters should round normalized dims up to expert-TP granularity."""
         model = GroupedExpertModel()
         model.decoder.layers[0].mlp.experts.linear_fc2.config.moe_router_topk = 8
+        model.decoder.layers[0].mlp.experts.linear_fc2.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc2"], dim=8, normalize_moe_lora=True, share_expert_adapters=False)
 
         def mock_get_attrs(module, is_expert=False):
@@ -761,10 +789,6 @@ class TestLoRANormalizeMoE:
 
         with (
             patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
-            patch(
-                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
-            ),
             patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_adapter,
         ):
             mock_adapter.return_value = nn.Identity()
