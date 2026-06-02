@@ -71,6 +71,8 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cuda_scope = getattr(cfg.model, "cuda_graph_scope", None) or []
     scope_names = {s if isinstance(s, str) else getattr(s, "name", "") for s in cuda_scope}
     graphs_active = (cuda_impl is not None and cuda_impl != "none") or "full_iteration" in scope_names
+    if cuda_impl == "none":
+        cfg.model.cuda_graph_scope = []
     if cuda_impl is not None or scope_names:
         cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = graphs_active
 
