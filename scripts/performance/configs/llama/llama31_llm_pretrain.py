@@ -43,6 +43,35 @@ def set_llama31_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
 
 
+def set_llama31_405b_mlperf_parity_overrides(cfg: ConfigContainer, precision: str) -> None:
+    """Apply MLPerf v6.0 reference parity overrides to a Llama3.1 405B config (strict v5.1/v6.0 405B knob set; FP8-DPA overlay for NVFP4)."""
+    # Per v5.1/v6.0 405B reference: 405B does NOT enable use_transformer_engine_op_fuser /
+    # comm_overlap.bucket_size=768MiB / fused_single_qkv_rope (those are 8B-style parity).
+    if hasattr(cfg.model, "tp_only_amax_red"):
+        cfg.model.tp_only_amax_red = True
+    if hasattr(cfg.model, "cpu_offloading") and cfg.model.cpu_offloading:
+        cfg.model.cpu_offloading = False
+    if hasattr(cfg.model, "cpu_offloading_num_layers"):
+        cfg.model.cpu_offloading_num_layers = None
+    if hasattr(cfg.model, "use_te_rng_tracker"):
+        cfg.model.use_te_rng_tracker = True
+    if hasattr(cfg, "rng") and hasattr(cfg.rng, "te_rng_tracker"):
+        cfg.rng.te_rng_tracker = True
+
+    if precision == "nvfp4":
+        if hasattr(cfg.mixed_precision, "fp8_dot_product_attention"):
+            cfg.mixed_precision.fp8_dot_product_attention = True
+        if hasattr(cfg.ddp, "fp4_param_gather"):
+            cfg.ddp.fp4_param_gather = False
+        if hasattr(cfg.mixed_precision, "fp4_param_gather"):
+            cfg.mixed_precision.fp4_param_gather = False
+
+
+def _is_mlperf_variant(config_variant: str) -> bool:
+    """True if config_variant selects an MLPerf v6.0 reference parity variant."""
+    return config_variant.lower().startswith("mlperf")
+
+
 def disable_param_gather_overlap(cfg: ConfigContainer) -> None:
     """
     Disable parameter-gather overlap to reduce training peak memory and avoid OOM.
@@ -86,6 +115,9 @@ def llama31_405b_pretrain_config_gb300(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
+    if _is_mlperf_variant(config_variant):
+        set_llama31_405b_mlperf_parity_overrides(cfg, precision)
+
     return cfg
 
 
@@ -122,6 +154,9 @@ def llama31_405b_pretrain_config_gb200(
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
     if precision == "nvfp4" and config_variant.lower() == "v2":
         disable_param_gather_overlap(cfg)
+
+    if _is_mlperf_variant(config_variant):
+        set_llama31_405b_mlperf_parity_overrides(cfg, precision)
 
     return cfg
 
@@ -188,6 +223,9 @@ def llama31_405b_pretrain_config_b300(
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
+    if _is_mlperf_variant(config_variant):
+        set_llama31_405b_mlperf_parity_overrides(cfg, precision)
+
     return cfg
 
 
@@ -217,6 +255,9 @@ def llama31_405b_pretrain_config_b200(
 
     cfg.comm_overlap.tp_comm_overlap_cfg = comm_overlap_cfg
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
+
+    if _is_mlperf_variant(config_variant):
+        set_llama31_405b_mlperf_parity_overrides(cfg, precision)
 
     return cfg
 

@@ -257,6 +257,12 @@ class PerfEnvPlugin(Plugin):
         moe_flex_dispatcher_backend: str,
         gpu_sm100_or_newer: bool,
     ):
+        if "CUDA_DEVICE_MAX_CONNECTIONS" in executor.env_vars:
+            logger.info(
+                f"Respecting explicit CUDA_DEVICE_MAX_CONNECTIONS="
+                f"{executor.env_vars['CUDA_DEVICE_MAX_CONNECTIONS']}"
+            )
+            return
         cuda_device_max_connections = 8
         if moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
             cuda_device_max_connections = 32
@@ -321,6 +327,10 @@ class PerfEnvPlugin(Plugin):
                     del_cudnn_ln = False
             if model_family_name == "kimi":
                 if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
+        if gpu in ["b200", "b300"]:
+            if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
+                if compute_dtype in ("nvfp4", "fp8_cs"):
                     del_cudnn_ln = False
         if model_family_name in ["llama"] and train_task in ["sft"]:
             del_cudnn_ln = False
