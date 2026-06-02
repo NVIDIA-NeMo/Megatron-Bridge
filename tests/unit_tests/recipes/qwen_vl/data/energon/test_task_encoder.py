@@ -296,6 +296,30 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.assertEqual(len(encoded.imgs), 0)
         self.assertEqual(len(encoded.videos), 0)
 
+    def test_encode_sample_preserves_legacy_assistant_target_spans(self):
+        """Assistant targets should use the legacy answer-token span search."""
+        self.tokenizer.apply_chat_template.return_value = [np.array([1, 2, 7, 8, 3, 4, 7, 8, 5])]
+        self.tokenizer.encode.side_effect = lambda x, **kwargs: [7, 8] if x == "Ok" else [999]
+
+        sample = ChatMLSample(
+            **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
+            imgs=None,
+            videos=None,
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Q1"},
+                    {"role": "assistant", "content": "Ok"},
+                    {"role": "user", "content": "Q2"},
+                    {"role": "assistant", "content": "Ok"},
+                ]
+            ),
+        )
+
+        encoded = self.encoder.encode_sample(sample)
+
+        self.assertEqual(encoded.text.tolist(), [1, 2, 7, 8, 3, 4, 7, 8, 5])
+        self.assertEqual(encoded.target.tolist(), [0, 7, 8, 0, 0, 7, 8, 0, 0])
+
     def test_batch(self):
         # Create dummy encoded samples
         s1 = QwenVLTaskSample(
