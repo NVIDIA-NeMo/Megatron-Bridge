@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to enable, validate, and troubleshoot CUDA graph capture in Megatron Bridge training workloads, reducing host-driver overhead for improved GPU throughput on static-shape pretraining runs. <br>
+Developers and engineers enabling CUDA graph capture in Megatron Bridge training workloads to reduce host-driver overhead and improve GPU throughput for pretraining and fine-tuning recipes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -20,18 +20,24 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
-- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
+## Evaluation Agents Used: <br>
+- Claude Code (`claude-code`) <br>
+- Codex (`codex`) <br>
+
+
+
 ## Evaluation Tasks: <br>
-Evaluated through NVSkills-Eval 3-Tier validation (external profile, 2026-05-29). Tier 1 static validation and Tier 2 deduplication completed; Tier 3 live agent evaluation not available. <br>
+Evaluated against 3 evaluation tasks (2 positive skill-activation cases, 1 negative case) with 2 attempts per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -41,17 +47,33 @@ Reported benchmark dimensions: <br>
 - Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
 - Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
 
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
+- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
+- `accuracy`: Grades final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
+- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
+- `token_efficiency`: Compares token usage with and without the skill. <br>
+
 
 
 ## Evaluation Results: <br>
-| Tier | Checks | Findings | Status |
-|---|---:|---:|---|
-| Tier 1 (Static Validation) | 9 | 13 | FAIL |
-| Tier 2 (Deduplication) | 2 | 0 | PASS |
-| Tier 3 (Live Agent) | — | — | Not available |
+| Dimension | Num | `claude-code` | `codex` |
+|---|---:|---:|---:|
+| Security | 6 | 100% (+0%) | 100% (+0%) |
+| Correctness | 6 | 92% (-2%) | 94% (+13%) |
+| Discoverability | 6 | 100% (+0%) | 77% (-2%) |
+| Effectiveness | 6 | 91% (-2%) | 95% (+6%) |
+| Efficiency | 6 | 92% (-0%) | 67% (-3%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-67b6ae5d (source: git SHA, committed 2026-05-28) <br>
+v0.2.0rc6-1520-g91d60f3f (source: git describe) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

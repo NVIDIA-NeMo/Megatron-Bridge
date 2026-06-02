@@ -44,18 +44,11 @@ cost entirely, but it is **incompatible with PP > 1**.
 
 ## Enablement
 
-### Selective recompute (default for most recipes)
+### Selective recompute
 
 ```python
 cfg.model.recompute_granularity = "selective"
-cfg.model.recompute_modules = ["core_attn"]
-```
-
-### Selective recompute with additional modules
-
-```python
-cfg.model.recompute_granularity = "selective"
-cfg.model.recompute_modules = ["core_attn", "layernorm"]  # or ["mlp"] or ["mlp", "core_attn"]
+cfg.model.recompute_modules = ["core_attn"]  # add "layernorm", "mlp", or other valid modules as needed
 ```
 
 ### Full-layer recompute
