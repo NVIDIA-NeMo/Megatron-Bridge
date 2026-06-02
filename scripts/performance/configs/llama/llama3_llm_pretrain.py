@@ -417,6 +417,9 @@ def llama3_8b_pretrain_config_b300(
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
 
+    if _is_mlperf_variant(config_variant):
+        set_llama3_mlperf_parity_overrides(cfg, precision)
+
     return cfg
 
 
