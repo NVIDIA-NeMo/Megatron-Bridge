@@ -39,6 +39,10 @@ import sys
 from pathlib import Path
 
 
+_DEFAULT_CHECKPOINT_LOAD_SUFFIX = Path("nemo_experiments") / "default" / "checkpoints"
+_CANONICAL_DUMP_CHECKPOINT_LOAD = "/nemo_run/nemo_experiments/default/checkpoints"
+
+
 # ---------------------------------------------------------------------------
 # All (family, recipe, task, num_gpus, gpu, precision) combos that exist in
 # both the old scripts/performance/configs/ and the new flat perf recipes.
@@ -193,7 +197,23 @@ COMBOS = [
 
 def _dump_config_to_yaml(cfg, yaml_path: Path) -> None:
     """Dump a ConfigContainer to YAML using the production to_yaml() path."""
+    _canonicalize_dump_only_paths(cfg)
     cfg.to_yaml(str(yaml_path))
+
+
+def _canonicalize_dump_only_paths(cfg) -> None:
+    """Canonicalize dump-only cwd-derived paths for branch-to-branch comparisons."""
+    checkpoint_load = getattr(cfg.checkpoint, "load", None)
+    if not isinstance(checkpoint_load, str):
+        return
+
+    try:
+        checkpoint_load_suffix = Path(checkpoint_load).relative_to(Path.cwd())
+    except ValueError:
+        return
+
+    if checkpoint_load_suffix == _DEFAULT_CHECKPOINT_LOAD_SUFFIX:
+        cfg.checkpoint.load = _CANONICAL_DUMP_CHECKPOINT_LOAD
 
 
 def load_old_recipe(
