@@ -237,8 +237,8 @@ class TestDataLoaders:
         mock_build_datasets.return_value = (fake_train_ds, None, None)
         fake_train_loader = object()
         # Return a loader for train (non-None dataset), None for valid/test (None dataset)
-        mock_build_loader.side_effect = (
-            lambda dataset, *args, **kwargs: fake_train_loader if dataset is not None else None
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: (
+            fake_train_loader if dataset is not None else None
         )
 
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(

@@ -28,6 +28,7 @@ import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
     ChatMLSample,
@@ -341,8 +342,10 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             else:
                 batched_visual[key] = None
 
+        keys = [s.__key__ for s in samples]
         batch_kwargs: Dict = dict(
-            __keys__=[s.__key__ for s in samples],
+            **batch_metadata_kwargs(keys=keys),
+            __keys__=keys,
             __subflavors__=[s.__subflavors__ for s in samples],
             input_ids=tokens,
             labels=labels,
@@ -351,12 +354,6 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             position_ids=position_ids,
             visual_tensors=batched_visual,
         )
-        # Energon Batch base class may require __key__ / __restore_key__
-        _batch_fields = {f.name for f in dataclasses.fields(HFEncoderTaskBatch)}
-        if "__key__" in _batch_fields:
-            batch_kwargs["__key__"] = samples[0].__key__
-        if "__restore_key__" in _batch_fields:
-            batch_kwargs["__restore_key__"] = ()
 
         return HFEncoderTaskBatch(**batch_kwargs)
 

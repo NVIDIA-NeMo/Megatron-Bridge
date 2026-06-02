@@ -21,7 +21,11 @@ from megatron.bridge.data.megatron_mimo.dataset import MegatronMIMODataset
 
 
 TRAINING_PATH = (
-    Path(__file__).resolve().parents[4] / "examples" / "megatron_mimo" / "megatron_mimo_training_llava_audio.py"
+    Path(__file__).resolve().parents[4]
+    / "examples"
+    / "megatron_mimo"
+    / "llava"
+    / "megatron_mimo_training_llava_audio.py"
 )
 
 

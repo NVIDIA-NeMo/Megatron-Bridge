@@ -52,6 +52,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[Logging](logging.md)** | Logging configuration and TensorBoard/WandB integration | Monitoring training progress |
 | **[Profiling](profiling.md)** | Performance profiling and analysis | Identifying bottlenecks |
+| **[Theoretical Memory Estimator](memory-estimator.md)** | Formula-based per-GPU memory planning | Sizing dense and MoE training configs |
 | **[Resiliency](resiliency.md)** | Handling failures and recovery | Building robust training pipelines |
 
 ### Advanced Features

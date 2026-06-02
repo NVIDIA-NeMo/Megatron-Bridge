@@ -323,6 +323,11 @@ def parse_cli_args():
     data_args.add_argument("--dataset_name", type=str, help="Dataset name (deprecated)")
     data_args.add_argument("--packed_sequence", action="store_true", help="Use packed sequences")
     data_args.add_argument("--head_only", action="store_true", help="Use only head data (for rp2 dataset)")
+    data_args.add_argument(
+        "--diffusion_dataset_path",
+        type=str,
+        help="WebDataset root path for diffusion recipes (FLUX, WAN). When unset, recipes fall back to mock data.",
+    )
 
     # Tokenizer configuration
     tokenizer_args = parser.add_argument_group("Tokenizer arguments")
@@ -846,6 +851,19 @@ def _testing_args(parser):
         "--is_long_convergence_run",
         action="store_true",
         help="If true, runs a long convergence run.",
+        required=False,
+        default=False,
+    )
+    testing_args.add_argument(
+        "--retry_on_testing_failure",
+        action="store_true",
+        help=(
+            "If true, when the post-training convergence/perf check fails, the "
+            "experiment is retrained from scratch and re-tested in the next "
+            "outer-loop iteration (bounded by --max_retries). Off by default: "
+            "a single failed test surfaces immediately as AssertionError, "
+            "which is the right behavior for CI."
+        ),
         required=False,
         default=False,
     )
