@@ -25,6 +25,13 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.vlm_processing import (
+    apply_assistant_labels_to_batch,
+    build_assistant_loss_mask,
+    ensure_position_ids,
+    gather_assistant_text_segments,
+    pop_generic_visual_inputs,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs, Qwen2AudioInputs
 
 
@@ -49,21 +56,7 @@ def _gather_assistant_text_segments(example: dict) -> list[str]:
     content is a list of items like {"type": "text"|"image"|..., "text": "..."}.
     Returns a list of concatenated text strings, one per assistant turn.
     """
-    texts: list[str] = []
-    for turn in example.get("conversation", []):
-        if turn.get("role") != "assistant":
-            continue
-        parts = turn.get("content", [])
-        buf = []
-        if isinstance(parts, list):
-            for p in parts:
-                if isinstance(p, dict) and p.get("type") == "text" and isinstance(p.get("text"), str):
-                    buf.append(p["text"])
-        elif isinstance(parts, str):
-            buf.append(parts)
-        if buf:
-            texts.append("".join(buf))
-    return texts
+    return gather_assistant_text_segments(example)
 
 
 def create_multiturn_loss_mask_by_search(
@@ -76,40 +69,7 @@ def create_multiturn_loss_mask_by_search(
     - For each assistant text, tokenize without special tokens and search sequentially
     - On success, unmask that span; otherwise leave masked
     """
-    tokenizer = getattr(processor, "tokenizer", processor)
-    ids = input_ids.tolist()
-    mask = [0] * len(ids)
-
-    def try_mark(span_text: str, start_from: int) -> int:
-        """Tokenize a span and mark its occurrence if found. Returns new search start index."""
-        variants = [span_text, span_text + "\n", span_text.strip(), span_text.strip() + "\n"]
-        for text in variants:
-            span_tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
-            if not span_tokens:
-                continue
-            # naive sequential search from start_from
-            for i in range(start_from, len(ids) - len(span_tokens) + 1):
-                if ids[i : i + len(span_tokens)] == span_tokens:
-                    for j in range(i, i + len(span_tokens)):
-                        mask[j] = 1
-                    return i + len(span_tokens)
-        return start_from
-
-    search_start = 0
-    for asst_text in _gather_assistant_text_segments(example):
-        search_start = try_mark(asst_text, search_start)
-
-    if sum(mask) == 0:
-        warnings.warn("*" * 100)
-        warnings.warn(f"All tokens are masked for example:\n{example}.")
-        warnings.warn("*" * 100)
-
-    # Ensure pad/skipped tokens are masked
-    ids_t = torch.tensor(ids)
-    for k, t in enumerate(ids_t):
-        if t in skipped_tokens:
-            mask[k] = 0
-    return mask
+    return build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int).tolist()
 
 
 def phi4_mm_collate_fn(examples, processor):
@@ -240,31 +200,9 @@ def qwen2_5_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         if "image_grid_thw" in batch_with:
             batch["image_grid_thw"] = batch_with["image_grid_thw"]
 
-    labels = batch["input_ids"].clone()[:, 1:].contiguous()
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-    labels[torch.isin(labels, skipped_tokens)] = -100
-    batch["labels"] = labels
     # Ensure position_ids exist for the model
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device)
-            .unsqueeze(0)
-            .expand(batch_size, -1)
-            .clone()
-            .contiguous()
-        )
-    # Prefer general search-based masking using structured example content (not template-specific)
-    loss_masks = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
-    ]
-    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
-    # Shift loss mask to align with next-token labels timeline
-    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    # Enforce label masking to match shifted loss_mask
-    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
-    batch["loss_mask"] = loss_mask_t
+    ensure_position_ids(batch)
+    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
     # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
     visual_inputs = Qwen2_5_VLVisualInputs(
         pixel_values=batch.get("pixel_values"),
@@ -828,44 +766,21 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         )
 
     if "input_ids" in batch:
-        labels = batch["input_ids"].clone()[:, 1:]
-        labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-        labels[torch.isin(labels, skipped_tokens)] = -100
-        batch["labels"] = labels
-
-        # Create loss mask using search-based masking for assistant turns
-        loss_masks = [
-            create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-            for example, input_ids in zip(examples, batch["input_ids"])
-        ]
-        loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
-        # Unmask the last token (EOS) so the model learns when to stop generating
-        loss_mask_t[:, -1] = 1
-        # Shift loss mask to align with next-token labels timeline
-        loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-        # Enforce label masking to match shifted loss_mask
-        batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
-        batch["loss_mask"] = loss_mask_t
-
-    if "position_ids" not in batch and "input_ids" in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
-        )
+        apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens, unmask_last_token=True)
+    ensure_position_ids(batch)
 
     # Wrap visual tensors in GenericVisualInputs so vlm_step.py picks them up
-    visual_kwargs = {}
-    for vk in (
-        "pixel_values",
-        "pixel_values_videos",
-        "image_grid_thw",
-        "video_grid_thw",
-        "image_sizes",
-        "image_position_ids",
-    ):
-        if vk in batch:
-            visual_kwargs[vk] = batch.pop(vk)
-    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    batch["visual_inputs"] = pop_generic_visual_inputs(
+        batch,
+        (
+            "pixel_values",
+            "pixel_values_videos",
+            "image_grid_thw",
+            "video_grid_thw",
+            "image_sizes",
+            "image_position_ids",
+        ),
+    )
 
     return batch
 
@@ -890,32 +805,14 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         return_dict=True,
     )
 
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
-        )
-
-    labels = batch["input_ids"].clone()[:, 1:]
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-    labels[torch.isin(labels, skipped_tokens)] = -100
-    batch["labels"] = labels
-
-    loss_masks = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])
-    ]
-    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
-    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
-    batch["loss_mask"] = loss_mask_t
+    ensure_position_ids(batch)
+    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
 
     # Wrap visual tensors in GenericVisualInputs (includes mm_token_type_ids for GLM)
-    visual_kwargs = {}
-    for vk in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "mm_token_type_ids"):
-        if vk in batch:
-            visual_kwargs[vk] = batch.pop(vk)
-    batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    batch["visual_inputs"] = pop_generic_visual_inputs(
+        batch,
+        ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "mm_token_type_ids"),
+    )
 
     return batch
 
@@ -956,26 +853,10 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if tokenizer is not None and saved_padding_side is not None:
         tokenizer.padding_side = saved_padding_side
 
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).clone()
-        )
+    ensure_position_ids(batch)
 
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
-    labels = batch["input_ids"].clone()[:, 1:]
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-    labels[torch.isin(labels, skipped_tokens)] = -100
-    batch["labels"] = labels
-    loss_masks = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])  # type: ignore[arg-type]
-    ]
-    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=batch["input_ids"].device)
-    # Shift loss mask to align with next-token labels timeline
-    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, -100)
-    batch["loss_mask"] = loss_mask_t
+    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
     # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
     visual_inputs = Qwen2_5_VLVisualInputs(
         pixel_values=batch.get("pixel_values"),
@@ -1290,31 +1171,9 @@ def kimi_k25_vl_collate_fn(
     if all_grid_thws:
         result["grid_thws"] = torch.cat(all_grid_thws, dim=0)  # (N, 3) with [t, h, w]
 
-    labels = result["input_ids"].clone()[:, 1:].contiguous()
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-    labels[torch.isin(labels, skipped_tokens)] = -100
-    result["labels"] = labels
     # Ensure position_ids exist for the model
-    if "position_ids" not in result:
-        result_size, seq_len = result["input_ids"].shape
-        result["position_ids"] = (
-            torch.arange(seq_len, device=result["input_ids"].device)
-            .unsqueeze(0)
-            .expand(result_size, -1)
-            .clone()
-            .contiguous()
-        )
-    # Prefer general search-based masking using structured example content (not template-specific)
-    loss_masks = [
-        create_multiturn_loss_mask_by_search(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, result["input_ids"])  # type: ignore[arg-type]
-    ]
-    loss_mask_t = torch.tensor(loss_masks, dtype=torch.float, device=result["input_ids"].device)
-    # Shift loss mask to align with next-token labels timeline
-    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    # Enforce label masking to match shifted loss_mask
-    result["labels"] = result["labels"].masked_fill(loss_mask_t == 0, -100)
-    result["loss_mask"] = loss_mask_t.contiguous()
+    ensure_position_ids(result)
+    apply_assistant_labels_to_batch(result, examples, processor, skipped_tokens)
 
     # Build visual inputs object and attach to batch; remove raw keys.
     # Kimi processor outputs "grid_thws" (N, 3); pass full [t, h, w] as image_grid_thw.

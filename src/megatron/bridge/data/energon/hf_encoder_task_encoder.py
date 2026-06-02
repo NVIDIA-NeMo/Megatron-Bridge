@@ -20,7 +20,6 @@ in a single ``processor()`` call (e.g. Gemma3-VL, Ministral3, GLM-4.5V).
 
 import dataclasses
 import logging
-import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -35,9 +34,9 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     _images_to_pil,
     _videos_to_pil,
     cook_chatml_sample,
-    find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
+from megatron.bridge.data.vlm_processing import HFProcessorVLMDataProcessor
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -97,6 +96,13 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         self.visual_keys: Tuple[str, ...] = tuple(visual_keys)
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
+        self.data_processor = HFProcessorVLMDataProcessor(
+            processor=processor,
+            seq_length=seq_length,
+            visual_keys=self.visual_keys,
+            min_pixels=min_pixels,
+            max_pixels=max_pixels,
+        )
 
     # ------------------------------------------------------------------
     # Helpers
@@ -114,32 +120,6 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
     @property
     def _eos_token_id(self) -> int:
         return self._tokenizer.eos_token_id
-
-    @property
-    def _image_token_id(self) -> Optional[int]:
-        """Resolve image token ID from the processor, or ``None`` if unavailable."""
-        if hasattr(self.processor, "image_token_id"):
-            return self.processor.image_token_id
-        image_token = getattr(self.processor, "image_token", None)
-        if image_token is not None:
-            return self._tokenizer.convert_tokens_to_ids(image_token)
-        return None
-
-    @staticmethod
-    def _find_contiguous_blocks(arr: np.ndarray, value: int) -> List[Tuple[int, int]]:
-        """Return ``[(start, end), ...]`` for each contiguous run of *value* in *arr*."""
-        mask = arr == value
-        blocks: List[Tuple[int, int]] = []
-        i, n = 0, len(mask)
-        while i < n:
-            if mask[i]:
-                start = i
-                while i < n and mask[i]:
-                    i += 1
-                blocks.append((start, i))
-            else:
-                i += 1
-        return blocks
 
     # ------------------------------------------------------------------
     # encode_sample
@@ -160,135 +140,20 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         images_pil = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
         videos_pil = _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
 
-        # 2. Normalize conversation
         conversation = cook_chatml_sample(sample.conversation)
-
-        # 2b. Convert <image> placeholders to structured multimodal content
-        #     so that apply_chat_template inserts model-specific image tokens.
-        has_images = images_pil is not None
-        if has_images:
-            for turn in conversation:
-                text = turn["content"]
-                if "<image>" in text:
-                    parts = re.split(r"(<image>)", text)
-                    content_parts: list = []
-                    for part in parts:
-                        if part == "<image>":
-                            content_parts.append({"type": "image"})
-                        elif part.strip():
-                            content_parts.append({"type": "text", "text": part.strip()})
-                    turn["content"] = content_parts
-
-        # 3. Get the full prompt text from chat template (not tokenized)
-        # Use processor (not tokenizer) because conversation may contain
-        # structured multimodal content dicts that only the processor can handle.
-        prompt_text = self.processor.apply_chat_template(conversation, tokenize=False)
-
-        # 4. Run processor for joint tokenization + vision preprocessing
-        proc_kwargs = {"text": prompt_text, "return_tensors": "pt"}
-        if images_pil is not None:
-            proc_kwargs["images"] = images_pil
-        if videos_pil is not None:
-            proc_kwargs["videos"] = videos_pil
-        if self.min_pixels is not None:
-            proc_kwargs["min_pixels"] = self.min_pixels
-        if self.max_pixels is not None:
-            proc_kwargs["max_pixels"] = self.max_pixels
-
-        proc_output = self.processor(**proc_kwargs)
-
-        input_ids_t = proc_output["input_ids"]  # [1, seq]
-        if input_ids_t.dim() == 2:
-            input_ids_np = input_ids_t[0].numpy()
-        else:
-            input_ids_np = input_ids_t.numpy()
-
-        # 5. Build loss mask: only supervise assistant content
-        loss_mask_np = np.zeros(len(input_ids_np), dtype=np.float32)
-        search_start = 0
-        for turn in conversation:
-            if turn["role"] == "assistant":
-                answer = turn["content"]
-                answer_tokens = self._tokenizer.encode(answer, add_special_tokens=False)
-                ans_start, ans_end = find_pattern_indices(input_ids_np, answer_tokens, search_start)
-                if ans_start >= 0:
-                    loss_mask_np[ans_start:ans_end] = 1.0
-                    search_start = ans_end
-
-        # 6. Labels = left-shifted input_ids; positions without valid label get IGNORE_INDEX
-        labels_np = np.full(len(input_ids_np), IGNORE_INDEX, dtype=np.int64)
-        labels_np[:-1] = input_ids_np[1:]
-        # Zero out labels where loss_mask is 0 (shift loss_mask accordingly)
-        shifted_loss = np.zeros_like(loss_mask_np)
-        shifted_loss[:-1] = loss_mask_np[1:]
-        labels_np[shifted_loss == 0.0] = IGNORE_INDEX
-        # Also shift loss_mask to align with labels
-        loss_mask_np = shifted_loss
-
-        # 7. Truncate
-        max_len = self.seq_length
-        input_ids_pre_trunc = input_ids_np
-        input_ids_np = input_ids_np[:max_len].copy()
-        labels_np = labels_np[:max_len].copy()
-        loss_mask_np = loss_mask_np[:max_len].copy()
-
-        # 7b. Handle partial image token blocks caused by truncation.
-        #     If truncation split an image's token block, remove the partial
-        #     tokens (replace with pad) and track how many complete images remain
-        #     so the corresponding visual tensors can be sliced.
-        num_images = len(images_pil) if images_pil else 0
-        num_complete_images = num_images
-        if num_images > 0 and len(input_ids_np) < len(input_ids_pre_trunc):
-            image_token_id = self._image_token_id
-            if image_token_id is not None:
-                orig_blocks = self._find_contiguous_blocks(input_ids_pre_trunc, image_token_id)
-                num_complete_images = sum(1 for s, e in orig_blocks if e <= max_len)
-
-                if num_complete_images < len(orig_blocks):
-                    for start, end in orig_blocks[num_complete_images:]:
-                        s = max(start, 0)
-                        e = min(end, max_len)
-                        if s < e:
-                            input_ids_np[s:e] = self._pad_token_id
-                            labels_np[s:e] = IGNORE_INDEX
-                            loss_mask_np[s:e] = 0.0
-
-                    if num_complete_images < num_images:
-                        logging.warning(
-                            "Truncation to seq_length=%d removed %d of %d images whose "
-                            "token blocks did not fit. Consider increasing seq_length.",
-                            max_len,
-                            num_images - num_complete_images,
-                            num_images,
-                        )
-
-        # 8. Collect visual tensors
-        visual_tensors: Dict[str, torch.Tensor] = {}
-        for key in self.visual_keys:
-            val = proc_output.get(key)
-            if val is not None:
-                if isinstance(val, torch.Tensor):
-                    visual_tensors[key] = val
-                else:
-                    visual_tensors[key] = torch.tensor(val)
-
-        # 8b. Slice visual tensors to keep only complete images
-        if num_complete_images < num_images:
-            for key in list(visual_tensors.keys()):
-                t = visual_tensors[key]
-                if t is not None and t.dim() >= 1 and t.shape[0] == num_images:
-                    if num_complete_images > 0:
-                        visual_tensors[key] = t[:num_complete_images]
-                    else:
-                        del visual_tensors[key]
+        encoded = self.data_processor.encode(
+            conversation,
+            images=images_pil,
+            videos=videos_pil,
+        )
 
         return HFEncoderTaskSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
-            input_ids=torch.from_numpy(input_ids_np.copy()),
-            labels=torch.from_numpy(labels_np.copy()),
-            loss_mask=torch.from_numpy(loss_mask_np.copy()),
-            visual_tensors=visual_tensors,
+            input_ids=encoded.input_ids,
+            labels=encoded.labels,
+            loss_mask=encoded.loss_mask,
+            visual_tensors=encoded.visual_tensors,
         )
 
     # ------------------------------------------------------------------

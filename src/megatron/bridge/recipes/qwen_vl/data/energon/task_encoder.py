@@ -33,10 +33,11 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     _tensor_to_pil,  # noqa: F401  -- re-exported for backward compat
     _videos_to_pil,
     cook_chatml_sample,
-    find_pattern_indices,
+    find_pattern_indices,  # noqa: F401  -- re-exported for backward compat
     get_ltor_masks_and_position_ids,
     videohandler,  # noqa: F401  -- re-exported for backward compat
 )
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
 
 
@@ -282,16 +283,15 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         chat_output = self.hf_tokenizer.apply_chat_template(conversation, tokenize=True, return_tensors="np")
         input_ids = chat_output["input_ids"][0] if isinstance(chat_output, BatchEncoding) else chat_output[0]
         pad_token_id = self.hf_tokenizer.pad_token_id
-        target = [pad_token_id for _ in range(len(input_ids))]
-        search_start_index = 0
-        for turn_idx, turn in enumerate(conversation[1:]):
-            if turn["role"] == "assistant":
-                answer = turn["content"]
-                answer_tokens = self.hf_tokenizer.encode(answer, add_special_tokens=False)
-                answer_start, answer_end = find_pattern_indices(input_ids, answer_tokens, search_start_index)
-                assert answer_start > 0, "Not found valid answer in conversation."
-                target[answer_start:answer_end] = input_ids[answer_start:answer_end]
-                search_start_index = answer_end
+        assistant_loss_mask = build_assistant_loss_mask(
+            conversation,
+            input_ids,
+            self.hf_tokenizer,
+            include_search_variants=False,
+            require_matches=True,
+            warn_on_all_masked=False,
+        ).numpy()
+        target = np.where(assistant_loss_mask > 0, input_ids, pad_token_id)
 
         # NOTE: expand image_pad & video_pad
         merge_length = self.merge_size**2
