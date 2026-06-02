@@ -548,6 +548,91 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights=merge_adapter_weights,
         )
 
+    def export_hf_weights_modelopt(
+        self,
+        model: MegatronModelT | list[MegatronModelT],
+        quant_mode: str = "nvfp4",
+        cpu: bool = False,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask | None]] = None,
+        ignore_patterns: Optional[List[str]] = None,
+        merge_adapter_weights: bool = True,
+    ) -> Iterable["HFWeightTuple"]:
+        """Export Megatron weights to HuggingFace ModelOpt deployment format.
+
+        Args:
+            model: Megatron model instance or list of instances.
+            quant_mode: ModelOpt quantization mode to export. Currently supports ``"nvfp4"``.
+            cpu: Whether to move exported tensors to CPU before yielding.
+            show_progress: Display progress bar during base Hugging Face weight export.
+            conversion_tasks: Pre-built conversion tasks. If not provided, tasks will be built
+                automatically from the models.
+            ignore_patterns: Hugging Face parameter name patterns that should remain unquantized.
+                Scale tensor suffixes and the optional ``model.`` prefix are ignored when matching.
+            merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
+                tensors during export.
+
+        Yields:
+            HFWeightTuple: Named tuples containing Hugging Face parameter names and tensors. Quantized
+            weights yield the packed weight under the original ``*.weight`` name followed by the
+            corresponding ``*.weight_scale`` and ``*.weight_scale_2`` tensors.
+
+        Raises:
+            RuntimeError: If a matched quantized Megatron parameter uses a qformat unsupported by
+                ``quant_mode``.
+        """
+        from megatron.bridge.models.conversion.modelopt_utils import (
+            build_hf_to_megatron_name_map,
+            collect_modelopt_quant_metadata,
+            get_modelopt_quant_exporter,
+            matches_quant_ignore_pattern,
+            sync_modelopt_quant_metadata,
+        )
+
+        expected_qformat, export_weight = get_modelopt_quant_exporter(quant_mode)
+
+        if not isinstance(model, list):
+            model = [model]
+        if conversion_tasks is None:
+            conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
+
+        hf_to_megatron_name = build_hf_to_megatron_name_map(conversion_tasks)
+        metadata = collect_modelopt_quant_metadata(conversion_tasks)
+
+        pp_group = model_bridge._get_pp_group(model)
+        if pp_group is not None and dist.is_initialized() and dist.get_world_size(group=pp_group) > 1:
+            sync_modelopt_quant_metadata(metadata, pp_group)
+
+        hf_weights = self.export_hf_weights(
+            model,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+        ignore_patterns = ignore_patterns or []
+        for hf_name, tensor in hf_weights:
+            if "_quantizer." in hf_name:
+                continue
+
+            meta = None
+            if hf_name.endswith(".weight") and not matches_quant_ignore_pattern(hf_name, ignore_patterns):
+                megatron_name = hf_to_megatron_name.get(hf_name)
+                if megatron_name is not None:
+                    meta = metadata.get(megatron_name)
+
+            if meta is None:
+                tensor = tensor.detach()
+                yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
+                continue
+
+            if meta.qformat != expected_qformat:
+                raise RuntimeError(f"Unsupported qformat for ModelOpt {quant_mode} export: {meta.qformat}")
+
+            for quant_name, quant_tensor in export_weight(hf_name, tensor, meta):
+                yield HFWeightTuple(quant_name, quant_tensor.cpu() if cpu else quant_tensor)
+
     def export_hf_weights_quant(
         self,
         model: list[MegatronModelT],
