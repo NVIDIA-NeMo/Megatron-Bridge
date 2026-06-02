@@ -17,6 +17,7 @@ import json
 import pytest
 import torch
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskBatch,
     NemotronOmniTaskEncoder,
@@ -80,10 +81,7 @@ class _Processor:
 
 def _make_chatml_sample(conversation, *, imgs=None, videos=None, audio=None, key="k1"):
     return ChatMLSample(
-        __key__=key,
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__={},
+        **sample_metadata_kwargs(key=key, restore_key=(), subflavors={}),
         imgs=imgs,
         videos=videos,
         audio=audio,
