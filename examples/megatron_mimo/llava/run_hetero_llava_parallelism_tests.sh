@@ -1,16 +1,16 @@
 #!/bin/bash
 # Run heterogeneous MIMO LLaVA E2E test with various parallelism configurations
-# Usage: ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh [--gpus N] [--config CONFIG_NAME] [--deterministic]
+# Usage: ./run_hetero_llava_parallelism_tests.sh [--gpus N] [--config CONFIG_NAME] [--deterministic]
 #
 # Set DETERMINISTIC=1 (env var) or pass --deterministic to enable deterministic mode:
 # exports deterministic NCCL/CUBLAS/cuDNN/TE env vars AND passes --deterministic
 # to the training script (FP32 precision, unfused attention, full recompute, etc.).
 #
 # Examples:
-#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh                    # Run all configs with 8 GPUs
-#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --gpus 4           # Run all configs with 4 GPUs
-#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --config tp2_dp2   # Run only tp2_dp2 config
-#   ./run_hetero_llava_parallelism_tests_unfrozen_llm.sh --deterministic    # Run in deterministic mode
+#   ./run_hetero_llava_parallelism_tests.sh                    # Run all configs with 8 GPUs
+#   ./run_hetero_llava_parallelism_tests.sh --gpus 4           # Run all configs with 4 GPUs
+#   ./run_hetero_llava_parallelism_tests.sh --config tp2_dp2   # Run only tp2_dp2 config
+#   ./run_hetero_llava_parallelism_tests.sh --deterministic    # Run in deterministic mode
 
 set -euo pipefail
 
@@ -27,8 +27,8 @@ DETERMINISTIC=${DETERMINISTIC:-0}
 # GBS must be divisible by MBS.  num_microbatches = GBS / MBS.
 GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-96}
 TRAIN_ITERS=${TRAIN_ITERS:-100}
-LR=${LR:-1e-4}
-MIN_LR=${MIN_LR:-1.0e-5}
+LR=${LR:-1e-3}
+MIN_LR=${MIN_LR:-2.0e-5}
 LR_WARMUP_ITERS=${LR_WARMUP_ITERS:-60}
 WEIGHT_DECAY=${WEIGHT_DECAY:-0.0}
 ADAM_BETA1=${ADAM_BETA1:-0.9}
@@ -36,7 +36,11 @@ ADAM_BETA2=${ADAM_BETA2:-0.95}
 LOG_INTERVAL=${LOG_INTERVAL:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"Megatron-Bridge-MIMO"}
 WANDB_SAVE_DIR=${WANDB_SAVE_DIR:-"/tmp/wandb"}
-DATASET_ROOT=${DATASET_ROOT:-"/path/to/llava/pretrain/dataset"}
+# Empty by default. When empty, the LLaVA-Pretrain dataset is auto-downloaded
+# and extracted to DATASET_DOWNLOAD_DIR by prepare_dataset (see below).
+DATASET_ROOT=${DATASET_ROOT:-""}
+DATASET_DOWNLOAD_DIR=${DATASET_DOWNLOAD_DIR:-/workspace/llava_pretrain}
+LLAVA_PRETRAIN_REPO=${LLAVA_PRETRAIN_REPO:-liuhaotian/LLaVA-Pretrain}
 UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 
 # HuggingFace source models for checkpoint conversion
@@ -108,19 +112,39 @@ echo "=========================================="
 # MBS must be divisible by every module's DP size (enforced by build_megatron_mimo_data_loaders)
 
 declare -a CONFIGS_8GPU=(
-    "tp4_both|4|1|1|0|4|1|1|4|2"
-    "tp2_dp2_both|2|1|2|0|2|1|2|4|2"
-    "tp2_pp2_llm_tp4_vision|2|2|1|0|4|1|1|4|2"
-    "tp2_pp2_llm_tp2_dp2_vision|2|2|1|0|2|1|2|4|2"
-    "pp4_llm_tp4_vision|1|4|1|0|4|1|1|4|2"
-    "pp4_llm_tp2dp2_vision|1|4|1|0|2|1|2|4|2"
-    "pp2_dp2_llm_tp2dp2_vision|1|2|2|0|2|1|2|4|2"
-    "tp4_llm_tp2dp2_vision|4|1|1|0|2|1|2|4|2"
+    # 4+4 split
+    "tp4_both|4|1|1|0|4|1|1|4|4"
+    "tp2_dp2_both|2|1|2|0|2|1|2|4|4"
+    "tp2_pp2_llm_tp4_vision|2|2|1|0|4|1|1|4|4"
+    "tp1_dp4_both|1|1|4|0|1|1|4|4|4"
+    "pp4_llm_tp4_vision|1|4|1|0|4|1|1|4|4"
+    "pp4_llm_dp4_vision|1|4|1|0|1|1|4|4|4"
+    "pp2_dp2_llm_tp2_dp2|1|2|2|0|2|1|2|4|4"
+    "tp4_llm_dp4_vision|4|1|1|0|1|1|4|4|4"
+    "tp2_pp2_llm_tp2_dp2_vision|2|2|1|0|2|1|2|4|4"
+    "tp2_dp2_llm_dp4_vision|2|1|2|0|1|1|4|4|4"
+    # Asymmetric configs
+    "asymmetric_2_6_pp2|1|2|1|0|2|1|3|2|3"
+    "asymmetric_2_6_tp2|2|1|1|0|2|1|3|2|3"
+)
+
+declare -a CONFIGS_4GPU=(
+    # 2+2 split
+    "tp2_both|2|1|1|0|2|1|1|2|4"
+    "tp1_dp2_both|1|1|2|0|1|1|2|2|4"
+)
+
+declare -a CONFIGS_2GPU=(
+    "tp1_both|1|1|1|0|1|1|1|1|4"
 )
 
 # Select configs based on GPU count
 if [[ $NUM_GPUS -ge 8 ]]; then
     CONFIGS=("${CONFIGS_8GPU[@]}")
+elif [[ $NUM_GPUS -ge 4 ]]; then
+    CONFIGS=("${CONFIGS_4GPU[@]}")
+else
+    CONFIGS=("${CONFIGS_2GPU[@]}")
 fi
 
 # Track results
@@ -128,6 +152,55 @@ declare -a RESULTS=()
 declare -a FAILED_CONFIGS=()
 TOTAL=0
 PASSED=0
+
+# Ensure the LLaVA-Pretrain dataset is available. When DATASET_ROOT is empty,
+# download liuhaotian/LLaVA-Pretrain (captions JSON + images.zip) into
+# DATASET_DOWNLOAD_DIR and extract images.zip there. The JSON's image paths
+# (e.g. "00453/004531425.jpg") resolve against DATASET_ROOT, so images.zip is
+# extracted directly into it. Both steps are skipped if already present.
+prepare_dataset() {
+    if [[ -n "${DATASET_ROOT}" ]]; then
+        echo "Using DATASET_ROOT: ${DATASET_ROOT}"
+        return
+    fi
+
+    DATASET_ROOT="${DATASET_DOWNLOAD_DIR}"
+    local json_file="${DATASET_ROOT}/blip_laion_cc_sbu_558k.json"
+    local images_zip="${DATASET_ROOT}/images.zip"
+
+    # Already prepared: captions JSON + extracted image shards present. This
+    # holds even if images.zip was deleted post-extraction, so we skip both the
+    # download and the extraction.
+    if [[ -f "${json_file}" && -d "${DATASET_ROOT}/00000" ]]; then
+        echo "Using cached LLaVA-Pretrain dataset at ${DATASET_ROOT}"
+        return
+    fi
+
+    echo "DATASET_ROOT not set; preparing ${LLAVA_PRETRAIN_REPO} under ${DATASET_ROOT}"
+    mkdir -p "${DATASET_ROOT}"
+
+    if [[ -f "${json_file}" && -f "${images_zip}" ]]; then
+        echo "  Using cached download in ${DATASET_ROOT}"
+    else
+        echo "  Downloading ${LLAVA_PRETRAIN_REPO} (this can take a while)..."
+        uv run python - "${LLAVA_PRETRAIN_REPO}" "${DATASET_ROOT}" <<'PY'
+import sys
+from huggingface_hub import snapshot_download
+repo_id, local_dir = sys.argv[1], sys.argv[2]
+snapshot_download(repo_id=repo_id, repo_type="dataset", local_dir=local_dir)
+PY
+    fi
+
+    # images.zip extracts to 5-digit shard dirs (00000, 00001, ...) at the root.
+    if [[ -d "${DATASET_ROOT}/00000" ]]; then
+        echo "  Images already extracted."
+    else
+        echo "  Extracting images.zip..."
+        unzip -q -o "${images_zip}" -d "${DATASET_ROOT}"
+    fi
+
+    echo "  Dataset ready at ${DATASET_ROOT}"
+}
 
 convert_checkpoints() {
     local vision_tp="$1"
@@ -172,7 +245,7 @@ build_wandb_exp_name() {
     local vision_tp="$5" vision_pp="$6" vision_dp="$7"
     local mbs="$8"
 
-    echo "hetero-llava-unfrozen_llm-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-mbs${mbs}"
+    echo "hetero-llava-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-mbs${mbs}"
 }
 
 run_config() {
@@ -230,7 +303,6 @@ run_config() {
            --dataset-root "${DATASET_ROOT}" \
            --vision-encoder-checkpoint "${CONVERTED_CLIP_CKPT}" \
            --language-model-checkpoint "${CONVERTED_LLM_CKPT}" \
-           --freeze-llm False \
            ${DETERMINISTIC_FLAG} \
            2>&1; then
         local end_time=$(date +%s)
@@ -248,6 +320,9 @@ run_config() {
     fi
     return 0
 }
+
+# Ensure dataset is available (downloads + extracts when DATASET_ROOT is empty)
+prepare_dataset
 
 # Run tests
 if [[ -n "${SINGLE_CONFIG}" ]]; then

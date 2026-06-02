@@ -21,13 +21,14 @@ NUM_GPUS=${NUM_GPUS:-8}
 SINGLE_CONFIG=""
 DETERMINISTIC=${DETERMINISTIC:-0}
 
+
 # Training defaults (can be overridden via env vars)
 # MBS is set per-config (must be divisible by every module's DP size).
 # GBS must be divisible by MBS.  num_microbatches = GBS / MBS.
 GLOBAL_BATCH_SIZE=${GLOBAL_BATCH_SIZE:-96}
 TRAIN_ITERS=${TRAIN_ITERS:-100}
-LR=${LR:-1e-4}
-MIN_LR=${MIN_LR:-1.0e-5}
+LR=${LR:-1e-3}
+MIN_LR=${MIN_LR:-2.0e-5}
 LR_WARMUP_ITERS=${LR_WARMUP_ITERS:-60}
 WEIGHT_DECAY=${WEIGHT_DECAY:-0.0}
 ADAM_BETA1=${ADAM_BETA1:-0.9}
@@ -35,7 +36,17 @@ ADAM_BETA2=${ADAM_BETA2:-0.95}
 LOG_INTERVAL=${LOG_INTERVAL:-1}
 WANDB_PROJECT=${WANDB_PROJECT:-"Megatron-Bridge-MIMO"}
 WANDB_SAVE_DIR=${WANDB_SAVE_DIR:-"/tmp/wandb"}
-DATASET_ROOT=${DATASET_ROOT:-"/path/to/LLaVA-Pretrain-Audio-Augmented"}
+# Audio-augmented dataset. Empty DATASET_ROOT triggers a build via
+# prepare_llava_pretrain_audio.sh into AUDIO_DATASET_DIR (TTS synthesis over
+# LLaVA-Pretrain; resume-safe, skipped if already built). Set DATASET_ROOT to an
+# existing audio-augmented tree to skip the build.
+DATASET_ROOT=${DATASET_ROOT:-""}
+AUDIO_DATASET_DIR=${AUDIO_DATASET_DIR:-/workspace/llava_pretrain_audio_augmented}
+# Only train_iters * GBS samples are consumed over the whole run (the loader caps
+# the dataset at train_samples and reserves no val/test split), so audio is
+# synthesized for just that many records via LIMIT rather than all 558k. Override
+# LIMIT to force a specific count.
+LIMIT=${LIMIT:-$((TRAIN_ITERS * GLOBAL_BATCH_SIZE))}
 UV_CACHE_DIR=${UV_CACHE_DIR:-/workspace/uv_cache/}
 
 # HuggingFace source models for checkpoint conversion
@@ -147,6 +158,29 @@ declare -a FAILED_CONFIGS=()
 TOTAL=0
 PASSED=0
 
+# Ensure the audio-augmented dataset is available. When DATASET_ROOT is empty,
+# run prepare_llava_pretrain_audio.sh (which auto-downloads LLaVA-Pretrain as
+# needed, synthesizes per-sample audio, and merges ${HF_DATA_FILES}) into
+# AUDIO_DATASET_DIR, then point DATASET_ROOT at it. Skipped when the merged JSON
+# is already present. Pass DATASET_DOWNLOAD_DIR/LIMIT/NUM_SHARDS/TTS_* through the environment to
+# tune the build (see prepare_llava_pretrain_audio.sh).
+prepare_dataset() {
+    if [[ -n "${DATASET_ROOT}" ]]; then
+        echo "Using DATASET_ROOT: ${DATASET_ROOT}"
+        return
+    fi
+
+    DATASET_ROOT="${AUDIO_DATASET_DIR}"
+    if [[ -f "${DATASET_ROOT}/${HF_DATA_FILES}" ]]; then
+        echo "Using cached audio-augmented dataset at ${DATASET_ROOT}"
+        return
+    fi
+
+    echo "DATASET_ROOT not set; building audio-augmented dataset (LIMIT=${LIMIT}) under ${DATASET_ROOT}"
+    AUGMENTED_DATASET_DIR="${DATASET_ROOT}" LIMIT="${LIMIT}" "${SCRIPT_DIR}/prepare_llava_pretrain_audio.sh"
+    echo "  Audio-augmented dataset ready at ${DATASET_ROOT}"
+}
+
 convert_checkpoints() {
     local vision_tp="$1"
     local llm_tp="$2"
@@ -206,7 +240,7 @@ build_wandb_exp_name() {
     local audio_tp="$8" audio_pp="$9" audio_dp="${10}"
     local mbs="${11}"
 
-    echo "hetero-llava-unfrozen_llm-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-aud_tp${audio_tp}_pp${audio_pp}_dp${audio_dp}-mbs${mbs}"
+    echo "hetero-llava-${name}-${NUM_GPUS}gpu-llm_tp${llm_tp}_pp${llm_pp}_dp${llm_dp}-vis_tp${vision_tp}_pp${vision_pp}_dp${vision_dp}-aud_tp${audio_tp}_pp${audio_pp}_dp${audio_dp}-mbs${mbs}"
 }
 
 run_config() {
@@ -282,7 +316,6 @@ run_config() {
            --vision-encoder-checkpoint "${CONVERTED_CLIP_CKPT}" \
            --language-model-checkpoint "${CONVERTED_LLM_CKPT}" \
            --audio-encoder-checkpoint "${CONVERTED_WHISPER_CKPT}" \
-           --freeze-llm False \
            ${DETERMINISTIC_FLAG} \
            2>&1; then
         local end_time=$(date +%s)
@@ -300,6 +333,9 @@ run_config() {
     fi
     return 0
 }
+
+# Ensure dataset is available (builds the audio-augmented tree when DATASET_ROOT is empty)
+prepare_dataset
 
 # Run tests
 if [[ -n "${SINGLE_CONFIG}" ]]; then

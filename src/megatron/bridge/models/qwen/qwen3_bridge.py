@@ -85,13 +85,13 @@ class Qwen3Bridge(MegatronModelBridge):
             "mtp.layers.0.hnorm.weight": "mtp.pre_fc_norm_hidden.weight",
             "mtp.layers.0.final_layernorm.weight": "mtp.norm.weight",
             # MTP transformer layer attention
-            "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
-            "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight": "mtp.layers.0.input_layernorm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight": "mtp.layers.0.self_attn.q_norm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight": "mtp.layers.0.self_attn.k_norm.weight",
+            "mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight": "mtp.layers.0.self_attn.o_proj.weight",
             # MTP transformer layer MLP
-            "mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
-            "mtp.layers.0.transformer_layer.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
+            "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight": "mtp.layers.0.post_attention_layernorm.weight",
+            "mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight": "mtp.layers.0.mlp.down_proj.weight",
         }
 
         mapping_list = []
@@ -118,14 +118,14 @@ class Qwen3Bridge(MegatronModelBridge):
                 ),
                 # MTP QKV: same split/merge as decoder layers
                 QKVMapping(
-                    megatron_param="mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
+                    megatron_param="mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
                     q="mtp.layers.*.self_attn.q_proj.weight",
                     k="mtp.layers.*.self_attn.k_proj.weight",
                     v="mtp.layers.*.self_attn.v_proj.weight",
                 ),
                 # MTP Gated MLP
                 GatedMLPMapping(
-                    megatron_param="mtp.layers.0.transformer_layer.mlp.linear_fc1.weight",
+                    megatron_param="mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
                     gate="mtp.layers.0.mlp.gate_proj.weight",
                     up="mtp.layers.0.mlp.up_proj.weight",
                 ),

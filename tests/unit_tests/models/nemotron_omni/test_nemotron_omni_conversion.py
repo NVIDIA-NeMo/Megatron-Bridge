@@ -153,6 +153,7 @@ def test_nemotron_omni_mapping_registry_includes_sound_mappings():
 
 
 def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
+    from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
     from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
         NemotronOmniTaskBatch,
         NemotronOmniTaskEncoder,
@@ -168,6 +169,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
     pixel_values = torch.ones(1, 4, 8)
 
     batch = NemotronOmniTaskBatch(
+        **batch_metadata_kwargs(keys=["sample"]),
         input_ids=tokens,
         labels=labels,
         loss_mask=loss_mask,

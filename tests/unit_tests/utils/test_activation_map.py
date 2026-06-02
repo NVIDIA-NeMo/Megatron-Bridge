@@ -63,6 +63,11 @@ class TestStrToCallable:
         """'gelu_pytorch_tanh' is an alias for fast_gelu."""
         assert str_to_callable("gelu_pytorch_tanh") is fast_gelu
 
+    def test_quick_gelu(self):
+        """'quick_gelu' resolves to a callable (mcore quick_gelu or F.gelu fallback)."""
+        result = str_to_callable("quick_gelu")
+        assert callable(result)
+
     def test_fully_qualified_silu(self):
         """Fully-qualified 'torch.nn.functional.silu' resolves to F.silu."""
         assert str_to_callable("torch.nn.functional.silu") is F.silu
@@ -149,7 +154,17 @@ class TestActivationFuncMapContents:
 
     def test_short_names_present(self):
         """All expected short names are in the map."""
-        expected = {"silu", "gelu", "relu", "sigmoid", "relu2", "squared_relu", "fast_gelu", "gelu_pytorch_tanh"}
+        expected = {
+            "silu",
+            "gelu",
+            "relu",
+            "sigmoid",
+            "relu2",
+            "squared_relu",
+            "fast_gelu",
+            "gelu_pytorch_tanh",
+            "quick_gelu",
+        }
         for name in expected:
             assert name in ACTIVATION_FUNC_MAP, f"'{name}' missing from ACTIVATION_FUNC_MAP"
 

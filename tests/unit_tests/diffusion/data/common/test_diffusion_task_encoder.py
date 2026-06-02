@@ -16,6 +16,7 @@ from typing import List
 
 import torch
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
 from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
     DiffusionTaskEncoderWithSequencePacking,
@@ -54,10 +55,7 @@ class ConcreteDiffusionTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
 def create_diffusion_sample(key: str, seq_len: int, video_shape=(16, 8), embedding_dim=128) -> DiffusionSample:
     """Helper function to create a DiffusionSample for testing."""
     return DiffusionSample(
-        __key__=key,
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **sample_metadata_kwargs(key=key, restore_key=(), subflavors=["default"]),
         video=torch.randn(seq_len, video_shape[0]),
         context_embeddings=torch.randn(10, embedding_dim),
         context_mask=torch.ones(10),

@@ -23,12 +23,14 @@ from megatron.energon import SkipSample
 from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
 from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
     DiffusionTaskEncoderWithSequencePacking,
 )
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.
@@ -164,10 +166,11 @@ class FluxTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         }
 
         return DiffusionSample(
-            __key__=sample["__key__"],
-            __restore_key__=sample["__restore_key__"],
-            __subflavor__=None,
-            __subflavors__=sample["__subflavors__"],
+            **sample_metadata_kwargs(
+                key=sample["__key__"],
+                restore_key=sample["__restore_key__"],
+                subflavors=sample["__subflavors__"],
+            ),
             video=image_latent,  # Store unpacked latents [C, H, W]
             context_embeddings=prompt_embeds,
             latent_shape=torch.tensor([H, W], dtype=torch.int32),

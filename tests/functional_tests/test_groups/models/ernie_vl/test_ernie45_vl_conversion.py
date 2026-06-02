@@ -385,7 +385,8 @@ class TestErnie45VLConversion:
         """
         import sys
 
-        fwd_bwd_script = str(Path(__file__).parent / "ernie45_vl_fwd_bwd.py")
+        repo_root = Path(__file__).resolve().parents[5]
+        fwd_bwd_script = str(repo_root / "examples/models/vlm/ernie_vl/ernie45_vl_fwd_bwd.py")
 
         cmd = [
             sys.executable,
@@ -414,7 +415,7 @@ class TestErnie45VLConversion:
                 cmd,
                 capture_output=True,
                 text=True,
-                cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+                cwd=repo_root,
                 timeout=300,
             )
 

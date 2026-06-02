@@ -37,18 +37,30 @@ from megatron.bridge.utils.instantiate_utils import (
     instantiate,
     instantiate_node,
     register_allowed_target_prefix,
+    target_allowlist,
 )
 
 
 @pytest.fixture(autouse=True)
 def _register_test_prefixes():
     """Temporarily register test prefixes so test targets pass the allowlist."""
-    original = _ALLOWED_TARGET_PREFIXES.copy()
-    _ALLOWED_TARGET_PREFIXES.add("tests.")
-    _ALLOWED_TARGET_PREFIXES.add("builtins.")
+    added_to_bridge = []
+    added_to_mlm = []
+    for prefix in ("tests.", "builtins."):
+        if prefix not in _ALLOWED_TARGET_PREFIXES:
+            _ALLOWED_TARGET_PREFIXES.add(prefix)
+            added_to_bridge.append(prefix)
+        if prefix not in target_allowlist.allowed_prefixes:
+            target_allowlist.add_prefix(prefix)
+            added_to_mlm.append(prefix)
     yield
-    _ALLOWED_TARGET_PREFIXES.clear()
-    _ALLOWED_TARGET_PREFIXES.update(original)
+    for prefix in added_to_bridge:
+        _ALLOWED_TARGET_PREFIXES.discard(prefix)
+    for prefix in added_to_mlm:
+        try:
+            target_allowlist.remove_prefix(prefix)
+        except ValueError:
+            pass
 
 
 # Test classes and functions for instantiation testing
@@ -681,6 +693,10 @@ class TestTargetPrefixValidation:
         finally:
             _ALLOWED_TARGET_PREFIXES.clear()
             _ALLOWED_TARGET_PREFIXES.update(original)
+            try:
+                target_allowlist.remove_prefix("custom_pkg.")
+            except ValueError:
+                pass
 
     def test_register_empty_prefix_rejected(self):
         """Test that registering an empty prefix is rejected."""
@@ -695,5 +711,5 @@ class TestTargetPrefixValidation:
     def test_instantiate_rejects_disallowed_target(self):
         """Test end-to-end: instantiate rejects a config with a disallowed _target_."""
         config = {"_target_": "os.system", "command": "echo hello"}
-        with pytest.raises(InstantiationException, match="is not allowed"):
+        with pytest.raises(InstantiationException, match="not in the allowlist"):
             instantiate(config)

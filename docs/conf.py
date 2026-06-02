@@ -59,6 +59,8 @@ exclude_patterns = [
     ".DS_Store",
     "skills/linting-and-formatting/SKILL.md",
     "skills/parity-testing/SKILL.md",
+    "skills/**/BENCHMARK.md",
+    "skills/**/skill-card.md",
 ]
 
 suppress_warnings = [

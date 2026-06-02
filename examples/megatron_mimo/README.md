@@ -19,10 +19,11 @@ documents what is currently supported for that model and what is not.
 
 Current example coverage:
 
-| Model | Scope |
-|---|---|
-| Qwen3.5-VL | HF to MegatronMIMO conversion and non-colocated HF-data SFT. |
-| LLaVA | MegatronMIMO training, conversion, and checkpoint/resume workflows. |
+- [Qwen3.5](qwen35_vl/README.md): HF to MegatronMIMO conversion and non-colocated HF-data SFT.
+- [LLaVA](llava/README.md): heterogeneous MIMO training (Vicuna-7B + CLIP, with
+  an optional Whisper audio encoder), HF→Megatron conversion, and parallelism
+  test sweeps.
+
 
 Model-specific READMEs and scripts document supported layouts, data paths,
 conversion commands, training launchers, and known limitations.

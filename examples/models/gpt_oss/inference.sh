@@ -15,37 +15,56 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
+MAX_NEW_TOKENS=${MAX_NEW_TOKENS:-64}
+PROMPT=${PROMPT:-"Hello, how are you?"}
+MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/gpt-oss-20b/iter_0000000}
+HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/gpt-oss-20b-hf-export}
+SFT_CHECKPOINT=${SFT_CHECKPOINT:-${WORKSPACE}/results/gpt_oss_20b_finetune_tp2_pp2_ep4_spTrue_cp1}
 
 # Inference with Hugging Face checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
     --hf_model_path unsloth/gpt-oss-20b-BF16 \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
+    --prompt "$PROMPT" \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
     --tp 2 --pp 2 --ep 2 --etp 1 \
+    --use-legacy-generation \
+    --attention-backend local \
     --trust-remote-code
 
 # Inference with imported Megatron checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path unsloth/gpt-oss-20b-BF16 \
-    --megatron_model_path ${WORKSPACE}/models/gpt-oss-20b/iter_0000000 \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --pp 2 --ep 2 --etp 1 \
-    --trust-remote-code
+if [ -d "$MEGATRON_MODEL_PATH" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
+        --hf_model_path unsloth/gpt-oss-20b-BF16 \
+        --megatron_model_path "$MEGATRON_MODEL_PATH" \
+        --prompt "$PROMPT" \
+        --max_new_tokens "$MAX_NEW_TOKENS" \
+        --tp 2 --pp 2 --ep 2 --etp 1 \
+        --use-legacy-generation \
+        --attention-backend local \
+        --trust-remote-code
+fi
 
 # Inference with exported HF checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path ${WORKSPACE}/models/gpt-oss-20b-hf-export \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --pp 2 --ep 2 --etp 1 \
-    --trust-remote-code
+if [ -d "$HF_EXPORT_PATH" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
+        --hf_model_path "$HF_EXPORT_PATH" \
+        --prompt "$PROMPT" \
+        --max_new_tokens "$MAX_NEW_TOKENS" \
+        --tp 2 --pp 2 --ep 2 --etp 1 \
+        --use-legacy-generation \
+        --attention-backend local \
+        --trust-remote-code
+fi
 
 # Inference with SFT (finetuned) Megatron checkpoint
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path unsloth/gpt-oss-20b-BF16 \
-    --megatron_model_path ${WORKSPACE}/results/gpt_oss_20b_finetune_tp2_pp2_ep4_spTrue_cp1 \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --pp 2 --ep 2 --etp 1 \
-    --trust-remote-code
+if [ -d "$SFT_CHECKPOINT" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
+        --hf_model_path unsloth/gpt-oss-20b-BF16 \
+        --megatron_model_path "$SFT_CHECKPOINT" \
+        --prompt "$PROMPT" \
+        --max_new_tokens "$MAX_NEW_TOKENS" \
+        --tp 2 --pp 2 --ep 2 --etp 1 \
+        --use-legacy-generation \
+        --attention-backend local \
+        --trust-remote-code
+fi
