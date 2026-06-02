@@ -195,13 +195,6 @@ def gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_120b_pretrain_64gpu_h100_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 120B pretrain: 64× H100, FP8-MX."""
-    cfg = gpt_oss_120b_pretrain_64gpu_h100_bf16_config()
-    cfg.mixed_precision = _perf_precision("fp8_mx")
-    return cfg
-
-
 # =============================================================================
 # GPT-OSS 120B — FP8-CS variants: same parallelism as BF16, FP8 current-scaling
 # =============================================================================
