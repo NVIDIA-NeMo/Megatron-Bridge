@@ -24,6 +24,15 @@ from megatron.bridge.utils.common_utils import warn_rank_0
 class TokenizerConfig(MTrainTokenizerConfig):
     """Configuration settings for tokenizers."""
 
+    make_vocab_size_divisible_by: int = 1
+    """Keep MCore tokenizer padding neutral; model providers apply vocab padding."""
+
+    tensor_model_parallel_size: int = 1
+    """Tensor parallel size used by MCore tokenizer padded vocab-size calculation."""
+
+    rank: int = 0
+    """Distributed rank used by MCore tokenizer helper logging."""
+
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
 

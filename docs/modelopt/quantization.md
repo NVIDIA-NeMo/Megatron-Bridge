@@ -6,6 +6,7 @@ This guide covers model quantization in Megatron Bridge using NVIDIA ModelOpt, i
 
 - [Overview](#overview)
 - [Post-Training Quantization (PTQ)](#post-training-quantization-ptq)
+- [Programmatic ModelOpt Export](#programmatic-modelopt-export)
 - [Quantization-Aware Training (QAT)](#quantization-aware-training-qat)
 
 ## Overview
@@ -128,6 +129,52 @@ uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/
 - `--export-dir` - Output directory for unified HuggingFace checkpoint
 - `--dtype` - Export data type
 
+### Programmatic ModelOpt Export
+
+Use `AutoBridge.export_hf_weights_modelopt()` when you need to stream ModelOpt deployment weights from an
+already-loaded Megatron model instead of writing a full checkpoint through the export script. This is useful for
+integrations that consume Hugging Face weight names directly, such as inference-engine refit paths.
+
+The API currently only supports `quant_mode="nvfp4"`. Quantized parameters are yielded as the original Hugging Face
+`*.weight` name plus the ModelOpt NVFP4 scale tensors:
+
+- `*.weight`
+- `*.weight_scale`
+- `*.weight_scale_2`
+
+Unquantized parameters are yielded under their regular Hugging Face names. Quantizer-internal tensors are skipped.
+
+```python
+from safetensors.torch import save_file
+
+state_dict = {}
+for name, weight in bridge.export_hf_weights_modelopt(
+    model,
+    quant_mode="nvfp4",
+    cpu=True,
+    show_progress=False,
+):
+    state_dict[name] = weight.contiguous()
+
+save_file(state_dict, "modelopt-nvfp4.safetensors")
+```
+
+For large models, consume the iterator directly in the downstream writer or refit path instead of materializing the
+full `state_dict`.
+
+```python
+for name, weight in bridge.export_hf_weights_modelopt(
+    model,
+    quant_mode="nvfp4",
+    ignore_patterns=["lm_head", "*self_attn.o_proj*"],
+    show_progress=False,
+):
+    refit_engine.replace_weight(name, weight)
+```
+
+`ignore_patterns` are matched against Hugging Face parameter names. The matcher handles the optional `model.` prefix
+and ModelOpt scale suffixes, so a pattern can target the logical parameter name without separately listing
+`*.weight_scale` and `*.weight_scale_2`.
 
 ### Supported Models For PTQ
 
@@ -210,4 +257,3 @@ uv run python -m torch.distributed.run --nproc_per_node 4 pretrain_quantized_lla
 | Model | Support |
 |-------|---------|
 | Meta-Llama-3-8B | ✅ |
-

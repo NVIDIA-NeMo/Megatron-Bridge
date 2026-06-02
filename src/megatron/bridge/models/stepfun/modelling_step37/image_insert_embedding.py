@@ -47,12 +47,15 @@ the GPTModel.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Optional, Union
 
 import torch
-from loguru import logger
 from torch import nn
+
+
+logger = logging.getLogger(__name__)
 
 
 # ─── ImageForInsert dataclass (model-interface type) ────────────────────────
@@ -166,9 +169,10 @@ class ImageInsertEmbedding(nn.Module):
 
         if len(feature_list) != insert_locations.shape[0]:
             logger.warning(
-                "Mismatch between image features and insert locations: "
-                f"{len(feature_list)} features vs {insert_locations.shape[0]} locations; "
-                "truncating to the overlap."
+                "Mismatch between image features and insert locations: %s features vs %s locations; "
+                "truncating to the overlap.",
+                len(feature_list),
+                insert_locations.shape[0],
             )
         count = min(len(feature_list), insert_locations.shape[0])
         if count == 0:
