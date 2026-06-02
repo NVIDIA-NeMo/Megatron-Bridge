@@ -141,7 +141,7 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
 
 # Register for the custom HF architecture (available via auto_map, not a standard transformers class)
 register_bridge_implementation(
-    source="MinistralDiffEncoderModel",
+    source="NemotronLabsDiffusionModel",
     target=GPTModel,
     bridge_class=NemotronLabsDiffusionBridge,
 )

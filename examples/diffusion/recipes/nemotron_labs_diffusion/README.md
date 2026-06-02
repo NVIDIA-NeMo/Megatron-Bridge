@@ -86,7 +86,7 @@ The `--tp` argument must match the tensor parallelism degree of the saved checkp
 
 ## Checkpoint Conversion (Bridge)
 
-The `NemotronLabsDiffusionBridge` converts between HuggingFace `MinistralDiffEncoderModel` and Megatron-Bridge distributed checkpoint format. It handles:
+The `NemotronLabsDiffusionBridge` converts between HuggingFace `NemotronLabsDiffusionModel` and Megatron-Bridge distributed checkpoint format. It handles:
 
 - **Language model weights** — mapped between HF (`encoder.*`) and Megatron (`language_model.decoder.*`) with proper QKV merging and tensor-parallel sharding.
 - **Diffusion head** (`diffusion_head.weight`) — mapped to Megatron's `language_model.output_layer.weight`.
