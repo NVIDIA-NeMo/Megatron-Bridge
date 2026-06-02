@@ -24,6 +24,7 @@ import torch
 from megatron.energon import SkipSample
 from PIL import Image
 
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     ChatMLSample,
     QwenVLTaskBatch,
@@ -206,10 +207,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
 
         sample = ChatMLSample(
-            __key__="key",
-            __restore_key__="restore_key",
-            __subflavor__={},
-            __subflavors__={},
+            **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=[MagicMock(spec=Image.Image)],
             videos=[],
             conversation=json.dumps(
@@ -257,10 +255,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Nice" else [999]
 
         sample = ChatMLSample(
-            __key__="key",
-            __restore_key__="restore_key",
-            __subflavor__={},
-            __subflavors__={},
+            **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=[MagicMock(spec=Image.Image)],
             videos=[],
             conversation=json.dumps(
@@ -284,10 +279,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
         self.tokenizer.encode.side_effect = lambda x, **kwargs: [12, 13] if x == "Hello" else [999]
 
         sample = ChatMLSample(
-            __key__="key",
-            __restore_key__="restore_key",
-            __subflavor__={},
-            __subflavors__={},
+            **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=None,
             videos=None,
             conversation=json.dumps(
@@ -339,6 +331,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
     def test_encode_batch(self):
         # Create a dummy batch
         batch = QwenVLTaskBatch(
+            **batch_metadata_kwargs(keys=["k1"]),
             __keys__=["k1"],
             __subflavors__=[{}],
             pixel_values=torch.randn(1, 3, 14, 14),
@@ -397,10 +390,7 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
         else:
             videos = None
         return ChatMLSample(
-            __key__="key",
-            __restore_key__="restore_key",
-            __subflavor__={},
-            __subflavors__={},
+            **sample_metadata_kwargs(key="key", restore_key="restore_key", subflavors={}),
             imgs=imgs,
             videos=videos,
             conversation=json.dumps(

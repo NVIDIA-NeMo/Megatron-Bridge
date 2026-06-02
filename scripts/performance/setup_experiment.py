@@ -275,6 +275,7 @@ def main(
     performance_params: Dict[str, Any],
     memory_params: Dict[str, Any],
     max_retries: int,
+    retry_on_testing_failure: bool,
     dgxc_base_url: str,
     dgxc_cluster: str,
     dgxc_kube_apiserver_url: str,
@@ -310,15 +311,19 @@ def main(
 
     # Disable PCT binding for certain models on specific hardware/precision combos
     if (
-        model_family_name == "nemotronh"
-        and model_recipe_name == "nemotron_3_super"
-        and compute_dtype == "bf16"
-        and gpu == "b300"
-    ) or (
-        model_family_name == "deepseek"
-        and model_recipe_name == "deepseek_v3"
-        and gpu == "b300"
-        and config_variant != "large_scale"
+        (
+            model_family_name == "nemotronh"
+            and model_recipe_name == "nemotron_3_super"
+            and compute_dtype == "bf16"
+            and gpu == "b300"
+        )
+        or (
+            model_family_name == "deepseek"
+            and model_recipe_name == "deepseek_v3"
+            and gpu == "b300"
+            and config_variant != "large_scale"
+        )
+        or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
     ):
         enable_pct_binding = False
 
@@ -569,7 +574,11 @@ def main(
 
             # Raise on terminal failures only if training didn't actually complete —
             # a job can time out due to hanging on teardown after all steps finished.
-            if terminal_failure and not is_finished_experiment:
+            # Long-convergence runs are intentionally split across walltime slices
+            # (slurm cancels at TIME_LIMIT, we resume from the saved checkpoint on
+            # the next outer-loop iteration), so the walltime-cap path is expected
+            # and must not raise.
+            if terminal_failure and not is_finished_experiment and not is_long_convergence_run:
                 raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
@@ -637,9 +646,28 @@ def main(
             logger.removeHandler(_dup_handler)
             _dup_file.close()
 
-            if not is_long_convergence_run:
+            if not retry_on_testing_failure:
+                # Train-then-test: each experiment runs the convergence/perf
+                # check exactly once. Force-exit the outer loop here — the
+                # post-loop block raises AssertionError(error_msg) when testing
+                # failed. Without this, a long-convergence run whose testing
+                # fails would otherwise spin re-evaluating the same finished
+                # training forever until the slurm walltime cap killed it.
                 n_attempts = max_retries + 1
-                is_finished_experiment = True
+            elif not is_testing_passed:
+                # Opt-in retry: redo training + testing in the next outer-loop
+                # iteration. Bump n_attempts so the outer loop bounds the
+                # retries. Reset is_finished_experiment so the inner training
+                # loop runs again; clear wandb_run_id so the retry logs to a
+                # fresh wandb run instead of resuming the failed one.
+                n_attempts += 1
+                if n_attempts <= max_retries:
+                    is_finished_experiment = False
+                    wandb_run_id = None
+                    logger.error(
+                        f"Testing failed; retrying full train+test "
+                        f"({n_attempts + 1} of {max_retries + 1}) for {exp_name}"
+                    )
 
         if is_finished_experiment and is_testing_passed:
             break
@@ -767,6 +795,7 @@ if __name__ == "__main__":
             "memory_threshold": args.memory_threshold,
         },
         max_retries=args.max_retries,
+        retry_on_testing_failure=args.retry_on_testing_failure,
         dgxc_base_url=args.dgxc_base_url,
         dgxc_cluster=args.dgxc_cluster,
         dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
