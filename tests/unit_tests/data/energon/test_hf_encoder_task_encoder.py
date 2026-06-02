@@ -23,6 +23,7 @@ from megatron.bridge.data.energon.hf_encoder_task_encoder import (
     HFEncoderTaskSample,
     HFEncoderVLMTaskEncoder,
 )
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import IGNORE_INDEX, ChatMLSample
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -62,10 +63,7 @@ def _make_processor(
 def _make_chatml_sample(conversation, imgs=None, videos=None, key="k1"):
     """Create a ChatMLSample with the correct base-class fields."""
     return ChatMLSample(
-        __key__=key,
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__={},
+        **sample_metadata_kwargs(key=key, restore_key=(), subflavors={}),
         imgs=imgs,
         videos=videos,
         conversation=conversation,
@@ -235,6 +233,7 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
 
         pv = torch.randn(2, 3, 4, 4)
         batch = HFEncoderTaskBatch(
+            **batch_metadata_kwargs(keys=["k1", "k2"]),
             __keys__=["k1", "k2"],
             __subflavors__=[{}, {}],
             input_ids=torch.tensor([[1, 2], [3, 4]]),
@@ -258,6 +257,7 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
         encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
 
         batch = HFEncoderTaskBatch(
+            **batch_metadata_kwargs(keys=["k1"]),
             __keys__=["k1"],
             __subflavors__=[{}],
             input_ids=torch.tensor([[1, 2]]),

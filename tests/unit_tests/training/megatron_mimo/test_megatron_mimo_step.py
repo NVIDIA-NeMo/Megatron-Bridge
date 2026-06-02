@@ -140,6 +140,44 @@ class TestForwardStep:
         # Intermediate stage should return None for loss_fn
         assert loss_fn is None
 
+    @patch("megatron.bridge.training.megatron_mimo_step.get_batch")
+    @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
+    def test_forward_step_language_intermediate_stage_keeps_position_ids(self, mock_unwrap, mock_get_batch):
+        """Test intermediate language PP stages keep position_ids for MRoPE."""
+        from megatron.bridge.training.megatron_mimo_step import forward_step
+
+        mock_state = MagicMock()
+        mock_model = MagicMock()
+        mock_role = MagicMock()
+        mock_role.has_language_module = True
+        mock_role.has_modality_modules = False
+        mock_role.is_first_stage.return_value = False
+        mock_role.is_last_stage.return_value = False
+        mock_model.role = mock_role
+        mock_model.return_value = (torch.tensor([1.0]), None)
+        mock_unwrap.return_value = mock_model
+
+        position_ids = torch.arange(4).unsqueeze(0)
+        mock_get_batch.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3, 4]]),
+            "position_ids": position_ids,
+            "attention_mask": None,
+            "labels": torch.tensor([[2, 3, 4, 5]]),
+            "loss_mask": torch.ones(1, 4),
+            "modality_inputs": {"images": {"pixel_values": torch.randn(1, 3)}},
+        }
+
+        output, loss_fn = forward_step(mock_state, iter([]), mock_model)
+
+        assert torch.equal(output, torch.tensor([1.0]))
+        assert loss_fn is None
+        call_kwargs = mock_model.call_args.kwargs
+        assert call_kwargs["input_ids"] is None
+        assert call_kwargs["position_ids"] is position_ids
+        assert call_kwargs["labels"] is None
+        assert call_kwargs["loss_mask"] is None
+        assert call_kwargs["modality_inputs"] is None
+
     @patch("megatron.bridge.training.megatron_mimo_step.unwrap_megatron_mimo_model")
     def test_forward_step_rejects_dict_at_last_stage(self, mock_unwrap):
         """Test forward step raises error if dict returned at last stage."""

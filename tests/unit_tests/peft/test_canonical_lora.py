@@ -14,6 +14,7 @@
 
 import datetime
 import os
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -461,6 +462,10 @@ class TestCanonicalLoRA:
     def test_canonical_lora_normalize_moe_lora_aligns_expert_dim_to_expert_tp(self):
         """Normalized canonical expert fc1 adapters should round up to the expert-TP granularity when needed."""
         model = MoEMegatronStyleModel(moe_router_topk=8)
+        for module in model.modules():
+            if hasattr(module, "config"):
+                module.config.expert_tensor_parallel_size = 2
+                module.config._pg_collection = SimpleNamespace(expt_tp=SimpleNamespace(size=lambda: 2))
         lora = CanonicalLoRA(
             target_modules=["linear_fc1_up", "linear_fc1_gate"],
             dim=8,
@@ -481,10 +486,6 @@ class TestCanonicalLoRA:
             patch(
                 "megatron.bridge.peft.canonical_lora.get_adapter_attributes_from_linear",
                 side_effect=mock_get_attrs,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
             ),
             patch("megatron.bridge.peft.canonical_lora.ParallelLinearAdapter") as mock_adapter,
         ):

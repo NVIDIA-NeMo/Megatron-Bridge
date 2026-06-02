@@ -115,6 +115,8 @@ class ErnieMultiTypeMoE(MegatronModule):
         submodules: MultiTypeMoeSubmodules containing specs for both pools.
         layer_number: Layer index in the transformer stack.
         pg_collection: Process group collection for parallelism.
+        is_mtp_layer: Whether this MoE is used inside an MTP layer.
+        name: Optional module instance name passed top-down by Megatron-Core.
     """
 
     def __init__(
@@ -123,13 +125,16 @@ class ErnieMultiTypeMoE(MegatronModule):
         submodules: Optional[MultiTypeMoeSubmodules] = None,
         layer_number: Optional[int] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
+        is_mtp_layer: bool = False,
+        name: str | None = None,
     ):
         super().__init__(config=config)
         self.layer_number = layer_number
+        self.is_mtp_layer = is_mtp_layer
 
-        # TransformerLayer only passes pg_collection to known MLP types (MoELayer,
-        # TEGroupedMLP, SequentialMLP). ErnieMultiTypeMoE is not in that list, so
-        # pg_collection may be None. Fall back to default MoE process groups.
+        # Older TransformerLayer paths only passed pg_collection to known MLP
+        # types. If ErnieMultiTypeMoE is instantiated outside the current path,
+        # pg_collection may still be None. Fall back to default MoE groups.
         if pg_collection is None:
             pg_collection = get_default_pg_collection()
 
@@ -145,13 +150,26 @@ class ErnieMultiTypeMoE(MegatronModule):
         self.vision_config.moe_shared_expert_intermediate_size = None
 
         # Build the two MoE pools and shared experts
-        self.text_moe_layer = build_module(submodules.text_moe_layer, self.text_config)
-        self.vision_moe_layer = build_module(submodules.vision_moe_layer, self.vision_config)
+        self.text_moe_layer = build_module(
+            submodules.text_moe_layer,
+            self.text_config,
+            pg_collection=pg_collection,
+            is_mtp_layer=is_mtp_layer,
+            name=(name + ".text_moe_layer") if name is not None else None,
+        )
+        self.vision_moe_layer = build_module(
+            submodules.vision_moe_layer,
+            self.vision_config,
+            pg_collection=pg_collection,
+            is_mtp_layer=is_mtp_layer,
+            name=(name + ".vision_moe_layer") if name is not None else None,
+        )
         self.shared_experts = build_module(
             submodules.shared_experts,
             config=config,
             pg_collection=pg_collection,
             gate=False,
+            name=(name + ".shared_experts") if name is not None else None,
         )
 
     def forward(

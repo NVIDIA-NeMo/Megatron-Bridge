@@ -498,12 +498,17 @@ class NemotronHBridge(MegatronModelBridge):
                 ),
             ]
         )
-        for conv1d_sub_module in ["weight", "bias"]:
+        for megatron_conv1d_param, hf_conv1d_param in [
+            ("conv1d_weight", "conv1d.weight"),
+            ("conv1d_bias", "conv1d.bias"),
+            ("conv1d.weight", "conv1d.weight"),
+            ("conv1d.bias", "conv1d.bias"),
+        ]:
             mapping_list.extend(
                 [
                     MambaConv1dMapping(
-                        megatron_param=rf"decoder.layers.*.mixer.conv1d.{conv1d_sub_module}",
-                        hf_param=rf"backbone.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                        megatron_param=rf"decoder.layers.*.mixer.{megatron_conv1d_param}",
+                        hf_param=rf"backbone.layers.*.mixer.{hf_conv1d_param}",
                     ),
                 ]
             )
