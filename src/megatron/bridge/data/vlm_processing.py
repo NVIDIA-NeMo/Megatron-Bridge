@@ -33,6 +33,128 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class NormalizedVLMSample:
+    """Source-normalized VLM sample consumed by shared processing.
+
+    Expected input format:
+        Instances are produced by source adapters such as
+        :func:`normalize_energon_vlm_sample` and
+        :func:`normalize_hf_vlm_example`.  ``conversation`` must be a structured
+        list of chat turns in HF processor format, for example::
+
+            [
+                {"role": "user", "content": "describe <image>"},
+                {"role": "assistant", "content": "a red car"},
+            ]
+
+        ``content`` may also be a multimodal content list accepted by
+        ``processor.apply_chat_template``, for example::
+
+            [{"type": "image", "image": image_obj}, {"type": "text", "text": "describe"}]
+
+        ``images`` and ``videos`` are optional processor-ready modality payloads.
+        Energon adapters convert WDS tensors to PIL objects before populating
+        these fields; HF adapters may leave them ``None`` when media already lives
+        inline in ``conversation`` content.
+
+    Output format:
+        Shared processing treats this as the single boundary contract before
+        model-specific tokenization and vision preprocessing.  It does not
+        contain batched tensors; ``HFProcessorVLMDataProcessor`` converts it into
+        ``HFProcessorEncodedSample``.
+    """
+
+    conversation: list[dict[str, Any]]
+    images: list[Any] | None = None
+    videos: list[Any] | None = None
+    audio: Any | None = None
+
+
+def normalize_energon_vlm_sample(sample: Any) -> NormalizedVLMSample:
+    """Normalize an Energon ``ChatMLSample`` into the shared VLM sample contract.
+
+    Expected input format:
+        ``sample`` is expected to expose the Energon ``ChatMLSample`` fields:
+
+        - ``conversation``: JSON string accepted by ``cook_chatml_sample``.  The
+          JSON may use either ``{"role": ..., "content": ...}`` turns or
+          ``{"from": ..., "value": ...}`` turns.
+        - ``imgs``: optional WDS decoded image tensor/list payload.
+        - ``videos``: optional WDS decoded video tensor/list payload.
+        - ``audio``: optional audio payload, passed through unchanged.
+
+    Output format:
+        Returns ``NormalizedVLMSample`` where ``conversation`` is a list of
+        ``{"role": str, "content": str | list[dict]}`` turns, ``images`` are
+        PIL/list processor inputs or ``None``, ``videos`` are nested PIL/list
+        processor inputs or ``None``, and ``audio`` is copied from the source
+        sample when present.
+    """
+    from megatron.bridge.data.energon.task_encoder_utils import (
+        _images_to_pil,
+        _videos_to_pil,
+        cook_chatml_sample,
+    )
+
+    imgs = getattr(sample, "imgs", None)
+    videos = getattr(sample, "videos", None)
+    return NormalizedVLMSample(
+        conversation=cook_chatml_sample(sample.conversation),
+        images=_images_to_pil(imgs) if imgs is not None and len(imgs) > 0 else None,
+        videos=_videos_to_pil(videos) if videos is not None and len(videos) > 0 else None,
+        audio=getattr(sample, "audio", None),
+    )
+
+
+def normalize_hf_vlm_example(example: Mapping[str, Any]) -> NormalizedVLMSample:
+    """Normalize a HF-style VLM dataset example into the shared sample contract.
+
+    Expected input format:
+        ``example`` must contain ``"conversation"`` as a structured list of chat
+        turns already produced by an HF dataset maker, for example::
+
+            {
+                "conversation": [
+                    {"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": "Q"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "A"}]},
+                ],
+                "audio": optional_audio,
+            }
+
+        Optional top-level ``images``/``image`` and ``videos``/``video`` fields
+        are accepted for maker variants that do not embed media inline in the
+        conversation.
+
+    Output format:
+        Returns ``NormalizedVLMSample`` with a deep-copied structured
+        ``conversation`` list, optional list-valued ``images`` and ``videos``
+        payloads, and optional ``audio``.  The adapter does not call
+        ``cook_chatml_sample`` because HF makers have already normalized the chat
+        schema.
+
+    Raises:
+        ValueError: If ``example["conversation"]`` is missing or is not a list.
+    """
+    conversation = example.get("conversation")
+    if not isinstance(conversation, list):
+        raise ValueError("HF VLM examples must contain a list-valued 'conversation' field.")
+
+    images = example.get("images")
+    if images is None and "image" in example:
+        images = [example["image"]]
+    videos = example.get("videos")
+    if videos is None and "video" in example:
+        videos = [example["video"]]
+
+    return NormalizedVLMSample(
+        conversation=copy.deepcopy(conversation),
+        images=images,
+        videos=videos,
+        audio=example.get("audio"),
+    )
+
+
 def get_processor_tokenizer(processor: Any) -> Any:
     """Return the tokenizer attached to a processor, or the object itself."""
     return getattr(processor, "tokenizer", processor)
@@ -208,9 +330,10 @@ def apply_assistant_labels_to_batch(
     unmask_last_token: bool = False,
 ) -> None:
     """Attach ``labels`` and ``loss_mask`` to a collated HF VLM batch."""
+    normalized_samples = [normalize_hf_vlm_example(example) for example in examples]
     loss_masks = [
-        build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
-        for example, input_ids in zip(examples, batch["input_ids"])
+        build_assistant_loss_mask(sample.conversation, input_ids, processor, skipped_tokens)
+        for sample, input_ids in zip(normalized_samples, batch["input_ids"])
     ]
     loss_mask_t = torch.stack(loss_masks).to(device=batch["input_ids"].device, dtype=torch.float32)
     if unmask_last_token and loss_mask_t.numel() > 0:
@@ -368,14 +491,49 @@ class HFProcessorVLMDataProcessor:
         images: list[Any] | None = None,
         videos: list[Any] | None = None,
     ) -> HFProcessorEncodedSample:
-        """Encode one structured VLM conversation into tensors."""
-        media_images, media_videos = collect_media_from_conversation(conversation)
-        images = images if images is not None else media_images
-        videos = videos if videos is not None else media_videos
+        """Encode one structured VLM conversation into tensors.
+
+        Expected input format:
+            ``conversation`` is a structured list of HF processor chat turns.
+            Optional ``images`` and ``videos`` override any inline media payloads
+            discoverable from the conversation.
+
+        Output format:
+            Returns one ``HFProcessorEncodedSample`` with unbatched ``input_ids``,
+            shifted ``labels``, shifted ``loss_mask``, and per-sample visual
+            tensors keyed by ``self.visual_keys``.
+        """
+        return self.encode_normalized(
+            NormalizedVLMSample(
+                conversation=copy.deepcopy(list(conversation)),
+                images=images,
+                videos=videos,
+            )
+        )
+
+    def encode_normalized(self, sample: NormalizedVLMSample) -> HFProcessorEncodedSample:
+        """Encode one source-normalized VLM sample into tensors.
+
+        Expected input format:
+            ``sample`` must follow ``NormalizedVLMSample``: structured
+            ``conversation`` plus optional processor-ready ``images`` and
+            ``videos`` payloads.  The method may additionally collect inline
+            image/video payloads from ``sample.conversation`` when top-level
+            modality fields are ``None``.
+
+        Output format:
+            Returns ``HFProcessorEncodedSample`` where all tensors are
+            per-sample, not batched: ``input_ids``/``labels``/``loss_mask`` have
+            shape ``[seq_len]`` and ``visual_tensors`` contains any configured
+            processor outputs such as ``pixel_values`` or ``image_grid_thw``.
+        """
+        media_images, media_videos = collect_media_from_conversation(sample.conversation)
+        images = sample.images if sample.images is not None else media_images
+        videos = sample.videos if sample.videos is not None else media_videos
         proc_conversation = (
-            convert_media_placeholders_to_content_parts(conversation)
+            convert_media_placeholders_to_content_parts(sample.conversation)
             if images is not None or videos is not None
-            else copy.deepcopy(list(conversation))
+            else copy.deepcopy(sample.conversation)
         )
 
         prompt_text = self.processor.apply_chat_template(proc_conversation, tokenize=False)

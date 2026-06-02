@@ -31,12 +31,9 @@ from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
     ChatMLSample,
-    _images_to_pil,
-    _videos_to_pil,
-    cook_chatml_sample,
     get_ltor_masks_and_position_ids,
 )
-from megatron.bridge.data.vlm_processing import HFProcessorVLMDataProcessor
+from megatron.bridge.data.vlm_processing import HFProcessorVLMDataProcessor, normalize_energon_vlm_sample
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -128,24 +125,19 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
     def encode_sample(self, sample: ChatMLSample) -> HFEncoderTaskSample:
         """Encode a single ChatML sample into model-ready tensors.
 
-        1. Convert WDS tensor images/videos to PIL.
-        2. Normalize conversation via ``cook_chatml_sample``.
-        3. Use the HF processor's ``apply_chat_template`` to get the prompt text,
-           then call ``processor(text=..., images=...)`` for joint tokenization +
-           vision preprocessing.
-        4. Build a loss mask that only supervises assistant turns.
-        5. Truncate to ``seq_length``.
-        """
-        # 1. Images / videos -> PIL
-        images_pil = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
-        videos_pil = _videos_to_pil(sample.videos) if sample.videos is not None and len(sample.videos) > 0 else None
+        Expected input format:
+            ``sample`` is an Energon ``ChatMLSample`` with JSON string
+            ``conversation`` plus optional WDS-decoded ``imgs`` and ``videos``.
 
-        conversation = cook_chatml_sample(sample.conversation)
-        encoded = self.data_processor.encode(
-            conversation,
-            images=images_pil,
-            videos=videos_pil,
-        )
+        Output format:
+            Returns ``HFEncoderTaskSample`` with unbatched ``input_ids``,
+            shifted ``labels``, shifted ``loss_mask``, and per-sample visual
+            tensors.  Source-specific normalization is delegated to
+            ``normalize_energon_vlm_sample``; model processing is delegated to
+            ``HFProcessorVLMDataProcessor``.
+        """
+        normalized_sample = normalize_energon_vlm_sample(sample)
+        encoded = self.data_processor.encode_normalized(normalized_sample)
 
         return HFEncoderTaskSample(
             __key__=sample.__key__,
