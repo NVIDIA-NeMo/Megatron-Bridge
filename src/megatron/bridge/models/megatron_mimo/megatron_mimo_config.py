@@ -132,21 +132,6 @@ class MegatronMIMOParallelismConfig:
                         f"One must divide the other for BridgeCommunicator."
                     )
 
-        # Validate encoder DP >= LLM DP for embedding alignment
-        # Encoder modules produce embeddings consumed by LLM. If encoder DP < LLM DP,
-        # the same encoder batch would need to align with different LLM batches, which fails.
-        llm_dp = self.module_parallelisms[MIMO_LANGUAGE_MODULE_KEY].data_parallel_size
-        if llm_dp is not None:
-            for name, p in self.module_parallelisms.items():
-                if name == MIMO_LANGUAGE_MODULE_KEY:
-                    continue
-                encoder_dp = p.data_parallel_size
-                if encoder_dp is not None and encoder_dp < llm_dp:
-                    raise ValueError(
-                        f"Encoder module '{name}' has DP={encoder_dp} < LLM DP={llm_dp}. "
-                        f"Encoder DP must be >= LLM DP for embedding alignment across batches."
-                    )
-
     def finalize(self, world_size: int) -> None:
         """Finalize parallelism config: compute data_parallel_size and validate.
 

@@ -803,15 +803,10 @@ class TestLoRATopKRouterAdapters:
 
         router = DummyTopKRouter(hidden_size=7, num_experts=5)
         router.config.sequence_parallel = True
+        router.config.tensor_model_parallel_size = 1
         router.parallel_mode = "test"
 
         monkeypatch.setattr(peft_utils, "TopKRouter", DummyTopKRouter, raising=True)
-        monkeypatch.setattr(
-            peft_utils.parallel_state,
-            "get_tensor_model_parallel_world_size",
-            lambda: 1,
-            raising=True,
-        )
 
         attrs = peft_utils.get_adapter_attributes_from_linear(router)
 
