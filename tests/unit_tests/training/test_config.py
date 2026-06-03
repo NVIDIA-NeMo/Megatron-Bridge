@@ -2728,6 +2728,7 @@ class TestDistributedOptimizerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+
 class TestSampleBasedTraining:
     """Tests for sample-based training configuration and validation."""
 
