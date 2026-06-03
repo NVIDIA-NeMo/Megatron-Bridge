@@ -491,7 +491,18 @@ def num_floating_point_operations(
                 if len(compress_ratios) != num_layers:
                     raise ValueError(
                         f"Invalid length of csa_compress_ratios: {len(compress_ratios)}, "
-                        f"expected num_layers + mtp_num_layers ({num_layers})."
+                        f"expected {num_layers} "
+                        f"(num_layers={cfg.model.num_layers}, mtp_num_layers={mtp_num_layers})."
+                    )
+
+                supported_compress_ratios = {0, 4, 128}
+                unsupported_compress_ratios = [
+                    ratio for ratio in compress_ratios if ratio not in supported_compress_ratios
+                ]
+                if unsupported_compress_ratios:
+                    raise ValueError(
+                        "csa_compress_ratios contains unsupported values: "
+                        f"{unsupported_compress_ratios}. Only 0, 4, and 128 are supported."
                     )
 
                 n_layers_r0 = sum(1 for ratio in compress_ratios if ratio == 0)

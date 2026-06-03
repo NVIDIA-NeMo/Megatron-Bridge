@@ -731,8 +731,109 @@ class TestDeepSeekV4HybridFlops:
         )
         cfg = MockConfigContainer(model=model_cfg)
 
-        with pytest.raises(ValueError, match="expected num_layers \\+ mtp_num_layers"):
+        with pytest.raises(ValueError, match=r"expected 3 \(num_layers=2, mtp_num_layers=1\)"):
             num_floating_point_operations(cfg, batch_size=1)
+
+    def test_dsv4_hybrid_validates_supported_compress_ratios(self):
+        """CSA compress ratios must be recognized before layer counts are used."""
+        model_cfg = MockModelConfig(
+            num_layers=3,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            o_lora_rank=16,
+            csa_compress_ratios=[0, 8, 128],
+            dsa_indexer_n_heads=2,
+            dsa_indexer_head_dim=8,
+            dsa_indexer_topk=32,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        with pytest.raises(ValueError, match=r"unsupported values: \[8\]"):
+            num_floating_point_operations(cfg, batch_size=1)
+
+    def test_dsv4_hybrid_requires_q_lora_rank(self):
+        """DSv4 hybrid FLOPs require q_lora_rank for projection accounting."""
+        model_cfg = MockModelConfig(
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=None,
+            csa_compress_ratios=[0] * 24,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        with pytest.raises(ValueError, match="q_lora_rank must be set"):
+            num_floating_point_operations(cfg, batch_size=1)
+
+    def test_dsv4_hybrid_requires_compress_ratios(self):
+        """DSv4 hybrid FLOPs require per-layer CSA compress ratios."""
+        model_cfg = MockModelConfig(
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            csa_compress_ratios=None,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        with pytest.raises(ValueError, match="csa_compress_ratios must be set"):
+            num_floating_point_operations(cfg, batch_size=1)
+
+    def test_dsv4_hybrid_without_ratio4_layers_skips_indexer_terms(self):
+        """DSv4 hybrid FLOPs support CSA patterns without DSA-indexed ratio-4 layers."""
+        batch_size = 1
+        seq_len = 512
+        hidden_size = 128
+        num_layers = 2
+        num_heads = 4
+        v_head_dim = 32
+        q_lora_rank = 16
+        qk_head_dim = 24
+        qk_pos_emb_head_dim = 8
+        o_lora_rank = 16
+        o_groups = 2
+        window = 64
+        ffn_hidden_size = 256
+        vocab_size = 1024
+
+        model_cfg = MockModelConfig(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=ffn_hidden_size,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=q_lora_rank,
+            qk_head_dim=qk_head_dim,
+            qk_pos_emb_head_dim=qk_pos_emb_head_dim,
+            v_head_dim=v_head_dim,
+            o_lora_rank=o_lora_rank,
+            o_groups=o_groups,
+            csa_compress_ratios=[0, 128],
+            csa_window_size=window,
+            gated_linear_unit=False,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
+        kv_term = hidden_size * v_head_dim + v_head_dim
+        o_term = num_heads * v_head_dim * o_lora_rank + o_groups * o_lora_rank * hidden_size
+        projection_term = 3 * 2 * num_layers * (q_term + kv_term + o_term)
+
+        sparse_attn_r0 = num_heads * window * v_head_dim * 2
+        sparse_attn_r128 = num_heads * (window + (seq_len // 128) / 2) * v_head_dim * 2
+        main_compressor_term = hidden_size * v_head_dim * 2
+        dsv4_extra_term = 3 * 2 * (sparse_attn_r0 + sparse_attn_r128 + main_compressor_term)
+        self_attention_term = projection_term + dsv4_extra_term
+
+        mlp_term = 3 * 2 * hidden_size * (ffn_hidden_size * 2 * num_layers)
+        logit_term = 3 * 2 * hidden_size * vocab_size
+        expected_flops = batch_size * seq_len * (mlp_term + self_attention_term + logit_term)
+
+        actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        assert actual_flops == expected_flops
 
 
 class TestHybridMtpPatternParsing:
