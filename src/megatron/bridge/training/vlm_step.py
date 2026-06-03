@@ -445,13 +445,19 @@ def forward_step(
     # multiple. Passing ``cu_seqlens`` alone gives the THD-correct Σᵢ sᵢ² for the
     # attention term instead of the pack-length² BSHD approximation. train.py
     # resets these before each step and reads accumulated values afterwards.
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        cu_seqlens=cu_seqlens,
-        image_grid_thw=getattr(visual_inputs, "image_grid_thw", None) if visual_inputs is not None else None,
-        video_grid_thw=getattr(visual_inputs, "video_grid_thw", None) if visual_inputs is not None else None,
-    )
+    # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
+    # t*h*w per image/video), so compute it here and hand a plain scalar to the
+    # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
+    vision_patches = None
+    if visual_inputs is not None:
+        for grid in (
+            getattr(visual_inputs, "image_grid_thw", None),
+            getattr(visual_inputs, "video_grid_thw", None),
+        ):
+            if grid is not None and grid.numel() > 0:
+                patches = grid.prod(dim=-1).sum()
+                vision_patches = patches if vision_patches is None else vision_patches + patches
+    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, vision_patches=vision_patches)
 
     forward_args = {
         "input_ids": tokens,
