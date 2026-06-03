@@ -79,6 +79,7 @@ training/peft.md
 training/packed-sequences.md
 training/multi-token-prediction.md
 training/callbacks.md
+training/ema.md
 ```
 
 ```{toctree}
