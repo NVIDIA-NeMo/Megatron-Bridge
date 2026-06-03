@@ -45,6 +45,8 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
+        "deepseek_v4_flash_sft_config",
+        "deepseek_v4_flash_no_mtp_sft_config",
     }
 )
 _DEEPSEEK_EXPORTED_NAMES = set(getattr(_deepseek_module, "__all__", ()))
@@ -305,3 +307,25 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.train.global_batch_size == 128
     assert cfg.train.micro_batch_size == 1
+
+
+def test_deepseek_v4_flash_sft_recipe_is_hardware_agnostic_unfused(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
+
+    # use_fused_mhc=False is the validated path and runs on both Hopper and Blackwell
+    # (the fused mHC kernel NaNs in SFT). There is intentionally no separate blackwell recipe.
+    assert cfg.model.use_fused_mhc is False
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+
+
+def test_deepseek_v4_flash_no_mtp_sft_recipe_disables_mtp(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_no_mtp_sft_config", monkeypatch)
+
+    assert cfg.model.use_fused_mhc is False
+    assert cfg.model.mtp_num_layers is None
+    assert cfg.model.mtp_loss_scaling_factor == 0.0
