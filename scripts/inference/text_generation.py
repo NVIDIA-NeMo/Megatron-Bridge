@@ -46,7 +46,15 @@ from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_local_rank_preinit, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_local_rank_preinit,
+    get_master_addr_safe,
+    get_master_port_safe,
+    get_rank_safe,
+    get_world_size_safe,
+    print_rank_0,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -258,11 +266,12 @@ def _maybe_initialize_distributed(timeout_minutes: int) -> None:
     if not dist.is_available() or dist.is_initialized():
         return
 
-    os.environ["RANK"] = os.environ.get("RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
-    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
-    torch.cuda.set_device(get_local_rank_preinit())
+    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
 
 

@@ -117,6 +117,32 @@ def _saved_config_disables_mtp(path: str | Path) -> bool:
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
 
+_ADAPTER_EXPORT_DTYPE_ALIASES: dict[str, torch.dtype] = {
+    "bf16": torch.bfloat16,
+    "bfloat16": torch.bfloat16,
+    "fp16": torch.float16,
+    "float16": torch.float16,
+    "half": torch.float16,
+    "fp32": torch.float32,
+    "float": torch.float32,
+    "float32": torch.float32,
+}
+
+
+def _normalize_adapter_export_dtype(dtype: str | torch.dtype) -> torch.dtype:
+    """Resolve adapter export dtype aliases to ``torch.dtype`` values."""
+    if isinstance(dtype, torch.dtype):
+        if dtype in _ADAPTER_EXPORT_DTYPE_ALIASES.values():
+            return dtype
+        raise ValueError(f"Unsupported adapter export dtype: {dtype}")
+
+    normalized_dtype = dtype.lower()
+    if normalized_dtype not in _ADAPTER_EXPORT_DTYPE_ALIASES:
+        supported = ", ".join(sorted(_ADAPTER_EXPORT_DTYPE_ALIASES))
+        raise ValueError(f"Unsupported adapter export dtype '{dtype}'. Supported values: {supported}")
+    return _ADAPTER_EXPORT_DTYPE_ALIASES[normalized_dtype]
+
+
 class AutoBridge(Generic[MegatronModelT]):
     """
     Automatically select and instantiate the appropriate bridge for a model.
@@ -581,6 +607,7 @@ class AutoBridge(Generic[MegatronModelT]):
         model: list[MegatronModelT],
         cpu: bool = True,
         show_progress: bool = True,
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export only adapter weights from a Megatron model without merging them into base tensors.
@@ -592,12 +619,19 @@ class AutoBridge(Generic[MegatronModelT]):
             model: Megatron model instance or list of instances
             cpu: Whether to move tensors to CPU before yielding
             show_progress: Display progress bar during export
+            exclude_adapter_base_prefixes: Megatron adapter base prefixes to
+                skip before resolving HuggingFace parameter mappings.
 
         Yields:
             HFWeightTuple: Named tuples of (param_name, weight_tensor) for adapter parameters
         """
         bridge = self._model_bridge
-        return bridge.stream_adapter_weights_megatron_to_hf(model, cpu=cpu, show_progress=show_progress)
+        return bridge.stream_adapter_weights_megatron_to_hf(
+            model,
+            cpu=cpu,
+            show_progress=show_progress,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+        )
 
     def save_hf_adapter(
         self,
@@ -606,6 +640,8 @@ class AutoBridge(Generic[MegatronModelT]):
         peft_config: "PEFT",
         base_model_name_or_path: Optional[str] = None,
         show_progress: bool = True,
+        output_dtype: str | torch.dtype = torch.float32,
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
 
@@ -622,6 +658,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 of the base model this adapter was trained on.  If *None*, the
                 value is inferred from ``hf_pretrained.model_name_or_path``.
             show_progress: Display progress bar during export.
+            output_dtype: Dtype used for tensors written to
+                ``adapter_model.safetensors``.
+            exclude_adapter_base_prefixes: Megatron adapter base prefixes to
+                skip before resolving HuggingFace parameter mappings.
 
         Example:
             >>> bridge.save_hf_adapter(
@@ -655,9 +695,15 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_initialized():
             dist.barrier()
 
+        output_dtype = _normalize_adapter_export_dtype(output_dtype)
         raw_adapter_weights = [
-            HFWeightTuple(exported_weight.param_name, exported_weight.weight.clone().float())
-            for exported_weight in self.export_adapter_weights(model, cpu=True, show_progress=show_progress)
+            HFWeightTuple(exported_weight.param_name, exported_weight.weight.clone().to(output_dtype))
+            for exported_weight in self.export_adapter_weights(
+                model,
+                cpu=True,
+                show_progress=show_progress,
+                exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+            )
         ]
         if not raw_adapter_weights:
             raise RuntimeError(
@@ -1230,6 +1276,8 @@ class AutoBridge(Generic[MegatronModelT]):
         peft_checkpoint: str | Path,
         output_path: str | Path,
         show_progress: bool = True,
+        dtype: str | torch.dtype = torch.float32,
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> None:
         """Export LoRA adapter weights from a Megatron PEFT checkpoint to HuggingFace PEFT format.
 
@@ -1249,6 +1297,9 @@ class AutoBridge(Generic[MegatronModelT]):
                 directory.
             output_path: Directory where the adapter files will be saved.
             show_progress: Display progress bar during export.
+            dtype: Dtype used for model materialization and adapter output tensors.
+            exclude_adapter_base_prefixes: Megatron adapter base prefixes to
+                skip before resolving HuggingFace parameter mappings.
 
         Example:
             >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
@@ -1313,13 +1364,14 @@ class AutoBridge(Generic[MegatronModelT]):
 
         lora = peft_class(**peft_cfg)
 
-        # Materialise model with base weights + LoRA structure.
-        # Use float32 so adapter weights are exported at full precision;
-        # bfloat16 matmul in downstream PEFT merges causes ~1e-3 weight
-        # errors that compound into large logit diffs.
+        dtype = _normalize_adapter_export_dtype(dtype)
+
+        # Materialise model with base weights + LoRA structure. Float32 remains
+        # the default because bf16 downstream PEFT merges can introduce ~1e-3
+        # weight errors that compound into large logit diffs.
         provider = self.to_megatron_provider(load_weights=True)
-        provider.pipeline_dtype = torch.float32
-        provider.params_dtype = torch.float32
+        provider.pipeline_dtype = dtype
+        provider.params_dtype = dtype
         provider.finalize()
         provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
 
@@ -1344,6 +1396,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 peft_config=lora,
                 base_model_name_or_path=base_model_name,
                 show_progress=show_progress,
+                output_dtype=dtype,
+                exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             )
 
         model_context = (

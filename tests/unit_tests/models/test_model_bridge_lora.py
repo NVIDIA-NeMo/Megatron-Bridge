@@ -766,6 +766,36 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     assert task.linear_out_task.param_weight.shape == torch.Size([2, 2])
 
 
+def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monkeypatch):
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+
+    adapters_info = [
+        (
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj.adapter",
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj",
+            False,
+            False,
+            False,
+            4,
+            8,
+            0,
+            0,
+        )
+    ]
+
+    monkeypatch.setattr(bridge, "_megatron_global_adapters_info_all_pp_ranks", lambda *_: adapters_info)
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: MegatronMappingRegistry())
+
+    tasks_by_base = bridge.build_adapter_conversion_tasks(
+        [Mock()],
+        exclude_adapter_base_prefixes=("mtp.layers",),
+    )
+
+    assert tasks_by_base == {}
+
+
 def test_materialize_adapter_weights(monkeypatch):
     bridge = DummyBridge()
 

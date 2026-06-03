@@ -17,7 +17,9 @@
 Export LoRA adapter weights from a Megatron-Bridge PEFT checkpoint to
 HuggingFace PEFT format (``adapter_config.json`` + ``adapter_model.safetensors``).
 
-No GPU required -- runs entirely on CPU.
+The default path runs on CPU and is suitable for models whose architecture can be
+materialized without CUDA. Large hybrid models can use the distributed GPU path
+by passing TP/PP/EP settings that match the adapter checkpoint.
 
 The output can be loaded directly with::
 
@@ -32,7 +34,9 @@ Usage::
     uv run python examples/conversion/adapter/export_adapter.py \\
         --hf-model-path meta-llama/Llama-3.2-1B \\
         --lora-checkpoint /path/to/finetune_ckpt \\
-        --output ./my_adapter
+        --output ./my_adapter \\
+        --dtype bfloat16 \\
+        --exclude-adapter-base-prefix mtp.layers
 """
 
 from __future__ import annotations
@@ -40,7 +44,39 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import torch
+import torch.distributed as dist
+from megatron.core import dist_checkpointing, parallel_state
+from transformers import AutoConfig
+
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.lora import LoRA, VLMLoRA
+from megatron.bridge.training.checkpointing import (
+    _generate_model_state_dict,
+    apply_peft_adapter_filter_to_state_dict,
+)
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+from megatron.bridge.utils.common_utils import get_local_rank_preinit
+
+
+_DTYPE_ALIASES: dict[str, torch.dtype] = {
+    "bf16": torch.bfloat16,
+    "bfloat16": torch.bfloat16,
+    "fp16": torch.float16,
+    "float16": torch.float16,
+    "half": torch.float16,
+    "fp32": torch.float32,
+    "float": torch.float32,
+    "float32": torch.float32,
+}
+
+
+def _parse_dtype(dtype: str) -> torch.dtype:
+    normalized_dtype = dtype.lower()
+    if normalized_dtype not in _DTYPE_ALIASES:
+        supported = ", ".join(sorted(_DTYPE_ALIASES))
+        raise argparse.ArgumentTypeError(f"unsupported dtype '{dtype}'. Supported values: {supported}")
+    return _DTYPE_ALIASES[normalized_dtype]
 
 
 def parse_args() -> argparse.Namespace:
@@ -61,18 +97,131 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, default=Path("./my_adapter"))
     parser.add_argument("--trust-remote-code", action="store_true")
+    parser.add_argument(
+        "--dtype",
+        type=_parse_dtype,
+        default=torch.float32,
+        help="Dtype used for model materialization and saved adapter tensors.",
+    )
+    parser.add_argument(
+        "--exclude-adapter-base-prefix",
+        action="append",
+        default=[],
+        help=(
+            "Megatron adapter base prefix to skip during export, before HF mapping lookup. "
+            "Can be specified multiple times; e.g. `mtp.layers` excludes MTP adapters."
+        ),
+    )
+    parser.add_argument("--tp", type=int, default=1, help="Tensor parallel size for distributed GPU export.")
+    parser.add_argument("--pp", type=int, default=1, help="Pipeline parallel size for distributed GPU export.")
+    parser.add_argument("--ep", type=int, default=1, help="Expert parallel size for distributed GPU export.")
+    parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallel size for distributed GPU export.")
+    parser.add_argument("--sequence-parallel", action="store_true", help="Enable sequence parallelism.")
     return parser.parse_args()
+
+
+def _load_lora_config(ckpt_path: Path) -> LoRA | VLMLoRA:
+    peft_class: type[LoRA | VLMLoRA] = LoRA
+    peft_cfg: dict = {}
+    cfg_file = ckpt_path / "run_config.yaml"
+    if not cfg_file.exists() and ckpt_path.parent != ckpt_path:
+        cfg_file = ckpt_path.parent / "run_config.yaml"
+    if cfg_file.exists():
+        run_cfg_dict = read_run_config(str(cfg_file))
+        peft_cfg = run_cfg_dict.get("peft", {}) or {}
+        if "VLMLoRA" in peft_cfg.get("_target_", ""):
+            peft_class = VLMLoRA
+        allowed_keys = {
+            "target_modules",
+            "exclude_modules",
+            "dim",
+            "alpha",
+            "dropout",
+            "dropout_position",
+            "normalize_moe_lora",
+            "share_expert_adapters",
+            "freeze_language_model",
+            "freeze_vision_model",
+            "freeze_vision_projection",
+        }
+        peft_cfg = {key: value for key, value in peft_cfg.items() if key in allowed_keys}
+    return peft_class(**peft_cfg)
+
+
+def _uses_distributed_export(args: argparse.Namespace) -> bool:
+    return args.tp > 1 or args.pp > 1 or args.ep > 1 or args.etp > 1
+
+
+def _configure_cuda_device() -> torch.device:
+    if not torch.cuda.is_available():
+        raise RuntimeError("Distributed adapter export requires CUDA. Use the default CPU path for TP=PP=EP=ETP=1.")
+    local_rank = get_local_rank_preinit()
+    torch.cuda.set_device(local_rank)
+    return torch.device("cuda", local_rank)
+
+
+def _export_adapter_distributed(args: argparse.Namespace) -> None:
+    device = _configure_cuda_device()
+    ckpt_path = Path(args.lora_checkpoint).expanduser().resolve()
+    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
+    bridge = AutoBridge.from_hf_config(config)
+    lora = _load_lora_config(ckpt_path)
+
+    provider = bridge.to_megatron_provider(load_weights=False)
+    provider.tensor_model_parallel_size = args.tp
+    provider.pipeline_model_parallel_size = args.pp
+    provider.expert_model_parallel_size = args.ep
+    provider.expert_tensor_parallel_size = args.etp
+    provider.sequence_parallel = args.sequence_parallel
+    provider.pipeline_dtype = args.dtype
+    provider.params_dtype = args.dtype
+    provider.finalize()
+    provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+    try:
+        provider.initialize_model_parallel(seed=0)
+
+        model = provider.provide_distributed_model(
+            wrap_with_ddp=False,
+            use_cpu_initialization=False,
+            init_model_with_meta_device=False,
+        )
+        model = [chunk.to(device) for chunk in model]
+
+        sharded_state_dict = _generate_model_state_dict(model, {})
+        sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
+        loaded_sd = dist_checkpointing.load(sharded_state_dict, str(ckpt_path))
+        model_key = "model" if "model" in loaded_sd else next(key for key in loaded_sd if key.startswith("model"))
+        model[0].load_state_dict(loaded_sd[model_key], strict=False)
+
+        bridge.save_hf_adapter(
+            model,
+            path=args.output,
+            peft_config=lora,
+            base_model_name_or_path=args.hf_model_path,
+            output_dtype=args.dtype,
+            exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
+        )
+    finally:
+        if parallel_state.is_initialized():
+            parallel_state.destroy_model_parallel()
+        if dist.is_initialized():
+            dist.destroy_process_group()
 
 
 def main() -> None:
     """Export a Megatron-Bridge PEFT checkpoint to HuggingFace PEFT format."""
     args = parse_args()
 
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
-    bridge.export_adapter_ckpt(
-        peft_checkpoint=args.lora_checkpoint,
-        output_path=args.output,
-    )
+    if _uses_distributed_export(args):
+        _export_adapter_distributed(args)
+    else:
+        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
+        bridge.export_adapter_ckpt(
+            peft_checkpoint=args.lora_checkpoint,
+            output_path=args.output,
+            dtype=args.dtype,
+            exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
+        )
 
 
 if __name__ == "__main__":
