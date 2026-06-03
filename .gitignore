@@ -91,6 +91,7 @@ instance/
 # Sphinx documentation
 docs/_build
 docs/apidocs
+docs/skills
 
 # PyBuilder
 target/

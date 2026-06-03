@@ -25,8 +25,8 @@ dataset:
 # Training configuration
 train:
   train_iters: 100
-  global_batch_size: 256
-  micro_batch_size: 2
+  global_batch_size: 8
+  micro_batch_size: 1
   eval_iters: 10
   eval_interval: 50
 
@@ -62,6 +62,13 @@ logger:
   tensorboard_dir: ./logs/llama32_1b
   # wandb_project: my_project  # Uncomment to enable W&B logging
   # wandb_entity: my_team
+  # mlflow_experiment: llama32_1b_pretrain  # Uncomment to enable MLFlow logging
+  # mlflow_run_name: llama32_1b_pretrain_run
+  # mlflow_tracking_uri: http://localhost:5000  # Optional: use remote MLflow server
+  # mlflow_tags:
+  #   project: llama32
+  #   phase: pretrain
+  #   variant: mlflow_example
 
 # Random seed
 rng:

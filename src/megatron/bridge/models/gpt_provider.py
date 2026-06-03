@@ -15,20 +15,25 @@
 import contextlib
 import inspect
 import logging
+import warnings
 from dataclasses import dataclass, field
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
-import modelopt.torch.distill as mtd
-import modelopt.torch.distill.plugins.megatron as mtd_mcore
 import torch
-from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_local_spec,
     get_gpt_layer_with_transformer_engine_spec,
 )
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.post_training.modelopt.gpt.model_specs import get_gpt_modelopt_spec
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
@@ -40,19 +45,18 @@ from megatron.bridge.utils import fusions
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
-if TYPE_CHECKING:
-    from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
-
-
 logger = logging.getLogger(__name__)
 
 
 def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Create a Transformer Engine layer specification based on the provided config."""
-    if "use_te_op_fuser" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+    spec_params = inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters
+    if "use_te_op_fuser" in spec_params:
         kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
     else:
         kwargs = {}
+    if "use_grouped_gemm_for_dense_mlp" in spec_params:
+        kwargs["use_grouped_gemm_for_dense_mlp"] = config.dense_grouped_gemm
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
@@ -93,11 +97,17 @@ def local_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     )
 
 
-def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
+def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Layer specification for quantization with ModelOpt."""
-    use_arbitrary_attention_mask = parallel_state.get_context_parallel_world_size() == 1
     # arbitrary attention mask is used for speculative decoding training
     # When context parallel > 1, only causal mask type is supported
+    from megatron.core import parallel_state
+
+    use_arbitrary_attention_mask = (
+        config.use_arbitrary_attention_mask
+        if config.use_arbitrary_attention_mask is not None
+        else parallel_state.get_context_parallel_world_size() == 1
+    )
     return get_gpt_modelopt_spec(
         config=config,
         local_core_attention=False,
@@ -109,9 +119,7 @@ def quantization_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.restore_modelopt_state:
-        return quantization_layer_spec(config)
-    elif config.use_transformer_engine_full_layer_spec:
+    if config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -130,10 +138,24 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     parallel_output: bool = True
     share_embeddings_and_output_weights: bool = True
     make_vocab_size_divisible_by: int = 128
-    position_embedding_type: Literal["learned_absolute", "rope"] = "learned_absolute"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn"] = "learned_absolute"
     rotary_base: int = 10000
     rotary_percent: float = 1.0
+    rope_scaling: bool = False
+    rope_scaling_factor: float = 1.0
+    rotary_scaling_factor: Optional[float] = None
     seq_len_interpolation_factor: Optional[float] = None
+
+    # YARN (Yet Another RoPE extensioN) position embedding parameters
+    # Used when position_embedding_type == "yarn"
+    yarn_rotary_scaling_factor: Optional[float] = None
+    yarn_original_max_position_embeddings: Optional[int] = None
+    yarn_beta_fast: Optional[float] = None
+    yarn_beta_slow: Optional[float] = None
+    yarn_mscale: Optional[float] = None
+    yarn_mscale_all_dim: Optional[float] = None
+    yarn_correction_range_round_to_int: Optional[bool] = None
+
     seq_length: int = 1024
     attention_softmax_in_fp32: bool = False
     deallocate_pipeline_outputs: bool = True
@@ -144,12 +166,11 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
+    dense_grouped_gemm: bool = False
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = default_layer_spec
 
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
-
-    generation_config: Optional[Any] = None
 
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
@@ -181,8 +202,14 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     gradient_accumulation_fusion: bool = field(default_factory=fusions.can_enable_gradient_accumulation_fusion)
 
     # If True, restore the modelopt_state that contains quantization, sparsity, speculative decoding transformation state.
-    # When resuming modelopt_state, we also change the transformer_layer_spec to `megatron.core.post_training.modelopt.gpt.model_specs` which is a combination of local spec + TEDotProductAttention.
     restore_modelopt_state: bool = False
+
+    # Whether to use AttnMaskType.arbitrary in the ModelOpt spec.
+    # If None, it will be determined by the default behavior (arbitrary only when context_parallel==1).
+    # Set to False when using packed/remove-padding (THD) data format.
+    use_arbitrary_attention_mask: Optional[bool] = None
+
+    _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
         """Configure and instantiate a Megatron Core GPT model based on this configuration.
@@ -243,13 +270,21 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.init_model_with_meta_device:
             model_init_device_context = partial(torch.device, device="meta")
 
-        # Check if mtp_block_spec parameter is supported
-        kwargs = {}
-        if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
-            kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
+        # Determine pre/post flags if not provided using vp + pp stage
+        if pre_process is None:
+            pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(
+                self._pg_collection.pp
+            )
+        if post_process is None:
+            post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(
+                self._pg_collection.pp
+            )
+        # Expose vp stage on config for downstream modules (e.g., TE layers)
+        # so they can compute correct offsets without legacy globals.
+        self._vp_stage = vp_stage
         with model_init_device_context():
             model = MCoreGPTModel(
                 self,
@@ -262,14 +297,15 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 position_embedding_type=self.position_embedding_type,
                 rotary_percent=self.rotary_percent,
                 rotary_base=self.rotary_base,
+                rope_scaling=self.rope_scaling,
+                rope_scaling_factor=self.rope_scaling_factor,
                 seq_len_interpolation_factor=self.seq_len_interpolation_factor,
-                pre_process=pre_process
-                or parallel_state.is_pipeline_first_stage(ignore_virtual=False, vp_stage=vp_stage),
-                post_process=post_process
-                or parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage),
+                pre_process=pre_process,
+                post_process=post_process,
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
+                pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
-                **kwargs,
+                mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
             )
 
         # If using full TE layer, need to set TP, CP group since the module call
@@ -279,82 +315,25 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.use_transformer_engine_full_layer_spec:
             # Copied from:
             # https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/transformer.py
-            if parallel_state.get_tensor_model_parallel_world_size() > 1:
+            if self._pg_collection.tp.size() > 1:
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_tensor_parallel_group"):
-                        tp_group = parallel_state.get_tensor_model_parallel_group()
+                        tp_group = self._pg_collection.tp
                         child.set_tensor_parallel_group(tp_group)
 
-            if parallel_state.get_context_parallel_world_size() > 1:
+            if self._pg_collection.cp.size() > 1:
                 cp_stream = torch.cuda.Stream()
                 for index, child in enumerate(model.modules()):
                     if index == 0:
                         continue
                     if hasattr(child, "set_context_parallel_group"):
-                        child.set_context_parallel_group(
-                            parallel_state.get_context_parallel_group(),
-                            parallel_state.get_context_parallel_global_ranks(),
-                            cp_stream,
-                        )
+                        cp_group = self._pg_collection.cp
+                        cp_global_ranks = torch.distributed.get_process_group_ranks(cp_group)
+                        child.set_context_parallel_group(cp_group, cp_global_ranks, cp_stream)
 
         return model
-
-
-@dataclass
-class GPTDistillationProvider(GPTModelProvider):
-    """Provider for Megatron Core GPT models in distillation mode."""
-
-    teacher: Optional["GPTModelProvider"] = None
-    kd_config: Optional["ModelOptDistillConfig"] = None
-
-    def __post_init__(self):
-        assert self.teacher is not None, "Teacher model must be provided."
-        shared_attrs = [
-            "tensor_model_parallel_size",
-            "pipeline_model_parallel_size",
-            "context_parallel_size",
-            "seq_length",
-            "pipeline_dtype",
-        ]
-        for attr in shared_attrs:
-            if getattr(self, attr) != getattr(self.teacher, attr):
-                raise ValueError(f"Student and teacher providers must have the same {attr}.")
-
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
-
-        Args:
-            pre_process: Whether to include pre-processing in the model, defaults to first pipeline stage
-            post_process: Whether to include post-processing in the model, defaults to last pipeline stage
-            vp_stage: Virtual pipeline stage
-
-        Returns:
-            MCoreGPTModel: Configured ModelOpt DistillationModel instance
-        """
-        if vp_stage is not None:
-            raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
-
-        student_model = super().provide(pre_process, post_process, vp_stage)
-        teacher_model = self.teacher.provide(pre_process, post_process, vp_stage)
-
-        kd_cfg = mtd_mcore.setup_distillation_config(self.kd_config, student_model.config, teacher_model.config)
-        modelopt_cfg = {
-            "teacher_model": teacher_model,
-            "criterion": kd_cfg.criterion,
-            "loss_balancer": kd_cfg.loss_balancer,
-        }
-        kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
-        mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
-
-        return kd_model
-
-    def __setattr__(self, name, value):
-        super().__setattr__(name, value)
-        # Mirror to teacher if it has that attribute
-        if hasattr(self.teacher, name):
-            setattr(self.teacher, name, value)
 
 
 def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -> Optional[ModuleSpec]:
@@ -379,118 +358,243 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         if hasattr(spec, "layer_specs") and len(spec.layer_specs) == 0:
             # Get the decoder layer spec explicitly if no decoder layer in the last stage,
             # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
-            spec = default_layer_spec(config)
+            # Re-derive all decoder layer specs and use the last one to get the correct
+            # layer type (dense vs MoE) for the MTP transformer layer.
+            from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_layer_specs
+
+            decoder_layer_specs = get_gpt_decoder_layer_specs(
+                config,
+                use_transformer_engine=True,
+                normalization=config.normalization,
+                qk_l2_norm=config.qk_l2_norm,
+            )
+            spec = decoder_layer_specs[-1]
         return get_gpt_mtp_block_spec(config, spec, use_transformer_engine=True, vp_stage=vp_stage)
     else:
         return None
 
 
-@dataclass
-class GPTProvider126M(GPTModelProvider):
-    """Configuration for a 126M parameter GPT model.
+def _patch_yarn_concentration_factor():
+    """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
 
-    Predefined configuration for a small GPT model with 12 layers,
-    768 hidden size, and 12 attention heads.
+    GPTModelProvider defines yarn_rotary_scaling_factor as Optional[float] = None,
+    but MCore uses hasattr() which returns True for dataclass fields set to None.
+    This causes a crash for non-YARN models. Use getattr + is not None instead.
+
+    TODO: Remove once upstream MCore merges the fix.
     """
+    try:
+        import megatron.core.models.common.embeddings.yarn_rotary_pos_embedding as _yarn_mod
+        import megatron.core.transformer.attention as _attn_mod
 
-    seq_length: int = 2048
-    num_layers: int = 12
-    hidden_size: int = 768
-    ffn_hidden_size: int = 3072
-    num_attention_heads: int = 12
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
+        _get_factor = _yarn_mod._yarn_get_concentration_factor
+
+        def _fixed_from_config(config):
+            yarn_scaling = getattr(config, "yarn_rotary_scaling_factor", None)
+            if yarn_scaling is not None:
+                return _get_factor(
+                    yarn_scaling,
+                    getattr(config, "yarn_mscale", None),
+                    getattr(config, "yarn_mscale_all_dim", None),
+                )
+            return 1.0
+
+        _yarn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+        _attn_mod._yarn_get_concentration_factor_from_config = _fixed_from_config
+    except ImportError:
+        pass
 
 
-@dataclass
-class GPTProvider5B(GPTModelProvider):
-    """Configuration for a 5B parameter GPT model.
+_patch_yarn_concentration_factor()
 
-    Predefined configuration for a medium-sized GPT model with 24 layers,
-    4096 hidden size, and 32 attention heads.
+
+def _patch_te_grouped_linear_single_grouped_weight():
+    """Guard for main/dev branch submodule compat: single_grouped_weight/bias kwargs.
+
+    MCore dev (commit 5c544844) passes ``single_grouped_weight`` and
+    ``single_grouped_bias`` to TE ``GroupedLinear.__init__`` when
+    ``is_te_min_version("2.14.0")``.  However some TE 2.14.0 builds only
+    expose a single ``single_grouped_parameter`` kwarg.  Remap so both
+    APIs work.
+
+    TODO: remove guard once TE ships the split weight/bias API in a
+    stable release and the CI container is updated.
     """
+    try:
+        import transformer_engine.pytorch as te_pytorch
 
-    seq_length: int = 2048
-    num_layers: int = 24
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 16384
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
+        _te_gl_init_params = set(inspect.signature(te_pytorch.GroupedLinear.__init__).parameters)
+
+        # Nothing to patch if TE already accepts the split kwargs.
+        if "single_grouped_weight" in _te_gl_init_params:
+            return
+
+        # Nothing to patch if TE has neither API (older TE without the feature).
+        if "single_grouped_parameter" not in _te_gl_init_params:
+            return
+
+        _original_init = te_pytorch.GroupedLinear.__init__
+
+        def _patched_init(self, *args, **kwargs):
+            sgw = kwargs.pop("single_grouped_weight", False)
+            sgb = kwargs.pop("single_grouped_bias", False)
+            if sgw or sgb:
+                kwargs["single_grouped_parameter"] = True
+            _original_init(self, *args, **kwargs)
+
+        te_pytorch.GroupedLinear.__init__ = _patched_init
+    except ImportError:
+        pass
 
 
-@dataclass
-class GPTProvider7B(GPTModelProvider):
-    """Configuration for a 7B parameter GPT model.
+_patch_te_grouped_linear_single_grouped_weight()
 
-    Predefined configuration for a medium-sized GPT model with 32 layers,
-    4096 hidden size, and 32 attention heads.
+
+def _patch_mtp_checkpointed_forward_padding_mask():
+    """Guard for MCore commits where MTP recompute drops the padding_mask parameter.
+
+    MCore main commit 4c636026 passes ``padding_mask`` from
+    ``MultiTokenPredictionLayer.forward`` into ``_checkpointed_forward``, but
+    that helper's signature does not accept the kwarg yet. Keep the Bridge bump
+    working without editing the MCore submodule. This is a no-op once upstream
+    MCore adds the parameter.
+
+    TODO: Remove once MCore's ``MultiTokenPredictionLayer._checkpointed_forward``
+    accepts ``padding_mask`` directly.
     """
+    try:
+        from megatron.core import parallel_state, tensor_parallel
+        from megatron.core.enums import Fp8Recipe
+        from megatron.core.fp8_utils import get_fp8_context
+        from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionLayer
+    except ImportError:
+        return
 
-    seq_length: int = 2048
-    num_layers: int = 32
-    hidden_size: int = 4096
-    ffn_hidden_size: int = 10880
-    num_attention_heads: int = 32
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
+    _checkpointed_forward_signature = inspect.signature(MultiTokenPredictionLayer._checkpointed_forward)
+    _checkpointed_forward_params = _checkpointed_forward_signature.parameters
+    if "padding_mask" in _checkpointed_forward_params or any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in _checkpointed_forward_params.values()
+    ):
+        return
+    if "hidden_states" not in _checkpointed_forward_params:
+        return
+    if "padding_mask" not in inspect.signature(MultiTokenPredictionLayer._proj_and_transformer_layer).parameters:
+        return
+
+    def _checkpointed_forward(
+        self,
+        hidden_states,
+        decoder_input,
+        attention_mask=None,
+        padding_mask=None,
+        context=None,
+        context_mask=None,
+        rotary_pos_emb=None,
+        rotary_pos_cos=None,
+        rotary_pos_sin=None,
+        attention_bias=None,
+        inference_params=None,
+        packed_seq_params=None,
+        sequence_len_offset=None,
+    ):
+        def custom_forward(
+            hidden_states,
+            decoder_input,
+            attention_mask,
+            padding_mask,
+            context,
+            context_mask,
+            rotary_pos_emb,
+            rotary_pos_cos,
+            rotary_pos_sin,
+            sequence_len_offset,
+        ):
+            return self._proj_and_transformer_layer(
+                hidden_states=hidden_states,
+                decoder_input=decoder_input,
+                attention_mask=attention_mask,
+                padding_mask=padding_mask,
+                context=context,
+                context_mask=context_mask,
+                rotary_pos_emb=rotary_pos_emb,
+                rotary_pos_cos=rotary_pos_cos,
+                rotary_pos_sin=rotary_pos_sin,
+                attention_bias=attention_bias,
+                inference_params=inference_params,
+                packed_seq_params=packed_seq_params,
+                sequence_len_offset=sequence_len_offset,
+            )
+
+        if self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed:
+            outer_quantization_context = get_fp8_context(self.config)
+        else:
+            outer_quantization_context = contextlib.nullcontext()
+
+        def checkpoint_handler():
+            if self.config.fp8 or getattr(self.config, "fp4", None):
+                from megatron.core.extensions.transformer_engine import te_checkpoint
+
+                return te_checkpoint(
+                    custom_forward,
+                    self.config.distribute_saved_activations,
+                    tensor_parallel.random.get_cuda_rng_tracker,
+                    parallel_state.get_tensor_model_parallel_group(),
+                    hidden_states,
+                    decoder_input,
+                    attention_mask,
+                    padding_mask,
+                    context,
+                    context_mask,
+                    rotary_pos_emb,
+                    rotary_pos_cos,
+                    rotary_pos_sin,
+                    sequence_len_offset,
+                )
+            return tensor_parallel.checkpoint(
+                custom_forward,
+                self.config.distribute_saved_activations,
+                hidden_states,
+                decoder_input,
+                attention_mask,
+                padding_mask,
+                context,
+                context_mask,
+                rotary_pos_emb,
+                rotary_pos_cos,
+                rotary_pos_sin,
+                sequence_len_offset,
+            )
+
+        if self.config.recompute_method == "uniform":
+            assert self.config.recompute_num_layers == 1, "recompute_num_layers must be 1 for MTP recompute"
+            with outer_quantization_context:
+                outputs = checkpoint_handler()
+        elif self.config.recompute_method == "block":
+            warnings.warn(
+                "recompute_method == 'block' is not supported for MTP yet. Skipping recompute.",
+                stacklevel=2,
+            )
+            outputs = self._proj_and_transformer_layer(
+                hidden_states=hidden_states,
+                decoder_input=decoder_input,
+                attention_mask=attention_mask,
+                padding_mask=padding_mask,
+                context=context,
+                context_mask=context_mask,
+                rotary_pos_emb=rotary_pos_emb,
+                rotary_pos_cos=rotary_pos_cos,
+                rotary_pos_sin=rotary_pos_sin,
+                attention_bias=attention_bias,
+                inference_params=inference_params,
+                packed_seq_params=packed_seq_params,
+                sequence_len_offset=sequence_len_offset,
+            )
+        else:
+            raise ValueError("Invalid activation recompute method.")
+
+        return outputs
+
+    MultiTokenPredictionLayer._checkpointed_forward = _checkpointed_forward
 
 
-@dataclass
-class GPTProvider20B(GPTModelProvider):
-    """Configuration for a 20B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 44 layers,
-    6144 hidden size, and 48 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 44
-    hidden_size: int = 6144
-    ffn_hidden_size: int = 24576
-    num_attention_heads: int = 48
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider40B(GPTModelProvider):
-    """Configuration for a 40B parameter GPT model.
-
-    Predefined configuration for a large GPT model with 48 layers,
-    8192 hidden size, and 64 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 48
-    hidden_size: int = 8192
-    ffn_hidden_size: int = 32768
-    num_attention_heads: int = 64
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-
-
-@dataclass
-class GPTProvider175B(GPTModelProvider):
-    """Configuration for a 175B parameter GPT model.
-
-    Predefined configuration for a massive GPT model with 96 layers,
-    12288 hidden size, and 96 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 96
-    hidden_size: int = 12288
-    ffn_hidden_size: int = 49152
-    num_attention_heads: int = 96
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-    layernorm_zero_centered_gamma: bool = True
+_patch_mtp_checkpointed_forward_padding_mask()

@@ -47,9 +47,9 @@ checkpoint:
   # Directory to save finetuned checkpoints
   save: ./checkpoints/llama32_1b_finetuned
   # Directory to resume from during training
-  load: ./checkpoints/llama32_1b
+  load: ./checkpoints/llama32_1b_finetuned
   # Directory for pretrained weights in Megatron format
-  pretrained_checkpoint: ./path/to/pretrained/checkpoint/
+  pretrained_checkpoint: ./checkpoints/llama32_1b
 
   save_interval: 50
 
@@ -72,6 +72,15 @@ logger:
   tensorboard_dir: ./logs/llama32_1b_finetuned
   # wandb_project: my_finetune_project
   # wandb_entity: my_team
+  # mlflow_experiment: llama32_1b_finetuned  # Uncomment to enable MLFlow logging
+  # mlflow_run_name: llama32_1b_finetuned
+  # mlflow_tracking_uri: http://localhost:5000  # Optional: use remote MLflow server
+  # mlflow_tags:
+  #   project: llama32
+  #   phase: finetune
+  #   variant: mlflow_example
+
+
 
 # Random seed
 rng:

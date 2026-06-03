@@ -14,6 +14,7 @@
 
 import fnmatch
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -26,12 +27,16 @@ from typing import (
     List,
     Optional,
     Pattern,
+    Set,
     Tuple,
     Union,
     overload,
 )
 
 import torch
+
+
+logger = logging.getLogger(__name__)
 
 
 class StateDict(Mapping[str, torch.Tensor]):
@@ -458,6 +463,19 @@ class SafeTensorsStateSource(StateSource):
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
 
+    @staticmethod
+    def _ignore_source_key_prefixes(
+        key_to_filename_map: Mapping[str, str] | None,
+        ignored_source_key_prefixes: Iterable[str] | None,
+    ) -> Dict[str, str]:
+        if not key_to_filename_map:
+            return {}
+        if not ignored_source_key_prefixes:
+            return dict(key_to_filename_map)
+
+        prefixes = tuple(ignored_source_key_prefixes)
+        return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
+
     @property
     def path(self) -> Path:
         """
@@ -544,10 +562,11 @@ class SafeTensorsStateSource(StateSource):
                     ignore_patterns=["*.bin", "*.pt", "*.pth"],
                 )
             )
-        except (ImportError, HfHubHTTPError, ValueError):
-            # If huggingface_hub is not installed, or if it's not a
-            # valid model ID, we return the original path and let the
-            # subsequent logic handle the file not found error.
+        except (ImportError, HfHubHTTPError, ValueError) as e:
+            logger.warning(
+                f"Failed to download '{model_name_or_path}' from HuggingFace Hub: {e}. "
+                f"Falling back to treating it as a local path."
+            )
             return local_path
 
     def get_all_keys(self) -> List[str]:
@@ -578,6 +597,7 @@ class SafeTensorsStateSource(StateSource):
         if not keys_to_load:
             return {}
 
+        import time
         from glob import glob as file_glob
 
         from safetensors import safe_open
@@ -585,6 +605,8 @@ class SafeTensorsStateSource(StateSource):
         loaded_tensors = {}
         remaining_keys = set(keys_to_load)
         key_to_filename_map = self.key_to_filename_map
+
+        max_retries = 3
 
         if key_to_filename_map:
             file_to_keys_map = defaultdict(list)
@@ -596,11 +618,22 @@ class SafeTensorsStateSource(StateSource):
             for filename, keys_in_file in file_to_keys_map.items():
                 file_path = self.path / filename
                 if file_path.exists():
-                    with safe_open(file_path, framework="pt", device="cpu") as f:
-                        for key in keys_in_file:
-                            if key in f.keys():
-                                loaded_tensors[key] = f.get_tensor(key)
-                                remaining_keys.discard(key)
+                    for attempt in range(max_retries):
+                        with safe_open(file_path, framework="pt", device="cpu") as f:
+                            file_keys = set(f.keys())
+                            for key in keys_in_file:
+                                if key in file_keys and key not in loaded_tensors:
+                                    loaded_tensors[key] = f.get_tensor(key)
+                                    remaining_keys.discard(key)
+                        still_missing = [k for k in keys_in_file if k in remaining_keys]
+                        if not still_missing:
+                            break
+                        if attempt < max_retries - 1:
+                            logger.warning(
+                                f"Retry {attempt + 1}/{max_retries}: {len(still_missing)} keys "
+                                f"not found in {filename}, retrying after delay..."
+                            )
+                            time.sleep(1.0 * (attempt + 1))
 
         if remaining_keys:
             safetensor_files = file_glob(str(self.path / "*.safetensors"))
@@ -667,7 +700,13 @@ class SafeTensorsStateSource(StateSource):
         return False
 
     def save_generator(
-        self, generator: Iterable[Tuple[str, torch.Tensor]], output_path: Union[str, Path], strict: bool = True
+        self,
+        generator: Iterable[Tuple[str, torch.Tensor]],
+        output_path: Union[str, Path],
+        strict: bool = True,
+        distributed_save: bool = False,
+        save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -690,7 +729,23 @@ class SafeTensorsStateSource(StateSource):
                     yields a tensor name not found in the original model's
                     sharding structure. If False, it prints a warning and
                     skips the tensor.
+            distributed_save: Whether to enable distributed saving mode where each rank saves
+                part of weights independently.
+            save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
+                For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
+                source sharding map when saving.
+
         """
+        if distributed_save:
+            return self._save_generator_distributed(
+                generator,
+                output_path,
+                strict,
+                save_every_n_ranks=save_every_n_ranks,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
+            )
+
         # In a distributed environment, only rank 0 should write to disk.
         # Other ranks must still exhaust the generator to participate in collectives.
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
@@ -708,7 +763,7 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self.key_to_filename_map
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
         all_expected_keys = set(key_to_filename_map.keys())
 
         if not key_to_filename_map:
@@ -786,7 +841,13 @@ class SafeTensorsStateSource(StateSource):
                     for key in tensors_to_save.keys():
                         del buffered_tensors[key]
 
-                    all_saved_keys.update(keys_for_file)
+                    # Only the keys we actually wrote belong in the
+                    # post-save index. Using ``keys_for_file`` here would
+                    # claim unsaved keys as written and produce a
+                    # ``model.safetensors.index.json`` that maps keys to a
+                    # file which doesn't contain them — HF loading then
+                    # crashes when it tries to read the missing tensor.
+                    all_saved_keys.update(tensors_to_save.keys())
                     del files_to_save[filename]
 
         if buffered_tensors:
@@ -845,3 +906,160 @@ class SafeTensorsStateSource(StateSource):
                 except json.JSONDecodeError:
                     return None
         return None
+
+    def _save_generator_distributed(
+        self,
+        generator: Iterable[Tuple[str, torch.Tensor]],
+        output_path: Union[str, Path],
+        strict: bool = True,
+        save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
+    ):
+        is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
+        if is_distributed:
+            world_size = torch.distributed.get_world_size()
+            rank = torch.distributed.get_rank()
+        else:
+            world_size = 1
+            rank = 0
+
+        from safetensors.torch import save_file
+
+        output_path = Path(output_path)
+
+        # Calculate which ranks should participate in saving
+        # Only rank % save_every_n_ranks == 0 will save
+        num_nodes = (world_size + save_every_n_ranks - 1) // save_every_n_ranks
+        is_saver_rank = rank % save_every_n_ranks == 0
+        saver_ranks = [i * save_every_n_ranks for i in range(num_nodes) if i * save_every_n_ranks < world_size]
+        num_savers = len(saver_ranks)
+        saver_index = rank // save_every_n_ranks if is_saver_rank else -1
+
+        if rank == 0:
+            output_path.mkdir(parents=True, exist_ok=True)
+        if is_distributed:
+            torch.distributed.barrier()
+
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
+
+        # Fallback: no sharding map, single-file save
+        if not key_to_filename_map:
+            if is_saver_rank and saver_index == 0:
+                buffered_tensors = dict(generator)
+                if buffered_tensors:
+                    save_file(buffered_tensors, output_path / "model.safetensors")
+            else:
+                for _ in generator:
+                    pass
+            if is_distributed:
+                torch.distributed.barrier()
+            return
+
+        all_expected_keys: Set[str] = set(key_to_filename_map.keys())
+        all_yielded_keys = set()
+        filename_to_keys_map: Dict[str, Set[str]] = defaultdict(set)
+        for key, fname in key_to_filename_map.items():
+            filename_to_keys_map[fname].add(key)
+
+        all_filenames = sorted(filename_to_keys_map.keys())
+
+        # Distribute files among saver ranks (one per node)
+        if is_saver_rank:
+            assigned_filenames = [fname for idx, fname in enumerate(all_filenames) if idx % num_savers == saver_index]
+            assigned_filenames_set = set(assigned_filenames)
+            assigned_expected_keys: Set[str] = (
+                set().union(*(filename_to_keys_map[fname] for fname in assigned_filenames))
+                if assigned_filenames
+                else set()
+            )
+        else:
+            assigned_filenames = []
+            assigned_filenames_set = set()
+            assigned_expected_keys = set()
+
+        buffered_tensors: Dict[str, torch.Tensor] = {}
+        actually_saved_keys: Set[str] = set()
+
+        for name, tensor in generator:
+            all_yielded_keys.add(name)
+
+            if name not in all_expected_keys:
+                if strict:
+                    raise KeyError(
+                        f"Tensor '{name}' from generator not found in the original model structure. "
+                        "To ignore, set strict=False."
+                    )
+                else:
+                    print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
+                    continue
+
+            if is_saver_rank:
+                fname = key_to_filename_map[name]
+                if fname not in assigned_filenames_set:
+                    continue
+                buffered_tensors[name] = tensor
+
+        if is_saver_rank:
+            missing_keys = assigned_expected_keys - set(buffered_tensors.keys())
+            if missing_keys:
+                missing_keys_sorted = sorted(missing_keys)
+                missing_preview = ", ".join(missing_keys_sorted[:20])
+                missing_suffix = ""
+                if len(missing_keys_sorted) > 20:
+                    missing_suffix = f", ... (+{len(missing_keys_sorted) - 20} more)"
+                print(
+                    f"Rank {rank}: Missing {len(missing_keys_sorted)} tensors for keys: "
+                    f"{missing_preview}{missing_suffix}",
+                    flush=True,
+                )
+
+            for fname in assigned_filenames:
+                keys_for_file = filename_to_keys_map[fname]
+                tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
+                if not tensors_to_save:
+                    continue
+                save_file(tensors_to_save, output_path / fname)
+                actually_saved_keys.update(tensors_to_save.keys())
+
+        # Rank 0 builds the index from the files that were actually written.
+        # This avoids all_gather_object on very large key lists, which can
+        # allocate excessive CUDA memory in distributed runs.
+        if is_distributed:
+            torch.distributed.barrier()
+
+            if rank == 0:
+                from safetensors import safe_open
+
+                all_saved_keys_aggregated = set()
+                for fname in all_filenames:
+                    file_path = output_path / fname
+                    if not file_path.exists():
+                        continue
+                    with safe_open(file_path, framework="pt", device="cpu") as f:
+                        all_saved_keys_aggregated.update(f.keys())
+            else:
+                all_saved_keys_aggregated = set()
+        else:
+            all_saved_keys_aggregated = actually_saved_keys
+
+        if rank == 0:
+            original_index_file = self.path / "model.safetensors.index.json"
+            if original_index_file.exists():
+                with open(original_index_file, "r") as f:
+                    original_index_data = json.load(f)
+
+                # Build weight_map only from actually saved keys, like the non-distributed path
+                new_weight_map = {
+                    key: key_to_filename_map[key] for key in key_to_filename_map if key in all_saved_keys_aggregated
+                }
+
+                new_index_data = {
+                    "metadata": original_index_data.get("metadata", {}),
+                    "weight_map": new_weight_map,
+                }
+                output_index_file = output_path / "model.safetensors.index.json"
+                with open(output_index_file, "w") as f:
+                    json.dump(new_index_data, f, indent=4)
+
+        if is_distributed:
+            torch.distributed.barrier()

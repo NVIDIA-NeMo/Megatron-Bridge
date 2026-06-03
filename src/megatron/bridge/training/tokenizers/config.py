@@ -13,56 +13,25 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import Any, Literal, Optional
+from typing import Any, Optional
+
+from megatron.training.config import TokenizerConfig as MTrainTokenizerConfig
+
+from megatron.bridge.utils.common_utils import warn_rank_0
 
 
-@dataclass
-class TokenizerConfig:
-    """Configuration settings for the tokenizer."""
+@dataclass(kw_only=True)
+class TokenizerConfig(MTrainTokenizerConfig):
+    """Configuration settings for tokenizers."""
 
-    vocab_size: Optional[int] = None
-    """Size of vocab before EOD or padding."""
+    make_vocab_size_divisible_by: int = 1
+    """Keep MCore tokenizer padding neutral; model providers apply vocab padding."""
 
-    vocab_file: Optional[str] = None
-    """Path to the vocab file."""
+    tensor_model_parallel_size: int = 1
+    """Tensor parallel size used by MCore tokenizer padded vocab-size calculation."""
 
-    merge_file: Optional[str] = None
-    """Path to the BPE merge file."""
-
-    vocab_extra_ids: int = 0
-    """Number of additional vocabulary tokens. They are used for span masking in the T5 model"""
-
-    tokenizer_type: Optional[
-        Literal[
-            "BertWordPieceLowerCase",
-            "BertWordPieceCase",
-            "GPT2BPETokenizer",
-            "SentencePieceTokenizer",
-            "GPTSentencePieceTokenizer",
-            "HuggingFaceTokenizer",
-            "Llama2Tokenizer",
-            "TikTokenizer",
-            "MultimodalTokenizer",
-            "NullTokenizer",
-        ]
-    ] = None
-    """What type of tokenizer to use."""
-
-    tokenizer_model: Optional[str] = None
-    """Sentencepiece tokenizer model."""
-
-    tiktoken_pattern: Optional[str] = None
-    """Which tiktoken pattern to use. Options: [v1, v2]"""
-
-    tiktoken_num_special_tokens: int = 1000
-    """Number of special tokens in tiktoken tokenizer"""
-
-    tiktoken_special_tokens: Optional[list[str]] = None
-    """List of tiktoken special tokens, needs to have ["<unk>", "<s>", "</s>"]"""
-
-    tokenizer_prompt_format: Optional[str] = None
-    special_tokens: Optional[list[str]] = None
-    image_tag_type: Optional[str] = None
+    rank: int = 0
+    """Distributed rank used by MCore tokenizer helper logging."""
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
@@ -70,12 +39,56 @@ class TokenizerConfig:
     Common options include:
         - use_fast (bool): Whether to use fast tokenizer implementation
         - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
-        - chat_template (str): Custom chat template string for conversation formatting
+        - include_special_tokens (bool): Whether to include special tokens when converting text to ids
 
     Example:
         hf_tokenizer_kwargs = {
             "use_fast": True,
             "trust_remote_code": True,
-            "chat_template": "custom_template_string"
+            "include_special_tokens": True
         }
     """
+
+    sp_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
+    """Additional keyword arguments to pass to SentencePiece tokenizer.
+
+    Common options include:
+        - legacy (bool): Whether to use legacy format of sentencepiece tokenizer
+
+    Example:
+        sp_tokenizer_kwargs = {
+            "legacy": True,
+        }
+    """
+
+    tokenizer_prompt_format: Optional[str] = None
+    """Prompt format for the tokenizer."""
+
+    image_tag_type: Optional[str] = None
+    """Image tag to apply, if any. For example <img><image></img>."""
+
+    force_system_message: Optional[bool] = False
+
+    def __post_init__(self) -> None:
+        """Sync with MCore values"""
+        # Don't pad vocab size since MBridge does it's own padding
+        self.pad_vocab_size = False
+
+        # HuggingFace tokenizer kwargs
+        self.tokenizer_hf_no_use_fast = not self.hf_tokenizer_kwargs.get("use_fast", True)
+        self.tokenizer_hf_no_include_special_tokens = not self.hf_tokenizer_kwargs.get("include_special_tokens", True)
+        self.trust_remote_code = self.hf_tokenizer_kwargs.get("trust_remote_code", False)
+        if self.hf_tokenizer_kwargs:
+            warn_rank_0(
+                "`hf_tokenizer_kwargs` is deprecated and will be removed soon. "
+                "Please, use `tokenizer_hf_no_use_fast` / `tokenizer_hf_no_include_special_tokens` / "
+                "`trust_remote_code` arguments directly instead."
+            )
+
+        # SentencePiece tokenizer kwargs
+        self.tokenizer_sentencepiece_legacy = self.sp_tokenizer_kwargs.get("legacy", False)
+        if self.sp_tokenizer_kwargs:
+            warn_rank_0(
+                "`sp_tokenizer_kwargs` is deprecated and will be removed soon. "
+                "Please, use `tokenizer_sentencepiece_legacy` (bool) argument directly instead."
+            )

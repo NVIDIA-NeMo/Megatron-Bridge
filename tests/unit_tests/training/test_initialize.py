@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 import warnings
 from pathlib import Path
@@ -21,7 +22,19 @@ import pytest
 import yaml
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.training.initialize import _initialize_tp_communicators
+from megatron.bridge.training.config import DistributedInitConfig
+from megatron.bridge.training.initialize import _initialize_tp_communicators, _setup_flight_recorder_env
+
+
+_FR_ENV_VARS = [
+    "TORCH_FR_DUMP_TEMP_FILE",
+    "TORCH_NCCL_DEBUG_INFO_TEMP_FILE",
+    "TORCH_NCCL_TRACE_BUFFER_SIZE",
+    "TORCH_NCCL_DUMP_ON_TIMEOUT",
+    "TORCH_INCLUDE_STACK_TRACE",
+    "TORCH_INCLUDE_ONLY_ACTIVE",
+    "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
+]
 
 
 class TestInitializeTPCommunicators:
@@ -309,3 +322,172 @@ class TestInitializeTPCommunicators:
             assert "use_fp8" in call_args[1]
             assert "quantization_modes" not in call_args[1]
             assert "bootstrap_backend" not in call_args[1]
+
+
+class TestDistributedInitConfigFlightRecorder:
+    """Test suite for DistributedInitConfig flight recorder fields."""
+
+    def test_default_values(self):
+        cfg = DistributedInitConfig()
+        assert cfg.flight_recorder_dump_path is None
+        assert cfg.flight_recorder_trace_buffer_size == 2000
+        assert cfg.flight_recorder_dump_on_timeout is True
+        assert cfg.flight_recorder_include_stack_trace is False
+        assert cfg.flight_recorder_include_only_active is True
+        assert cfg.flight_recorder_extra_dump_on_exec is True
+
+    def test_custom_values(self):
+        cfg = DistributedInitConfig(
+            flight_recorder_dump_path="/tmp/fr_dump",
+            flight_recorder_trace_buffer_size=5000,
+            flight_recorder_dump_on_timeout=False,
+            flight_recorder_include_stack_trace=True,
+            flight_recorder_include_only_active=False,
+            flight_recorder_extra_dump_on_exec=False,
+        )
+        assert cfg.flight_recorder_dump_path == "/tmp/fr_dump"
+        assert cfg.flight_recorder_trace_buffer_size == 5000
+        assert cfg.flight_recorder_dump_on_timeout is False
+        assert cfg.flight_recorder_include_stack_trace is True
+        assert cfg.flight_recorder_include_only_active is False
+        assert cfg.flight_recorder_extra_dump_on_exec is False
+
+
+class TestSetupFlightRecorderEnv:
+    """Test suite for _setup_flight_recorder_env helper."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self):
+        """Remove all flight-recorder env vars before and after each test."""
+        saved = {}
+        for var in _FR_ENV_VARS:
+            if var in os.environ:
+                saved[var] = os.environ.pop(var)
+        yield
+        for var in _FR_ENV_VARS:
+            os.environ.pop(var, None)
+        os.environ.update(saved)
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_no_path_no_env_is_noop(self, _mock_rank):
+        """When no dump path is configured and no env vars are set, nothing happens."""
+        cfg = DistributedInitConfig()
+        _setup_flight_recorder_env(cfg)
+        for var in _FR_ENV_VARS:
+            assert var not in os.environ
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_config_path_sets_all_env_vars(self, _mock_rank):
+        """When flight_recorder_dump_path is set in config, all env vars are populated."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr_test")
+        _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/tmp/fr_test"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/tmp/fr_test"
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "2000"
+        assert os.environ["TORCH_NCCL_DUMP_ON_TIMEOUT"] == "1"
+        assert os.environ["TORCH_INCLUDE_STACK_TRACE"] == "0"
+        assert os.environ["TORCH_INCLUDE_ONLY_ACTIVE"] == "1"
+        assert os.environ["TORCH_NCCL_EXTRA_DUMP_ON_EXEC"] == "1"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_custom_config_values_reflected_in_env(self, _mock_rank):
+        """Non-default config values are correctly converted to env var strings."""
+        cfg = DistributedInitConfig(
+            flight_recorder_dump_path="/data/traces",
+            flight_recorder_trace_buffer_size=8000,
+            flight_recorder_dump_on_timeout=False,
+            flight_recorder_include_stack_trace=True,
+            flight_recorder_include_only_active=False,
+            flight_recorder_extra_dump_on_exec=False,
+        )
+        _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "8000"
+        assert os.environ["TORCH_NCCL_DUMP_ON_TIMEOUT"] == "0"
+        assert os.environ["TORCH_INCLUDE_STACK_TRACE"] == "1"
+        assert os.environ["TORCH_INCLUDE_ONLY_ACTIVE"] == "0"
+        assert os.environ["TORCH_NCCL_EXTRA_DUMP_ON_EXEC"] == "0"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_env_var_takes_precedence_over_config(self, _mock_rank):
+        """Pre-existing env vars are preserved; config values are ignored with a warning."""
+        os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] = "9999"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_NCCL_TRACE_BUFFER_SIZE"] == "9999"
+        warning_messages = [str(x.message) for x in w]
+        assert any("TORCH_NCCL_TRACE_BUFFER_SIZE" in m and "9999" in m for m in warning_messages)
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_env_path_precedence_over_config_path(self, _mock_rank):
+        """TORCH_FR_DUMP_TEMP_FILE env var takes precedence over config dump_path."""
+        os.environ["TORCH_FR_DUMP_TEMP_FILE"] = "/env/path"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/config/path")
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/path"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/path"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_nccl_debug_info_env_triggers_setup(self, _mock_rank):
+        """TORCH_NCCL_DEBUG_INFO_TEMP_FILE alone triggers flight recorder setup."""
+        os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] = "/env/nccl_path"
+        cfg = DistributedInitConfig()
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/nccl_path"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/nccl_path"
+        assert "TORCH_NCCL_TRACE_BUFFER_SIZE" in os.environ
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_fr_dump_env_takes_precedence_over_nccl_debug_info_env(self, _mock_rank):
+        """TORCH_FR_DUMP_TEMP_FILE has higher priority than TORCH_NCCL_DEBUG_INFO_TEMP_FILE."""
+        os.environ["TORCH_FR_DUMP_TEMP_FILE"] = "/env/fr"
+        os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] = "/env/nccl"
+        cfg = DistributedInitConfig()
+        with warnings.catch_warnings(record=True):
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        assert os.environ["TORCH_FR_DUMP_TEMP_FILE"] == "/env/fr"
+        assert os.environ["TORCH_NCCL_DEBUG_INFO_TEMP_FILE"] == "/env/nccl"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_warning_for_every_preexisting_var(self, _mock_rank):
+        """A warning is emitted for each pre-existing env var."""
+        for var in _FR_ENV_VARS:
+            os.environ[var] = "preset"
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            _setup_flight_recorder_env(cfg)
+
+        warning_messages = [str(x.message) for x in w]
+        for var in _FR_ENV_VARS:
+            assert any(var in m for m in warning_messages), f"No warning for {var}"
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=0)
+    def test_rank_0_prints_env_vars(self, _mock_rank, capsys):
+        """Rank 0 prints the flight recorder env var summary."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        _setup_flight_recorder_env(cfg)
+        captured = capsys.readouterr()
+        assert "Flight recorder env vars:" in captured.out
+        assert "TORCH_FR_DUMP_TEMP_FILE=/tmp/fr" in captured.out
+        assert "TORCH_NCCL_TRACE_BUFFER_SIZE=2000" in captured.out
+
+    @patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1)
+    def test_non_rank_0_does_not_print(self, _mock_rank, capsys):
+        """Non-rank-0 processes do not print the flight recorder summary."""
+        cfg = DistributedInitConfig(flight_recorder_dump_path="/tmp/fr")
+        _setup_flight_recorder_env(cfg)
+        captured = capsys.readouterr()
+        assert "Flight recorder env vars:" not in captured.out

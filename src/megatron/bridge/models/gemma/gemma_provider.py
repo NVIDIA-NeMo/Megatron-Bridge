@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 import torch
-from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_vp_first_stage
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -70,60 +70,11 @@ class GemmaModelProvider(GPTModelProvider):
         model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
         # Apply Embedding Scaling for Gemma: sqrt(hidden_size)
-        if parallel_state.is_pipeline_first_stage(
-            ignore_virtual=False,
-            vp_stage=vp_stage,
-        ):
+        if is_vp_first_stage(
+            vp_stage=vp_stage, vp_size=self.virtual_pipeline_model_parallel_size
+        ) and is_pp_first_stage(self._pg_collection.pp):
             from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
 
             extend_instance(model.embedding, EmbeddingScalingMixin)
 
         return model
-
-
-@dataclass
-class GemmaModelProvider2B(GemmaModelProvider):
-    """Configuration for a 2B parameter Gemma model.
-
-    Specific configuration for the 2B Gemma model with 18 layers,
-    2048 hidden size, and 8 attention heads.
-    """
-
-    num_layers: int = 18
-    hidden_size: int = 2048
-    num_attention_heads: int = 8
-    num_query_groups: int = 1
-    ffn_hidden_size: int = 16384
-
-
-@dataclass
-class GemmaModelProvider7B(GemmaModelProvider):
-    """Configuration for a 7B parameter Gemma model.
-
-    Specific configuration for the 7B Gemma model with 28 layers,
-    3072 hidden size, and 16 attention heads.
-    """
-
-    num_layers: int = 28
-    hidden_size: int = 3072
-    num_attention_heads: int = 16
-    num_query_groups: int = 16
-    ffn_hidden_size: int = 24576
-
-
-@dataclass
-class CodeGemmaModelProvider2B(GemmaModelProvider2B):
-    """Configuration for a 2B parameter Code Gemma model.
-
-    Extends GemmaModelProvider with specific settings for code generation.
-    Thism model has an identical configuration to GemmaModelProvider2B.
-    """
-
-
-@dataclass
-class CodeGemmaModelProvider7B(GemmaModelProvider7B):
-    """Configuration for a 7B parameter Code Gemma model.
-
-    Extends GemmaModelProvider with specific settings for code generation.
-    This model has an identical configuration to GemmaModelProvider7B.
-    """

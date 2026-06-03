@@ -14,10 +14,13 @@
 # limitations under the License.
 
 
+import json
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
+
+from transformers.configuration_utils import PretrainedConfig
 
 
 # Add the src directory to Python path for imports
@@ -119,6 +122,33 @@ def test_copy_custom_modeling_files_nonexistent_source():
         print("✅ test_copy_custom_modeling_files_nonexistent_source passed")
 
 
+def test_hub_download_cleans_local_dir_cache():
+    """Test Hub downloads do not leave local_dir cache metadata in the export directory."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        def fake_hf_hub_download(repo_id, filename, local_dir, local_dir_use_symlinks):
+            del repo_id, local_dir_use_symlinks
+            local_dir = Path(local_dir)
+            (local_dir / filename).write_text("# downloaded file")
+            metadata_dir = local_dir / ".cache" / "huggingface" / "download"
+            metadata_dir.mkdir(parents=True)
+            (metadata_dir / f"{filename}.metadata").write_text("metadata")
+
+        base = MockPreTrainedBase()
+        with patch("huggingface_hub.list_repo_files", return_value=["nano_v3_reasoning_parser.py"]):
+            with patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download):
+                copied_files = base._copy_custom_modeling_files(
+                    "org/repo", target_dir, file_patterns=["*reasoning_parser.py"]
+                )
+
+        assert copied_files == ["nano_v3_reasoning_parser.py"]
+        assert (target_dir / "nano_v3_reasoning_parser.py").exists()
+        assert not (target_dir / ".cache").exists()
+
+
 def test_save_artifacts_with_trust_remote_code_true():
     """Test save_artifacts preserves custom files when trust_remote_code=True."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -177,6 +207,53 @@ def test_save_artifacts_with_trust_remote_code_false():
         print("✅ test_save_artifacts_with_trust_remote_code_false passed")
 
 
+def test_save_artifacts_strips_auto_map_without_trust_remote_code():
+    """Test save_artifacts drops remote-code auto_map when remote code is not preserved."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(trust_remote_code=False)
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        base._config = config
+
+        base.save_artifacts(target_dir)
+
+        saved_config = json.loads((target_dir / "config.json").read_text())
+        assert "auto_map" not in saved_config
+        assert config.auto_map == {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+
+
+def test_save_artifacts_preserves_auto_map_with_trust_remote_code():
+    """Test save_artifacts keeps auto_map when remote code is preserved."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(trust_remote_code=True)
+        config = PretrainedConfig()
+        config.auto_map = {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+        base._config = config
+
+        base.save_artifacts(target_dir)
+
+        saved_config = json.loads((target_dir / "config.json").read_text())
+        assert saved_config["auto_map"] == {
+            "AutoConfig": "configuration_custom.CustomConfig",
+            "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
+        }
+
+
 def test_save_artifacts_without_model_name_or_path():
     """Test save_artifacts handles missing model_name_or_path gracefully."""
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -223,6 +300,235 @@ def test_copy_handles_permission_errors():
         print("✅ test_copy_handles_permission_errors passed")
 
 
+def test_additional_files_exact_names():
+    """Test copying additional files with exact file names."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup source directory with various files
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "merges.txt").write_text("merge data")
+        (source_dir / "special_tokens.json").write_text('{"special": "tokens"}')
+        (source_dir / "ignore_me.json").write_text('{"ignore": "this"}')
+
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        # Test copying specific files
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+        copied_files = base._copy_custom_modeling_files(
+            source_dir, target_dir, file_patterns=["vocab.json", "merges.txt"]
+        )
+
+        # Verify only specified files were copied
+        assert (target_dir / "vocab.json").exists()
+        assert (target_dir / "merges.txt").exists()
+        assert not (target_dir / "special_tokens.json").exists()
+        assert not (target_dir / "ignore_me.json").exists()
+
+        # Verify return value
+        assert "vocab.json" in copied_files
+        assert "merges.txt" in copied_files
+        assert len(copied_files) == 2
+
+        print("✅ test_additional_files_exact_names passed")
+
+
+def test_additional_files_glob_patterns():
+    """Test copying additional files with glob patterns."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup source directory with various files
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "config.json").write_text('{"config": "data"}')
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "merges.txt").write_text("merge data")
+        (source_dir / "readme.md").write_text("# README")
+
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        # Test copying with glob patterns
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+        copied_files = base._copy_custom_modeling_files(source_dir, target_dir, file_patterns=["*.json", "*.md"])
+
+        # Verify files matching patterns were copied
+        assert (target_dir / "config.json").exists()
+        assert (target_dir / "vocab.json").exists()
+        assert (target_dir / "readme.md").exists()
+        assert not (target_dir / "merges.txt").exists()
+
+        # Verify return value
+        assert "config.json" in copied_files
+        assert "vocab.json" in copied_files
+        assert "readme.md" in copied_files
+
+        print("✅ test_additional_files_glob_patterns passed")
+
+
+def test_additional_files_mixed_patterns_and_names():
+    """Test copying additional files with mixed patterns and exact names."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup source directory
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "config.json").write_text('{"config": "data"}')
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "special_file.txt").write_text("special content")
+        (source_dir / "readme.md").write_text("# README")
+
+        target_dir = tmp_path / "target"
+        target_dir.mkdir()
+
+        # Test copying with mixed patterns and exact names
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+        base._copy_custom_modeling_files(
+            source_dir, target_dir, file_patterns=["*.json", "special_file.txt", "readme.md"]
+        )
+
+        # Verify all specified files were copied
+        assert (target_dir / "config.json").exists()
+        assert (target_dir / "vocab.json").exists()
+        assert (target_dir / "special_file.txt").exists()
+        assert (target_dir / "readme.md").exists()
+
+        print("✅ test_additional_files_mixed_patterns_and_names passed")
+
+
+def test_save_artifacts_with_additional_files():
+    """Test save_artifacts copies additional files when specified."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup source directory with additional files
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "custom_config.yaml").write_text("custom: config")
+        (source_dir / "readme.md").write_text("# Model README")
+
+        target_dir = tmp_path / "target"
+
+        # Create base
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+
+        # Mock the config to avoid loading issues
+        mock_config = Mock()
+        mock_config.save_pretrained = Mock()
+        base._config = mock_config
+
+        # Call save_artifacts with additional_files
+        base.save_artifacts(target_dir, additional_files=["vocab.json", "*.yaml", "readme.md"])
+
+        # Verify additional files were copied
+        assert (target_dir / "vocab.json").exists()
+        assert (target_dir / "custom_config.yaml").exists()
+        assert (target_dir / "readme.md").exists()
+
+        print("✅ test_save_artifacts_with_additional_files passed")
+
+
+def test_save_artifacts_with_additional_files_and_trust_remote_code():
+    """Test save_artifacts copies both custom modeling files and additional files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup source directory with both custom modeling and additional files
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "modeling_custom.py").write_text("# Custom modeling")
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+        (source_dir / "readme.md").write_text("# Model README")
+
+        target_dir = tmp_path / "target"
+
+        # Create base with trust_remote_code=True
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir), trust_remote_code=True)
+
+        # Mock the config to avoid loading issues
+        mock_config = Mock()
+        mock_config.save_pretrained = Mock()
+        base._config = mock_config
+
+        # Call save_artifacts with additional_files
+        base.save_artifacts(target_dir, additional_files=["vocab.json", "readme.md"])
+
+        # Verify both custom modeling file and additional files were copied
+        assert (target_dir / "modeling_custom.py").exists()  # From trust_remote_code
+        assert (target_dir / "vocab.json").exists()  # From additional_files
+        assert (target_dir / "readme.md").exists()  # From additional_files
+
+        print("✅ test_save_artifacts_with_additional_files_and_trust_remote_code passed")
+
+
+def test_additional_files_with_original_source_path():
+    """Test additional_files uses original_source_path when provided."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        # Setup original source directory
+        original_source_dir = tmp_path / "original_source"
+        original_source_dir.mkdir()
+        (original_source_dir / "vocab.json").write_text('{"vocab": "from_original"}')
+
+        # Setup model directory (different from original source)
+        model_dir = tmp_path / "model"
+        model_dir.mkdir()
+        (model_dir / "vocab.json").write_text('{"vocab": "from_model"}')
+
+        target_dir = tmp_path / "target"
+
+        # Create base with model_name_or_path pointing to model_dir
+        base = MockPreTrainedBase(model_name_or_path=str(model_dir))
+
+        # Mock the config
+        mock_config = Mock()
+        mock_config.save_pretrained = Mock()
+        base._config = mock_config
+
+        # Call save_artifacts with original_source_path
+        base.save_artifacts(target_dir, original_source_path=str(original_source_dir), additional_files=["vocab.json"])
+
+        # Verify file from original_source_path was copied (not from model_dir)
+        assert (target_dir / "vocab.json").exists()
+        content = (target_dir / "vocab.json").read_text()
+        assert "from_original" in content
+
+        print("✅ test_additional_files_with_original_source_path passed")
+
+
+def test_additional_files_empty_list():
+    """Test that empty additional_files list works correctly."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "vocab.json").write_text('{"vocab": "data"}')
+
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+
+        mock_config = Mock()
+        mock_config.save_pretrained = Mock()
+        base._config = mock_config
+
+        # Call save_artifacts with empty list
+        base.save_artifacts(target_dir, additional_files=[])
+
+        # Verify no additional files were copied
+        assert not (target_dir / "vocab.json").exists()
+
+        print("✅ test_additional_files_empty_list passed")
+
+
 def main():
     """Run all tests."""
     print("Running PreTrainedBase custom modeling file preservation tests...")
@@ -230,10 +536,22 @@ def main():
     try:
         test_copy_custom_modeling_files_basic()
         test_copy_custom_modeling_files_nonexistent_source()
+        test_hub_download_cleans_local_dir_cache()
         test_save_artifacts_with_trust_remote_code_true()
         test_save_artifacts_with_trust_remote_code_false()
+        test_save_artifacts_strips_auto_map_without_trust_remote_code()
+        test_save_artifacts_preserves_auto_map_with_trust_remote_code()
         test_save_artifacts_without_model_name_or_path()
         test_copy_handles_permission_errors()
+
+        # New tests for additional_files feature
+        test_additional_files_exact_names()
+        test_additional_files_glob_patterns()
+        test_additional_files_mixed_patterns_and_names()
+        test_save_artifacts_with_additional_files()
+        test_save_artifacts_with_additional_files_and_trust_remote_code()
+        test_additional_files_with_original_source_path()
+        test_additional_files_empty_list()
 
         print("\n🎉 All tests passed!")
         return 0

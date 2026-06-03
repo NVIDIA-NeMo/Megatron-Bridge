@@ -199,6 +199,9 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     # Default dataloader type for VLM providers
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
+    # Enable batch-level online sequence packing
+    pack_sequences_in_batch: bool = False
+
     def _build_split_dataset(
         self,
         split_path: Optional[str],
