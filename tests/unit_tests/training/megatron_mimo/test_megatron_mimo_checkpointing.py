@@ -70,6 +70,8 @@ def _make_global_state(
                 exit_duration_in_mins=exit_duration_in_mins,
                 exit_interval=exit_interval,
                 eval_interval=None,
+                manual_gc=False,
+                manual_gc_interval=0,
             ),
             dataset=SimpleNamespace(seq_length=128),
             checkpoint=SimpleNamespace(
@@ -214,7 +216,6 @@ class TestPretrainMegatronMIMOSetup:
     @patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
     @patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator")
     @patch("megatron.bridge.training.setup_megatron_mimo.get_model_config")
-    @patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks")
     @patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule")
     @patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple")
     @patch("megatron.bridge.training.setup_megatron_mimo._update_megatron_mimo_model_config_funcs")
@@ -227,7 +228,6 @@ class TestPretrainMegatronMIMOSetup:
         mock_update_config_funcs,
         mock_get_grid,
         mock_build_pg,
-        mock_validate,
         mock_get_config,
         mock_communicator,
         mock_create_ckpt_mgr,
@@ -278,20 +278,22 @@ class TestPretrainMegatronMIMOSetup:
         infra.topology = Mock()
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        cfg.model.build_infra.return_value = infra
-        cfg.model.provide_distributed_model.return_value = [Mock()]
+        model = Mock()
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
+        start_time_tensor = Mock()
+        start_time_tensor.item.return_value = global_state.start_time
 
         with (
-            patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
+            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
             patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
             patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
             patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+            patch("torch.tensor", return_value=start_time_tensor),
         ):
             result = setup_megatron_mimo(state=global_state)
 
@@ -977,6 +979,36 @@ class TestLoadCheckpointPgThreading:
                 assert kwargs["pg_collection"] is None
 
 
+class TestNoMimoLoadOptimizerSkip:
+    """Regression guard: `_load_checkpoint_from_path` must not skip
+    `optimizer.load_state_dict()` for MIMO + GLOBAL torch_dist checkpoints.
+
+    The skip was historically present to work around per-rank common-state
+    divergence, but MimoOptimizer now handles that internally via
+    `_mimo_param_groups` / `_mimo_grad_scaler` ShardedObjects. Re-adding the
+    skip silently drops Adam's step counter and grad_scaler on resume.
+    """
+
+    def test_no_skip_pattern_in_load_optimizer_branch(self):
+        from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
+
+        src = inspect.getsource(_load_checkpoint_from_path)
+        assert "optimizer.load_state_dict" in src, "Sanity check: load_state_dict call should still exist."
+        # The previous skip was: `if not (ckpt_type == CheckpointType.GLOBAL and _is_megatron_mimo):`
+        # Catch literal re-introduction and obvious equivalents.
+        forbidden_patterns = [
+            "CheckpointType.GLOBAL and _is_megatron_mimo",
+            "_is_megatron_mimo and ckpt_type == CheckpointType.GLOBAL",
+        ]
+        offenders = [p for p in forbidden_patterns if p in src]
+        assert not offenders, (
+            f"MIMO load-optimizer skip pattern detected ({offenders}). "
+            "MimoOptimizer.load_state_dict handles per-rank common state via "
+            "_mimo_param_groups / _mimo_grad_scaler ShardedObjects; the skip "
+            "must not be re-introduced or it will silently drop Adam step + grad_scaler."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests: setup_megatron_mimo checkpoint loading path
 # ---------------------------------------------------------------------------
@@ -990,13 +1022,11 @@ class TestSetupMegatronMIMOCheckpointLoading:
         "megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager",
         "megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator",
         "megatron.bridge.training.setup_megatron_mimo.get_model_config",
-        "megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks",
         "megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule",
         "megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple",
         "megatron.bridge.training.setup_megatron_mimo._update_megatron_mimo_model_config_funcs",
         "megatron.bridge.training.setup_megatron_mimo.unwrap_megatron_mimo_model",
         "megatron.bridge.training.setup_megatron_mimo.dist",
-        "megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds",
         "megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR",
         "megatron.core.num_microbatches_calculator.init_num_microbatches_calculator",
         "megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP",
@@ -1039,8 +1069,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         infra.topology = Mock()
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        cfg.model.build_infra.return_value = infra
-        cfg.model.provide_distributed_model.return_value = [Mock()]
+        model = Mock()
 
         local_pg = MagicMock()
         mock_optimizer = MagicMock()
@@ -1087,12 +1116,18 @@ class TestSetupMegatronMIMOCheckpointLoading:
             stack.enter_context(
                 patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
             )
+            stack.enter_context(
+                patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra))
+            )
 
             model_config = Mock(pipeline_dtype=None, bf16=True)
             stack.enter_context(
                 patch("megatron.bridge.training.setup_megatron_mimo.get_model_config", return_value=model_config)
             )
             stack.enter_context(patch("megatron.bridge.training.setup_megatron_mimo.unwrap_megatron_mimo_model"))
+            start_time_tensor = Mock()
+            start_time_tensor.item.return_value = state.start_time
+            stack.enter_context(patch("torch.tensor", return_value=start_time_tensor))
 
             result = setup_megatron_mimo(state=state)
 
@@ -1171,8 +1206,7 @@ class TestSetupMegatronMIMOResumeIterators:
         infra.topology = Mock()
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        cfg.model.build_infra.return_value = infra
-        cfg.model.provide_distributed_model.return_value = [Mock()]
+        model = Mock()
 
         state = Mock()
         state.cfg = cfg
@@ -1182,11 +1216,12 @@ class TestSetupMegatronMIMOResumeIterators:
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
+        start_time_tensor = Mock()
+        start_time_tensor.item.return_value = state.start_time
 
         with (
             patch("megatron.bridge.training.setup_megatron_mimo.dist") as m_dist,
-            patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
-            patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
             patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
             patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
             patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
@@ -1211,6 +1246,7 @@ class TestSetupMegatronMIMOResumeIterators:
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+            patch("torch.tensor", return_value=start_time_tensor),
         ):
             m_dist.get_rank.return_value = 0
             m_dist.get_world_size.return_value = 2
@@ -1253,8 +1289,7 @@ class TestSetupMegatronMIMOResumeIterators:
         infra.topology = Mock()
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        cfg.model.build_infra.return_value = infra
-        cfg.model.provide_distributed_model.return_value = [Mock()]
+        model = Mock()
 
         state = Mock()
         state.cfg = cfg
@@ -1263,11 +1298,12 @@ class TestSetupMegatronMIMOResumeIterators:
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
+        start_time_tensor = Mock()
+        start_time_tensor.item.return_value = state.start_time
 
         with (
             patch("megatron.bridge.training.setup_megatron_mimo.dist") as m_dist,
-            patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
-            patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
             patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
             patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
             patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
@@ -1292,6 +1328,7 @@ class TestSetupMegatronMIMOResumeIterators:
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+            patch("torch.tensor", return_value=start_time_tensor),
         ):
             m_dist.get_rank.return_value = 0
             m_dist.get_world_size.return_value = 2
@@ -1337,8 +1374,7 @@ class TestSetupMegatronMIMOResumeIterators:
         infra.topology = Mock()
         infra.module_output_ndim = {"language": 3}
         infra.pg_collections = {"language": Mock()}
-        cfg.model.build_infra.return_value = infra
-        cfg.model.provide_distributed_model.return_value = [Mock()]
+        model = Mock()
 
         state = Mock()
         state.cfg = cfg
@@ -1347,11 +1383,12 @@ class TestSetupMegatronMIMOResumeIterators:
 
         mock_optimizer = MagicMock()
         mock_optimizer.module_infos = {}
+        start_time_tensor = Mock()
+        start_time_tensor.item.return_value = state.start_time
 
         with (
             patch("megatron.bridge.training.setup_megatron_mimo.dist") as m_dist,
-            patch("megatron.bridge.training.setup_megatron_mimo._set_megatron_mimo_random_seeds"),
-            patch("megatron.bridge.training.setup_megatron_mimo.validate_no_stub_ranks"),
+            patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
             patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
             patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
             patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
@@ -1376,6 +1413,7 @@ class TestSetupMegatronMIMOResumeIterators:
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP", None),
             patch("megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP", None),
+            patch("torch.tensor", return_value=start_time_tensor),
         ):
             m_dist.get_rank.return_value = 0
             m_dist.get_world_size.return_value = 2

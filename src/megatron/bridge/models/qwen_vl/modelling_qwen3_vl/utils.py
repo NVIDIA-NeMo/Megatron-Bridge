@@ -148,7 +148,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             skip_bias_add=False,
             is_expert=False,
             tp_comm_buffer_name="patch_fc1",
-            tp_group=tp_group,
+            tp_group=self.tp_group,
         )
 
         self.activation_func = self.config.activation_func
@@ -164,7 +164,7 @@ class Qwen3VLVisionPatchMerger(MegatronModule):
             skip_bias_add=False,
             is_expert=False,
             tp_comm_buffer_name="patch_fc2",
-            tp_group=tp_group,
+            tp_group=self.tp_group,
         )
 
     def forward(self, hidden_states):

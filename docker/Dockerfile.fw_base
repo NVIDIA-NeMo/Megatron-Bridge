@@ -130,8 +130,10 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 
 # Copy Wheels
 RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
+    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
     pip install /tmp/vllm/vllm*.whl && \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
+    patch -p1 < /opt/vllm.patch && \
     popd
 
 ##############################################################################

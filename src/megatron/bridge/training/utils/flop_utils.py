@@ -15,8 +15,6 @@
 import importlib
 from pathlib import Path
 
-import torch.nn.functional as F
-
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
@@ -441,10 +439,10 @@ def num_floating_point_operations(
             if cfg.model.moe_shared_expert_intermediate_size is None
             else cfg.model.moe_shared_expert_intermediate_size
         )
-        # SwiGLU: h->2*ffn_h and ffn_h->h = 3 projections; non-SwiGLU: h->ffn_h and ffn_h->h = 2 projections.
-        ffn_expansion_factor = (
-            3 if (cfg.model.gated_linear_unit is True and cfg.model.activation_func == F.silu) else 2
-        )
+        # GLU: h->2*ffn_h and ffn_h->h = 3 projections; non-GLU: h->ffn_h and ffn_h->h = 2 projections.
+        ffn_expansion_factor = 3 if cfg.model.gated_linear_unit is True else 2
+
+        experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
 
         if cfg.model.multi_latent_attention:
             """
@@ -460,48 +458,144 @@ def num_floating_point_operations(
             https://arxiv.org/abs/2305.10403
             https://arxiv.org/abs/2205.05198
             """
-            ## MLA
-            if not hasattr(cfg.model, "q_lora_rank") or cfg.model.q_lora_rank is None:
-                q_term = (
+            if experimental_attention_variant == "dsv4_hybrid":
+                # DeepSeek-V4 hybrid MLA uses sparse attention instead of the full
+                # core-attention terms used by DeepSeek-V2/V3 MLA. Projection costs
+                # are accounted here; sparse attention, compressor, and indexer
+                # costs are added below.
+                q_lora_rank = getattr(cfg.model, "q_lora_rank", None)
+                if q_lora_rank is None:
+                    raise ValueError("q_lora_rank must be set for dsv4_hybrid FLOPs calculation")
+
+                qk_head_dim = getattr(cfg.model, "qk_head_dim", 64)
+                qk_pos_emb_head_dim = getattr(cfg.model, "qk_pos_emb_head_dim", 0)
+                v_head_dim = getattr(cfg.model, "v_head_dim", 64)
+                o_lora_rank = getattr(cfg.model, "o_lora_rank", 0)
+                o_groups = getattr(cfg.model, "o_groups", 1)
+
+                q_term = q_lora_rank * (
                     cfg.model.hidden_size
-                    * cfg.model.num_attention_heads
-                    * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
+                    + cfg.model.num_attention_heads * (qk_head_dim + qk_pos_emb_head_dim)
+                    + 1  # q norm
                 )
-            else:
-                q_term = cfg.model.q_lora_rank * (
-                    cfg.model.hidden_size
-                    + cfg.model.num_attention_heads
-                    * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
-                    + 1
+                kv_term = cfg.model.hidden_size * v_head_dim + v_head_dim  # kv projection + kv norm
+                o_term = (
+                    cfg.model.num_attention_heads * v_head_dim * o_lora_rank
+                    + o_groups * o_lora_rank * cfg.model.hidden_size
                 )
-            self_attn_term = (
-                3
-                * 2  # fwd(1) + bwd(2) *FMA
-                * num_layers
-                * (
-                    ## q lora + rope + q norm
-                    q_term
-                    ## kv lora + rope + kv norm
-                    + getattr(cfg.model, "kv_lora_rank", 0)
-                    * (
-                        cfg.model.hidden_size
-                        + cfg.model.num_attention_heads
-                        * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "v_head_dim", 64))
-                        + 1
+                self_attn_term = 3 * 2 * num_layers * (q_term + kv_term + o_term)
+
+                compress_ratios = getattr(cfg.model, "csa_compress_ratios", None)
+                if compress_ratios is None:
+                    raise ValueError("csa_compress_ratios must be set for dsv4_hybrid FLOPs calculation")
+                if len(compress_ratios) != num_layers:
+                    raise ValueError(
+                        f"Invalid length of csa_compress_ratios: {len(compress_ratios)}, "
+                        f"expected {num_layers} "
+                        f"(num_layers={cfg.model.num_layers}, mtp_num_layers={mtp_num_layers})."
                     )
-                    + cfg.model.hidden_size * getattr(cfg.model, "qk_pos_emb_head_dim", 0)
-                    ## o proj
-                    + (cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64)) * cfg.model.hidden_size
-                    ## core attn
-                    + core_attn_seq_factor
-                    * (
-                        cfg.model.num_attention_heads
+
+                supported_compress_ratios = {0, 4, 128}
+                unsupported_compress_ratios = [
+                    ratio for ratio in compress_ratios if ratio not in supported_compress_ratios
+                ]
+                if unsupported_compress_ratios:
+                    raise ValueError(
+                        "csa_compress_ratios contains unsupported values: "
+                        f"{unsupported_compress_ratios}. Only 0, 4, and 128 are supported."
+                    )
+
+                n_layers_r0 = sum(1 for ratio in compress_ratios if ratio == 0)
+                n_layers_r4 = sum(1 for ratio in compress_ratios if ratio == 4)
+                n_layers_r128 = sum(1 for ratio in compress_ratios if ratio == 128)
+                window = getattr(cfg.model, "csa_window_size", 128)
+
+                sparse_attn_r0 = n_layers_r0 * cfg.model.num_attention_heads * window * v_head_dim * 2
+                avg_comp_128 = (core_attn_seq_factor // 128) / 2
+                sparse_attn_r128 = (
+                    n_layers_r128 * cfg.model.num_attention_heads * (window + avg_comp_128) * v_head_dim * 2
+                )
+
+                main_compressor_term = (
+                    n_layers_r4 * cfg.model.hidden_size * (2 * v_head_dim) * 2
+                    + n_layers_r128 * cfg.model.hidden_size * v_head_dim * 2
+                )
+
+                if n_layers_r4 > 0:
+                    idx_n_heads = getattr(cfg.model, "dsa_indexer_n_heads", None)
+                    idx_head_dim = getattr(cfg.model, "dsa_indexer_head_dim", None)
+                    idx_topk = getattr(cfg.model, "dsa_indexer_topk", None)
+                    if idx_n_heads is None:
+                        raise ValueError("dsa_indexer_n_heads must be set for dsv4_hybrid ratio==4 layers")
+                    if idx_head_dim is None:
+                        raise ValueError("dsa_indexer_head_dim must be set for dsv4_hybrid ratio==4 layers")
+                    if idx_topk is None:
+                        raise ValueError("dsa_indexer_topk must be set for dsv4_hybrid ratio==4 layers")
+
+                    effective_topk_4 = min(idx_topk, core_attn_seq_factor // 4)
+                    avg_comp_4 = effective_topk_4 * (1 - effective_topk_4 * 4 / (2 * core_attn_seq_factor))
+                    sparse_attn_r4 = (
+                        n_layers_r4 * cfg.model.num_attention_heads * (window + avg_comp_4) * v_head_dim * 2
+                    )
+                    indexer_term = (
+                        n_layers_r4 * cfg.model.hidden_size * (2 * idx_head_dim) * 2
+                        + n_layers_r4 * q_lora_rank * idx_n_heads * idx_head_dim
+                        + n_layers_r4 * cfg.model.hidden_size * idx_n_heads
+                        + n_layers_r4 * idx_n_heads * idx_head_dim * (core_attn_seq_factor // 4)
+                    )
+                else:
+                    sparse_attn_r4 = 0
+                    indexer_term = 0
+
+                sparse_attn_term = sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128
+                self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
+            else:
+                ## MLA
+                if not hasattr(cfg.model, "q_lora_rank") or cfg.model.q_lora_rank is None:
+                    q_term = (
+                        cfg.model.hidden_size
+                        * cfg.model.num_attention_heads
                         * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
                     )
-                    / 2
-                    + core_attn_seq_factor * cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64) / 2
+                else:
+                    q_term = cfg.model.q_lora_rank * (
+                        cfg.model.hidden_size
+                        + cfg.model.num_attention_heads
+                        * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
+                        + 1
+                    )
+                self_attn_term = (
+                    3
+                    * 2  # fwd(1) + bwd(2) *FMA
+                    * num_layers
+                    * (
+                        ## q lora + rope + q norm
+                        q_term
+                        ## kv lora + rope + kv norm
+                        + getattr(cfg.model, "kv_lora_rank", 0)
+                        * (
+                            cfg.model.hidden_size
+                            + cfg.model.num_attention_heads
+                            * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "v_head_dim", 64))
+                            + 1
+                        )
+                        + cfg.model.hidden_size * getattr(cfg.model, "qk_pos_emb_head_dim", 0)
+                        ## o proj
+                        + (cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64))
+                        * cfg.model.hidden_size
+                        ## core attn
+                        + core_attn_seq_factor
+                        * (
+                            cfg.model.num_attention_heads
+                            * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
+                        )
+                        / 2
+                        + core_attn_seq_factor
+                        * cfg.model.num_attention_heads
+                        * getattr(cfg.model, "v_head_dim", 64)
+                        / 2
+                    )
                 )
-            )
 
         else:
             ## MHA or GQA
@@ -522,7 +616,15 @@ def num_floating_point_operations(
                     effective_window = window_size[0] + window_size[1] + 1
                 else:
                     effective_window = window_size
-                swa_context = min(effective_window, effective_seq_length)
+                # Exact average causal SWA context:
+                # W * (W + 1) / 2 + (T - W) * W if W < T, else T * (T + 1) / 2.
+                # Both expressions are divided by T because the multiplication with T happens later.
+                if effective_window < effective_seq_length:
+                    swa_context = effective_window - effective_window * (effective_window - 1) / (
+                        2 * effective_seq_length
+                    )
+                else:
+                    swa_context = core_attn_seq_factor / 2
 
                 if window_attn_skip_freq is None:
                     num_swa_layers = num_layers
@@ -540,9 +642,8 @@ def num_floating_point_operations(
                     num_full_attn_layers = num_layers
 
                 # Full attention is quadratic in seq_len -> use core_attn_seq_factor.
-                # SWA core is bounded by window_size, so keep the averaged bound.
                 full_core = query_projection_size * core_attn_seq_factor / 2 * 2
-                swa_core = query_projection_size * swa_context / 2 * 2
+                swa_core = query_projection_size * swa_context * 2
 
                 self_attn_term = (
                     3
@@ -560,7 +661,6 @@ def num_floating_point_operations(
         # When experimental_attention_variant is "gated_delta_net", a fraction of the
         # layers use GDN instead of standard attention. Override self_attn_term with a
         # weighted sum of GDN and standard-attention per-layer costs.
-        experimental_attention_variant = getattr(cfg.model, "experimental_attention_variant", None)
         if experimental_attention_variant == "gated_delta_net":
             linear_attention_freq = cfg.model.linear_attention_freq
             if linear_attention_freq is None:

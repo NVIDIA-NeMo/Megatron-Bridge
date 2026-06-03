@@ -39,7 +39,7 @@ from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25Om
 @dataclass
 class Qwen25OmniModelProvider(GPTModelProvider):
     """
-    Base model provider for Qwen2.5 Omni Models.
+    Base model provider for Qwen2.5 Omni.
 
     Key differences from Qwen3OmniMoeModelProvider:
     - Dense LLM (Qwen2), not MoE
