@@ -22,7 +22,11 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import (
+    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _perf_precision,
+)
 from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -66,6 +70,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -98,6 +103,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -201,6 +207,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -235,6 +242,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -500,6 +508,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -536,6 +545,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = None
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -566,6 +576,8 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.model.recompute_modules = ["mlp"]
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 
@@ -608,7 +620,12 @@ def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
 # DeepSeek V3 pretrain — 64 GPU aliases (same config as 1024 GPU H100)
 # =============================================================================
 
-deepseek_v3_pretrain_64gpu_h100_bf16_config = deepseek_v3_pretrain_1024gpu_h100_bf16_config
+
+def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× H100, BF16 (1024-GPU layout with legacy-scaled GBS)."""
+    cfg = deepseek_v3_pretrain_1024gpu_h100_bf16_config()
+    cfg.train.global_batch_size = 1024
+    return cfg
 
 
 def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
@@ -638,6 +655,8 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
 
     _benchmark_common(cfg)
+    cfg.train.global_batch_size = 1024
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 

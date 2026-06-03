@@ -40,6 +40,11 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemotron_3_super_bf16_with_nvfp4_mixed
 
 
+def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
+    cfg.train.global_batch_size = global_batch_size
+    return cfg
+
+
 def _nemotron_3_super_precision(compute_dtype: str) -> MixedPrecisionConfig:
     """Return the precision config used by Nemotron 3 Super perf recipes."""
     if compute_dtype == "nvfp4":
@@ -642,7 +647,9 @@ def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-nemotronh_56b_pretrain_256gpu_b200_fp8cs_config = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config
+def nemotronh_56b_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
+    """NemotronH 56B pretrain: 256× B200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(nemotronh_56b_pretrain_64gpu_b200_fp8cs_config(), 768)
 
 
 def nemotronh_56b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
@@ -652,4 +659,6 @@ def nemotronh_56b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
-nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config = nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config
+def nemotronh_56b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """NemotronH 56B pretrain: 256× GB300, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(nemotronh_56b_pretrain_64gpu_gb300_fp8cs_config(), 768)

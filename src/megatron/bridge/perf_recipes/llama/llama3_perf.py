@@ -28,7 +28,11 @@ Precision short-names:
     nvfp4  = NVFP4
 """
 
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import (
+    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _perf_precision,
+)
 from megatron.bridge.recipes.llama.llama3 import (
     llama3_8b_pretrain_config,
     llama3_8b_sft_config,
@@ -44,6 +48,11 @@ from megatron.bridge.training.comm_overlap import (
     userbuffers_fp8_h100_h8192_tp4_mbs1_seqlen8192,
 )
 from megatron.bridge.training.config import ConfigContainer
+
+
+def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
+    cfg.train.global_batch_size = global_batch_size
+    return cfg
 
 
 # =============================================================================
@@ -1035,6 +1044,7 @@ def llama3_70b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1143,6 +1153,7 @@ def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1166,6 +1177,7 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -2074,22 +2086,77 @@ def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
 # Llama3 8B pretrain — GPU-count aliases (same config, different scale)
 # =============================================================================
 
-llama3_8b_pretrain_64gpu_h100_bf16_config = llama3_8b_pretrain_8gpu_h100_bf16_config
-llama3_8b_pretrain_64gpu_h100_fp8cs_config = llama3_8b_pretrain_8gpu_h100_fp8cs_config
-llama3_8b_pretrain_64gpu_b200_bf16_config = llama3_8b_pretrain_8gpu_b200_bf16_config
-llama3_8b_pretrain_64gpu_b200_fp8cs_config = llama3_8b_pretrain_8gpu_b200_fp8cs_config
-llama3_8b_pretrain_32gpu_gb200_bf16_config = llama3_8b_pretrain_8gpu_gb200_bf16_config
-llama3_8b_pretrain_32gpu_gb200_fp8cs_config = llama3_8b_pretrain_8gpu_gb200_fp8cs_config
-llama3_8b_pretrain_32gpu_gb300_bf16_config = llama3_8b_pretrain_8gpu_gb300_bf16_config
-llama3_8b_pretrain_32gpu_gb300_fp8cs_config = llama3_8b_pretrain_8gpu_gb300_fp8cs_config
-llama3_8b_pretrain_32gpu_gb300_fp8mx_config = llama3_8b_pretrain_8gpu_gb300_fp8mx_config
-llama3_8b_pretrain_32gpu_gb300_nvfp4_config = llama3_8b_pretrain_8gpu_gb300_nvfp4_config
+
+def llama3_8b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 64× H100, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_h100_bf16_config(), 1024)
+
+
+def llama3_8b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 64× H100, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_h100_fp8cs_config(), 1024)
+
+
+def llama3_8b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 64× B200, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_b200_bf16_config(), 1024)
+
+
+def llama3_8b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 64× B200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_b200_fp8cs_config(), 1024)
+
+
+def llama3_8b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB200, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb200_bf16_config(), 512)
+
+
+def llama3_8b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb200_fp8cs_config(), 512)
+
+
+def llama3_8b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_bf16_config(), 512)
+
+
+def llama3_8b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_fp8cs_config(), 512)
+
+
+def llama3_8b_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB300, MXFP8, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_fp8mx_config(), 512)
+
+
+def llama3_8b_pretrain_32gpu_gb300_nvfp4_config() -> ConfigContainer:
+    """Llama3 8B pretrain: 32× GB300, NVFP4, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_nvfp4_config(), 512)
+
 
 # =============================================================================
 # Llama3 70B pretrain — 32 GPU aliases (same config as 64 GPU)
 # =============================================================================
 
-llama3_70b_pretrain_32gpu_gb200_bf16_config = llama3_70b_pretrain_64gpu_gb200_bf16_config
-llama3_70b_pretrain_32gpu_gb200_fp8cs_config = llama3_70b_pretrain_64gpu_gb200_fp8cs_config
-llama3_70b_pretrain_32gpu_gb300_bf16_config = llama3_70b_pretrain_64gpu_gb300_bf16_config
-llama3_70b_pretrain_32gpu_gb300_fp8cs_config = llama3_70b_pretrain_64gpu_gb300_fp8cs_config
+
+def llama3_70b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
+    """Llama3 70B pretrain: 32× GB200, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb200_bf16_config(), 128)
+
+
+def llama3_70b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
+    """Llama3 70B pretrain: 32× GB200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb200_fp8cs_config(), 128)
+
+
+def llama3_70b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
+    """Llama3 70B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb300_bf16_config(), 128)
+
+
+def llama3_70b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """Llama3 70B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb300_fp8cs_config(), 128)

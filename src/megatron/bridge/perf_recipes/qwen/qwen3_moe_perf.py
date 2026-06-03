@@ -22,7 +22,11 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import (
+    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _perf_precision,
+)
 from megatron.bridge.recipes.qwen.qwen3_moe import (
     qwen3_30b_a3b_pretrain_config,
     qwen3_235b_a22b_pretrain_config,
@@ -30,6 +34,11 @@ from megatron.bridge.recipes.qwen.qwen3_moe import (
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+
+
+def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
+    cfg.train.global_batch_size = global_batch_size
+    return cfg
 
 
 # =============================================================================
@@ -1297,6 +1306,7 @@ def qwen3_235b_a22b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1403,6 +1413,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1440,6 +1451,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1548,14 +1560,45 @@ def qwen3_235b_a22b_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
 # Qwen3 30B-A3B pretrain — GPU-count aliases (same config, different scale)
 # =============================================================================
 
-qwen3_30b_a3b_pretrain_64gpu_h100_bf16_config = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
-qwen3_30b_a3b_pretrain_64gpu_h100_fp8cs_config = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config
-qwen3_30b_a3b_pretrain_64gpu_b200_bf16_config = qwen3_30b_a3b_pretrain_8gpu_b200_bf16_config
-qwen3_30b_a3b_pretrain_64gpu_b200_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config
-qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config
-qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config
-qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config = qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config
-qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config = qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config
+
+def qwen3_30b_a3b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 64× H100, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config(), 4096)
+
+
+def qwen3_30b_a3b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 64× H100, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config(), 4096)
+
+
+def qwen3_30b_a3b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 64× B200, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_b200_bf16_config(), 4096)
+
+
+def qwen3_30b_a3b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 64× B200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config(), 4096)
+
+
+def qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32× GB200, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config(), 2048)
+
+
+def qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32× GB200, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config(), 2048)
+
+
+def qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config(), 2048)
+
+
+def qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config(), 2048)
 
 
 # =============================================================================
@@ -1594,6 +1637,7 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_hybridep_num_sms = 16
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -1601,6 +1645,8 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB300, MXFP8 (same layout as BF16)."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 
@@ -1620,6 +1666,8 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB200, MXFP8 (same layout as BF16)."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 

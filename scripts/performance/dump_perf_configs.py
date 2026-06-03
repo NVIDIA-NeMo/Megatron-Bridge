@@ -130,9 +130,7 @@ COMBOS = [
     ("kimi", "kimi_k2", "pretrain", 1024, "h100", "bf16"),
     ("kimi", "kimi_k2", "pretrain", 1024, "h100", "fp8_cs"),
     # NemotronH
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "bf16"),
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
-    ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "bf16"),
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "fp8_cs"),
     # GPT-OSS 120B
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "bf16"),

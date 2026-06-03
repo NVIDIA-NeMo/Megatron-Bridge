@@ -22,7 +22,11 @@ Naming convention::
     {model}_{size}_{task}_{num_gpus}gpu_{gpu}_{precision}_config
 """
 
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import (
+    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _perf_precision,
+)
 from megatron.bridge.recipes.llama.llama3 import llama31_405b_pretrain_config
 from megatron.bridge.training.comm_overlap import (
     userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
@@ -31,6 +35,11 @@ from megatron.bridge.training.comm_overlap import (
     userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192,
 )
 from megatron.bridge.training.config import ConfigContainer
+
+
+def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
+    cfg.train.global_batch_size = global_batch_size
+    return cfg
 
 
 # =============================================================================
@@ -558,6 +567,7 @@ def llama31_405b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -637,6 +647,7 @@ def llama31_405b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -661,6 +672,7 @@ def llama31_405b_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -740,6 +752,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -764,6 +777,7 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
     _benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -771,7 +785,16 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 # Llama3.1 405B pretrain — GPU-count aliases (same config, different scale)
 # =============================================================================
 
-llama31_405b_pretrain_512gpu_h100_bf16_config = llama31_405b_pretrain_1024gpu_h100_bf16_config
-llama31_405b_pretrain_512gpu_h100_fp8cs_config = llama31_405b_pretrain_1024gpu_h100_fp8cs_config
+
+def llama31_405b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 512× H100, BF16, legacy-scaled GBS."""
+    return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_bf16_config(), 768)
+
+
+def llama31_405b_pretrain_512gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Llama3.1 405B pretrain: 512× H100, FP8 current-scaling, legacy-scaled GBS."""
+    return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_fp8cs_config(), 768)
+
+
 llama31_405b_pretrain_256gpu_b200_bf16_config = llama31_405b_pretrain_256gpu_gb200_bf16_config
 llama31_405b_pretrain_256gpu_b200_fp8cs_config = llama31_405b_pretrain_256gpu_gb200_fp8cs_config
