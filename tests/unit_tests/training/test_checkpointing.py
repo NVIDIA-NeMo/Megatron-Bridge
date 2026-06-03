@@ -16,6 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, mock_open, patch
 
 import pytest
@@ -49,6 +50,7 @@ from megatron.bridge.training.checkpointing import (
     load_checkpoint,
     read_metadata,
     save_checkpoint,
+    _sync_hybrid_optimizer_param_copies_from_model,
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
@@ -729,6 +731,39 @@ def load_checkpoint_fixtures():
 
 class TestLoadCheckpoint:
     """Test checkpoint loading functionality."""
+
+    @pytest.mark.unit
+    def test_sync_hybrid_optimizer_param_copies_from_model(self):
+        """Hybrid CPU-offload optimizer copies are refreshed from loaded model params."""
+        model_param = torch.tensor([10.0, 20.0, 30.0, 40.0], dtype=torch.bfloat16)
+        shard_main_param = torch.full((2,), -1.0, dtype=torch.float32)
+        cpu_clone = torch.full((2,), -2.0, dtype=torch.float32)
+        hybrid_optimizer = SimpleNamespace(
+            gpu_params_map_cpu_copy={shard_main_param: cpu_clone},
+            update_fp32_param_by_new_param=Mock(),
+        )
+        distributed_optimizer = SimpleNamespace(
+            optimizer=hybrid_optimizer,
+            model_float16_groups=[[model_param]],
+            shard_fp32_from_float16_groups=[[shard_main_param]],
+        )
+        distributed_optimizer._get_model_param_range_map = Mock(
+            return_value={"param": SimpleNamespace(start=1, end=3)}
+        )
+
+        applied = _sync_hybrid_optimizer_param_copies_from_model(distributed_optimizer)
+
+        assert applied is True
+        torch.testing.assert_close(shard_main_param, torch.tensor([20.0, 30.0]))
+        torch.testing.assert_close(cpu_clone, torch.tensor([20.0, 30.0]))
+        hybrid_optimizer.update_fp32_param_by_new_param.assert_called_once_with()
+
+    @pytest.mark.unit
+    def test_sync_hybrid_optimizer_param_copies_ignores_non_hybrid_optimizer(self):
+        """Non-hybrid optimizers are left to reload_model_params()."""
+        optimizer = SimpleNamespace(optimizer=SimpleNamespace())
+
+        assert _sync_hybrid_optimizer_param_copies_from_model(optimizer) is False
 
     @patch("megatron.bridge.training.checkpointing._load_base_checkpoint")
     @patch("megatron.bridge.training.checkpointing.read_train_state")

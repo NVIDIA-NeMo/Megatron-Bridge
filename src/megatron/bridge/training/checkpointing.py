@@ -141,6 +141,72 @@ _DIRECT_ITERATION_DIR_SENTINEL = -2
 # ============================================================================
 
 
+def _sync_hybrid_optimizer_param_copies_from_model(optimizer: MegatronOptimizer) -> bool:
+    """Refresh HybridDeviceOptimizer copies after model-only checkpoint loads.
+
+    MCore's hybrid CPU-offload optimizer keeps CPU parameter clones in addition
+    to the distributed optimizer's FP32 shards. When Bridge loads finetune
+    weights after optimizer construction, those copies can still contain the
+    random initialization unless they are explicitly synchronized from the
+    loaded model parameters.
+    """
+
+    def _iter_optimizers(opt):
+        chained_optimizers = getattr(opt, "chained_optimizers", None)
+        if chained_optimizers is not None:
+            yield from chained_optimizers
+        else:
+            yield opt
+
+    def _sync_distributed_optimizer(distributed_optimizer) -> bool:
+        hybrid_optimizer = getattr(distributed_optimizer, "optimizer", None)
+        has_distributed_param_groups = all(
+            hasattr(distributed_optimizer, attr)
+            for attr in (
+                "model_float16_groups",
+                "shard_fp32_from_float16_groups",
+                "_get_model_param_range_map",
+            )
+        )
+        has_hybrid_param_copies = hasattr(hybrid_optimizer, "gpu_params_map_cpu_copy") or hasattr(
+            hybrid_optimizer, "update_fp32_param_by_new_param"
+        )
+        if not has_distributed_param_groups or not has_hybrid_param_copies:
+            return False
+
+        with torch.no_grad():
+            for model_group, shard_main_group in zip(
+                distributed_optimizer.model_float16_groups,
+                distributed_optimizer.shard_fp32_from_float16_groups,
+            ):
+                for model_param, shard_main_param in zip(model_group, shard_main_group):
+                    if shard_main_param is None:
+                        continue
+                    param_range = distributed_optimizer._get_model_param_range_map(model_param)["param"]
+                    shard_model_param = model_param.view(-1)[param_range.start : param_range.end]
+                    shard_main_param.data.copy_(shard_model_param)
+
+            for gpu_param, cpu_clone in getattr(hybrid_optimizer, "gpu_params_map_cpu_copy", {}).items():
+                cpu_clone.data.copy_(gpu_param.data)
+
+            if hasattr(hybrid_optimizer, "update_fp32_param_by_new_param"):
+                hybrid_optimizer.update_fp32_param_by_new_param()
+
+        return True
+
+    applied = False
+    for opt in _iter_optimizers(optimizer):
+        applied |= _sync_distributed_optimizer(opt)
+
+    if applied:
+        print_rank_0(
+            "Synced HybridDeviceOptimizer parameter copies from loaded model weights "
+            "(distributed FP32 shards and CPU offload clones)."
+        )
+
+    return applied
+
+
 def set_checkpoint_version(value: float) -> None:
     """Set the global checkpoint version number.
 
@@ -2571,6 +2637,8 @@ def _load_checkpoint_from_path(
                 optimizer.reload_model_params(state_dict=state_dict)
             else:
                 optimizer.reload_model_params()
+            if getattr(cfg.optimizer, "optimizer_cpu_offload", False):
+                _sync_hybrid_optimizer_param_copies_from_model(optimizer)
 
     # Load rerun state
     if not ignore_rerun_state:
