@@ -23,7 +23,6 @@ from utils.overrides import set_cli_overrides, set_user_overrides
 
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -140,31 +139,10 @@ def main():
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
 
-    # Post-recipe parallelism-dependent overrides, ported from the legacy
-    # scripts/performance/utils/overrides.py::set_post_overrides. The flat recipes
-    # encode their own parallelism/GBS, so the legacy GBS auto-scaling block is
-    # intentionally omitted here — only the perf flags that the legacy code path
-    # was setting automatically are reapplied.
+    # Preserve legacy BF16 Adam precision-aware behavior. Parallelism-dependent
+    # optimizer-step overlap is encoded directly in the flat perf recipes.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
-
-    _tp = recipe.model.tensor_model_parallel_size
-    _pp = recipe.model.pipeline_model_parallel_size
-    _cp = recipe.model.context_parallel_size
-    _vp = recipe.model.virtual_pipeline_model_parallel_size or 1
-    _dp = int(args.num_gpus / (_tp * _pp * _cp))
-    # overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx/nvfp4,
-    # and is incompatible with dist_muon. Keep the legacy guards.
-    if (
-        _dp > 1
-        and _pp > 1
-        and _vp > 1
-        and args.compute_dtype not in ("fp8_mx", "nvfp4")
-        and recipe.optimizer.optimizer != "dist_muon"
-    ):
-        recipe.optimizer.overlap_param_gather_with_optimizer_step = True
-        if hasattr(recipe, "comm_overlap") and isinstance(recipe.comm_overlap, CommOverlapConfig):
-            recipe.comm_overlap.overlap_param_gather_with_optimizer_step = True
 
     # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
     if getattr(recipe.ddp, "nccl_ub", False):

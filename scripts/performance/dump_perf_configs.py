@@ -216,6 +216,13 @@ def _canonicalize_dump_only_paths(cfg) -> None:
         cfg.checkpoint.load = _CANONICAL_DUMP_CHECKPOINT_LOAD
 
 
+def _apply_flat_recipe_runtime_overrides(cfg, precision: str):
+    """Apply runtime overrides that still live outside flat perf recipe functions."""
+    if precision == "bf16" and cfg.optimizer.optimizer == "adam":
+        cfg.optimizer.use_precision_aware_optimizer = True
+    return cfg
+
+
 def load_old_recipe(
     family: str,
     recipe: str,
@@ -227,14 +234,25 @@ def load_old_recipe(
 ):
     """Load recipe using the OLD scripts/performance/configs/ path (main branch)."""
     sys.path.insert(0, str(Path(__file__).parent))
+    from utils.overrides import set_post_overrides
     from utils.utils import get_perf_optimized_recipe
 
-    return get_perf_optimized_recipe(
+    cfg = get_perf_optimized_recipe(
         model_family_name=family,
         model_recipe_name=recipe,
         train_task=task,
         gpu=gpu,
         compute_dtype=precision,
+        config_variant=config_variant,
+    )
+    return set_post_overrides(
+        cfg,
+        family,
+        recipe,
+        gpu,
+        num_gpus,
+        precision,
+        task,
         config_variant=config_variant,
     )
 
@@ -263,7 +281,7 @@ def load_new_recipe(
     fn = getattr(mod, fn_name, None)
     if fn is None:
         raise ValueError(f"Recipe function {fn_name!r} not found in megatron.bridge.perf_recipes.{family}")
-    return fn()
+    return _apply_flat_recipe_runtime_overrides(fn(), precision)
 
 
 def dump_configs(mode: str, out_dir: Path, combos: list[tuple[str, str, str, int, str, str]], config_variant: str):
