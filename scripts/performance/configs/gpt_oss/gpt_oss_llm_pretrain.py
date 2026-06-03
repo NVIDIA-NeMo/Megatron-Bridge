@@ -422,6 +422,11 @@ def gpt_oss_120b_pretrain_config_gb300(
     if is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
+    if precision == "fp8_mx":
+        cfg.model.fine_grained_activation_offloading = True
+        cfg.model.offload_modules = ["core_attn", "attn_proj", "mlp_norm"]
+        cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+
     return cfg
 
 
