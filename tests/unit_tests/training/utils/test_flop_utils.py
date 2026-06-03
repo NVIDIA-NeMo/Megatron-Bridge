@@ -80,9 +80,17 @@ class MockModelConfig:
     qk_head_dim: int = 64
     qk_pos_emb_head_dim: int = 0
     v_head_dim: int = 64
+    o_lora_rank: int = 0
+    o_groups: int = 1
     # Sliding window attention settings
     window_size: tuple | list | int | None = None
     window_attn_skip_freq: int | list | None = None
+    # DeepSeek-V4 hybrid attention settings
+    csa_compress_ratios: list[int] | None = None
+    csa_window_size: int = 128
+    dsa_indexer_n_heads: int | None = None
+    dsa_indexer_head_dim: int | None = None
+    dsa_indexer_topk: int | None = None
     # GDN (Gated DeltaNet) settings
     experimental_attention_variant: str | None = None
     linear_attention_freq: int | list | None = None
@@ -628,6 +636,103 @@ class TestGDNLayerFlops:
         flops_freq4 = num_floating_point_operations(cfg_freq4, batch_size=batch_size)
         flops_freq8 = num_floating_point_operations(cfg_freq8, batch_size=batch_size)
         assert flops_freq4 != flops_freq8, "Different GDN ratios should produce different FLOPs"
+
+
+class TestDeepSeekV4HybridFlops:
+    """Tests for DeepSeek-V4 hybrid attention FLOPs in the transformer path."""
+
+    def test_dsv4_hybrid_exact_flops(self):
+        """DSv4 hybrid FLOPs include sparse attention, compressor, and indexer terms."""
+        batch_size = 1
+        seq_len = 512
+        hidden_size = 128
+        num_layers = 3
+        num_heads = 4
+        v_head_dim = 32
+        q_lora_rank = 16
+        qk_head_dim = 24
+        qk_pos_emb_head_dim = 8
+        o_lora_rank = 16
+        o_groups = 2
+        window = 64
+        idx_n_heads = 2
+        idx_head_dim = 8
+        idx_topk = 32
+        ffn_hidden_size = 256
+        vocab_size = 1024
+
+        model_cfg = MockModelConfig(
+            num_layers=num_layers,
+            hidden_size=hidden_size,
+            seq_length=seq_len,
+            ffn_hidden_size=ffn_hidden_size,
+            num_attention_heads=num_heads,
+            vocab_size=vocab_size,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=q_lora_rank,
+            qk_head_dim=qk_head_dim,
+            qk_pos_emb_head_dim=qk_pos_emb_head_dim,
+            v_head_dim=v_head_dim,
+            o_lora_rank=o_lora_rank,
+            o_groups=o_groups,
+            csa_compress_ratios=[0, 4, 128],
+            csa_window_size=window,
+            dsa_indexer_n_heads=idx_n_heads,
+            dsa_indexer_head_dim=idx_head_dim,
+            dsa_indexer_topk=idx_topk,
+            gated_linear_unit=False,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
+        kv_term = hidden_size * v_head_dim + v_head_dim
+        o_term = num_heads * v_head_dim * o_lora_rank + o_groups * o_lora_rank * hidden_size
+        projection_term = 3 * 2 * num_layers * (q_term + kv_term + o_term)
+
+        sparse_attn_r0 = num_heads * window * v_head_dim * 2
+        sparse_attn_r128 = num_heads * (window + (seq_len // 128) / 2) * v_head_dim * 2
+        effective_topk = min(idx_topk, seq_len // 4)
+        avg_comp_4 = effective_topk * (1 - effective_topk * 4 / (2 * seq_len))
+        sparse_attn_r4 = num_heads * (window + avg_comp_4) * v_head_dim * 2
+        main_compressor_term = hidden_size * (2 * v_head_dim) * 2 + hidden_size * v_head_dim * 2
+        indexer_term = (
+            hidden_size * (2 * idx_head_dim) * 2
+            + q_lora_rank * idx_n_heads * idx_head_dim
+            + hidden_size * idx_n_heads
+            + idx_n_heads * idx_head_dim * (seq_len // 4)
+        )
+        dsv4_extra_term = (
+            3 * 2 * (sparse_attn_r0 + sparse_attn_r4 + sparse_attn_r128 + main_compressor_term + indexer_term)
+        )
+        self_attention_term = projection_term + dsv4_extra_term
+
+        mlp_term = 3 * 2 * hidden_size * (ffn_hidden_size * 2 * num_layers)
+        logit_term = 3 * 2 * hidden_size * vocab_size
+        expected_flops = batch_size * seq_len * (mlp_term + self_attention_term + logit_term)
+
+        actual_flops = num_floating_point_operations(cfg, batch_size=batch_size)
+
+        assert actual_flops == expected_flops
+
+    def test_dsv4_hybrid_validates_compress_ratio_length(self):
+        """CSA compress-ratio count must match decoder plus MTP layer count."""
+        model_cfg = MockModelConfig(
+            num_layers=2,
+            mtp_num_layers=1,
+            multi_latent_attention=True,
+            experimental_attention_variant="dsv4_hybrid",
+            q_lora_rank=16,
+            o_lora_rank=16,
+            csa_compress_ratios=[0, 4],
+            dsa_indexer_n_heads=2,
+            dsa_indexer_head_dim=8,
+            dsa_indexer_topk=32,
+        )
+        cfg = MockConfigContainer(model=model_cfg)
+
+        with pytest.raises(ValueError, match="expected num_layers \\+ mtp_num_layers"):
+            num_floating_point_operations(cfg, batch_size=1)
 
 
 class TestHybridMtpPatternParsing:
