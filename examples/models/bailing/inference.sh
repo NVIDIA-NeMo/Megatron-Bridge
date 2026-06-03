@@ -15,28 +15,43 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
+COORDINATOR_HOST=${COORDINATOR_HOST:-127.0.0.1}
+MAX_NEW_TOKENS=${MAX_NEW_TOKENS:-64}
+PROMPT=${PROMPT:-"Hello, how are you?"}
+MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/Ling-flash-2.0/iter_0000000}
+HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/Ling-flash-2.0-hf-export}
 
 # Inference with Hugging Face checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
     --hf_model_path inclusionAI/Ling-flash-2.0 \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --ep 4 \
+    --prompt "$PROMPT" \
+    --max_new_tokens "$MAX_NEW_TOKENS" \
+    --tp 1 --ep 8 \
+    --use-coordinator \
+    --coordinator-host "${COORDINATOR_HOST}" \
     --trust-remote-code
 
 # Inference with imported Megatron checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path inclusionAI/Ling-flash-2.0 \
-    --megatron_model_path ${WORKSPACE}/models/Ling-flash-2.0/iter_0000000 \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --ep 4 \
-    --trust-remote-code
+if [ -d "$MEGATRON_MODEL_PATH" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
+        --hf_model_path inclusionAI/Ling-flash-2.0 \
+        --megatron_model_path "$MEGATRON_MODEL_PATH" \
+        --prompt "$PROMPT" \
+        --max_new_tokens "$MAX_NEW_TOKENS" \
+        --tp 1 --ep 8 \
+        --use-coordinator \
+        --coordinator-host "${COORDINATOR_HOST}" \
+        --trust-remote-code
+fi
 
 # Inference with exported HF checkpoints
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_text.py \
-    --hf_model_path ${WORKSPACE}/models/Ling-flash-2.0-hf-export \
-    --prompt "Hello, how are you?" \
-    --max_new_tokens 64 \
-    --tp 2 --ep 4 \
-    --trust-remote-code
+if [ -d "$HF_EXPORT_PATH" ]; then
+    uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
+        --hf_model_path "$HF_EXPORT_PATH" \
+        --prompt "$PROMPT" \
+        --max_new_tokens "$MAX_NEW_TOKENS" \
+        --tp 1 --ep 8 \
+        --use-coordinator \
+        --coordinator-host "${COORDINATOR_HOST}" \
+        --trust-remote-code
+fi

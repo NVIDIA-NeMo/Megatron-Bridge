@@ -22,11 +22,17 @@ VIDEO_URL="https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen3-Omni/cookbook/a
 # VIDEO_PATH=${VIDEO_PATH:-/path/to/video.mp4}
 PROMPT="What was the first sentence the boy said when he met the girl?"
 
-# Requires: uv pip install qwen-omni-utils[decord]
+# qwen-omni-utils is needed for video/audio preprocessing. Keep it as a uv runtime dependency
+# for this example instead of making it a required Megatron Bridge dependency.
 # Requires ffmpeg for audio: uv pip install imageio-ffmpeg && ln -sf $(uv run python -c "import imageio_ffmpeg; print(imageio_ffmpeg.get_ffmpeg_exe())") /usr/local/bin/ffmpeg
+UV_RUN_ARGS=(uv run --no-sync)
+# Set QWEN_OMNI_INSTALL_DEPS=0 when the package is already available in the environment.
+if [[ "${QWEN_OMNI_INSTALL_DEPS:-1}" == "1" ]]; then
+    UV_RUN_ARGS+=(--with "qwen-omni-utils[decord]")
+fi
 
 # Inference with Hugging Face checkpoints (video + audio)
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+"${UV_RUN_ARGS[@]}" python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_to_megatron_generate_omni_lm.py \
     --hf_model_path Qwen/${MODEL_NAME} \
     --video_url "${VIDEO_URL}" \
@@ -37,7 +43,7 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     --trust_remote_code
 
 # Inference with imported Megatron checkpoint (video + audio)
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+"${UV_RUN_ARGS[@]}" python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_to_megatron_generate_omni_lm.py \
     --hf_model_path Qwen/${MODEL_NAME} \
     --megatron_model_path ${WORKSPACE}/models/${MODEL_NAME}/iter_0000000 \
@@ -49,7 +55,7 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     --trust_remote_code
 
 # Inference with exported HF checkpoint
-uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+"${UV_RUN_ARGS[@]}" python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_to_megatron_generate_omni_lm.py \
     --hf_model_path ${WORKSPACE}/models/${MODEL_NAME}-hf-export \
     --video_url "${VIDEO_URL}" \
