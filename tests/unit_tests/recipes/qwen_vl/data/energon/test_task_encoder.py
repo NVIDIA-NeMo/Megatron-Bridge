@@ -16,7 +16,7 @@ import io
 import json
 import pickle
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -434,11 +434,40 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
         encoded = enc.encode_sample(sample)
         self.assertIsInstance(encoded, QwenVLTaskSample)
 
+    def test_max_visual_tokens_skip_when_exceeded(self):
+        self.image_processor.return_value = {"image_grid_thw": torch.tensor([[1, 28, 28]])}
+        enc = self._make_encoder(max_visual_tokens=100)
+        sample = self._make_sample(n_images=1)
+
+        with self.assertRaises(SkipSample):
+            enc.encode_sample(sample)
+
     def test_small_seq_len_defers_to_collate_and_training_padding(self):
         enc = self._make_encoder(max_padding_length=50, max_visual_tokens=None)
         sample = self._make_sample(n_images=1)
         encoded = enc.encode_sample(sample)
         self.assertIsInstance(encoded, QwenVLTaskSample)
+
+    def test_batch_passes_strict_assistant_matching_to_qwen_collate(self):
+        enc = self._make_encoder(max_visual_tokens=None)
+        sample = QwenVLTaskSample(
+            __key__="key",
+            __subflavors__={},
+            example={"conversation": [{"role": "user", "content": "Hi"}]},
+        )
+        collated = {
+            "input_ids": torch.tensor([[1, 2]]),
+            "attention_mask": torch.tensor([[1, 1]]),
+            "position_ids": torch.tensor([[0, 1]]),
+            "labels": torch.tensor([[2, -100]]),
+            "loss_mask": torch.tensor([[1.0, 0.0]]),
+            "visual_inputs": Qwen2_5_VLVisualInputs(),
+        }
+
+        with patch.object(task_encoder_module, "qwen2_5_collate_fn", return_value=collated) as collate:
+            enc.batch([sample])
+
+        self.assertTrue(collate.call_args.kwargs["require_assistant_matches"])
 
 
 class TestProcessVisionVideoBranch(unittest.TestCase):

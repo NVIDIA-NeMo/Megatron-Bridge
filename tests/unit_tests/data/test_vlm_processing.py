@@ -25,6 +25,7 @@ from megatron.bridge.data.vlm_processing import (
     apply_assistant_labels_to_batch,
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
+    collect_media_from_conversation,
     convert_media_placeholders_to_content_parts,
     gather_assistant_text_segments,
     normalize_energon_vlm_sample,
@@ -98,6 +99,25 @@ def test_build_assistant_loss_mask_uses_current_search_variants_and_skipped_toke
     assert mask.tolist() == [0.0, 0.0, 1.0, 0.0, 0.0]
 
 
+def test_build_assistant_loss_mask_require_matches_raises_for_missing_answer():
+    example = {
+        "conversation": [
+            {"role": "user", "content": [{"type": "text", "text": "question"}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "missing"}]},
+        ]
+    }
+    input_ids = torch.tensor([1, 2, 3, 4, 99])
+
+    with pytest.raises(AssertionError, match="Not found valid answer"):
+        build_assistant_loss_mask(
+            example,
+            input_ids,
+            _Processor(),
+            require_matches=True,
+            warn_on_all_masked=False,
+        )
+
+
 def test_build_shifted_labels_and_loss_mask_aligns_next_token_labels():
     input_ids = torch.tensor([1, 2, 3, 4, 5])
     assistant_mask = torch.tensor([0.0, 0.0, 1.0, 1.0, 0.0])
@@ -127,6 +147,29 @@ def test_apply_assistant_labels_to_batch_mutates_batch_with_shared_masking():
     assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, IGNORE_INDEX, IGNORE_INDEX]]
 
 
+def test_apply_assistant_labels_to_batch_unmask_last_token_affects_shifted_loss_mask():
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+    batch = {"input_ids": torch.tensor([[1, 2, 3, 4, 5]])}
+
+    apply_assistant_labels_to_batch(
+        batch,
+        examples,
+        _Processor(),
+        skipped_tokens=torch.tensor([]),
+        unmask_last_token=True,
+    )
+
+    assert batch["loss_mask"].tolist() == [[0.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, 5, IGNORE_INDEX]]
+
+
 def test_convert_media_placeholders_to_content_parts_preserves_text_order():
     conversation = [{"role": "user", "content": "before <image> between <video> after"}]
 
@@ -144,6 +187,26 @@ def test_convert_media_placeholders_to_content_parts_preserves_text_order():
             ],
         }
     ]
+
+
+def test_collect_media_from_conversation_handles_inline_image_and_video_payloads():
+    image = object()
+    video = object()
+    conversation = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image},
+                {"type": "text", "text": "watch"},
+                {"type": "video", "video": video},
+            ],
+        }
+    ]
+
+    images, videos = collect_media_from_conversation(conversation)
+
+    assert images == [image]
+    assert videos == [video]
 
 
 def test_normalize_energon_vlm_sample_decodes_chatml_and_converts_images():
@@ -214,3 +277,33 @@ def test_hf_processor_vlm_data_processor_encodes_one_sample_and_collects_visual_
     templated_conversation = processor.template_inputs[0][0]
     assert templated_conversation[0]["content"][1] == {"type": "image"}
     assert processor.processor_inputs[0]["images"] == [image]
+
+
+def test_hf_processor_vlm_data_processor_truncates_partial_image_blocks_and_visual_tensors():
+    class _ImageBlockProcessor(_Processor):
+        def __call__(self, **kwargs):
+            self.processor_inputs.append(kwargs)
+            return {
+                "input_ids": torch.tensor([[1, 10, 10, 3, 4]]),
+                "pixel_values": torch.ones(1, 3, 4, 4),
+            }
+
+    processor = _ImageBlockProcessor()
+    data_processor = HFProcessorVLMDataProcessor(
+        processor,
+        seq_length=2,
+        visual_keys=("pixel_values",),
+    )
+    conversation = [
+        {"role": "user", "content": "describe <image>"},
+        {"role": "assistant", "content": "answer"},
+    ]
+    image = object()
+    normalized = normalize_hf_vlm_example({"conversation": conversation, "image": image})
+
+    encoded = data_processor.encode_normalized(normalized)
+
+    assert encoded.input_ids.tolist() == [1, processor.tokenizer.pad_token_id]
+    assert encoded.labels.tolist() == [IGNORE_INDEX, IGNORE_INDEX]
+    assert encoded.loss_mask.tolist() == [0.0, 0.0]
+    assert encoded.visual_tensors == {}

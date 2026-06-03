@@ -48,6 +48,8 @@ def _make_processor(
 
     processor = MagicMock()
     processor.tokenizer = tokenizer
+    processor.image_token_id = 10
+    processor.apply_chat_template.return_value = apply_chat_template_return
 
     if input_ids is None:
         input_ids = torch.tensor([[10, 11, 12, 13]])
@@ -119,6 +121,7 @@ class TestHFTaskEncoderEncodeSample(unittest.TestCase):
 
         encoded = encoder.encode_sample(sample)
         self.assertIsInstance(encoded, HFEnergonSample)
+        self.assertIsNotNone(encoded.encoded)
         self.assertEqual(
             encoded.example["conversation"],
             [
@@ -151,6 +154,8 @@ class TestHFTaskEncoderEncodeSample(unittest.TestCase):
         self.assertEqual(user_content[0]["type"], "text")
         self.assertEqual(user_content[1]["type"], "image")
         self.assertIn("image", user_content[1])
+        processor.assert_called_once()
+        self.assertIn("images", processor.call_args.kwargs)
 
 
 class TestHFTaskEncoderBatch(unittest.TestCase):
@@ -199,6 +204,73 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
         batch = encoder.batch([s1])
         self.assertIsInstance(batch.visual_inputs, GenericVisualInputs)
         self.assertEqual(batch.visual_inputs.pixel_values.shape[0], 3)
+
+    def test_batch_uses_encoded_samples_and_enforces_seq_length(self):
+        processor = _make_processor(input_ids=torch.tensor([[10, 11, 12, 13, 14, 15]]))
+        encoder = HFTaskEncoder(processor=processor, seq_length=4, collate_fn=_make_collate_fn())
+        sample = _make_chatml_sample(
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ]
+            ),
+            key="encoded",
+        )
+
+        encoded = encoder.encode_sample(sample)
+        batch = encoder.batch([encoded])
+
+        self.assertEqual(batch.input_ids.shape, (1, 4))
+        self.assertEqual(batch.labels.shape, (1, 4))
+        self.assertEqual(batch.loss_mask.shape, (1, 4))
+        self.assertEqual(batch.attention_mask.tolist(), [[1, 1, 1, 1]])
+
+    def test_encode_sample_threads_visual_keys_and_pixel_constraints(self):
+        pixel_values = torch.randn(1, 3, 4, 4)
+        processor = _make_processor(pixel_values=pixel_values)
+        encoder = HFTaskEncoder(
+            processor=processor,
+            seq_length=8,
+            visual_keys=("pixel_values",),
+            min_pixels=16,
+            max_pixels=128,
+            collate_fn=_make_collate_fn(),
+        )
+        sample = _make_chatml_sample(
+            conversation=json.dumps(
+                [
+                    {"role": "user", "content": "Describe <image>"},
+                    {"role": "assistant", "content": "Hello"},
+                ]
+            ),
+            imgs=[torch.rand(3, 4, 4)],
+            key="with-image",
+        )
+
+        encoded = encoder.encode_sample(sample)
+        batch = encoder.batch([encoded])
+
+        self.assertEqual(processor.call_args.kwargs["min_pixels"], 16)
+        self.assertEqual(processor.call_args.kwargs["max_pixels"], 128)
+        self.assertIsInstance(batch.visual_inputs, GenericVisualInputs)
+        self.assertEqual(batch.visual_inputs.pixel_values.shape, pixel_values.shape)
+
+    def test_collate_fallback_rejects_oversized_batches(self):
+        processor = _make_processor()
+        encoder = HFTaskEncoder(
+            processor=processor,
+            seq_length=4,
+            collate_fn=_make_collate_fn(),
+        )
+        sample = HFEnergonSample(
+            __key__="manual",
+            __subflavors__={},
+            example={"conversation": [{"role": "user", "content": "manual"}]},
+        )
+
+        with self.assertRaisesRegex(ValueError, "exceeds seq_length"):
+            encoder.batch([sample])
 
 
 class TestHFTaskEncoderEncodeBatch(unittest.TestCase):

@@ -90,6 +90,16 @@ def _resolve_hf_mm_token_ids(hf_tokenizer):
     return image_id, video_id
 
 
+def _visual_token_count(grid_thw: Any, merge_size: int) -> int:
+    """Return merged visual token count for THW grid metadata."""
+    if grid_thw is None:
+        return 0
+    grid = torch.as_tensor(grid_thw)
+    if grid.numel() == 0:
+        return 0
+    return int(grid.prod(dim=-1).sum().item()) // (merge_size**2)
+
+
 @dataclass
 class QwenVLTaskSample:
     """HF-style Qwen VLM sample produced from an Energon ``ChatMLSample``.
@@ -233,6 +243,28 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
                     clipped.append(v)
             videos_for_processing = clipped
 
+        if self.max_visual_tokens is not None and (
+            imgs_for_processing is not None or videos_for_processing is not None
+        ):
+            processed_vision = process_vision(
+                self.image_processor,
+                imgs_for_processing,
+                videos_for_processing,
+                min_pixels=self.min_pixels,
+                max_pixels=self.max_pixels,
+            )
+            image_tokens = _visual_token_count(processed_vision["image_grid_thw"], self.merge_size)
+            video_tokens = _visual_token_count(processed_vision["video_grid_thw"], self.merge_size)
+            total_visual_tokens = image_tokens + video_tokens
+            if total_visual_tokens > self.max_visual_tokens:
+                logging.warning(
+                    "Skipping sample %s: %d visual tokens exceeds max_visual_tokens=%d",
+                    sample.__key__,
+                    total_visual_tokens,
+                    self.max_visual_tokens,
+                )
+                raise SkipSample()
+
         normalized_sample = dataclasses.replace(
             normalized_sample,
             images=imgs_for_processing,
@@ -263,6 +295,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             self.image_processor,
             min_pixels=self.min_pixels,
             max_pixels=self.max_pixels,
+            require_assistant_matches=True,
         )
 
     def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:

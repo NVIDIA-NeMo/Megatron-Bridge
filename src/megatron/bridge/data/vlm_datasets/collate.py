@@ -113,6 +113,7 @@ def qwen2_5_collate_fn(
     processor,
     min_pixels: int = 200704,
     max_pixels: int = 1003520,
+    require_assistant_matches: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
     if not HAVE_QWEN_VL_UTILS:
@@ -234,7 +235,14 @@ def qwen2_5_collate_fn(
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                require_matches=require_assistant_matches,
+                warn_on_all_masked=not require_assistant_matches,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)
