@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic HF-encoder VLM task encoder for Energon dataloading.
+"""Generic HF VLM task encoder for Energon dataloading.
 
 Works with any HF processor that handles tokenization + vision preprocessing
 in a single ``processor()`` call (e.g. Gemma3-VL, Ministral3, GLM-4.5V).
@@ -36,7 +36,7 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 @dataclass
-class HFEncoderTaskSample:
+class HFEnergonSample:
     """HF-style VLM example produced from an Energon ``ChatMLSample``."""
 
     __key__: str
@@ -45,8 +45,8 @@ class HFEncoderTaskSample:
 
 
 @dataclass
-class HFEncoderTaskBatch(Batch):
-    """Batched format for a generic HF-encoder VLM."""
+class HFEnergonBatch(Batch):
+    """Batched format for a generic HF VLM."""
 
     __keys__: List[str] = field(default_factory=list)
     __subflavors__: List[Dict] = field(default_factory=list)
@@ -58,8 +58,8 @@ class HFEncoderTaskBatch(Batch):
     attention_mask: torch.Tensor | None = None
 
 
-class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSample, HFEncoderTaskBatch, dict]):
-    """Task encoder for HF-encoder VLMs that rely on ``processor()`` for tokenization + vision.
+class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
+    """Task encoder for HF VLMs that rely on ``processor()`` for tokenization + vision.
 
     Args:
         processor: HF ``AutoProcessor`` instance. Must support ``apply_chat_template``
@@ -92,7 +92,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         collate_key = type(processor).__name__ if processor is not None else "default"
         self._collate_impl = collate_fn or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])
 
-    def encode_sample(self, sample: ChatMLSample) -> HFEncoderTaskSample:
+    def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.
 
         Expected input format:
@@ -100,7 +100,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             ``conversation`` plus optional WDS-decoded ``imgs`` and ``videos``.
 
         Output format:
-            Returns ``HFEncoderTaskSample`` whose ``example`` follows the same
+            Returns ``HFEnergonSample`` whose ``example`` follows the same
             dictionary schema consumed by HF VLM dataset collate functions.
             Tokenization, processor calls, label construction, and visual tensor
             batching are deferred to ``self.collate_fn``.
@@ -108,7 +108,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
         normalized_sample = normalize_energon_vlm_sample(sample)
         example = normalized_vlm_sample_to_hf_example(normalized_sample)
 
-        return HFEncoderTaskSample(
+        return HFEnergonSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
             example=example,
@@ -131,7 +131,7 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
     # batch
     # ------------------------------------------------------------------
 
-    def batch(self, samples: List[HFEncoderTaskSample]) -> HFEncoderTaskBatch:
+    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
         """Collate normalized samples with the selected HF VLM collator."""
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
@@ -151,13 +151,13 @@ class HFEncoderVLMTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEncoderTaskSamp
             visual_inputs=collated.get("visual_inputs"),
         )
 
-        return HFEncoderTaskBatch(**batch_kwargs)
+        return HFEnergonBatch(**batch_kwargs)
 
     # ------------------------------------------------------------------
     # encode_batch
     # ------------------------------------------------------------------
 
-    def encode_batch(self, batch: HFEncoderTaskBatch) -> dict:
+    def encode_batch(self, batch: HFEnergonBatch) -> dict:
         """Convert batch dataclass to dict without expanding ``visual_inputs``."""
         raw = {field.name: getattr(batch, field.name) for field in dataclasses.fields(batch)}
 

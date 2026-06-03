@@ -24,7 +24,7 @@ import torch
 class GenericVisualInputs:
     """Container for visual modality tensors produced by HF processors.
 
-    Works with any HF-encoder VLM (Gemma3-VL, Ministral3, GLM-4.5V, etc.).
+    Works with any HF VLM (Gemma3-VL, Ministral3, GLM-4.5V, etc.).
     Compatible with ``vlm_step.py`` iteration over ``__dict__`` and
     ``.normalized_for_model()`` call.
     """

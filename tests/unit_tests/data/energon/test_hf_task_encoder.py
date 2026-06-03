@@ -18,10 +18,10 @@ from unittest.mock import MagicMock
 
 import torch
 
-from megatron.bridge.data.energon.hf_encoder_task_encoder import (
-    HFEncoderTaskBatch,
-    HFEncoderTaskSample,
-    HFEncoderVLMTaskEncoder,
+from megatron.bridge.data.energon.hf_task_encoder import (
+    HFEnergonBatch,
+    HFEnergonSample,
+    HFTaskEncoder,
 )
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
@@ -91,10 +91,10 @@ def _make_collate_fn(pixel_values=None, seen_examples=None):
     return _collate
 
 
-class TestHFEncoderTaskSample(unittest.TestCase):
+class TestHFEnergonSample(unittest.TestCase):
     def test_fields(self):
         example = {"conversation": [{"role": "user", "content": "Hi"}]}
-        s = HFEncoderTaskSample(
+        s = HFEnergonSample(
             __key__="k1",
             __subflavors__={},
             example=example,
@@ -103,10 +103,10 @@ class TestHFEncoderTaskSample(unittest.TestCase):
         self.assertEqual(s.example, example)
 
 
-class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
+class TestHFTaskEncoderEncodeSample(unittest.TestCase):
     def test_text_only(self):
         processor = _make_processor()
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128, collate_fn=_make_collate_fn())
+        encoder = HFTaskEncoder(processor=processor, seq_length=128, collate_fn=_make_collate_fn())
 
         sample = _make_chatml_sample(
             conversation=json.dumps(
@@ -118,7 +118,7 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         )
 
         encoded = encoder.encode_sample(sample)
-        self.assertIsInstance(encoded, HFEncoderTaskSample)
+        self.assertIsInstance(encoded, HFEnergonSample)
         self.assertEqual(
             encoded.example["conversation"],
             [
@@ -129,7 +129,7 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
 
     def test_with_images(self):
         processor = _make_processor()
-        encoder = HFEncoderVLMTaskEncoder(
+        encoder = HFTaskEncoder(
             processor=processor,
             seq_length=128,
             visual_keys=("pixel_values",),
@@ -153,30 +153,30 @@ class TestHFEncoderVLMTaskEncoderEncodeSample(unittest.TestCase):
         self.assertIn("image", user_content[1])
 
 
-class TestHFEncoderVLMTaskEncoderBatch(unittest.TestCase):
+class TestHFTaskEncoderBatch(unittest.TestCase):
     def setUp(self):
         self.processor = _make_processor()
         self.seen_examples = []
-        self.encoder = HFEncoderVLMTaskEncoder(
+        self.encoder = HFTaskEncoder(
             processor=self.processor,
             seq_length=128,
             collate_fn=_make_collate_fn(seen_examples=self.seen_examples),
         )
 
     def test_batch_uses_collate_fn(self):
-        s1 = HFEncoderTaskSample(
+        s1 = HFEnergonSample(
             __key__="k1",
             __subflavors__={},
             example={"conversation": [{"role": "user", "content": "one"}]},
         )
-        s2 = HFEncoderTaskSample(
+        s2 = HFEnergonSample(
             __key__="k2",
             __subflavors__={},
             example={"conversation": [{"role": "user", "content": "two"}]},
         )
 
         batch = self.encoder.batch([s1, s2])
-        self.assertIsInstance(batch, HFEncoderTaskBatch)
+        self.assertIsInstance(batch, HFEnergonBatch)
         self.assertEqual(batch.input_ids.shape, (2, 5))
         self.assertEqual(batch.labels.shape, (2, 5))
         self.assertEqual(batch.loss_mask.shape, (2, 5))
@@ -186,12 +186,12 @@ class TestHFEncoderVLMTaskEncoderBatch(unittest.TestCase):
 
     def test_visual_inputs_passthrough(self):
         pv = torch.randn(3, 3, 4, 4)
-        encoder = HFEncoderVLMTaskEncoder(
+        encoder = HFTaskEncoder(
             processor=self.processor,
             seq_length=128,
             collate_fn=_make_collate_fn(pixel_values=pv),
         )
-        s1 = HFEncoderTaskSample(
+        s1 = HFEnergonSample(
             __key__="k1",
             __subflavors__={},
             example={"conversation": [{"role": "user", "content": "one"}]},
@@ -201,13 +201,13 @@ class TestHFEncoderVLMTaskEncoderBatch(unittest.TestCase):
         self.assertEqual(batch.visual_inputs.pixel_values.shape[0], 3)
 
 
-class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
+class TestHFTaskEncoderEncodeBatch(unittest.TestCase):
     def test_encode_batch(self):
         processor = _make_processor()
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
+        encoder = HFTaskEncoder(processor=processor, seq_length=128)
 
         pv = torch.randn(2, 3, 4, 4)
-        batch = HFEncoderTaskBatch(
+        batch = HFEnergonBatch(
             **batch_metadata_kwargs(keys=["k1", "k2"]),
             __keys__=["k1", "k2"],
             __subflavors__=[{}, {}],
@@ -228,9 +228,9 @@ class TestHFEncoderVLMTaskEncoderEncodeBatch(unittest.TestCase):
 
     def test_encode_batch_no_visuals(self):
         processor = _make_processor()
-        encoder = HFEncoderVLMTaskEncoder(processor=processor, seq_length=128)
+        encoder = HFTaskEncoder(processor=processor, seq_length=128)
 
-        batch = HFEncoderTaskBatch(
+        batch = HFEnergonBatch(
             **batch_metadata_kwargs(keys=["k1"]),
             __keys__=["k1"],
             __subflavors__=[{}],
