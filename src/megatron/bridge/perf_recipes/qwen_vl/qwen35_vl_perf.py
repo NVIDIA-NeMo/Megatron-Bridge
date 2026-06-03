@@ -28,7 +28,11 @@ Models:
 - **397B-A17B**: 8 experts, 17B active parameters
 """
 
-from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes._common import (
+    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _perf_precision,
+)
 from megatron.bridge.recipes.qwen_vl.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_mock_config,
     qwen35_vl_122b_a10b_pretrain_mock_config,
@@ -67,7 +71,12 @@ def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
     cfg.model.freeze_vision_model = False
 
 
-def _qwen35_vl_perf_post(cfg: ConfigContainer, *, clear_cuda_graph_scope: bool = False) -> None:
+def _qwen35_vl_perf_post(
+    cfg: ConfigContainer,
+    *,
+    clear_cuda_graph_scope: bool = False,
+    overlap_param_gather_with_optimizer_step: bool = False,
+) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
     Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
@@ -78,6 +87,8 @@ def _qwen35_vl_perf_post(cfg: ConfigContainer, *, clear_cuda_graph_scope: bool =
     if clear_cuda_graph_scope:
         cfg.model.cuda_graph_scope = []
     cfg.optimizer.overlap_param_gather = False
+    if overlap_param_gather_with_optimizer_step:
+        _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
 # =============================================================================
@@ -321,7 +332,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_perf_post(cfg, overlap_param_gather_with_optimizer_step=True)
     return cfg
 
 
@@ -352,7 +363,11 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
+    _qwen35_vl_perf_post(
+        cfg,
+        clear_cuda_graph_scope=True,
+        overlap_param_gather_with_optimizer_step=True,
+    )
     return cfg
 
 
@@ -544,7 +559,11 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
+    _qwen35_vl_perf_post(
+        cfg,
+        clear_cuda_graph_scope=True,
+        overlap_param_gather_with_optimizer_step=True,
+    )
     return cfg
 
 
@@ -559,6 +578,8 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× B200, MXFP8."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 
@@ -594,7 +615,11 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
+    _qwen35_vl_perf_post(
+        cfg,
+        clear_cuda_graph_scope=True,
+        overlap_param_gather_with_optimizer_step=True,
+    )
     return cfg
 
 
@@ -793,7 +818,11 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
+    _qwen35_vl_perf_post(
+        cfg,
+        clear_cuda_graph_scope=True,
+        overlap_param_gather_with_optimizer_step=True,
+    )
     return cfg
 
 
@@ -808,6 +837,8 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× B200, MXFP8."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 
@@ -843,7 +874,11 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg, clear_cuda_graph_scope=True)
+    _qwen35_vl_perf_post(
+        cfg,
+        clear_cuda_graph_scope=True,
+        overlap_param_gather_with_optimizer_step=True,
+    )
     return cfg
 
 
