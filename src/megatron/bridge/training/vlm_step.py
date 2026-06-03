@@ -436,12 +436,15 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches. For in-batch packed
-    # batches, ``cu_seqlens`` describes the real sub-sequence boundaries (no
-    # padding sub-seqs), so the helper computes the THD-correct Σᵢ sᵢ² for
-    # the attention term instead of the pack-length² BSHD approximation.
-    # train.py resets these before each step and reads accumulated values
-    # afterwards.
+    # Accumulate FLOPS metadata across micro-batches. VLM packing is done
+    # in-batch, so ``cu_seqlens`` already lists the real sub-sequence boundaries
+    # with no trailing pad sub-sequence (see get_batch_from_iterator, where
+    # ``cu_seqlens_argmin == len(cu_seqlens)``). Hence there is no
+    # ``cu_seqlens_unpadded`` / ``*_argmin`` to pass here — those exist only for
+    # offline-packed THD SFT (gpt_step), where sub-sequences are padded to a
+    # multiple. Passing ``cu_seqlens`` alone gives the THD-correct Σᵢ sᵢ² for the
+    # attention term instead of the pack-length² BSHD approximation. train.py
+    # resets these before each step and reads accumulated values afterwards.
     accumulate_flops_metadata(
         state,
         tokens,

@@ -543,34 +543,18 @@ def train(
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
-        # Read accumulated FLOPS metadata from forward_step micro-batches.
-        # These are per-DP-rank totals; scale by dp_size for global estimate.
-        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
-        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
-        # the FLOPS formula already accounts for ALL layers in the full model.
-        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
-        local_seqlen_sum = flop_utils.flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sum", 0))
-        local_seqlen_sq_sum = flop_utils.flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sq_sum", 0))
-        num_vision_patches = flop_utils.flops_accumulator_to_int(getattr(global_state, "_flops_vision_patches", 0))
-
-        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
-        # once per virtual stage, but FLOPS formula already covers all stages.
-        vp_size = config.model.virtual_pipeline_model_parallel_size
-        if isinstance(vp_size, int) and vp_size > 1:
-            local_seqlen_sum = local_seqlen_sum // vp_size
-            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-            num_vision_patches = num_vision_patches // vp_size
-
-        if local_seqlen_sum > 0:
-            seqlen_sum = local_seqlen_sum * dp_size
-            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
-        else:
-            # Fallback for step functions that don't set accumulators
-            seqlen_sum = None
-            seqlen_squared_sum = None
-
-        # Vision patches: local accumulation * dp_size for global
-        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
+        # Read the per-microbatch FLOPS accumulators populated by forward_step and
+        # reduce them to data-parallel-global totals. Under variable-length (THD
+        # packed) training the per-rank Σᵢ sᵢ² differs across DP ranks, so the helper
+        # does a SUM all-reduce over the (pure) DP group when available — exact —
+        # instead of extrapolating the local rank by dp_size. It also undoes the VPP
+        # over-counting and returns (None, None, ...) when no accumulation happened.
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+            global_state,
+            data_parallel_size=dp_size,
+            vp_size=config.model.virtual_pipeline_model_parallel_size,
+            dp_group=pg_collection.dp,
+        )
 
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,

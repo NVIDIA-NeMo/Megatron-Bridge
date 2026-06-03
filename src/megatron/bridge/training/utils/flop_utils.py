@@ -26,8 +26,8 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 _lora_seq_stats_cache: dict = {}
 
 
-def flops_accumulator_to_int(value) -> int:
-    """Convert a FLOPs accumulator value to ``int`` at step/logging boundaries."""
+def _accumulator_to_int(value) -> int:
+    """Coerce a FLOPs accumulator (``int`` or scalar ``Tensor``) to ``int``."""
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -37,6 +37,82 @@ def flops_accumulator_to_int(value) -> int:
             return 0
         return int(value.detach().cpu().item())
     return 0
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
+
+    Reads the three accumulators populated by the forward step
+    (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
+    over real sub-sequences, ``_flops_vision_patches``), corrects for VPP
+    over-counting, and reduces them to global totals across the data-parallel
+    group.
+
+    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` and
+    vision-patch counts differ across DP ranks, so a single SUM all-reduce over
+    ``dp_group`` is used to get the exact global sum. When no process group is
+    available (single process, ``dp_group is None``, or ``torch.distributed`` not
+    initialized) the values are extrapolated as ``local * data_parallel_size`` —
+    exact only when every DP rank sees an identical sequence-length distribution.
+
+    Args:
+        state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
+        data_parallel_size: Size of the data-parallel group (used for the
+            extrapolation fallback).
+        vp_size: Virtual pipeline size; accumulators are divided by it to undo
+            the per-virtual-stage over-counting. ``None``/``<= 1`` is a no-op.
+        dp_group: Data-parallel process group to SUM-reduce over. Must be the
+            pure DP group (excluding CP) matching ``data_parallel_size`` — CP
+            ranks share the same ``cu_seqlens`` and would double-count.
+
+    Returns:
+        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
+        are ``None`` when no accumulation happened, signalling the caller to fall
+        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
+        vision tokens were seen.
+    """
+    local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
+    local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
+    local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+
+    # VPP correction: forward_step_func runs once per virtual stage per microbatch,
+    # so each accumulator over-counts by vp_size; the FLOPS formula already covers
+    # all layers. Done per-rank (before the reduce) to recover each rank's true local.
+    if isinstance(vp_size, int) and vp_size > 1:
+        local_seqlen_sum //= vp_size
+        local_seqlen_sq_sum //= vp_size
+        local_vision_patches //= vp_size
+
+    use_all_reduce = (
+        dp_group is not None
+        and data_parallel_size > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    )
+    if use_all_reduce:
+        device = torch.cuda.current_device() if torch.cuda.is_available() else None
+        stats = torch.tensor(
+            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
+            dtype=torch.long,
+            device=device,
+        )
+        torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+    else:
+        # No process group: extrapolate from the local rank (approximation).
+        seqlen_sum = local_seqlen_sum * data_parallel_size
+        seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
+        num_vision_patches = local_vision_patches * data_parallel_size
+
+    if seqlen_sum <= 0:
+        return None, None, max(num_vision_patches, 0)
+    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
 
 
 def _add_flops_accumulator(state, name: str, delta) -> None:

@@ -24,6 +24,7 @@ import torch
 from megatron.bridge.training.utils.flop_utils import (
     accumulate_flops_metadata,
     num_floating_point_operations,
+    resolve_global_flops_seqlen_stats,
     vit_flops,
 )
 
@@ -2115,3 +2116,77 @@ class TestAccumulateFlopsMetadata:
         # 32 * 256² = 2,097,152 vs 8192² = 67,108,864 → 32× smaller.
         assert thd_sq == 32 * 256**2
         assert bshd_sq // thd_sq == 32
+
+
+@pytest.mark.unit
+class TestResolveGlobalFlopsSeqlenStats:
+    """Unit tests for ``resolve_global_flops_seqlen_stats`` (non-distributed paths).
+
+    ``torch.distributed`` is not initialized in unit tests, so the helper takes the
+    extrapolation fallback (``local * data_parallel_size``). The exact all-reduce
+    path is covered by functional/distributed tests.
+    """
+
+    def test_extrapolates_local_by_dp_size(self):
+        state = _State()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 250_000
+        state._flops_vision_patches = 64
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 4
+        assert seqlen_sq_sum == 250_000 * 4
+        assert vision == 64 * 4
+
+    def test_dp_size_one_returns_local(self):
+        state = _State()
+        state._flops_seqlen_sum = 512
+        state._flops_seqlen_sq_sum = 4096
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=1, dp_group=None
+        )
+        assert (seqlen_sum, seqlen_sq_sum, vision) == (512, 4096, 0)
+
+    def test_vpp_correction_divides_before_extrapolation(self):
+        # Accumulators over-count by vp_size; helper divides them back per-rank.
+        state = _State()
+        state._flops_seqlen_sum = 1000 * 4  # accumulated once per virtual stage (vp=4)
+        state._flops_seqlen_sq_sum = 250_000 * 4
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=2, vp_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 2
+        assert seqlen_sq_sum == 250_000 * 2
+
+    def test_no_accumulation_returns_none(self):
+        # Step functions that don't set accumulators → caller falls back to fixed-length.
+        state = _State()
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=8, dp_group=None
+        )
+        assert seqlen_sum is None
+        assert seqlen_sq_sum is None
+        assert vision == 0
+
+    def test_coerces_scalar_tensor_accumulators(self):
+        # forward_step may leave accumulators as scalar tensors (deferred host sync).
+        state = _State()
+        state._flops_seqlen_sum = torch.tensor(800)
+        state._flops_seqlen_sq_sum = torch.tensor(160_000)
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(state, data_parallel_size=2, dp_group=None)
+        assert seqlen_sum == 1600
+        assert seqlen_sq_sum == 320_000
+
+    def test_dp_group_ignored_when_distributed_not_initialized(self):
+        # A non-None dp_group must not trigger a collective when torch.distributed
+        # is not initialized; the helper falls back to extrapolation.
+        assert not torch.distributed.is_initialized()
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+        assert seqlen_sum == 40
+        assert seqlen_sq_sum == 400

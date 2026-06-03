@@ -36,7 +36,7 @@ from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.utils.flop_utils import flops_accumulator_to_int, num_floating_point_operations
+from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, resolve_global_flops_seqlen_stats
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -1084,24 +1084,19 @@ def training_log(
             # This keeps the per-step TFLOP/s/GPU shown here consistent with the
             # `floating_point_operations_so_far` accumulated by the main loop.
             #
-            # VPP correction: forward_step_func is called once per virtual-stage
-            # per microbatch, so the accumulators over-count by vp_size. Divide
-            # them back so the FLOPS formula (which already covers all layers)
-            # receives the correct per-microbatch totals.
-            local_seqlen_sum = flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sum", 0))
-            local_seqlen_sq_sum = flops_accumulator_to_int(getattr(global_state, "_flops_seqlen_sq_sum", 0))
-            local_vision_patches = flops_accumulator_to_int(getattr(global_state, "_flops_vision_patches", 0))
-            num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
+            # The helper undoes the VPP over-counting and SUM all-reduces the
+            # accumulators over the (pure) DP group so Σᵢ sᵢ² is exact across data
+            # parallelism rather than extrapolated from the local rank. This block
+            # runs on all ranks at log_interval boundaries (the elapsed-time timer
+            # above already barriers), so the collective is safe.
+            seqlen_sum, seqlen_squared_sum, num_vision_patches = resolve_global_flops_seqlen_stats(
+                global_state,
+                data_parallel_size=config.data_parallel_size,
+                vp_size=getattr(config.model, "virtual_pipeline_model_parallel_size", None),
+                dp_group=pg_collection.dp,
+            )
 
-            vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None)
-            if isinstance(vp_size, int) and vp_size > 1:
-                local_seqlen_sum = local_seqlen_sum // vp_size
-                local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-                num_vision_patches = num_vision_patches // vp_size
-
-            if local_seqlen_sum > 0:
-                seqlen_sum = local_seqlen_sum * config.data_parallel_size
-                seqlen_squared_sum = local_seqlen_sq_sum * config.data_parallel_size
+            if seqlen_sum is not None:
                 num_flops = num_floating_point_operations(
                     config,
                     batch_size,
