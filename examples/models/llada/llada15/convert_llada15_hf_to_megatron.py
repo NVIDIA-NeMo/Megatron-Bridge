@@ -24,12 +24,12 @@ Usage::
 
     PYTHONPATH=src:/opt/Megatron-Bridge/src python3 \\
         examples/models/llada/llada15/convert_llada15_hf_to_megatron.py \\
-        --hf-path /linnanw/home/.cache/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/84346fd91ba60252d260022201ad6fc5a3468fb2 \\
-        --out-path /linnanw/llada15_megatron_ckpt
+        --hf-path /path/to/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/<commit-hash> \\
+        --out-path /path/to/llada15_megatron_ckpt
 
 Result on disk::
 
-    /linnanw/llada15_megatron_ckpt/
+    /path/to/llada15_megatron_ckpt/
         iter_0000000/
             ...torch_dist shards...
         latest_checkpointed_iteration.txt

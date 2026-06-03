@@ -20,7 +20,7 @@ runs the same prompt through both, and reports full-tensor logit similarity.
 
 Usage::
 
-    python examples/conversion/test_llada15_parity.py \
+    python examples/models/llada/llada15/test_llada15_parity.py \
         --hf-path /path/to/GSAI-ML/LLaDA-1.5/snapshot \
         --prompt "The capital of France is"
 

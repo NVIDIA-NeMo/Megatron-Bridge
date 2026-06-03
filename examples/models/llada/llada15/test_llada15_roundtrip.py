@@ -28,8 +28,8 @@ mask.
 Usage::
 
     PYTHONPATH=/opt/Megatron-Bridge/src python3 \\
-        examples/conversion/test_llada15_roundtrip.py \\
-        --hf-path /linnanw/home/.cache/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/84346fd91ba60252d260022201ad6fc5a3468fb2
+        examples/models/llada/llada15/test_llada15_roundtrip.py \\
+        --hf-path /path/to/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/<commit-hash>
 """
 
 import argparse

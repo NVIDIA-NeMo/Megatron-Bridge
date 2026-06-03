@@ -60,7 +60,7 @@ LLaDA1.5's reference `get_bidirectional_attention_bias` (a zero tensor).
 
 ## Scripts
 
-All scripts live under `examples/conversion/`. They use the container's
+All scripts live under `examples/models/llada/llada15/`. They use the container's
 bundled Bridge install (`/opt/Megatron-Bridge/src`) because that path has a
 working `megatron.bridge.training` against the installed Megatron-Core.
 
@@ -75,8 +75,8 @@ working `megatron.bridge.training` against the installed Megatron-Core.
 Environment expected in the rest of this doc:
 
 ```bash
-export HF_PATH=/linnanw/home/.cache/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/84346fd91ba60252d260022201ad6fc5a3468fb2
-export CKPT_PATH=/linnanw/llada15_megatron_ckpt
+export HF_PATH=/path/to/huggingface/hub/models--GSAI-ML--LLaDA-1.5/snapshots/<commit-hash>
+export CKPT_PATH=/path/to/llada15_megatron_ckpt
 export PYTHONPATH=/opt/Megatron-Bridge/src
 ```
 
@@ -90,7 +90,7 @@ machine. Run them in order — each builds confidence on top of the previous.
 #### Level 1: state-dict round-trip (exact match)
 
 ```bash
-python3 examples/conversion/test_llada15_roundtrip.py --hf-path "$HF_PATH"
+python3 examples/models/llada/llada15/test_llada15_roundtrip.py --hf-path "$HF_PATH"
 ```
 
 Confirms every weight tensor round-trips bit-exactly through the bridge
@@ -101,11 +101,11 @@ mappings. No floating-point arithmetic is involved, so this should report
 
 ```bash
 # Unmasked prompt
-python3 examples/conversion/test_llada15_parity.py \
+python3 examples/models/llada/llada15/test_llada15_parity.py \
     --hf-path "$HF_PATH" --prompt "The capital of France is"
 
 # Masked prompt (exercises the MDM path)
-python3 examples/conversion/test_llada15_parity.py \
+python3 examples/models/llada/llada15/test_llada15_parity.py \
     --hf-path "$HF_PATH" --prompt "The capital of France is" --mask-some
 ```
 
@@ -117,7 +117,7 @@ overlap is `>= 4/5`.
 #### Generation parity (official sampler, token-for-token)
 
 ```bash
-python3 examples/conversion/test_llada15_generation_parity.py \
+python3 examples/models/llada/llada15/test_llada15_generation_parity.py \
     --hf-path "$HF_PATH" \
     --prompt "The capital of France is" \
     --gen-length 32 --block-length 32 --steps 32
@@ -131,7 +131,7 @@ it. Greedy decoding (`temperature=0`) makes the comparison deterministic.
 ### 2. Convert the checkpoint (one-time)
 
 ```bash
-python3 examples/conversion/convert_llada15_hf_to_megatron.py \
+python3 examples/models/llada/llada15/convert_llada15_hf_to_megatron.py \
     --hf-path  "$HF_PATH" \
     --out-path "$CKPT_PATH"
 ```
@@ -156,7 +156,7 @@ $CKPT_PATH/
 ### 3. Chat / generate from the saved checkpoint
 
 ```bash
-python3 examples/conversion/run_llada15_chat.py \
+python3 examples/models/llada/llada15/run_llada15_chat.py \
     --ckpt-path      "$CKPT_PATH" \
     --tokenizer-path "$HF_PATH" \
     --gen-length 128 --block-length 32 --steps 64
@@ -166,7 +166,7 @@ Runs `generate_block_diffusion()` over a built-in prompt set. To supply
 custom prompts:
 
 ```bash
-python3 examples/conversion/run_llada15_chat.py \
+python3 examples/models/llada/llada15/run_llada15_chat.py \
     --ckpt-path "$CKPT_PATH" --tokenizer-path "$HF_PATH" \
     --prompts \
       "Explain BFS in one sentence." \
@@ -253,7 +253,7 @@ not invoke the trust_remote_code class):
   kwargs.
 - Set `model.config.use_cache = False` (no longer auto-populated).
 
-These shims live in `examples/conversion/test_llada15_*.py` and are
+These shims live in `examples/models/llada/llada15/test_llada15_*.py` and are
 isolated from production code.
 
 ## Limitations
