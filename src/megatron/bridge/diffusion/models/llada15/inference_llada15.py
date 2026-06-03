@@ -109,16 +109,21 @@ def generate_block_diffusion(
         threshold: Optional confidence threshold for gated transfer.
         mask_token_id: LLaDA1.5 mask token id (default 126336).
         eos_token_id: EOS id (default 126081) for early stopping.
-        eos_early_stop: Stop as soon as EOS appears in the generated region.
-            Disable for short-answer prompts where the model emits EOS at the
-            first position and would otherwise return empty.
+        eos_early_stop: Stop generation once *every* sample in the batch has
+            emitted at least one EOS in its generated region. Evaluated at block
+            boundaries (not per step), so the current block is always fully
+            unmasked before stopping and no mask id survives before a sample's
+            EOS. Disable for fixed-length outputs.
         pad_token_id: If given and the batched prompt contains padding, a boolean
             key-padding mask is installed so padded positions are never attended
             to. Required for correct mixed-length batched generation (LLaDA1.5
             attends fully bidirectionally and has no implicit padding mask).
 
     Returns:
-        Token ids ``[B, prompt_len + gen_length]`` (or shorter if EOS-stopped).
+        Token ids ``[B, prompt_len + gen_length]`` — always full width. When
+        ``eos_early_stop`` triggers, generation halts but the tensor is *not*
+        truncated; positions past each sample's first EOS keep their generated
+        ids, so callers should trim at the first ``eos_token_id`` per row.
     """
     device = input_ids.device
     B, prompt_len = input_ids.shape
@@ -176,9 +181,16 @@ def generate_block_diffusion(
                 cur[transfer_index] = x0[transfer_index]
                 x[:, block_slice] = cur
 
-                if eos_early_stop and eos_token_id is not None:
-                    if (x[:, prompt_len:] == eos_token_id).any():
-                        return x
+            # EOS early-stop, evaluated at the block boundary (not per step):
+            # stop only once *every* sample has emitted at least one EOS. The
+            # per-sample reduction ``.any(dim=1).all()`` avoids halting the whole
+            # batch when a single sample finishes first (which would return other
+            # samples still full of mask ids), and checking after the block is
+            # fully unmasked guarantees no ``mask_token_id`` remains before any
+            # sample's first EOS.
+            if eos_early_stop and eos_token_id is not None:
+                if (x[:, prompt_len:] == eos_token_id).any(dim=1).all():
+                    return x
 
         return x
     finally:
