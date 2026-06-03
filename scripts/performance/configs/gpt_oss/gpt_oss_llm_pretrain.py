@@ -425,7 +425,7 @@ def gpt_oss_120b_pretrain_config_gb300(
     if precision == "fp8_mx":
         cfg.model.fine_grained_activation_offloading = True
         cfg.model.offload_modules = ["core_attn", "attn_proj", "mlp_norm", "qkv_linear", "attn_norm"]
-        cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+        # cfg.model.fine_grained_offloading_max_inflight_offloads = 2
 
     return cfg
 
