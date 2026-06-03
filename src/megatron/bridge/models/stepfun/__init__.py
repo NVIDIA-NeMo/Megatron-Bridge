@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
 from megatron.bridge.models.stepfun.step35_bridge import Step35Bridge
+from megatron.bridge.models.stepfun.step37_bridge import Step37Bridge
+from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
 
 
 __all__ = [
     "Step35Bridge",
+    "Step37Bridge",
+    "Step37Model",
+    "Step37ModelProvider",
 ]

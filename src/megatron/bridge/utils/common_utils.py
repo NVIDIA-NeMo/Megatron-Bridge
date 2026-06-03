@@ -21,15 +21,15 @@ from pathlib import Path
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
+from megatron.core._rank_utils import safe_get_rank as get_rank_safe  # noqa: F401
+from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
+from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
 
 from megatron.bridge.utils.slurm_utils import (
-    resolve_slurm_local_rank,
     resolve_slurm_master_addr,
     resolve_slurm_master_port,
-    resolve_slurm_rank,
-    resolve_slurm_world_size,
 )
 
 
@@ -41,88 +41,11 @@ except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
 
-def get_rank_safe() -> int:
-    """Get the distributed rank safely, even if torch.distributed is not initialized.
-
-    Fallback order:
-    1. torch.distributed.get_rank() (if initialized)
-    2. RANK environment variable (torchrun/torchelastic)
-    3. SLURM_PROCID environment variable (SLURM)
-    4. Default: 0 (with warning)
-
-    Returns:
-        The current process rank.
-    """
-    if torch.distributed.is_initialized():
-        return torch.distributed.get_rank()
-
-    if "RANK" in os.environ:
-        return int(os.environ["RANK"])
-
-    slurm_rank = resolve_slurm_rank()
-    if slurm_rank is not None:
-        return slurm_rank
-
-    warnings.warn("Could not determine rank from torch.distributed, RANK, or SLURM_PROCID. Defaulting to rank 0.")
-    return 0
-
-
-def get_world_size_safe() -> int:
-    """Get the distributed world size safely, even if torch.distributed is not initialized.
-
-    Fallback order:
-    1. torch.distributed.get_world_size() (if initialized)
-    2. WORLD_SIZE environment variable (torchrun/torchelastic)
-    3. SLURM_NTASKS environment variable (SLURM)
-    4. Default: 1 (with warning)
-
-    Returns:
-        The total number of processes in the distributed job.
-    """
-    if torch.distributed.is_initialized():
-        return torch.distributed.get_world_size()
-
-    if "WORLD_SIZE" in os.environ:
-        return int(os.environ["WORLD_SIZE"])
-
-    slurm_world_size = resolve_slurm_world_size()
-    if slurm_world_size is not None:
-        return slurm_world_size
-
-    warnings.warn(
-        "Could not determine world size from torch.distributed, WORLD_SIZE, or SLURM_NTASKS. "
-        "Defaulting to world size 1."
-    )
-    return 1
-
-
 def get_last_rank() -> int:
     """Get the last rank in the distributed group"""
     if not torch.distributed.is_initialized():
         return 0
     return torch.distributed.get_world_size() - 1
-
-
-def get_local_rank_preinit() -> int:
-    """Get the local rank from the environment variable, intended for use before full init.
-
-    Fallback order:
-    1. LOCAL_RANK environment variable (torchrun/torchelastic)
-    2. SLURM_LOCALID environment variable (SLURM)
-    3. Default: 0 (with warning)
-
-    Returns:
-        The local rank of the current process.
-    """
-    if "LOCAL_RANK" in os.environ:
-        return int(os.environ["LOCAL_RANK"])
-
-    slurm_local_rank = resolve_slurm_local_rank()
-    if slurm_local_rank is not None:
-        return slurm_local_rank
-
-    warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
-    return 0
 
 
 def get_master_addr_safe() -> str:

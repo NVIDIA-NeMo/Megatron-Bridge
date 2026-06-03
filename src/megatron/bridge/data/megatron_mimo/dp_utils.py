@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import builtins
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 import torch
@@ -14,6 +15,14 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
+
+
+def _batch_dim_for_tensor(key: str, value: torch.Tensor) -> int:
+    """Return the batch dimension for known MegatronMIMO batch tensors."""
+    # Qwen-VL MRoPE position_ids are [3, batch, seq] instead of [batch, seq].
+    if key == "position_ids" and value.dim() >= 3 and value.size(0) == 3:
+        return 1
+    return 0
 
 
 def _find_rank_module(
@@ -30,14 +39,16 @@ def _find_rank_module(
 def _needs_data_for_module(grid: "HyperCommGrid", module_name: str) -> bool:
     """Determine if the current rank needs to load data for the given module.
 
-    LLM: first and last PP stage need data (input_ids and labels respectively).
+    LLM: all PP stages need batch metadata. First PP stages consume input_ids,
+    last PP stages consume labels/loss_mask, and models with position-dependent
+    decoder blocks (for example Qwen3-VL MRoPE) need position_ids on intermediate
+    PP stages as well.
     Encoders: only the first PP stage needs raw modality inputs.
     """
     pp_group = grid.get_pg(["pp"])
     pp_rank = pp_group.rank()
-    pp_size = pp_group.size()
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
-        return (pp_rank == 0) or (pp_rank == pp_size - 1)
+        return True
     return pp_rank == 0
 
 
@@ -124,8 +135,10 @@ def slice_batch_for_megatron_mimo(
     Handles nested dicts (e.g. ``modality_inputs``) by recursing.
 
     Args:
-        batch: Global batch dictionary with tensors of shape [global_batch, ...].
-            May contain nested dicts (e.g. modality_inputs → encoder → kwargs).
+        batch: Global batch dictionary with tensors of shape [global_batch, ...],
+            except known layouts such as Qwen-VL MRoPE position_ids shaped
+            [3, global_batch, seq]. May contain nested dicts
+            (e.g. modality_inputs -> encoder -> kwargs).
         dp_rank: This rank's position in its **module-local** DP group.
         dp_size: Size of the module-local DP group.
 
@@ -143,8 +156,8 @@ def slice_batch_for_megatron_mimo(
     sliced = {}
     for key, value in batch.items():
         if isinstance(value, torch.Tensor):
-            # Slice along batch dimension (dim=0)
-            batch_size = value.size(0)
+            batch_dim = _batch_dim_for_tensor(key, value)
+            batch_size = value.size(batch_dim)
             if batch_size % dp_size != 0:
                 raise ValueError(
                     f"Batch size {batch_size} for key '{key}' is not divisible "
@@ -154,7 +167,9 @@ def slice_batch_for_megatron_mimo(
             local_batch_size = batch_size // dp_size
             start_idx = dp_rank * local_batch_size
             end_idx = start_idx + local_batch_size
-            sliced[key] = value[start_idx:end_idx]
+            index = [builtins.slice(None)] * value.dim()
+            index[batch_dim] = builtins.slice(start_idx, end_idx)
+            sliced[key] = value[tuple(index)]
         elif isinstance(value, dict):
             # Recurse into nested dicts (e.g. modality_inputs)
             sliced[key] = slice_batch_for_megatron_mimo(value, dp_rank, dp_size)

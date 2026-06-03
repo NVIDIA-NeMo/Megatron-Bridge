@@ -86,6 +86,14 @@ def main() -> None:
             if field.name not in dataloader_field_names
         },
     )
+
+    # For HF datasets, download + apply process_example_fn → training.jsonl. The
+    # packer in prepare_packed_data() reads that JSONL; without this step the
+    # cache directory is empty and packing fails with FileNotFoundError.
+    if isinstance(builder, HFDatasetBuilder):
+        print("Preparing HF dataset (download + tokenize examples to JSONL)...")
+        builder.prepare_data()
+
     builder.prepare_packed_data()
 
     print("Done.")
