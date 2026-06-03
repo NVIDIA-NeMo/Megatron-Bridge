@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import fields
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
@@ -1972,6 +1973,90 @@ class TestCheckpointConfig:
         ckpt_cfg.finalize()
         assert ckpt_cfg.ckpt_step == 5000
         assert ckpt_cfg.load == "/checkpoints"
+
+    def test_save_weight_format_field_is_removed(self):
+        """Test that the old save_weight_format alias is no longer part of CheckpointConfig."""
+        assert "save_weight_format" not in {field.name for field in fields(CheckpointConfig)}
+
+    def test_also_save_hf_checkpoint_rejects_fsdp_dtensor(self):
+        """Test that HF extra export is not allowed with fsdp_dtensor checkpoints."""
+        ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, ckpt_format="fsdp_dtensor")
+
+        with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not supported"):
+            ckpt_cfg.finalize()
+
+    def test_also_save_hf_checkpoint_rejects_local_non_persistent_checkpoint(self):
+        """Test that HF extra export is not allowed for local non-persistent checkpoints."""
+        ckpt_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True, non_persistent_ckpt_type="local")
+
+        with pytest.raises(ValueError, match="also_save_hf_checkpoint=True is not compatible"):
+            ckpt_cfg.finalize()
+
+    def test_also_save_hf_checkpoint_requires_hf_source_during_container_validation(self):
+        """Test that HF extra export requires a source before training starts."""
+        checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
+        model_cfg = create_test_gpt_config(hf_model_id=None)
+        tokenizer_cfg = create_test_tokenizer_config(tokenizer_model=None)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            tokenizer_config=tokenizer_cfg,
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="also_save_hf_checkpoint=True requires an HF source"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_also_save_hf_checkpoint_accepts_hf_source_path_during_container_validation(self):
+        """Test that explicit hf_source_path satisfies HF extra export validation."""
+        checkpoint_cfg = create_test_checkpoint_config(
+            also_save_hf_checkpoint=True,
+            hf_source_path="/hf/source",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(hf_model_id=None),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_also_save_hf_checkpoint_accepts_model_hf_model_id_during_container_validation(self):
+        """Test that model.hf_model_id satisfies HF extra export validation."""
+        checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(hf_model_id="hf/model"),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_also_save_hf_checkpoint_accepts_tokenizer_model_during_container_validation(self):
+        """Test that tokenizer.tokenizer_model satisfies HF extra export validation."""
+        checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(hf_model_id=None),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model="hf/tokenizer-or-model"),
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_async_save_validation_error(self):
         """Test that async_save requires both a save path and use_persistent_ckpt_worker=True."""
