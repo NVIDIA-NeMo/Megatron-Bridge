@@ -36,7 +36,6 @@ def test_megatron_mimo_heterogeneous_rank_offset_overlap():
 
 def test_megatron_mimo_heterogeneous_valid_contiguous():
     """Test that contiguous rank allocation works correctly."""
-    # Note: encoder DP must be >= LLM DP for embedding alignment
     module_parallelisms = {
         "encoder": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=0),
         "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=4),
@@ -44,6 +43,34 @@ def test_megatron_mimo_heterogeneous_valid_contiguous():
     megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
         module_parallelisms=module_parallelisms,
     )
-    # No gaps, no overlap, encoder DP >= LLM DP - should pass
     megatron_mimo_parallelism_config.finalize(world_size=6)
     assert megatron_mimo_parallelism_config.total_world_size == 6
+
+
+def test_megatron_mimo_heterogeneous_allows_encoder_dp_less_than_language_dp():
+    """Test BridgeCommunicator fan-out layouts where encoder DP is smaller."""
+    module_parallelisms = {
+        "images": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=1, rank_offset=0),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=4, rank_offset=1),
+    }
+    megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+        module_parallelisms=module_parallelisms,
+    )
+
+    megatron_mimo_parallelism_config.finalize(world_size=5)
+
+    assert megatron_mimo_parallelism_config.total_world_size == 5
+
+
+def test_megatron_mimo_heterogeneous_rejects_non_divisible_dp():
+    """Test asymmetric DP still requires pairwise divisibility."""
+    module_parallelisms = {
+        "images": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=3, rank_offset=0),
+        "language": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=2, rank_offset=3),
+    }
+    megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
+        module_parallelisms=module_parallelisms,
+    )
+
+    with pytest.raises(ValueError, match="DP sizes must be divisible"):
+        megatron_mimo_parallelism_config.finalize(world_size=5)

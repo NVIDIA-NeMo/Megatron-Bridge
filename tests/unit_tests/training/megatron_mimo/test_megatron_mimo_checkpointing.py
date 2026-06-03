@@ -70,6 +70,8 @@ def _make_global_state(
                 exit_duration_in_mins=exit_duration_in_mins,
                 exit_interval=exit_interval,
                 eval_interval=None,
+                manual_gc=False,
+                manual_gc_interval=0,
             ),
             dataset=SimpleNamespace(seq_length=128),
             checkpoint=SimpleNamespace(

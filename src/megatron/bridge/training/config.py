@@ -1736,6 +1736,12 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+    if cfg.profiling is not None:
+        cfg.profiling.finalize()
+        if cfg.profiling.nvtx_ranges:
+            from megatron.core.utils import configure_nvtx_profiling
+
+            configure_nvtx_profiling(enabled=True)
 
     # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
