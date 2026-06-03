@@ -977,6 +977,36 @@ class TestLoadCheckpointPgThreading:
                 assert kwargs["pg_collection"] is None
 
 
+class TestNoMimoLoadOptimizerSkip:
+    """Regression guard: `_load_checkpoint_from_path` must not skip
+    `optimizer.load_state_dict()` for MIMO + GLOBAL torch_dist checkpoints.
+
+    The skip was historically present to work around per-rank common-state
+    divergence, but MimoOptimizer now handles that internally via
+    `_mimo_param_groups` / `_mimo_grad_scaler` ShardedObjects. Re-adding the
+    skip silently drops Adam's step counter and grad_scaler on resume.
+    """
+
+    def test_no_skip_pattern_in_load_optimizer_branch(self):
+        from megatron.bridge.training.checkpointing import _load_checkpoint_from_path
+
+        src = inspect.getsource(_load_checkpoint_from_path)
+        assert "optimizer.load_state_dict" in src, "Sanity check: load_state_dict call should still exist."
+        # The previous skip was: `if not (ckpt_type == CheckpointType.GLOBAL and _is_megatron_mimo):`
+        # Catch literal re-introduction and obvious equivalents.
+        forbidden_patterns = [
+            "CheckpointType.GLOBAL and _is_megatron_mimo",
+            "_is_megatron_mimo and ckpt_type == CheckpointType.GLOBAL",
+        ]
+        offenders = [p for p in forbidden_patterns if p in src]
+        assert not offenders, (
+            f"MIMO load-optimizer skip pattern detected ({offenders}). "
+            "MimoOptimizer.load_state_dict handles per-rank common state via "
+            "_mimo_param_groups / _mimo_grad_scaler ShardedObjects; the skip "
+            "must not be re-introduced or it will silently drop Adam step + grad_scaler."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Tests: setup_megatron_mimo checkpoint loading path
 # ---------------------------------------------------------------------------
