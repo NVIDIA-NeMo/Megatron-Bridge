@@ -24,9 +24,10 @@ import torch
 class GenericVisualInputs:
     """Container for visual modality tensors produced by HF processors.
 
-    Works with any HF VLM (Gemma3-VL, Ministral3, GLM-4.5V, etc.).
-    Compatible with ``vlm_step.py`` iteration over ``__dict__`` and
-    ``.normalized_for_model()`` call.
+    Generic means pass-through: fields are forwarded as model kwargs without
+    Qwen-specific shape normalization. Some field names, such as
+    ``image_grid_thw`` and ``video_grid_thw``, originate from Qwen-style HF
+    processor outputs but are also used by other VLM processors.
     """
 
     pixel_values: Optional[torch.Tensor] = None
@@ -55,8 +56,9 @@ class GenericVisualInputs:
 class Qwen2_5_VLVisualInputs:
     """Container for Qwen2/Qwen2.5-VL visual modality tensors.
 
-    Fields mirror the processor outputs for Qwen2/Qwen2.5-VL. Shapes may be
-    normalized for model consumption via normalized_for_model().
+    Fields mirror Qwen-style HF processor outputs. Use this container when
+    ``normalized_for_model()`` must flatten batched image/video tensors and THW
+    grid metadata before model forward.
     """
 
     # Image tensors, e.g., Qwen2.5-VL processor output.
