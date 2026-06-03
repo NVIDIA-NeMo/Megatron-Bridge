@@ -14,9 +14,18 @@
 
 """
 Collation utilities for building VLM training batches from conversation examples.
+
+Most model collators follow the same high-level pipeline:
+1. Read canonical HF-style conversation examples.
+2. Prepare model-specific processor inputs.
+3. Call the HF processor or chat template.
+4. Normalize model-specific sequence layout and media placeholders.
+5. Attach labels, loss masks, and position IDs.
+6. Wrap visual/audio processor outputs for ``vlm_step.py``.
 """
 
 import warnings
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -47,6 +56,136 @@ try:
     HAVE_QWEN_VL_UTILS = True
 except ImportError:
     HAVE_QWEN_VL_UTILS = False
+
+
+QWEN_VISUAL_KEYS = ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw")
+GENERIC_VISUAL_KEYS = (
+    "pixel_values",
+    "pixel_values_videos",
+    "image_grid_thw",
+    "video_grid_thw",
+    "image_sizes",
+    "image_position_ids",
+)
+
+
+def _conversation_list(examples: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Return batched conversations from HF-style VLM examples."""
+    return [example["conversation"] for example in examples]
+
+
+def _render_chat_texts(examples: list[dict[str, Any]], processor) -> list[str]:
+    """Render each example conversation to text without tokenizing."""
+    return [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
+
+
+def _ensure_pad_token(processor) -> bool:
+    """Ensure tokenizer padding is available and return whether padding can be used."""
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is not None and tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    return tokenizer is not None and tokenizer.pad_token is not None
+
+
+@contextmanager
+def _right_padding(processor):
+    """Temporarily force right padding for Megatron packing and padding assumptions."""
+    tokenizer = getattr(processor, "tokenizer", processor)
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None:
+        tokenizer.padding_side = "right"
+    try:
+        yield
+    finally:
+        if tokenizer is not None and saved_padding_side is not None:
+            tokenizer.padding_side = saved_padding_side
+
+
+def _apply_chat_template_batch(
+    examples: list[dict[str, Any]],
+    processor,
+    *,
+    padding: bool,
+) -> dict[str, Any]:
+    """Tokenize batched conversations with a processor chat template."""
+    return processor.apply_chat_template(
+        _conversation_list(examples),
+        tokenize=True,
+        padding=padding,
+        truncation=True,
+        return_tensors="pt",
+        return_dict=True,
+    )
+
+
+def _contiguous_tensor_values(batch: dict[str, Any]) -> dict[str, Any]:
+    """Make tensor values contiguous while preserving non-tensor processor outputs."""
+    return {key: value.contiguous() if isinstance(value, torch.Tensor) else value for key, value in batch.items()}
+
+
+def _as_list(value: Any) -> list[Any]:
+    """Normalize optional scalar/list modality payloads to a list."""
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
+
+
+def _finalize_text_targets(
+    batch: dict[str, Any],
+    examples: list[dict[str, Any]],
+    processor,
+    skipped_tokens: torch.Tensor,
+    *,
+    unmask_last_token: bool = False,
+    labels_before_position_ids: bool = False,
+) -> None:
+    """Attach position IDs, labels, and loss mask after sequence layout is stable."""
+    if labels_before_position_ids:
+        if "input_ids" in batch:
+            apply_assistant_labels_to_batch(
+                batch, examples, processor, skipped_tokens, unmask_last_token=unmask_last_token
+            )
+        ensure_position_ids(batch)
+        return
+
+    ensure_position_ids(batch)
+    if "input_ids" in batch:
+        apply_assistant_labels_to_batch(
+            batch, examples, processor, skipped_tokens, unmask_last_token=unmask_last_token
+        )
+
+
+def _wrap_qwen_visual_inputs(
+    batch: dict[str, Any],
+    *,
+    image_grid_key: str = "image_grid_thw",
+) -> Qwen2_5_VLVisualInputs:
+    """Move Qwen-style visual processor outputs into ``visual_inputs``."""
+    visual_inputs = Qwen2_5_VLVisualInputs(
+        pixel_values=batch.get("pixel_values"),
+        pixel_values_videos=batch.get("pixel_values_videos"),
+        image_grid_thw=batch.get(image_grid_key),
+        video_grid_thw=batch.get("video_grid_thw"),
+    )
+    for key in ("pixel_values", "pixel_values_videos", image_grid_key, "video_grid_thw"):
+        batch.pop(key, None)
+    batch["visual_inputs"] = visual_inputs
+    return visual_inputs
+
+
+def _wrap_generic_visual_inputs(batch: dict[str, Any], keys: tuple[str, ...] = GENERIC_VISUAL_KEYS) -> None:
+    """Move generic visual processor outputs into ``visual_inputs``."""
+    batch["visual_inputs"] = pop_generic_visual_inputs(batch, keys)
+
+
+def _wrap_qwen_audio_inputs(batch: dict[str, Any]) -> None:
+    """Move Qwen2-Audio processor outputs into ``audio_inputs``."""
+    batch["audio_inputs"] = Qwen2AudioInputs(
+        input_features=batch.get("input_features"),
+        feature_attention_mask=batch.get("feature_attention_mask"),
+    )
+    for key in ("input_features", "feature_attention_mask"):
+        batch.pop(key, None)
 
 
 def phi4_mm_collate_fn(examples, processor):
@@ -104,18 +243,13 @@ def qwen2_5_collate_fn(
 
     skipped_tokens = extract_skipped_token_ids(processor)
 
-    texts = [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
+    texts = _render_chat_texts(examples, processor)
     # Build per-example media (list) and split by presence.  Qwen processors accept
     # nested per-example image/video lists; splitting avoids passing empty media
     # kwargs for text-only rows.
     per_example_images = []
     per_example_videos = []
     has_media = []
-
-    def _as_list(value):
-        if value is None:
-            return []
-        return value if isinstance(value, list) else [value]
 
     for example in examples:
         imgs, videos = process_vision_info(example["conversation"])
@@ -146,19 +280,17 @@ def qwen2_5_collate_fn(
             processor_kwargs["images"] = images_with
         if any(videos_with):
             processor_kwargs["videos"] = videos_with
-        batch_with = processor(**processor_kwargs)
-
-        batch_with = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_with.items()}
+        batch_with = _contiguous_tensor_values(processor(**processor_kwargs))
 
     if idx_without:
         texts_without = [texts[i] for i in idx_without]
-        batch_without = processor(
-            text=texts_without,
-            padding=True,
-            return_tensors="pt",
+        batch_without = _contiguous_tensor_values(
+            processor(
+                text=texts_without,
+                padding=True,
+                return_tensors="pt",
+            )
         )
-
-        batch_without = {k: v.contiguous() if isinstance(v, torch.Tensor) else v for k, v in batch_without.items()}
 
     # Merge batches back to original order
     if batch_with is not None and batch_without is None:
@@ -199,24 +331,12 @@ def qwen2_5_collate_fn(
                 attention_mask[i] = attn_without[row]
             batch["attention_mask"] = attention_mask
         # Carry over vision tensors if present
-        for key in ("pixel_values", "image_grid_thw", "pixel_values_videos", "video_grid_thw"):
+        for key in QWEN_VISUAL_KEYS:
             if key in batch_with:
                 batch[key] = batch_with[key]
 
-    # Ensure position_ids exist for the model
-    ensure_position_ids(batch)
-    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
-    # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
-    visual_inputs = Qwen2_5_VLVisualInputs(
-        pixel_values=batch.get("pixel_values"),
-        pixel_values_videos=batch.get("pixel_values_videos"),
-        image_grid_thw=batch.get("image_grid_thw"),
-        video_grid_thw=batch.get("video_grid_thw"),
-    )
-    for key in ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw"):
-        if key in batch:
-            del batch[key]
-    batch["visual_inputs"] = visual_inputs
+    _finalize_text_targets(batch, examples, processor, skipped_tokens)
+    _wrap_qwen_visual_inputs(batch)
     return batch
 
 
@@ -720,14 +840,7 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     skipped_tokens = extract_skipped_token_ids(processor)
 
     if processor.chat_template is not None:
-        batch = processor.apply_chat_template(
-            [example["conversation"] for example in examples],
-            tokenize=True,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
-            return_dict=True,
-        )
+        batch = _apply_chat_template_batch(examples, processor, padding=True)
     else:
         texts = []
         for example in examples:
@@ -773,22 +886,15 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
             return_tensors="pt",
         )
 
-    if "input_ids" in batch:
-        apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens, unmask_last_token=True)
-    ensure_position_ids(batch)
-
-    # Wrap visual tensors in GenericVisualInputs so vlm_step.py picks them up
-    batch["visual_inputs"] = pop_generic_visual_inputs(
+    _finalize_text_targets(
         batch,
-        (
-            "pixel_values",
-            "pixel_values_videos",
-            "image_grid_thw",
-            "video_grid_thw",
-            "image_sizes",
-            "image_position_ids",
-        ),
+        examples,
+        processor,
+        skipped_tokens,
+        unmask_last_token=True,
+        labels_before_position_ids=True,
     )
+    _wrap_generic_visual_inputs(batch)
 
     return batch
 
@@ -804,23 +910,11 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     """
     skipped_tokens = extract_skipped_token_ids(processor)
 
-    batch = processor.apply_chat_template(
-        [example["conversation"] for example in examples],
-        tokenize=True,
-        padding=True,
-        truncation=True,
-        return_tensors="pt",
-        return_dict=True,
-    )
+    batch = _apply_chat_template_batch(examples, processor, padding=True)
 
-    ensure_position_ids(batch)
-    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
+    _finalize_text_targets(batch, examples, processor, skipped_tokens)
 
-    # Wrap visual tensors in GenericVisualInputs (includes mm_token_type_ids for GLM)
-    batch["visual_inputs"] = pop_generic_visual_inputs(
-        batch,
-        ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw", "mm_token_type_ids"),
-    )
+    _wrap_generic_visual_inputs(batch, (*QWEN_VISUAL_KEYS, "mm_token_type_ids"))
 
     return batch
 
@@ -832,49 +926,16 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
     skipped_tokens = extract_skipped_token_ids(processor)
 
-    # Ensure a pad_token is set so padding can produce uniform-length tensors.
-    tokenizer = getattr(processor, "tokenizer", None)
-    if tokenizer is not None and tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    # If pad_token is still unset after the eos_token fallback, disable padding
-    # to avoid a ValueError from apply_chat_template.
-    can_pad = tokenizer is not None and tokenizer.pad_token is not None
+    # If pad_token remains unset after the eos_token fallback, disable padding to
+    # avoid a ValueError from apply_chat_template.
+    can_pad = _ensure_pad_token(processor)
 
-    # Force right-padding for training collation.  Some tokenizers (e.g. Gemma3)
-    # default to left-padding which breaks downstream sequence packing: the packer
-    # copies tokens[seq_idx, :length] from position 0, so left-padded content gets
-    # replaced by padding tokens and image/special tokens are lost.
-    saved_padding_side = getattr(tokenizer, "padding_side", None)
-    if tokenizer is not None:
-        tokenizer.padding_side = "right"
+    with _right_padding(processor):
+        batch = _apply_chat_template_batch(examples, processor, padding=can_pad)
 
-    batch = processor.apply_chat_template(
-        [example["conversation"] for example in examples],
-        tokenize=True,
-        padding=can_pad,
-        truncation=True,
-        return_tensors="pt",
-        return_dict=True,
-    )
-
-    # Restore original padding side so generation paths are unaffected.
-    if tokenizer is not None and saved_padding_side is not None:
-        tokenizer.padding_side = saved_padding_side
-
-    ensure_position_ids(batch)
-
+    _finalize_text_targets(batch, examples, processor, skipped_tokens)
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
-    apply_assistant_labels_to_batch(batch, examples, processor, skipped_tokens)
-    # Build Qwen2VL visual inputs object and attach to batch; remove raw keys
-    visual_inputs = Qwen2_5_VLVisualInputs(
-        pixel_values=batch.get("pixel_values"),
-        image_grid_thw=batch.get("image_grid_thw"),
-    )
-    if "pixel_values" in batch:
-        del batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        del batch["image_grid_thw"]
-    batch["visual_inputs"] = visual_inputs
+    _wrap_qwen_visual_inputs(batch)
     return batch
 
 
@@ -893,8 +954,7 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     texts = []
     audio_inputs = []
     for example in examples:
-        text = processor.apply_chat_template(example["conversation"], tokenize=False)
-        texts.append(text)
+        texts.append(processor.apply_chat_template(example["conversation"], tokenize=False))
         audio = example.get("audio")
         if audio is not None:
             if isinstance(audio, tuple):
@@ -904,23 +964,17 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
             else:
                 audio_inputs.append(audio)
 
-    # Megatron's packing and padding utilities assume right-padding
-    # (tokens[:length] extracts real content). Override the tokenizer's
-    # default padding_side which may be "left" (e.g. Qwen2Audio).
     tokenizer = getattr(processor, "tokenizer", processor)
-    orig_padding_side = getattr(tokenizer, "padding_side", "right")
-    tokenizer.padding_side = "right"
 
-    batch = processor(
-        text=texts,
-        audio=audio_inputs if audio_inputs else None,
-        return_tensors="pt",
-        padding=True,
-    )
+    with _right_padding(processor):
+        batch = processor(
+            text=texts,
+            audio=audio_inputs if audio_inputs else None,
+            return_tensors="pt",
+            padding=True,
+        )
 
-    tokenizer.padding_side = orig_padding_side
     input_ids = batch["input_ids"]
-    batch_size, seq_len = input_ids.shape
     pad_token_id = tokenizer.pad_token_id
 
     # --- HF-compatible label construction ---
@@ -964,21 +1018,8 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     # Step 3: Derive loss_mask from active label positions
     batch["loss_mask"] = (labels != IGNORE_INDEX).float()
 
-    # Ensure position_ids exist
-    if "position_ids" not in batch:
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1).clone().contiguous()
-        )
-
-    # Wrap audio tensors in Qwen2AudioInputs and attach as audio_inputs
-    audio_inputs = Qwen2AudioInputs(
-        input_features=batch.get("input_features"),
-        feature_attention_mask=batch.get("feature_attention_mask"),
-    )
-    for key in ("input_features", "feature_attention_mask"):
-        if key in batch:
-            del batch[key]
-    batch["audio_inputs"] = audio_inputs
+    ensure_position_ids(batch)
+    _wrap_qwen_audio_inputs(batch)
 
     return batch
 
@@ -1179,19 +1220,8 @@ def kimi_k25_vl_collate_fn(
     if all_grid_thws:
         result["grid_thws"] = torch.cat(all_grid_thws, dim=0)  # (N, 3) with [t, h, w]
 
-    # Ensure position_ids exist for the model
-    ensure_position_ids(result)
-    apply_assistant_labels_to_batch(result, examples, processor, skipped_tokens)
-
-    # Build visual inputs object and attach to batch; remove raw keys.
-    # Kimi processor outputs "grid_thws" (N, 3); pass full [t, h, w] as image_grid_thw.
-    visual_inputs = Qwen2_5_VLVisualInputs(
-        pixel_values=result.get("pixel_values"),
-        image_grid_thw=result.get("grid_thws"),
-    )
-    for k in ("pixel_values", "grid_thws"):
-        result.pop(k, None)
-    result["visual_inputs"] = visual_inputs
+    _finalize_text_targets(result, examples, processor, skipped_tokens)
+    _wrap_qwen_visual_inputs(result, image_grid_key="grid_thws")
     return result
 
 
