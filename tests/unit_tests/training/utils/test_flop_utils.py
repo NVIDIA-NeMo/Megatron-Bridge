@@ -835,6 +835,34 @@ class TestDeepSeekV4HybridFlops:
 
         assert actual_flops == expected_flops
 
+    @pytest.mark.parametrize(
+        ("missing_field", "error_message"),
+        [
+            ("dsa_indexer_n_heads", "dsa_indexer_n_heads must be set"),
+            ("dsa_indexer_head_dim", "dsa_indexer_head_dim must be set"),
+            ("dsa_indexer_topk", "dsa_indexer_topk must be set"),
+        ],
+    )
+    def test_dsv4_hybrid_ratio4_requires_indexer_config(self, missing_field, error_message):
+        """DSv4 hybrid ratio-4 layers require DSA indexer config for FLOPs accounting."""
+        model_kwargs = {
+            "num_layers": 3,
+            "multi_latent_attention": True,
+            "experimental_attention_variant": "dsv4_hybrid",
+            "q_lora_rank": 16,
+            "o_lora_rank": 16,
+            "csa_compress_ratios": [0, 4, 128],
+            "dsa_indexer_n_heads": 2,
+            "dsa_indexer_head_dim": 8,
+            "dsa_indexer_topk": 32,
+        }
+        model_kwargs[missing_field] = None
+        model_cfg = MockModelConfig(**model_kwargs)
+        cfg = MockConfigContainer(model=model_cfg)
+
+        with pytest.raises(ValueError, match=error_message):
+            num_floating_point_operations(cfg, batch_size=1)
+
 
 class TestHybridMtpPatternParsing:
     """Tests for hybrid/MTP pattern parsing in FLOPs accounting."""
