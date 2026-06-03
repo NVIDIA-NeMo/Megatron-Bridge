@@ -781,7 +781,6 @@ class MegatronModelBridge(
             return self._cached_param_names
 
         # Compute the result
-        pp_group = _get_pp_group(megatron_model)
         model_config = unwrap_model(megatron_model)[0].config
         global_param_names = []
 
@@ -801,13 +800,26 @@ class MegatronModelBridge(
                     continue
                 global_param_names.append(global_param_name)
 
-        gathered_global_param_names = [None] * pp_group.size()
-        torch.distributed.all_gather_object(gathered_global_param_names, global_param_names, group=pp_group)
+        # Gather across the full process group rather than only the PP group:
+        # names can be sharded across any axis (PP/EP/ETP), so a PP-only gather
+        # can silently miss expert names that live on other EP/ETP ranks.
+        world_size = torch.distributed.get_world_size()
+        gathered_global_param_names = [None] * world_size
+        torch.distributed.all_gather_object(gathered_global_param_names, global_param_names)
 
         # flatten the list, sort it and remove duplicates
         # the order matters here, casually re-order will cause a hang.
         # e.g. decoder.layers.0.mlp.experts.linear_fc1.weight100
         flattened_names = list(set(sum(gathered_global_param_names, [])))
+
+        # Fail loudly if the gathered global set ever drops a name that some rank
+        # contributed locally, instead of silently truncating the conversion.
+        global_set = set(flattened_names)
+        local_set = set(global_param_names)
+        assert local_set <= global_set, (
+            "Gathered global parameter names are not a superset of this rank's local names; "
+            f"missing {sorted(local_set - global_set)}"
+        )
 
         # the order cannot be changed, this sync for all ranks for conversion
         # change this might cause a hang
