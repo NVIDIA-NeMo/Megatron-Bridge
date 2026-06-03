@@ -136,7 +136,7 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
     if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
-        assert cfg.model.cross_entropy_fusion_impl == "te"
+        assert cfg.model.cross_entropy_fusion_impl == "native"
 
     # SFT and PEFT-specific assertions
     if is_sft_or_peft:

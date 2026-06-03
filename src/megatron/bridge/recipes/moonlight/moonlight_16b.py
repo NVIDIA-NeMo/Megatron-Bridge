@@ -125,7 +125,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = "selective"
@@ -307,7 +307,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     # recompute_granularity already set in model provider
@@ -520,7 +520,7 @@ def moonlight_16b_peft_config(
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.fine_grained_activation_offloading = False

@@ -95,7 +95,7 @@ def llama32_1b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -182,7 +182,7 @@ def llama32_3b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -268,7 +268,7 @@ def llama3_8b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -349,7 +349,7 @@ def llama3_8b_16k_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -430,7 +430,7 @@ def llama3_8b_64k_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -511,7 +511,7 @@ def llama3_8b_128k_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -614,7 +614,7 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -701,7 +701,7 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -804,7 +804,7 @@ def llama3_70b_16k_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -893,7 +893,7 @@ def llama3_70b_64k_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -987,7 +987,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -1070,7 +1070,7 @@ def llama31_70b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
@@ -1165,7 +1165,7 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None

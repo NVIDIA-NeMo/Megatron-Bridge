@@ -67,7 +67,7 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     if hasattr(recipe.model, "apply_rope_fusion"):
         recipe.model.apply_rope_fusion = True
     if hasattr(recipe.model, "cross_entropy_fusion_impl"):
-        recipe.model.cross_entropy_fusion_impl = "te"
+        recipe.model.cross_entropy_fusion_impl = "native"
 
     # TODO: This needs to be adjusted when overlapping HybridEP with computation or
     # the number of SMs for HybridEP is reduced.

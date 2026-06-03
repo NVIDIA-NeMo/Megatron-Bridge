@@ -77,7 +77,7 @@ def qwen3_30b_a3b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading) - ENABLED for 30B MoE
     cfg.model.recompute_granularity = "full"
@@ -191,7 +191,7 @@ def qwen3_235b_a22b_pretrain_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     # Enable if needed for memory optimization
@@ -321,7 +321,7 @@ def qwen3_30b_a3b_sft_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -454,7 +454,7 @@ def qwen3_235b_a22b_sft_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -601,7 +601,7 @@ def qwen3_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -748,7 +748,7 @@ def qwen3_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigConta
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None

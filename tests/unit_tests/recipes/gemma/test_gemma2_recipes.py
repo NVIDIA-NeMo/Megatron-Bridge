@@ -61,7 +61,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     def __init__(self):
-        self.cross_entropy_fusion_impl = "te"
+        self.cross_entropy_fusion_impl = "native"
         self.vocab_size = 256000
         self.context_parallel_size = 1
 

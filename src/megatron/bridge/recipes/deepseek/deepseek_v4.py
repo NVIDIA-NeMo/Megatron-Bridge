@@ -121,7 +121,7 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
     cfg.model.moe_aux_loss_coeff = 0.0
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act", "mhc"]

@@ -67,7 +67,7 @@ class KimiK2Bridge(MegatronModelBridge):
         provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
-        provider.cross_entropy_fusion_impl = "te"
+        provider.cross_entropy_fusion_impl = "native"
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True

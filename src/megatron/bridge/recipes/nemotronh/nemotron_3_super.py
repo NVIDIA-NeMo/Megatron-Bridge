@@ -86,7 +86,7 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
 
     # Kernel Selections
     cfg.model.attention_backend = "fused"
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
     cfg.model.use_te_rng_tracker = True
 
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;

@@ -135,7 +135,7 @@ def kimi_k25_vl_sft_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving
     cfg.model.fine_grained_activation_offloading = False

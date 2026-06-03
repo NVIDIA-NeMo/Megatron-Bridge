@@ -105,7 +105,7 @@ def create_test_config(**kwargs):
         hidden_size=4096,
         ffn_hidden_size=14336,
         num_attention_heads=32,
-        cross_entropy_fusion_impl="te",
+        cross_entropy_fusion_impl="native",
         tensor_model_parallel_size=tensor_model_parallel_size,
         pipeline_model_parallel_size=pipeline_model_parallel_size,
         pipeline_dtype=pipeline_dtype,

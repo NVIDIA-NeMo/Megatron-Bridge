@@ -267,12 +267,12 @@ class TestKimiK25VLSftConfig:
         assert cfg.model.cuda_graph_warmup_steps == 3
 
     def test_sft_config_kernel_selections(self):
-        """Default attention backend is None; cross-entropy fusion uses TE."""
+        """Default attention backend is None; cross-entropy fusion uses native."""
         cfg = kimi_k25_vl_sft_config()
 
         assert cfg.model.attention_backend is None
         assert cfg.model.cross_entropy_loss_fusion is True
-        assert cfg.model.cross_entropy_fusion_impl == "te"
+        assert cfg.model.cross_entropy_fusion_impl == "native"
 
     def test_sft_config_comm_overlap(self):
         """Comm overlap is off (TP overlap, wgrad delay, MoE EP overlap)."""

@@ -225,7 +225,7 @@ class TestKimiK2PretrainConfig:
 
         assert cfg.model.attention_backend is None
         assert cfg.model.cross_entropy_loss_fusion is True
-        assert cfg.model.cross_entropy_fusion_impl == "te"
+        assert cfg.model.cross_entropy_fusion_impl == "native"
 
     def test_pretrain_config_comm_overlap(self):
         """Test communication overlap configuration."""

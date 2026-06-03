@@ -146,7 +146,7 @@ def kimi_k2_pretrain_config(optimizer_type: str = "muon") -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading) - already set in model provider
     # cfg.model.recompute_granularity = "selective"

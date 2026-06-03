@@ -107,7 +107,7 @@ class SarvamMoEModelProvider(GPTModelProvider):
     attention_softmax_in_fp32: bool = True
     persist_layer_norm: bool = True
 
-    cross_entropy_fusion_impl: str = "te"
+    cross_entropy_fusion_impl: str = "native"
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
     recompute_modules: List[str] = field(default_factory=lambda: ["layernorm", "shared_experts", "mlp", "moe_act"])
@@ -192,7 +192,7 @@ class SarvamMLAModelProvider(MLATransformerConfig, GPTModelProvider):
     attention_softmax_in_fp32: bool = True
     persist_layer_norm: bool = True
 
-    cross_entropy_fusion_impl: str = "te"
+    cross_entropy_fusion_impl: str = "native"
     cp_comm_type: str = "p2p"
     recompute_granularity: str = "selective"
     recompute_modules: List[str] = field(default_factory=lambda: ["moe"])

@@ -67,7 +67,7 @@ def qwen3_600m_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -148,7 +148,7 @@ def qwen3_1p7b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -229,7 +229,7 @@ def qwen3_4b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -310,7 +310,7 @@ def qwen3_8b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -391,7 +391,7 @@ def qwen3_14b_pretrain_config() -> ConfigContainer:
     # Kernel selections
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading)
     cfg.model.recompute_granularity = None
@@ -464,7 +464,7 @@ def qwen3_32b_pretrain_config() -> ConfigContainer:
 
     cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving (recompute & offloading) - ENABLED for 32B
     cfg.model.recompute_granularity = "full"

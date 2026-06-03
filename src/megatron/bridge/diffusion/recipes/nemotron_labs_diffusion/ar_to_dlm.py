@@ -229,7 +229,7 @@ def _nemotron_labs_diffusion_common(
         model_cfg.recompute_num_layers = 1
 
     model_cfg.cross_entropy_loss_fusion = True
-    model_cfg.cross_entropy_fusion_impl = "te"
+    model_cfg.cross_entropy_fusion_impl = "native"
 
     if lr_decay_style == "WSD":
         opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing_dllm(

@@ -84,7 +84,7 @@ def deepseek_v2_lite_pretrain_config() -> ConfigContainer:
         True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
     )
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
+    cfg.model.cross_entropy_fusion_impl = "native"  # Default from DeepSeekModelProvider
 
     # Memory saving (recompute & offloading) - ENABLED for V2-Lite
     cfg.model.recompute_granularity = "full"
@@ -202,7 +202,7 @@ def deepseek_v2_pretrain_config() -> ConfigContainer:
         True  # MoE-specific: Use grouped GEMM for experts (default from DeepSeekModelProvider)
     )
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
+    cfg.model.cross_entropy_fusion_impl = "native"  # Default from DeepSeekModelProvider
 
     # Memory saving (recompute & offloading) - ENABLED for V2
     cfg.model.recompute_granularity = "full"

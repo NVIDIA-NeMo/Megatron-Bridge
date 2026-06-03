@@ -82,7 +82,7 @@ def _safe_overrides_for(name: str) -> dict:
 
 class _FakeModelCfg:
     def __init__(self):
-        self.cross_entropy_fusion_impl = "te"
+        self.cross_entropy_fusion_impl = "native"
         self.context_parallel_size = 1
 
     def finalize(self):
@@ -186,11 +186,7 @@ def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pyt
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
     if "llama3" in recipe_func.__name__.lower():
-        # Pretrain configs use "te", SFT/PEFT configs use "native"
-        expected_impl = (
-            "native" if ("sft" in recipe_func.__name__.lower() or "peft" in recipe_func.__name__.lower()) else "te"
-        )
-        assert cfg.model.cross_entropy_fusion_impl == expected_impl
+        assert cfg.model.cross_entropy_fusion_impl == "native"
 
 
 @pytest.mark.parametrize("recipe_func", _LLAMA3_SFT_FUNCS)

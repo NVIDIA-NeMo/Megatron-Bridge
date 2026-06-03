@@ -170,7 +170,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True  # MoE-specific: Fuse permute operations
     cfg.model.moe_grouped_gemm = True  # MoE-specific: Use grouped GEMM for experts
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
+    cfg.model.cross_entropy_fusion_impl = "native"  # Default from DeepSeekModelProvider
 
     # Memory saving (recompute & offloading) — no recompute by default.
     # Setting granularity="selective" with modules=None would cause MCore's
@@ -326,7 +326,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
     cfg.model.cross_entropy_loss_fusion = True
-    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cross_entropy_fusion_impl = "native"
 
     # Memory saving - FULL recompute for 32 nodes (memory efficiency)
     cfg.model.recompute_granularity = "full"
