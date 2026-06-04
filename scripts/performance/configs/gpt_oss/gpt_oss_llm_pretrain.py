@@ -201,7 +201,8 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.model.cuda_graph_warmup_steps = 5
         cfg.ddp.average_in_collective = True
-        cfg.ddp.overlap_param_gather = False  # CG errors if True
+        cfg.ddp.overlap_param_gather = True
+        cfg.optimizer.overlap_param_gather = True
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 768
