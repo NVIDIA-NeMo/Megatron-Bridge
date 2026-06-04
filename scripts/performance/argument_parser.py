@@ -573,7 +573,7 @@ def parse_cli_args():
         "--kubeflow_tolerations_json",
         type=str,
         help="JSON-encoded list of Kubernetes Toleration dicts applied to the training pods. "
-        "Required for landing on lease-tainted GPU nodes (e.g. gpu-wrangler.nvidia.com/lease).",
+        "Required for landing on tainted GPU nodes.",
         required=False,
         default=None,
     )
@@ -581,7 +581,7 @@ def parse_cli_args():
         "--kubeflow_affinity_json",
         type=str,
         help="JSON-encoded Kubernetes Affinity dict applied to the training pods. "
-        "Used to pin pods to GPULease-allocated nodes via nodeAffinity.",
+        "Used to pin pods to specific nodes via nodeAffinity.",
         required=False,
         default=None,
     )
