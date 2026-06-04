@@ -383,6 +383,7 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            "decoder.final_layernorm.weight": "backbone.norm_f.weight",
             # Fused TE layer norm weights (when using TELayerNormColumnParallelLinear)
             # if the megatron key does not exist for a given layer it will be ignored,
             # so only one of these will be used per layer

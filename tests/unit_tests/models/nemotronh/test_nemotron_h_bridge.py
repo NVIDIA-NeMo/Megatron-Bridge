@@ -534,6 +534,16 @@ class TestNemotronHBridgeMegatronToHFConfig:
         with pytest.raises(ValueError, match="Unknown layer type characters in mtp_hybrid_override_pattern"):
             NemotronHBridge.megatron_to_hf_config(provider)
 
+    def test_megatron_to_hf_config_rejects_mismatched_mtp_patterns(self):
+        """Unified MTP blocks must be identical when exported to a single HF MTP pattern."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="ME/*E/*M",
+            mtp_num_layers=2,
+        )
+
+        with pytest.raises(ValueError, match="All MTP patterns in hybrid_override_pattern must be identical"):
+            NemotronHBridge.megatron_to_hf_config(provider)
+
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with NemotronH models."""
@@ -1032,6 +1042,16 @@ class TestNemotronHBridgeMTPIntegration:
         assert mlp_mapping.hf_param == "mtp.layers.2.mixer.experts.5.up_proj.weight"
         assert isinstance(qkv_mapping, QKVMapping)
         assert qkv_mapping.hf_param["q"] == "mtp.layers.3.mixer.q_proj.weight"
+
+    def test_mapping_registry_resolves_final_norm_aliases(self):
+        """Export trunk final norm for both HybridModel and TransformerBlock key names."""
+        registry = NemotronHBridge().mapping_registry()
+
+        final_norm_mapping = registry.megatron_to_hf_lookup("decoder.final_norm.weight")
+        final_layernorm_mapping = registry.megatron_to_hf_lookup("decoder.final_layernorm.weight")
+
+        assert final_norm_mapping.hf_param == "backbone.norm_f.weight"
+        assert final_layernorm_mapping.hf_param == "backbone.norm_f.weight"
 
     def test_mapping_registry_without_mtp_logs_warning(self):
         """Test mapping_registry logs warning when mtp_layers_per_block is 0."""
