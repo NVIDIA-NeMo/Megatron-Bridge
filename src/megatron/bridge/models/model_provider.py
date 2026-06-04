@@ -128,6 +128,22 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
                 raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
             setattr(self, name, value)
 
+        # DeepSeek-V4 hash-routed MoE requires an explicit pipeline_model_parallel_layout
+        # when PP > 1 (the hash layers must co-locate with the embedding on the first
+        # stage). Recipes set this explicitly; auto-set it here so provider paths that
+        # bypass recipes (e.g. mbridge/verl) also work for PP > 1 without the caller
+        # supplying a layout. Only applies to DeepSeek-V4 and never overrides a user layout.
+        if (
+            getattr(self, "experimental_attention_variant", None) == "dsv4_hybrid"
+            and (getattr(self, "pipeline_model_parallel_size", 1) or 1) > 1
+            and getattr(self, "pipeline_model_parallel_layout", None) is None
+        ):
+            from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+                set_deepseek_v4_pipeline_model_parallel_layout,
+            )
+
+            set_deepseek_v4_pipeline_model_parallel_layout(self)
+
         self.finalize()
         return self
 

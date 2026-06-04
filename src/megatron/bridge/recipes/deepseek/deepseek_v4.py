@@ -16,7 +16,7 @@ import torch
 from megatron.core.quantization.quant_config import RecipeConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
@@ -26,37 +26,6 @@ from megatron.bridge.recipes.utils.optimizer_utils import (
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
-
-
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: GPTModelProvider) -> None:
-    """Set an even DSv4 pipeline layout with MTP and loss on the last stage."""
-    pp_size = model_cfg.pipeline_model_parallel_size or 1
-    if pp_size <= 1:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
-    if num_layers <= 0:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
-    base_layers, extra_layers = divmod(num_layers, pp_size)
-    layout: list[list[str]] = []
-    for pp_rank in range(pp_size):
-        stage: list[str] = []
-        if pp_rank == 0:
-            stage.append("embedding")
-
-        decoder_layers = base_layers + int(pp_rank < extra_layers)
-        stage.extend(["decoder"] * decoder_layers)
-
-        if pp_rank == pp_size - 1:
-            stage.extend(["mtp"] * mtp_layers)
-            stage.append("loss")
-        layout.append(stage)
-
-    model_cfg.pipeline_model_parallel_layout = layout
 
 
 def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
