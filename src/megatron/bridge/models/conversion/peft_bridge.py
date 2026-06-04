@@ -250,15 +250,15 @@ class MegatronPeftBridge:
         linear_out_tensor: torch.Tensor,
         base_weight_shape: Optional[torch.Size] = None,
     ) -> bool:
-        """Detect fused FC1 (gate/up) adapters based on names and tensor shape."""
+        """Detect fused FC1 adapters based on names and tensor shape."""
 
         names = list(base_hf_weight_names)
         has_gate_up = (
             bool(names)
             and len(names) % 2 == 0
-            and all(("gate_proj" in name or "up_proj" in name) for name in names)
-            and any("gate_proj" in name for name in names)
-            and any("up_proj" in name for name in names)
+            and all(self._is_fused_fc1_gate_proj(name) or self._is_fused_fc1_up_proj(name) for name in names)
+            and any(self._is_fused_fc1_gate_proj(name) for name in names)
+            and any(self._is_fused_fc1_up_proj(name) for name in names)
         )
         if not has_gate_up:
             return False
@@ -289,6 +289,16 @@ class MegatronPeftBridge:
             if projection_key in hf_name:
                 return projection_key
         return None
+
+    def _is_fused_fc1_gate_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the gate half of fused FC1."""
+
+        return "gate_proj" in hf_name or ".w1." in hf_name
+
+    def _is_fused_fc1_up_proj(self, hf_name: str) -> bool:
+        """Return whether the HF name maps to the up half of fused FC1."""
+
+        return "up_proj" in hf_name or ".w3." in hf_name
 
     def _infer_hf_expert_idx(self, hf_name: str) -> Optional[int]:
         """Return the expert index embedded in an HF MoE weight name."""
@@ -934,9 +944,9 @@ class MegatronPeftBridge:
             )
             per_base = {}
             for base_name in base_hf_weight_names:
-                if "gate_proj" in base_name:
+                if self._is_fused_fc1_gate_proj(base_name):
                     per_base[base_name] = gate_weight
-                elif "up_proj" in base_name:
+                elif self._is_fused_fc1_up_proj(base_name):
                     per_base[base_name] = up_weight
                 else:
                     raise ValueError(f"Unknown fused-fc1 base weight name: {base_name}")
@@ -1047,9 +1057,9 @@ class MegatronPeftBridge:
                         current_linear_out_weight,
                         is_expert=is_expert,
                     )
-                if "gate_proj" in hf_name:
+                if self._is_fused_fc1_gate_proj(hf_name):
                     current_linear_out_weight = fc1_gate_weight
-                elif "up_proj" in hf_name:
+                elif self._is_fused_fc1_up_proj(hf_name):
                     current_linear_out_weight = fc1_up_weight
                 else:
                     raise ValueError(f"Unknown weight name: {hf_name}")
@@ -1063,6 +1073,68 @@ class MegatronPeftBridge:
                 base_weight, alpha, dim, current_linear_in_weight, current_linear_out_weight
             )
             converted_weights_dict[hf_name] = merged_weight
+
+        return converted_weights_dict
+
+    def _merge_grouped_export_adapter_weights(
+        self,
+        task: "WeightConversionTask",
+        converted_weights_dict: Dict[str, torch.Tensor],
+        adapter_weights: List[AdapterWeight],
+        num_moe_experts: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Merge LoRA weights into a single grouped-expert export shard.
+
+        Grouped expert mappings bypass the standard export path and therefore
+        never reach `_merge_lora_adapter_weights`. Merge the current expert's
+        adapter slice into its per-expert tensor before the grouped export code
+        stacks all experts back together.
+        """
+
+        if not converted_weights_dict or not adapter_weights:
+            return converted_weights_dict
+
+        if len(adapter_weights) != 1 or adapter_weights[0].adapter_key is not None:
+            adapter_keys = [adapter_weight.adapter_key for adapter_weight in adapter_weights]
+            raise ValueError(
+                "Unsupported adapter configuration for grouped export weight merging "
+                f"for parameter '{task.global_param_name}': expected exactly one "
+                "non-canonical adapter with adapter_key=None, but got "
+                f"{len(adapter_weights)} adapter(s) with adapter keys {adapter_keys}."
+            )
+
+        from megatron.bridge.utils.common_utils import extract_expert_number_from_param
+
+        expert_idx = extract_expert_number_from_param(task.global_param_name)
+
+        adapter_weight = adapter_weights[0]
+        linear_in_weight = adapter_weight.linear_in_weight.weight
+        linear_out_weight = adapter_weight.linear_out_weight.weight
+
+        expert_linear_in_gathered = self._gather_expert_adapter_weight(linear_in_weight)
+        expert_linear_out_gathered = self._gather_expert_adapter_weight(linear_out_weight)
+
+        current_linear_in_weight = self._select_expert_adapter_weight(
+            linear_in_weight,
+            expert_linear_in_gathered,
+            expert_idx,
+            num_moe_experts,
+        )
+        current_linear_out_weight = self._select_expert_adapter_weight(
+            linear_out_weight,
+            expert_linear_out_gathered,
+            expert_idx,
+            num_moe_experts,
+        )
+
+        for hf_name, base_weight in list(converted_weights_dict.items()):
+            converted_weights_dict[hf_name] = self._merge_single_adapter_weight(
+                base_weight,
+                adapter_weight.alpha,
+                adapter_weight.dim,
+                current_linear_in_weight,
+                current_linear_out_weight,
+            )
 
         return converted_weights_dict
 

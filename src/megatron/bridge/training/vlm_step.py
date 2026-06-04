@@ -278,8 +278,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
 
     if not enable_packing:
-        # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
-        if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        # PP needs fixed activation shapes across stages. EP/HybridEP also needs
+        # matching token dimensions across the expert group for routing metadata.
+        requires_fixed_seq_len = (
+            getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1
+            or getattr(cfg.model, "expert_model_parallel_size", 1) > 1
+        )
+        if requires_fixed_seq_len:
             seq_len = cfg.model.seq_length
 
             tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
@@ -449,6 +454,11 @@ def forward_step(
             "max_seqlen": max_seqlen,
             "cu_seqlens_argmin": cu_seqlens_argmin,
         }
+        # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
+        # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
+        # transformer models to avoid per-step CUDA overhead.
+        if getattr(config, "is_hybrid_model", False):
+            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     if loss_mask is not None:

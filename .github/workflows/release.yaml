@@ -67,7 +67,7 @@ jobs:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   release:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.77.0
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v0.93.0
     needs: [pre-flight]
     with:
       release-ref: ${{ inputs.release-ref || github.sha }}
@@ -89,6 +89,7 @@ jobs:
       submodules: recursive
       container-options: "--gpus all --runtime=nvidia"
       gh-release-from-tag: ${{ inputs.gh-release-from-tag }}
+      extra-no-build-isolation-packages: "grpcio-tools"
     secrets:
       TWINE_USERNAME: __token__
       TWINE_PASSWORD: ${{ secrets.TWINE_PASSWORD }}

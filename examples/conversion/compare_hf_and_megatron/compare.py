@@ -111,17 +111,18 @@ try:
 except ImportError:
     QWEN_VL_UTILS_AVAILABLE = False
     process_vision_info = None
+import io
 import os
 
 # Import debugger module from same directory
 import sys
 
-import requests
 from PIL import Image
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
 # Cosine similarity threshold: require at least 98% similarity (2% tolerance)
@@ -338,11 +339,12 @@ def load_image(image_path: str) -> Image.Image:
         PIL Image object
     """
     if image_path.startswith(("http://", "https://")):
-        response = requests.get(image_path)
-        response.raise_for_status()
-        return Image.open(requests.get(image_path, stream=True).raw)
-    else:
-        return Image.open(image_path)
+        is_safe, reason = is_safe_public_http_url(image_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image_path}")
+        with safe_url_open(image_path) as resp:
+            return Image.open(io.BytesIO(resp.read()))
+    return Image.open(image_path)
 
 
 def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0):
@@ -446,7 +448,7 @@ def _load_hf_model(args, is_vl_model: bool):
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
-        device_map="auto",
+        device_map="cuda",
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,

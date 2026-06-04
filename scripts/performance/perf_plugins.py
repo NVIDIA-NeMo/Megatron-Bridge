@@ -42,6 +42,7 @@ except (ImportError, ModuleNotFoundError):
     from .utils.utils import get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
+NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
 
 
 def _format_list_for_override(values: List | int):
@@ -52,6 +53,21 @@ def _format_list_for_override(values: List | int):
     if isinstance(values, int):
         values = [values]
     return "[" + ",".join(str(v) for v in values) + "]"
+
+
+def _ensure_sqlite_nsys_export(nsys_extra_args: list[str]) -> list[str]:
+    """Add SQLite export unless nsys export args already request it."""
+    for index, arg in enumerate(nsys_extra_args):
+        export_values = None
+        if arg == "--export" and index + 1 < len(nsys_extra_args):
+            export_values = nsys_extra_args[index + 1]
+        elif arg.startswith("--export="):
+            export_values = arg.split("=", 1)[1]
+
+        if export_values is not None and "sqlite" in export_values.split(","):
+            return nsys_extra_args
+
+    return nsys_extra_args + [NSYS_SQLITE_EXPORT_ARG]
 
 
 @dataclass
@@ -93,6 +109,7 @@ class NsysPlugin(Plugin):
             'nvtx' and 'cuda' events will be traced.
         record_shapes (bool): Whether to record tensor shapes. Default is False.
         nsys_gpu_metrics (bool): Whether to enable GPU metrics collection. Default is False.
+        export_sqlite (bool): Whether to export a SQLite report after profiling finishes. Default is False.
         script_args_converter_fn (Optional[Callable]): A function that takes NsysPluginScriptArgs
                                                         and returns a list of CLI arguments. If not provided,
                                                         uses the default hydra-style converter.
@@ -110,6 +127,7 @@ class NsysPlugin(Plugin):
     nsys_extra_args: Optional[list[str]] = None
     record_shapes: bool = False
     nsys_gpu_metrics: bool = False
+    export_sqlite: bool = False
     script_args_converter_fn: Optional[Callable[[NsysPluginScriptArgs], List[str]]] = None
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
@@ -128,6 +146,9 @@ class NsysPlugin(Plugin):
             # Combine user args with existing args (user args first for precedence)
             launcher.nsys_extra_args = self.nsys_extra_args + existing_extra_args
             logger.info(f"Combined nsys_extra_args: {launcher.nsys_extra_args}")
+
+        if self.export_sqlite:
+            launcher.nsys_extra_args = _ensure_sqlite_nsys_export(launcher.nsys_extra_args or [])
 
         if isinstance(executor, SlurmExecutor):
             # NOTE: DO NOT change to f-string, `%q{}` is Slurm placeholder
@@ -188,6 +209,8 @@ class PerfEnvPlugin(Plugin):
             in order to not block DP level communication overlap.
         enable_vboost (bool): Whether to steer more power towards tensor cores via
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
+        lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
+            `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -200,6 +223,7 @@ class PerfEnvPlugin(Plugin):
 
     enable_layernorm_sm_margin: bool = True
     enable_vboost: bool = False
+    lock_gpu_freq: int | None = None
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int | None = None
@@ -272,10 +296,10 @@ class PerfEnvPlugin(Plugin):
             model_family_name in ["deepseek"]
             and model_recipe_name in ["deepseek_v3"]
             and train_task == "pretrain"
-            and gpu in ["h100", "gb200"]
+            and gpu in ["h100", "gb200", "b200"]
         ):
             executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-            if gpu in ["gb200"]:
+            if gpu in ["gb200", "b200"]:
                 executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         elif (
             model_family_name in ["qwen"]
@@ -294,8 +318,8 @@ class PerfEnvPlugin(Plugin):
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
         if model_recipe_name in ["llama3_70b"]:
             if compute_dtype in ["fp8_cs", "fp8_mx"]:
-                if train_task in ["sft"]:
-                    if gpu in ["gb300", "h100"]:
+                if train_task in ["sft", "lora"]:
+                    if gpu in ["gb300", "gb200", "h100"]:
                         executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
                         executor.env_vars["NCCL_GRAPH_REGISTER"] = "0"
         del_cudnn_ln = True
@@ -433,6 +457,48 @@ class PerfEnvPlugin(Plugin):
                 else vboost_cmd
             )
 
+    def _set_lock_gpu_freq(
+        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
+    ):
+        """Lock GPU graphics clocks to a fixed frequency before training.
+
+        Used for silicon simulation correlation studies where a fixed GPU
+        clock frequency is required to match simulation assumptions.
+        """
+
+        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
+            import shlex
+
+            lock_freq_cmd = "\n".join(
+                [
+                    "",
+                    "# Command 0: lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {freq_mhz}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+
+            return lock_freq_cmd
+
+        if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
+            executor.setup_lines = (
+                executor.setup_lines + lock_freq_cmd
+                if (executor.setup_lines and len(executor.setup_lines) > 0)
+                else lock_freq_cmd
+            )
+
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Enable the performance environment settings"""
         workload_base_config = get_workload_base_config(
@@ -494,6 +560,9 @@ class PerfEnvPlugin(Plugin):
 
         # Improve perf by steering power to tensor cores, may not work on all systems
         self._set_vboost(task, executor, self.enable_vboost)
+
+        # Lock GPU graphics clock frequency for stable performance measurements
+        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
 
         # Set model-specific environment variables
         self._set_model_specific_environment_variables(

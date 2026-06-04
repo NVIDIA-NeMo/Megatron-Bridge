@@ -14,11 +14,17 @@
 
 """Shared utilities for VLM generation scripts."""
 
+import io
+import logging
 from typing import Optional
 
-import requests
 import torch
 from PIL import Image
+
+from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
+
+
+logger = logging.getLogger(__name__)
 
 
 try:
@@ -109,7 +115,11 @@ def pad_input_ids_to_tp_multiple(input_ids, tp_size: int, pad_token_id: int = 0)
 def load_image(image_path: str) -> Image.Image:
     """Load an image from URL or file path."""
     if image_path.startswith(("http://", "https://")):
-        return Image.open(requests.get(image_path, stream=True).raw)
+        is_safe, reason = is_safe_public_http_url(image_path)
+        if not is_safe:
+            raise ValueError(f"Refusing to fetch image URL ({reason}): {image_path}")
+        with safe_url_open(image_path) as resp:
+            return Image.open(io.BytesIO(resp.read()))
     return Image.open(image_path)
 
 

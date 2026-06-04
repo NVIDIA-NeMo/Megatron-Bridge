@@ -536,6 +536,14 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     # to avoid a ValueError from apply_chat_template.
     can_pad = tokenizer is not None and tokenizer.pad_token is not None
 
+    # Force right-padding for training collation.  Some tokenizers (e.g. Gemma3)
+    # default to left-padding which breaks downstream sequence packing: the packer
+    # copies tokens[seq_idx, :length] from position 0, so left-padded content gets
+    # replaced by padding tokens and image/special tokens are lost.
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if tokenizer is not None:
+        tokenizer.padding_side = "right"
+
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
         tokenize=True,
@@ -544,6 +552,10 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         return_tensors="pt",
         return_dict=True,
     )
+
+    # Restore original padding side so generation paths are unaffected.
+    if tokenizer is not None and saved_padding_side is not None:
+        tokenizer.padding_side = saved_padding_side
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
