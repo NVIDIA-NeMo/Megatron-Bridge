@@ -187,13 +187,13 @@ def forward_step(
     # BSHD math for the attention term. Vision-patch tracking still applies.
     # Vision-patch count is model-specific (Qwen reports grid_thw = t*h*w per
     # image/video); compute it here and pass a scalar to the model-agnostic helper.
-    vision_patches = None
+    num_vision_patches = None
     if isinstance(multimodal_inputs, dict):
         for grid in (multimodal_inputs.get("image_grid_thw"), multimodal_inputs.get("video_grid_thw")):
             if grid is not None and grid.numel() > 0:
                 patches = grid.prod(dim=-1).sum()
-                vision_patches = patches if vision_patches is None else vision_patches + patches
-    accumulate_flops_metadata(state, tokens, vision_patches=vision_patches)
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(state, tokens, num_vision_patches=num_vision_patches)
 
     forward_args = {
         "input_ids": tokens,

@@ -2081,23 +2081,23 @@ class TestAccumulateFlopsMetadata:
         assert not hasattr(state, "_flops_seqlen_sum")
         assert not hasattr(state, "_flops_seqlen_sq_sum")
 
-    def test_vision_patches_int(self):
+    def test_num_vision_patches_int(self):
         # Vision-patch count is precomputed by the (model-specific) caller and
         # passed as a model-agnostic scalar.
         state = _State()
         tokens = torch.zeros(1, 64)
-        accumulate_flops_metadata(state, tokens, vision_patches=32 + 8)
+        accumulate_flops_metadata(state, tokens, num_vision_patches=32 + 8)
         assert state._flops_vision_patches == 40
 
-    def test_vision_patches_tensor_accumulates_across_microbatches(self):
+    def test_num_vision_patches_tensor_accumulates_across_microbatches(self):
         # A scalar device tensor (no host sync) accumulates correctly.
         state = _State()
         tokens = torch.zeros(1, 64)
-        accumulate_flops_metadata(state, tokens, vision_patches=torch.tensor(32))
-        accumulate_flops_metadata(state, tokens, vision_patches=torch.tensor(8))
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(32))
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(8))
         assert int(state._flops_vision_patches) == 40
 
-    def test_vision_patches_none_is_noop(self):
+    def test_num_vision_patches_none_is_noop(self):
         state = _State()
         tokens = torch.zeros(1, 64)
         accumulate_flops_metadata(state, tokens)

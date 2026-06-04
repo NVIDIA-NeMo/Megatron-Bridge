@@ -451,7 +451,7 @@ def forward_step(
     # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
     # t*h*w per image/video), so compute it here and hand a plain scalar to the
     # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
-    vision_patches = None
+    num_vision_patches = None
     if visual_inputs is not None:
         for grid in (
             getattr(visual_inputs, "image_grid_thw", None),
@@ -459,8 +459,8 @@ def forward_step(
         ):
             if grid is not None and grid.numel() > 0:
                 patches = grid.prod(dim=-1).sum()
-                vision_patches = patches if vision_patches is None else vision_patches + patches
-    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, vision_patches=vision_patches)
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, num_vision_patches=num_vision_patches)
 
     forward_args = {
         "input_ids": tokens,

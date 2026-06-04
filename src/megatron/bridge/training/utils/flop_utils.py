@@ -171,7 +171,7 @@ def accumulate_flops_metadata(
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
-    vision_patches: int | torch.Tensor | None = None,
+    num_vision_patches: int | torch.Tensor | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
 
@@ -182,9 +182,9 @@ def accumulate_flops_metadata(
     - ``_flops_seqlen_sq_sum``: Σᵢ sᵢ² over real sub-sequence lengths derived
       from ``cu_seqlens`` when available (THD-correct attention work), else
       ``mbs * seq_len²`` (BSHD fallback, matches legacy behavior).
-    - ``_flops_vision_patches``: running total of ``vision_patches``.
+    - ``_flops_vision_patches``: running total of ``num_vision_patches``.
 
-    ``vision_patches`` is the precomputed number of vision patches in this
+    ``num_vision_patches`` is the precomputed number of vision patches in this
     microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
     caller — which knows its own encoder's layout — computes the count and passes
     a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
@@ -213,8 +213,8 @@ def accumulate_flops_metadata(
         sq_delta = mbs * seq_len**2
     _add_flops_accumulator(state, "_flops_seqlen_sq_sum", sq_delta)
 
-    if vision_patches is not None:
-        _add_flops_accumulator(state, "_flops_vision_patches", vision_patches)
+    if num_vision_patches is not None:
+        _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
 
 
 def vit_flops(
