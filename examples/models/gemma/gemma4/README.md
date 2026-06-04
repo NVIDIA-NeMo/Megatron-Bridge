@@ -2,17 +2,16 @@
 
 **Gemma 4 E4B** (3.8B dense text model) integration for Megatron-Bridge, including HuggingFace checkpoint conversion, numerical parity verification, and TP-distributed training.
 
-Works with **clean Megatron-Core** — no Gemma4-specific CLI arguments or `TransformerConfig` fields are required in MCore. All Gemma4 specifics live in Bridge via `Gemma4E4BProvider`.
+Works with **clean Megatron-Core** — no Gemma4-specific CLI arguments or `TransformerConfig` fields are required in MCore. All Gemma4 specifics live in Bridge via `Gemma4E4BProvider` and `Gemma4VLBridge`.
 
 ## What's included
 
 | File | Purpose |
 |------|---------|
 | `src/megatron/bridge/models/gemma/gemma4_layer_specs.py` | Layer spec, attention, dual-RoPE, PLE, shared-KV, `Gemma4E4BProvider` |
-| `examples/models/gemma/gemma4/loader_gemma4_hf.py` | HF → Megatron checkpoint loader |
+| `src/megatron/bridge/models/gemma/gemma4_bridge.py` | Bridge-native HF↔Megatron conversion (`Gemma4VLBridge` for E4B HF checkpoints) |
 | `examples/models/gemma/gemma4/parity_check_e4b.py` | Distributed parity check (uses `Gemma4E4BProvider`) |
-| `train_gemma4_e4b_parity.sh` | Logit parity check launcher: Megatron (TP=2) vs HuggingFace |
-| `train_gemma4_e4b_pipeline.sh` | Full pipeline: convert → parity check → training |
+| `examples/models/gemma/gemma4/slurm_pretrain.sh` | Full pipeline: convert → parity check → training |
 | `tests/unit_tests/models/gemma/test_gemma4_{provider,bridge}.py` | Provider and bridge mapping unit tests |
 
 ## Quick start
@@ -21,34 +20,33 @@ Works with **clean Megatron-Core** — no Gemma4-specific CLI arguments or `Tran
 
 ```bash
 export MEGATRON_LM_ROOT=/path/to/Megatron-LM
-export PYTHONPATH=$PWD/src:$PWD/examples/models/gemma/gemma4:$MEGATRON_LM_ROOT/tools/checkpoint:$PYTHONPATH
+export PYTHONPATH=$PWD/src:$MEGATRON_LM_ROOT
+export GEMMA4_CONVERSION_MODE=text
 
-python $MEGATRON_LM_ROOT/tools/checkpoint/convert.py \
-    --model-type GPT \
-    --loader gemma4_hf \
-    --saver core \
-    --load-dir /path/to/gemma-4-E4B-it \
-    --save-dir /path/to/gemma4-e4b-megatron \
-    --model-size gemma4-e4b \
-    --tokenizer-model /path/to/gemma-4-E4B-it \
-    --bf16 \
-    --target-tensor-parallel-size 2 \
-    --target-pipeline-parallel-size 1 \
-    --no-checking
+torchrun --nproc_per_node=2 \
+    examples/conversion/convert_checkpoints_multi_gpu.py import \
+    --hf-model /path/to/gemma-4-E4B-it \
+    --megatron-path /path/to/gemma4-e4b-megatron \
+    --tp 2 \
+    --pp 1 \
+    --torch-dtype bfloat16
 ```
 
 **Step 2 — Verify conversion (logit parity):**
 
 ```bash
-NVIDIA_VISIBLE_DEVICES=0,1 \
-GEMMA4_HF_DIR=/path/to/gemma-4-E4B-it \
-GEMMA4_CKPT=/path/to/gemma4-e4b-megatron \
-bash examples/models/gemma/gemma4/train_gemma4_e4b_parity.sh
+CUDA_DEVICE_MAX_CONNECTIONS=1 \
+PYTHONPATH=$PWD/src \
+torchrun --nproc_per_node=2 \
+    examples/models/gemma/gemma4/parity_check_e4b.py \
+    --hf-dir /path/to/gemma-4-E4B-it \
+    --megatron-ckpt /path/to/gemma4-e4b-megatron \
+    --tp 2 --bf16 --atol 3.0
 ```
 
 Expected results:
 - fp32: `max |diff|: ~0.15  (atol=0.3)  --> PASSED`
-- bf16: `max |diff|: ~2.73  (atol=3.0)  --> PASSED`
+- bf16: `max |diff|: ~2.94  (atol=3.0)  --> PASSED`
 
 **Or run all steps at once (convert → parity → training):**
 
@@ -57,7 +55,7 @@ NVIDIA_VISIBLE_DEVICES=0,1 \
 HF_MODEL_DIR=/path/to/gemma-4-E4B-it \
 MEGATRON_CKPT=/path/to/gemma4-e4b-megatron \
 TRAIN_DATA_PATH=/path/to/data \
-bash examples/models/gemma/gemma4/train_gemma4_e4b_pipeline.sh
+bash examples/models/gemma/gemma4/slurm_pretrain.sh
 ```
 
 ## Running tests
@@ -84,23 +82,19 @@ NVIDIA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
 - **RoPE**: dual RoPE (sliding θ=10000 full rotation, global θ=1000000 partial-factor=0.25), handled by `Gemma4RotaryEmbedding` in Bridge
 - **Per-Layer Embeddings (PLE)**: `embed_tokens_per_layer` weight mapping; per-layer projection forwarded through transformer blocks via MCore's generic `per_layer_inputs` hook in `TransformerBlock`
 - **Shared KV layers**: last 18 layers reuse KV from earlier layers, wired post-construction by `wire_gemma4_kv_sharing()`
-- **GEGLU activation**: tanh-approximate GELU matching HF `gelu_pytorch_tanh`, configured as provider default (no CLI flag needed)
+- **GEGLU activation**: tanh-approximate GELU matching HF `gelu_pytorch_tanh`, handled automatically by Bridge's `GatedMLPMapping` (interleaved TP split)
 - **Logit softcapping**: `final_logit_softcapping=30.0` applied inside `Gemma4E4BProvider`
-- **Checkpoint conversion**: QKV fusion/layout mapping, PLE weight mapping, GEGLU interleaved TP split (see note below)
+- **Checkpoint conversion**: Bridge-native via `Gemma4VLBridge` registered for `Gemma4ForConditionalGeneration`; QKV/GEGLU/PLE handled by `GatedMLPMapping`, `_Gemma4E4BQKVMapping`, `AutoMapping`
 - **`Gemma4E4BProvider`**: all-in-one Bridge provider — builds `TransformerConfig`, injects Gemma4 attrs, replaces `rotary_pos_emb`, attaches PLE modules, patches `forward()` for PLE computation, wires shared-KV
 
-## Key fix: GEGLU weight TP splitting
-
-Megatron's GEGLU forward uses `fc1_stride=2` (interleaved gate/up per rank). The HF checkpoint loader (`loader_gemma4_hf.py`) signals this via `md.geglu = True`, so the checkpoint saver splits `[gate, up]` weights interleaved rather than contiguously:
+## Bridge conversion architecture
 
 ```
-# Correct: interleaved per-rank layout
-rank 0 gets: [gate_rank0, up_rank0]
-rank 1 gets: [gate_rank1, up_rank1]
-
-# Wrong (contiguous split)
-rank 0 gets: [gate_full]
-rank 1 gets: [up_full]
+AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
+  └─ Gemma4VLBridge                      # registered for Gemma4ForConditionalGeneration
+       ├─ provider_bridge()               # text mode → Gemma4E4BProvider for pretraining
+       │                                  # auto/vl mode → Gemma4E4BVLProvider for full VL
+       ├─ _dense_e4b_mapping_registry()   # language mappings (4 norms, QKV, GEGLU, PLE, ...)
+       └─ maybe_modify_loaded_hf_weight() # shared-KV: synthesize zero K/V rows
+                                          # (last 18 layers have no k/v proj in HF)
 ```
-
-Without this fix, TP=2 logit error exceeds 50 (vs expected ~3 for bf16 numerical noise).

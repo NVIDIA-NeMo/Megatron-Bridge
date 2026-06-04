@@ -15,25 +15,22 @@
 """
 Megatron Bridge for Gemma 4 text-only (CausalLM).
 
-Gemma 4 is a MoE model with hybrid sliding/global attention. The dense MLP
-is mapped to Megatron-Core's shared expert mechanism, and routed experts
-use fused tensor format ``[num_experts, 2*intermediate, hidden]``.
+Supports both model variants via the same ``Gemma4ForCausalLM`` HF architecture:
 
-Key architecture-specific handling:
-- K=V on global attention layers: ``v_proj`` is absent; K weights are copied to V.
-- Dual pre-norms: separate norms for dense MLP vs routed experts.
-- Router scale/per_expert_scale: loaded as replicated buffers.
-- layer_scalar: per-layer scaling buffer.
+**MoE variant** (``enable_moe_block=True``, e.g. ``google/gemma-4-26B-A4B``):
+- Dense MLP mapped to Megatron shared expert; routed experts use fused ``[E, 2*I, H]``.
+- K=V on global attention: ``v_proj`` absent; V synthesized from K.
+- Dual pre-norms (dense vs MoE); router/per_expert_scale fused into router weight.
 
-**Supported models**
-
-- ``google/gemma-4-26B-A4B`` (MoE, ``enable_moe_block=True``) — fully supported.
-
-**NOT supported**
-
-- Dense Gemma 4 models (``enable_moe_block=False``, e.g. ``google/gemma-4-e2b-it``).
-  ``gemma4_vl_bridge.py`` raises ``ValueError`` for non-MoE models.  Dense support
-  requires per-layer ``ffn_hidden_size`` and Per-Layer Embeddings (PLE) in MCore.
+**Dense E4B variant** (``enable_moe_block=False``, e.g. ``google/gemma-4-E4B-it``):
+- Standard dense MLP (no MoE, no shared experts).
+- Per-Layer Embeddings (PLE): ``embed_tokens_per_layer``, ``per_layer_model_projection``,
+  ``per_layer_projection_norm`` mapped to model-level Bridge modules.
+- Shared-KV layers: last ``num_kv_shared_layers`` layers have no k/v proj in HF;
+  K and V rows in Megatron's fused QKV are zero (wired at runtime via ``wire_gemma4_kv_sharing``).
+- 4 layer norms per block: input, post-attn, pre-MLP, post-MLP.
+- Heterogeneous head dims: sliding layers use ``kv_channels=256``,
+  global layers use ``global_kv_channels=512`` for both Q and KV.
 """
 
 import re
@@ -58,6 +55,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
     rope_theta_from_hf,
 )
+from megatron.bridge.models.gemma.gemma4_layer_specs import Gemma4E4BProvider
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -78,6 +76,19 @@ class _Gemma4QKVMapping(QKVMapping):
     ``allow_hf_name_mismatch = True`` prevents the weight loader from
     skipping the entire QKV mapping; the V weights are synthesized from K
     in ``Gemma4Bridge.maybe_modify_loaded_hf_weight``.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_hf_name_mismatch = True
+
+
+class _Gemma4E4BQKVMapping(QKVMapping):
+    """QKV mapping for Dense E4B: tolerates missing k_proj AND v_proj.
+
+    Shared-KV layers (last ``num_kv_shared_layers``) have no k/v proj in HF.
+    ``allow_hf_name_mismatch = True`` prevents hard failure; zero K/V tensors
+    are synthesized in ``Gemma4Bridge.maybe_modify_loaded_hf_weight``.
     """
 
     def __init__(self, *args, **kwargs):
@@ -118,10 +129,61 @@ class Gemma4Bridge(MegatronModelBridge):
             return getattr(hf_config, "enable_moe_block", True)
         return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma4ModelProvider:
-        """Convert HuggingFace config to Gemma4ModelProvider."""
-        hf_config = hf_pretrained.config
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Gemma4ModelProvider | Gemma4E4BProvider":
+        """Convert HuggingFace config to a Megatron model provider.
 
+        Dispatches to the Dense E4B path when ``enable_moe_block=False``,
+        otherwise builds the MoE provider.
+        """
+        hf_config = hf_pretrained.config
+        if not getattr(hf_config, "enable_moe_block", False):
+            self._is_dense_e4b = True
+            return self._build_dense_e4b_provider(hf_config)
+
+        self._is_dense_e4b = False
+        return self._build_moe_provider(hf_config)
+
+    def _build_dense_e4b_provider(self, hf_config) -> Gemma4E4BProvider:
+        """Build a Gemma4E4BProvider from HF config (Dense 3.8B path)."""
+        rope_params = getattr(hf_config, "rope_parameters", {}) or {}
+        sliding_rope = rope_params.get("sliding_attention", {})
+        full_rope = rope_params.get("full_attention", {})
+
+        layer_types = getattr(hf_config, "layer_types", None)
+        if layer_types is not None:
+            layer_types = [layer_type == "sliding_attention" for layer_type in layer_types]
+
+        return Gemma4E4BProvider(
+            num_layers=hf_config.num_hidden_layers,
+            hidden_size=hf_config.hidden_size,
+            ffn_hidden_size=hf_config.intermediate_size,
+            num_attention_heads=hf_config.num_attention_heads,
+            num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=getattr(hf_config, "head_dim", 256),
+            global_kv_channels=getattr(hf_config, "global_head_dim", 512),
+            num_global_query_groups=getattr(
+                hf_config,
+                "num_global_key_value_heads",
+                getattr(hf_config, "num_key_value_heads", 2),
+            ),
+            seq_length=hf_config.max_position_embeddings,
+            vocab_size=hf_config.vocab_size,
+            normalization="RMSNorm",
+            layernorm_epsilon=hf_config.rms_norm_eps,
+            window_attn_skip_freq=layer_types if layer_types is not None else 6,
+            sliding_window_rope_base=sliding_rope.get("rope_theta", 10000.0),
+            full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
+            full_attention_rope_partial_factor=full_rope.get("partial_rotary_factor", 0.25),
+            num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
+            per_layer_embed_vocab_size=getattr(
+                hf_config, "vocab_size_per_layer_input", hf_config.vocab_size
+            ),
+            per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
+            bf16=True,
+        )
+
+    def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:
+        """Build a Gemma4ModelProvider from HF config (MoE path, original logic)."""
         # Use base class helper for common config conversion
         provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
         provider = Gemma4ModelProvider(**provider_kwargs)
@@ -255,11 +317,27 @@ class Gemma4Bridge(MegatronModelBridge):
            ``pre_feedforward_layernorm``-normed input even though MCore feeds it
            ``pre_feedforward_layernorm_2``-normed input.
         """
-        # Handle K=V on global layers
+        # Handle QKV mapping special cases
         if isinstance(hf_param, dict) and "v" in hf_param:
+            k_name = hf_param["k"]
             v_name = hf_param["v"]
-            if v_name not in hf_state_dict:
-                k_name = hf_param["k"]
+            q_name = hf_param["q"]
+
+            # Dense E4B shared-KV: both k_proj AND v_proj absent → zero K/V rows.
+            # The Megatron model wires shared layers' KV to a source layer at runtime
+            # via wire_gemma4_kv_sharing(), so these zeros are never actually used.
+            if k_name not in hf_state_dict and v_name not in hf_state_dict:
+                q_weight = hf_state_dict[q_name]
+                # Infer KV shape from Q: num_kv_heads=2, head_dim = q_rows / num_q_heads
+                num_q_heads = 8  # fixed for Gemma4 E4B
+                kv_head_dim = q_weight.shape[0] // num_q_heads
+                num_kv_heads = 2  # fixed for Gemma4 E4B
+                kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
+                k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
+                return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
+
+            # MoE global attention K=V: only v_proj absent → synthesize V from K
+            if v_name not in hf_state_dict and k_name in hf_state_dict:
                 hf_weights = {}
                 for role, name in hf_param.items():
                     if role == "v":
@@ -358,11 +436,96 @@ class Gemma4Bridge(MegatronModelBridge):
         return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        """Define parameter mappings between Megatron and HF formats.
+        """Dispatch to the appropriate mapping registry based on model variant."""
+        if getattr(self, "_is_dense_e4b", False):
+            return self._dense_e4b_mapping_registry()
+        return self._moe_mapping_registry()
 
-        HF param names use ``model.layers.*`` prefix (text-only CausalLM).
-        The VLM bridge overrides this with ``model.language_model.layers.*``.
+    def _dense_e4b_mapping_registry(self, megatron_prefix: str = "") -> MegatronMappingRegistry:
+        """Parameter mappings for the Dense E4B (3.8B) variant.
+
+        Key differences from MoE:
+        - 4 layer norms per block (input, post-attn, pre-MLP, post-MLP)
+        - PLE model-level modules (per_layer_embedding, per_layer_model_proj, per_layer_proj_norm)
+        - No MoE experts, no shared expert, no router
+        - Shared-KV layers handled by _Gemma4E4BQKVMapping + maybe_modify_loaded_hf_weight
         """
+        mp = megatron_prefix
+        hp = self._hf_layer_prefix()
+        param_mappings = {
+            # === Embeddings ===
+            f"{mp}embedding.word_embeddings.weight": f"{hp}embed_tokens.weight",
+            f"{mp}decoder.final_layernorm.weight": f"{hp}norm.weight",
+            # === Per-Layer Embeddings (model-level) ===
+            f"{mp}per_layer_embedding.weight": f"{hp}embed_tokens_per_layer.weight",
+            f"{mp}per_layer_model_proj.weight": f"{hp}per_layer_model_projection.weight",
+            # === 4 layer norms per block ===
+            f"{mp}decoder.layers.*.input_layernorm.weight": f"{hp}layers.*.input_layernorm.weight",
+            f"{mp}decoder.layers.*.post_self_attn_layernorm.weight": f"{hp}layers.*.post_attention_layernorm.weight",
+            f"{mp}decoder.layers.*.pre_mlp_layernorm.weight": f"{hp}layers.*.pre_feedforward_layernorm.weight",
+            f"{mp}decoder.layers.*.post_mlp_layernorm.weight": f"{hp}layers.*.post_feedforward_layernorm.weight",
+            # === Q/K per-head norms ===
+            f"{mp}decoder.layers.*.self_attention.q_layernorm.weight": f"{hp}layers.*.self_attn.q_norm.weight",
+            f"{mp}decoder.layers.*.self_attention.k_layernorm.weight": f"{hp}layers.*.self_attn.k_norm.weight",
+            # === Attention output projection ===
+            f"{mp}decoder.layers.*.self_attention.linear_proj.weight": f"{hp}layers.*.self_attn.o_proj.weight",
+            # === MLP ===
+            f"{mp}decoder.layers.*.mlp.linear_fc2.weight": f"{hp}layers.*.mlp.down_proj.weight",
+        }
+        mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
+
+        # per_layer_proj_norm is a Gemma4RMSNorm — use ReplicatedMapping to avoid auto-detection
+        mapping_list.append(
+            ReplicatedMapping(
+                megatron_param=f"{mp}per_layer_proj_norm.weight",
+                hf_param=f"{hp}per_layer_projection_norm.weight",
+            )
+        )
+
+        mapping_list.extend([
+            # === Per-Layer Embeddings (layer-local, not tensor-parallel sharded) ===
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.per_layer_input_gate.weight",
+                hf_param=f"{hp}layers.*.per_layer_input_gate.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.per_layer_projection.weight",
+                hf_param=f"{hp}layers.*.per_layer_projection.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.post_per_layer_input_norm.weight",
+                hf_param=f"{hp}layers.*.post_per_layer_input_norm.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.layer_scalar",
+                hf_param=f"{hp}layers.*.layer_scalar",
+            ),
+            # === QKV: GQA fusion, heterogeneous head dim, shared-KV zero K/V ===
+            _Gemma4E4BQKVMapping(
+                megatron_param=f"{mp}decoder.layers.*.self_attention.linear_qkv.weight",
+                q=f"{hp}layers.*.self_attn.q_proj.weight",
+                k=f"{hp}layers.*.self_attn.k_proj.weight",
+                v=f"{hp}layers.*.self_attn.v_proj.weight",
+            ),
+            # === MLP: GEGLU gate+up fusion, interleaved TP split ===
+            GatedMLPMapping(
+                megatron_param=f"{mp}decoder.layers.*.mlp.linear_fc1.weight",
+                gate=f"{hp}layers.*.mlp.gate_proj.weight",
+                up=f"{hp}layers.*.mlp.up_proj.weight",
+            ),
+        ])
+        return MegatronMappingRegistry(*mapping_list)
+
+    def _hf_layer_prefix(self) -> str:
+        """Return the HF model prefix (override in VLM subclass for language_model path).
+
+        Text-only CausalLM: weights live at ``model.*``
+        VLM (ConditionalGeneration): text weights live at ``model.language_model.*``
+        """
+        return "model."
+
+    def _moe_mapping_registry(self) -> MegatronMappingRegistry:
+        """Parameter mappings for the MoE variant (original logic)."""
         param_mappings = {
             # === Embeddings ===
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",

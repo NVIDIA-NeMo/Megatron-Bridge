@@ -19,8 +19,9 @@ import torch
 from transformers import GenerationConfig, SiglipVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.gemma.gemma4_layer_specs import Gemma4E4BProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import Gemma4VLBridge
-from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4VLModelProvider
+from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4E4BVLProvider, Gemma4VLModelProvider
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
@@ -250,24 +251,22 @@ class TestGemma4VLBridgeProviderBridgeMoE:
 
 
 class TestGemma4VLBridgeProviderBridgeDense:
-    def test_raises_for_dense_with_hidden_size_per_layer_model(self, bridge):
-        """provider_bridge must raise ValueError for dense models with per-layer hidden size."""
-        dense_text_config = Mock(spec=[])
-        dense_text_config.enable_moe_block = False
-        dense_text_config.torch_dtype = "bfloat16"
-        dense_text_config.hidden_size_per_layer_input = 1
-        hf_config = Mock()
-        hf_config.text_config = dense_text_config
-        hf_config.vision_config = Mock()
-        hf_config._name_or_path = "google/gemma-4-e2b-it"
-        pretrained = Mock(spec=PreTrainedVLM)
-        pretrained.config = hf_config
-        with pytest.raises(ValueError, match="hidden_size_per_layer_input=1"):
-            bridge.provider_bridge(pretrained)
+    def test_accepts_dense_with_hidden_size_per_layer_model(self, bridge, mock_hf_pretrained_dense):
+        """Dense E4B with per-layer inputs is supported by Gemma4E4BVLProvider."""
+        mock_hf_pretrained_dense.config.text_config.hidden_size_per_layer_input = 256
+        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
+        assert isinstance(provider, Gemma4E4BVLProvider)
+        assert provider.per_layer_embed_dim == 256
 
     def test_returns_provider(self, bridge, mock_hf_pretrained_dense):
         provider = bridge.provider_bridge(mock_hf_pretrained_dense)
-        assert isinstance(provider, Gemma4VLModelProvider)
+        assert isinstance(provider, Gemma4E4BVLProvider)
+
+    def test_text_conversion_mode_returns_text_provider(self, bridge, mock_hf_pretrained_dense, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
+        assert isinstance(provider, Gemma4E4BProvider)
+        assert not isinstance(provider, Gemma4E4BVLProvider)
 
 
 # ---------------------------------------------------------------------------

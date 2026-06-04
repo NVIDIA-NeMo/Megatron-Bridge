@@ -3,7 +3,7 @@
 # Gemma-4 E4B Full Pipeline: HF → Convert → Parity Check → Training
 #
 # Usage (from Megatron-Bridge root):
-#   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/train_gemma4_e4b_pipeline.sh
+#   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 #
 # Key overrides:
 #   HF_MODEL_DIR     : path to downloaded HF model  (default: ~/models/gemma-4-E4B-it)
@@ -12,6 +12,7 @@
 #   SAVE_DIR         : where to save training checkpoints
 #   SKIP_CONVERT     : set to 1 to skip conversion if checkpoint already exists
 #   SKIP_PARITY      : set to 1 to skip parity check
+#   GEMMA4_CONVERSION_MODE : text for language-only pretraining checkpoint (default: text)
 #   TRAIN_ITERS      : number of training iterations (default: 1000)
 #   SEQ_LENGTH       : sequence length (default: 4096)
 #
@@ -20,7 +21,7 @@
 #   MEGATRON_CKPT=/path/to/gemma4-e4b-megatron \
 #   TRAIN_DATA_PATH=/mnt/nvme0/data/train \
 #   SAVE_DIR=/path/to/gemma4-e4b-finetune \
-#   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/train_gemma4_e4b_pipeline.sh
+#   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 # =============================================================================
 
 set -euo pipefail
@@ -36,7 +37,7 @@ if [ ! -f "$MEGATRON_LM_ROOT/pretrain_gpt.py" ]; then
 fi
 
 export MEGATRON_LM_ROOT
-export PYTHONPATH="$BRIDGE_ROOT/src:$SCRIPT_DIR:$MEGATRON_LM_ROOT:$MEGATRON_LM_ROOT/tools/checkpoint:${PYTHONPATH:-}"
+export PYTHONPATH="$BRIDGE_ROOT/src:$MEGATRON_LM_ROOT:${PYTHONPATH:-}"
 cd "$MEGATRON_LM_ROOT"
 
 # ---------------------------------------------------------------------------
@@ -50,6 +51,8 @@ TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-}  # e.g. /mnt/data/train_text_document
 # Pipeline control
 SKIP_CONVERT=${SKIP_CONVERT:-0}
 SKIP_PARITY=${SKIP_PARITY:-0}
+GEMMA4_CONVERSION_MODE=${GEMMA4_CONVERSION_MODE:-text}
+export GEMMA4_CONVERSION_MODE
 
 # Hardware
 GPUS_PER_NODE=${GPUS_PER_NODE:-2}
@@ -83,6 +86,7 @@ echo "  mcore       : $MEGATRON_LM_ROOT"
 echo "  hf_model    : $HF_MODEL_DIR"
 echo "  megatron_ck : $MEGATRON_CKPT"
 echo "  save_dir    : $SAVE_DIR"
+echo "  convert_mode: $GEMMA4_CONVERSION_MODE"
 echo "  gpus        : $GPUS_PER_NODE  TP=$TP_SIZE  PP=$PP_SIZE"
 echo "  train_iters : $TRAIN_ITERS  seq=$SEQ_LENGTH"
 echo "========================================"
@@ -99,18 +103,18 @@ if [ "${SKIP_CONVERT}" = "1" ] && [ -f "$MEGATRON_CKPT/latest_checkpointed_itera
     echo "  Skipping: checkpoint already exists at $MEGATRON_CKPT"
 else
     mkdir -p "$MEGATRON_CKPT"
-    CUDA_DEVICE_MAX_CONNECTIONS=1 python "$MEGATRON_LM_ROOT/tools/checkpoint/convert.py" \
-        --model-type GPT \
-        --loader gemma4_hf \
-        --saver core \
-        --load-dir "$HF_MODEL_DIR" \
-        --save-dir "$MEGATRON_CKPT" \
-        --model-size gemma4-e4b \
-        --tokenizer-model "$HF_MODEL_DIR" \
-        --bf16 \
-        --target-tensor-parallel-size $TP_SIZE \
-        --target-pipeline-parallel-size $PP_SIZE \
-        --no-checking
+    CUDA_DEVICE_MAX_CONNECTIONS=1 $TORCHRUN_BIN \
+        --nproc_per_node $TP_SIZE \
+        --nnodes 1 --node_rank 0 \
+        --master_addr localhost \
+        --master_port $((MASTER_PORT + 2)) \
+        "$BRIDGE_ROOT/examples/conversion/convert_checkpoints_multi_gpu.py" import \
+        --hf-model "$HF_MODEL_DIR" \
+        --megatron-path "$MEGATRON_CKPT" \
+        --tp $TP_SIZE \
+        --pp $PP_SIZE \
+        --torch-dtype bfloat16 \
+        --distributed-timeout-minutes 30
 
     echo "  Conversion done → $MEGATRON_CKPT"
 fi

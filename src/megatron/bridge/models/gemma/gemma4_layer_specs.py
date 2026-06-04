@@ -46,9 +46,10 @@
 
 import copy
 import types
+import weakref
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -74,6 +75,8 @@ from megatron.core.transformer.transformer_layer import (
 from megatron.core.transformer.utils import is_layer_window_attention
 from megatron.core.typed_torch import apply_module
 from megatron.core.utils import deprecate_inference_params, get_pg_rank
+
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 class Gemma4RMSNorm(nn.Module):
@@ -244,6 +247,25 @@ class Gemma4TransformerLayerSubmodules(TransformerLayerSubmodules):
     post_per_layer_input_norm: LayerNormBuilder = IdentityOp
 
 
+def _is_gemma4_sliding_layer(config: TransformerConfig, layer_number: int) -> bool:
+    """Return whether a Gemma4 layer uses sliding attention.
+
+    HF configs may carry ``layer_types`` as strings; Bridge normally converts
+    those to booleans, but this helper keeps all Gemma4 call sites robust.
+    """
+    if not getattr(config, "window_size", None):
+        return False
+
+    skip_freq = getattr(config, "window_attn_skip_freq", None)
+    if isinstance(skip_freq, list):
+        layer_type = skip_freq[layer_number - 1]
+        if isinstance(layer_type, str):
+            return layer_type == "sliding_attention"
+        return bool(layer_type)
+
+    return is_layer_window_attention(config.window_size, skip_freq, layer_number)
+
+
 # ---------------------------------------------------------------------------
 # Gemma4SelfAttention: v_norm + Step 3 (shared KV) + Step 4 (k_eq_v)
 # ---------------------------------------------------------------------------
@@ -267,9 +289,7 @@ class Gemma4SelfAttention(SelfAttention):
         # accepts q_layernorm/k_layernorm in the submodule spec without raising an error.
         attention_config.qk_layernorm = True
 
-        is_sliding = is_layer_window_attention(
-            config.window_size, config.window_attn_skip_freq, layer_number
-        )
+        is_sliding = _is_gemma4_sliding_layer(config, layer_number)
         if not is_sliding:
             if getattr(config, 'global_kv_channels', None) is not None:
                 attention_config.kv_channels = config.global_kv_channels
@@ -298,7 +318,10 @@ class Gemma4SelfAttention(SelfAttention):
         if num_kv_shared > 0:
             skip_freq = getattr(config, 'window_attn_skip_freq', None)
             if isinstance(skip_freq, list):
-                layer_is_sliding = [bool(x) for x in skip_freq[:num_layers]]
+                layer_is_sliding = [
+                    x == "sliding_attention" if isinstance(x, str) else bool(x)
+                    for x in skip_freq[:num_layers]
+                ]
             elif isinstance(skip_freq, int) and skip_freq > 0:
                 layer_is_sliding = [(i + 1) % skip_freq != 0 for i in range(num_layers)]
             else:
@@ -325,8 +348,79 @@ class Gemma4SelfAttention(SelfAttention):
 
         # Runtime KV state (populated during forward pass)
         self._stored_kv: Optional[Tuple[Tensor, Tensor]] = None
-        # Reference to source layer (set by wire_gemma4_kv_sharing)
-        self._kv_source: Optional['Gemma4SelfAttention'] = None
+        # Weak reference to source layer (set by wire_gemma4_kv_sharing).
+        # Keep this out of nn.Module._modules so checkpointing does not recurse
+        # into the source attention module from every shared-KV layer.
+        self._kv_source_ref: Optional[weakref.ReferenceType["Gemma4SelfAttention"]] = None
+
+    def sharded_state_dict(self, prefix: str = "", sharded_offsets: tuple = (), metadata=None):
+        """Separate sliding and full-attention checkpoint keys.
+
+        Gemma4 E4B uses different attention projection widths across layers:
+        sliding layers use the regular head dim, while full-attention layers use
+        ``global_kv_channels``.  MCore's default TransformerBlock checkpointing
+        prepends a layer axis and assumes every layer under one key has the same
+        global shape.  Split the self-attention keys by attention type and remap
+        that prepended layer axis to the per-type layer count.
+        """
+        import dataclasses as _dataclasses
+
+        from megatron.core.dist_checkpointing.mapping import ShardedObject as _ShardedObject
+        from megatron.core.dist_checkpointing.mapping import ShardedTensor as _ShardedTensor
+
+        is_sliding = self.is_gemma4_sliding_layer
+        suffix = "_sliding" if is_sliding else "_global"
+        modified_prefix = prefix[:-1] + suffix + "." if prefix.endswith(".") else prefix + suffix
+
+        state_dict = super().sharded_state_dict(
+            prefix=modified_prefix,
+            sharded_offsets=sharded_offsets,
+            metadata=metadata,
+        )
+
+        total_layers = self.config.num_layers
+        type_total = sum(
+            1 for layer_idx in range(1, total_layers + 1)
+            if _is_gemma4_sliding_layer(self.original_config, layer_idx) == is_sliding
+        )
+        type_rank = sum(
+            1 for layer_idx in range(1, self.layer_number)
+            if _is_gemma4_sliding_layer(self.original_config, layer_idx) == is_sliding
+        )
+
+        def _remap(obj):
+            if isinstance(obj, _ShardedTensor):
+                if obj.prepend_axis_num <= 0 or obj.global_shape[0] != total_layers:
+                    return obj
+                new_axis_fragmentations = (
+                    (type_total,) + obj.axis_fragmentations[1:]
+                    if obj.axis_fragmentations is not None
+                    else None
+                )
+                return _dataclasses.replace(
+                    obj,
+                    global_shape=(type_total,) + obj.global_shape[1:],
+                    global_offset=(type_rank,) + obj.global_offset[1:],
+                    axis_fragmentations=new_axis_fragmentations,
+                )
+
+            if isinstance(obj, _ShardedObject):
+                if not obj.global_shape or obj.global_shape[0] != total_layers:
+                    return obj
+                return _dataclasses.replace(
+                    obj,
+                    global_shape=(type_total,) + obj.global_shape[1:],
+                    global_offset=(type_rank,) + obj.global_offset[1:],
+                )
+
+            return obj
+
+        def _walk(obj):
+            if isinstance(obj, dict):
+                return {key: _walk(value) for key, value in obj.items()}
+            return _remap(obj)
+
+        return _walk(state_dict)
 
     def _v_norm(self, value: Tensor) -> Tensor:
         vf = value.float()
@@ -399,8 +493,9 @@ class Gemma4SelfAttention(SelfAttention):
             query, _k, _v = super().get_query_key_value_tensors(
                 hidden_states, key_value_states, False, True
             )
-            if self._kv_source is not None and self._kv_source._stored_kv is not None:
-                key, value = self._kv_source._stored_kv
+            kv_source = self._kv_source_ref() if self._kv_source_ref is not None else None
+            if kv_source is not None and kv_source._stored_kv is not None:
+                key, value = kv_source._stored_kv
                 key = key.to(query.device)
                 value = value.to(query.device)
             else:
@@ -578,9 +673,7 @@ class Gemma4TransformerLayer(TransformerLayer):
 
         # Phase 3: resolve dual-RoPE tuple to single embedding for this layer
         if isinstance(rotary_pos_emb, tuple) and len(rotary_pos_emb) == 2:
-            if is_layer_window_attention(
-                self.config.window_size, self.config.window_attn_skip_freq, self.layer_number
-            ):
+            if _is_gemma4_sliding_layer(self.config, self.layer_number):
                 rotary_pos_emb = rotary_pos_emb[0]  # sliding-window embedding
             else:
                 rotary_pos_emb = rotary_pos_emb[1]  # full-attention embedding
@@ -720,7 +813,7 @@ def wire_gemma4_kv_sharing(model: nn.Module) -> None:
         if attn.is_kv_shared_layer and attn.kv_shared_layer_index is not None:
             source = attn_by_layer.get(attn.kv_shared_layer_index)
             if source is not None:
-                attn._kv_source = source
+                attn._kv_source_ref = weakref.ref(source)
 
 
 # ---------------------------------------------------------------------------
@@ -938,7 +1031,7 @@ class Gemma4RotaryEmbedding(nn.Module):
 
 
 @dataclass
-class Gemma4E4BProvider:
+class Gemma4E4BProvider(GPTModelProvider):
     """Gemma-4 E4B (3.8B dense text) model provider for clean Megatron-Core.
 
     All Gemma4-specific settings are encoded here as dataclass fields so that
@@ -977,6 +1070,8 @@ class Gemma4E4BProvider:
     # ---- Embeddings ------------------------------------------------------
     scale_embeddings_by_hidden_size: bool = True
     share_embeddings_and_output_weights: bool = True
+    position_embedding_type: str = "rope"
+    rotary_percent: float = 1.0
 
     # ---- Dropout ---------------------------------------------------------
     attention_dropout: float = 0.0
@@ -984,11 +1079,14 @@ class Gemma4E4BProvider:
 
     # ---- Window attention (kept in clean MCore) --------------------------
     window_size: Optional[Tuple[int, int]] = (511, 0)
-    window_attn_skip_freq: int = 6
+    window_attn_skip_freq: Union[int, List[int]] = 6
 
     # ---- dtype -----------------------------------------------------------
     bf16: bool = True
     fp16: bool = False
+    params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
+    use_cpu_initialization: bool = False
 
     # ---- Gemma4-specific (read by gemma4_layer_specs via getattr) --------
     global_kv_channels: int = 512
@@ -999,6 +1097,36 @@ class Gemma4E4BProvider:
     num_kv_shared_layers: int = 18
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
+
+    # Kept for compatibility with Gemma4 provider defaults; Dense E4B mappings
+    # do not instantiate MoE modules.
+    num_moe_experts: int = 128
+    moe_router_topk: int = 8
+    moe_ffn_hidden_size: int = 704
+
+    def finalize(self) -> None:
+        """Finalize deferred TransformerConfig fields for Bridge model saving."""
+        super().finalize()
+        self._gemma4_e4b_finalized = True
+
+    def _ensure_finalized(self) -> None:
+        if not getattr(self, "_gemma4_e4b_finalized", False):
+            self.finalize()
+
+    def provide(
+        self,
+        pre_process: Optional[bool] = None,
+        post_process: Optional[bool] = None,
+        vp_stage: Optional[int] = None,
+    ) -> "torch.nn.Module":
+        """ModelProviderMixin entry point used by AutoBridge conversion."""
+        if vp_stage is not None or getattr(self, "pipeline_model_parallel_size", 1) != 1:
+            raise NotImplementedError("Gemma4E4BProvider currently supports PP=1 only.")
+
+        return self.build(
+            pre_process=True if pre_process is None else pre_process,
+            post_process=True if post_process is None else post_process,
+        )
 
     def build(
         self,
@@ -1015,44 +1143,9 @@ class Gemma4E4BProvider:
           5. Patch model.forward() to compute per_layer_inputs.
         """
         from megatron.core.models.gpt import GPTModel
-        from megatron.core.transformer.transformer_config import TransformerConfig
 
-        # Build a TransformerConfig with all standard fields
-        config_kwargs = {
-            "num_layers": self.num_layers,
-            "hidden_size": self.hidden_size,
-            "ffn_hidden_size": self.ffn_hidden_size,
-            "num_attention_heads": self.num_attention_heads,
-            "num_query_groups": self.num_query_groups,
-            "kv_channels": self.kv_channels,
-            "normalization": self.normalization,
-            "layernorm_epsilon": self.layernorm_epsilon,
-            "gated_linear_unit": self.gated_linear_unit,
-            "add_bias_linear": self.add_bias_linear,
-            "activation_func": self.activation_func,
-            "attention_dropout": self.attention_dropout,
-            "hidden_dropout": self.hidden_dropout,
-            "window_size": self.window_size,
-            "window_attn_skip_freq": self.window_attn_skip_freq,
-            "bf16": self.bf16,
-            "fp16": self.fp16,
-            "scale_embeddings_by_hidden_size": self.scale_embeddings_by_hidden_size,
-        }
-        config = TransformerConfig(**config_kwargs)
-
-        # Inject Gemma4-specific fields needed during GPTModel.__init__()
-        # (read by Gemma4SelfAttention / Gemma4TransformerLayer constructors via getattr)
-        # NOTE: sliding_window_rope_base / full_attention_rope_base are intentionally
-        # omitted here because clean MCore GPTModel.__init__() raises ValueError when
-        # it detects those attributes.  They are injected AFTER model construction.
-        for attr in (
-            "global_kv_channels",
-            "num_global_query_groups",
-            "num_kv_shared_layers",
-            "per_layer_embed_vocab_size",
-            "per_layer_embed_dim",
-        ):
-            setattr(config, attr, getattr(self, attr))
+        self._ensure_finalized()
+        config = self
 
         padded_vocab = (
             (self.vocab_size + self.make_vocab_size_divisible_by - 1)
@@ -1060,22 +1153,32 @@ class Gemma4E4BProvider:
             * self.make_vocab_size_divisible_by
         )
 
-        model = GPTModel(
-            config=config,
-            transformer_layer_spec=get_gemma4_layer_spec(config),
-            vocab_size=padded_vocab,
-            max_sequence_length=self.seq_length,
-            position_embedding_type="rope",
-            rotary_percent=1.0,
-            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
-            pre_process=pre_process,
-            post_process=post_process,
-        )
-
-        # Inject dual-RoPE attrs now that GPTModel.__init__() is complete
-        setattr(config, "sliding_window_rope_base", self.sliding_window_rope_base)
-        setattr(config, "full_attention_rope_base", self.full_attention_rope_base)
-        setattr(config, "full_attention_rope_partial_factor", self.full_attention_rope_partial_factor)
+        # GPTModel intentionally rejects dual-RoPE config attributes during
+        # construction.  Hide them until the custom Gemma4 rotary embedding is
+        # installed below.
+        dual_rope_attrs = {
+            "sliding_window_rope_base": self.sliding_window_rope_base,
+            "full_attention_rope_base": self.full_attention_rope_base,
+            "full_attention_rope_partial_factor": self.full_attention_rope_partial_factor,
+        }
+        for attr in dual_rope_attrs:
+            setattr(config, attr, None)
+        try:
+            model = GPTModel(
+                config=config,
+                transformer_layer_spec=get_gemma4_layer_spec(config),
+                vocab_size=padded_vocab,
+                max_sequence_length=self.seq_length,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                pre_process=pre_process,
+                post_process=post_process,
+                pg_collection=getattr(self, "_pg_collection", None),
+            )
+        finally:
+            for attr, value in dual_rope_attrs.items():
+                setattr(config, attr, value)
 
         # Replace standard RoPE with Gemma4 dual-theta RoPE
         model.rotary_pos_emb = Gemma4RotaryEmbedding(config)
@@ -1102,6 +1205,8 @@ def _attach_ple_modules(
     n_layers = provider.num_layers
     ple_dim = provider.per_layer_embed_dim
     ple_vocab = provider.per_layer_embed_vocab_size
+    if ple_dim <= 0 or ple_vocab <= 0:
+        return
 
     model.per_layer_embedding = tp.VocabParallelEmbedding(
         ple_vocab,
