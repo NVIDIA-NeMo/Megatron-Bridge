@@ -2872,7 +2872,7 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(AssertionError, match="Cannot specify both train_iters and train_samples"):
+            with pytest.raises(AssertionError, match="Cannot specify more than one"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -2888,7 +2888,7 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(AssertionError, match="Either train_iters or train_samples must be provided"):
+            with pytest.raises(AssertionError, match="One of train_iters, train_samples, or num_epochs must be provided"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3086,6 +3086,71 @@ class TestSampleBasedTraining:
 
         with pytest.raises(AssertionError, match="Cannot specify lr_warmup_fraction=0.1 with.*lr_warmup_samples=1000"):
             sched_cfg.finalize()
+
+
+class TestEpochBasedTraining:
+    """Tests for epoch-based training configuration and resolution."""
+
+    def test_epoch_based_training_resolves_fractional_epochs(self):
+        train_cfg = create_test_training_config(train_iters=None, num_epochs=1.5, global_batch_size=32)
+        dataset_cfg = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert container.train.train_iters is None
+
+            container.resolve_num_epochs(train_dataset_size=100)
+
+            assert container.train.train_iters == 6
+            assert container.scheduler.lr_decay_iters == 6
+            assert container.scheduler.lr_decay_steps == 192
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_epoch_based_training_rejects_other_training_modes(self):
+        train_cfg = create_test_training_config(train_iters=10, num_epochs=1.0)
+
+        with pytest.raises(AssertionError, match="Cannot specify more than one"):
+            train_cfg.finalize()
+
+    def test_epoch_based_training_requires_finite_finetuning_dataset(self):
+        train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="num_epochs is only supported for finite FinetuningDatasetConfig"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_epoch_based_training_allows_single_dataloader(self):
+        train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
+        dataset_cfg = FinetuningDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            dataloader_type="single",
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
 
 
 class TestDatasetSequenceLengthValidation:

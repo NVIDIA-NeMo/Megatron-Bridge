@@ -29,7 +29,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.data.loaders import setup_data_iterators
+from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
 from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
@@ -203,6 +203,22 @@ def setup(
 
             cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
 
+    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
+    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
+        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
+
+    if cfg.train.num_epochs is not None:
+        if should_fire(callback_manager, "on_data_init_start"):
+            raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
+        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, train_valid_test_datasets_provider)
+
+        def cached_datasets_provider(_train_val_test_num_samples, _dataset_config):
+            """Return datasets built before optimizer and scheduler initialization."""
+            return datasets
+
+        train_valid_test_datasets_provider = cached_datasets_provider
+
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
 
@@ -343,11 +359,6 @@ def setup(
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
-    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
-    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
-
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,

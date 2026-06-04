@@ -21,7 +21,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig, GPTDatasetConfig
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -164,6 +164,35 @@ def build_train_valid_test_datasets(
     return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset)
 
 
+def build_train_valid_test_datasets_for_num_epochs(
+    cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
+) -> tuple[Any, Any, Any]:
+    """Build a finite finetuning dataset and resolve epoch-based training iterations.
+
+    This cannot use :func:`build_train_valid_test_datasets` because that function
+    requires ``train_iters`` to already be resolved. Finetuning dataset providers
+    determine dataset sizes from the data source or ``max_train_samples`` and ignore
+    the requested target sample counts, so zero placeholders are sufficient here.
+    """
+    if not isinstance(cfg.dataset, FinetuningDatasetConfig):
+        raise ValueError(
+            "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+            "providers may build a requested number of samples instead of exposing their true dataset size."
+        )
+
+    train_ds, valid_ds, test_ds = build_train_valid_test_datasets_provider([0, 0, 0], cfg.dataset)
+    if train_ds is None:
+        raise ValueError("num_epochs requires a training dataset")
+
+    try:
+        train_dataset_size = len(train_ds)
+    except TypeError as error:
+        raise ValueError("num_epochs requires a training dataset with a finite length") from error
+
+    cfg.resolve_num_epochs(train_dataset_size)
+    return train_ds, valid_ds, test_ds
+
+
 def build_train_valid_test_data_loaders(
     cfg: ConfigContainer,
     train_state: TrainState,
@@ -265,6 +294,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=dp_rank,
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
+        drop_last=not (cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"),
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
