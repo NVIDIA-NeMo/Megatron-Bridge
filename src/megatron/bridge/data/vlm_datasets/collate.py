@@ -34,7 +34,7 @@ from PIL import Image  # noqa: F401  # may be used downstream by processors
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, gather_assistant_text_segments
-from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2_5_VLVisualInputs, Qwen2AudioInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs, Qwen2AudioInputs
 
 
 # Local message used when optional qwen_vl_utils dependency is missing
@@ -63,49 +63,6 @@ PASSTHROUGH_VISUAL_KEYS = (
     "image_sizes",
     "image_position_ids",
 )
-
-
-def phi4_mm_collate_fn(examples, processor):
-    """Collate function for Phi-4 MM model audio input"""
-
-    # Extract conversations and audio data
-    conversations = [example["conversation"] for example in examples]
-    audios = [example["audio"] for example in examples]
-    texts = [processor.apply_chat_template(conversation, tokenize=False) for conversation in conversations]
-    audio_inputs = [(audio["array"], audio["sampling_rate"]) if isinstance(audio, dict) else audio for audio in audios]
-    batch = processor(
-        text=texts, audios=audio_inputs, return_tensors="pt", padding=True, truncation=True, max_length=1024
-    )
-    labels = batch["input_ids"].clone()[:, 1:]
-    labels = torch.cat([labels, -100 * torch.ones_like(labels[:, :1])], dim=1)
-
-    loss_masks = []
-    for i, conversation in enumerate(conversations):
-        input_ids = batch["input_ids"][i].tolist()
-
-        assistant_content = conversation[1]["content"]
-        assistant_tokens = processor.tokenizer(assistant_content, add_special_tokens=False)["input_ids"]
-
-        loss_mask = [0] * len(input_ids)
-        for start_idx in range(len(input_ids) - len(assistant_tokens) + 1):
-            if input_ids[start_idx : start_idx + len(assistant_tokens)] == assistant_tokens:
-                for j in range(len(assistant_tokens)):
-                    loss_mask[start_idx + j] = 1
-                break
-        loss_masks.append(loss_mask)
-
-    max_len = max(len(mask) for mask in loss_masks)
-    padded_loss_masks = [mask + [0] * (max_len - len(mask)) for mask in loss_masks]
-    batch["loss_mask"] = torch.tensor(padded_loss_masks, dtype=torch.float)
-
-    labels[batch["loss_mask"] == 0] = -100
-    batch["labels"] = labels
-
-    # Remove specified batch features if present
-    for key in ["input_image_embeds", "image_sizes", "image_attention_mask"]:
-        if key in batch:
-            del batch[key]
-    return batch
 
 
 def qwen2_5_collate_fn(
@@ -254,7 +211,7 @@ def qwen2_5_collate_fn(
     batch["labels"] = labels.masked_fill(loss_mask == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask
 
-    visual_inputs = Qwen2_5_VLVisualInputs(
+    visual_inputs = GenericVisualInputs(
         pixel_values=batch.get("pixel_values"),
         pixel_values_videos=batch.get("pixel_values_videos"),
         image_grid_thw=batch.get("image_grid_thw"),
@@ -963,7 +920,7 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     batch["loss_mask"] = loss_mask
 
     batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
-    visual_inputs = Qwen2_5_VLVisualInputs(
+    visual_inputs = GenericVisualInputs(
         pixel_values=batch.get("pixel_values"),
         pixel_values_videos=batch.get("pixel_values_videos"),
         image_grid_thw=batch.get("image_grid_thw"),
@@ -1299,7 +1256,7 @@ def kimi_k25_vl_collate_fn(
     result["labels"] = labels.masked_fill(loss_mask == 0, IGNORE_INDEX)
     result["loss_mask"] = loss_mask
 
-    visual_inputs = Qwen2_5_VLVisualInputs(
+    visual_inputs = GenericVisualInputs(
         pixel_values=result.get("pixel_values"),
         pixel_values_videos=result.get("pixel_values_videos"),
         image_grid_thw=result.get("grid_thws"),

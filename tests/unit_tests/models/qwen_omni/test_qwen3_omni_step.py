@@ -20,7 +20,7 @@ from megatron.bridge.models.qwen_omni.qwen3_omni_step import (
     get_batch,
     get_batch_from_iterator,
 )
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 class _Iterator:
@@ -98,7 +98,7 @@ def test_normalize_multimodal_inputs_flattens_expected_shapes():
 def test_normalize_multimodal_inputs_accepts_visual_inputs_container():
     normalized = _normalize_multimodal_inputs(
         {
-            "visual_inputs": Qwen2_5_VLVisualInputs(
+            "visual_inputs": GenericVisualInputs(
                 pixel_values=torch.randn(1, 2, 3, 4, 4),
                 image_grid_thw=torch.tensor([[[1, 2, 2], [1, 2, 2]]]),
             ),

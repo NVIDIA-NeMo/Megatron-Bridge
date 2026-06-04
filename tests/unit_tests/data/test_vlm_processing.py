@@ -21,15 +21,14 @@ from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
 from megatron.bridge.data.vlm_processing import (
-    HFProcessorVLMDataProcessor,
+    NormalizedVLMSample,
     apply_assistant_labels_to_batch,
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
-    collect_media_from_conversation,
-    convert_media_placeholders_to_content_parts,
     gather_assistant_text_segments,
     normalize_energon_vlm_sample,
     normalize_hf_vlm_example,
+    normalized_vlm_sample_to_hf_example,
 )
 
 
@@ -170,43 +169,52 @@ def test_apply_assistant_labels_to_batch_unmask_last_token_affects_shifted_loss_
     assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, 5, IGNORE_INDEX]]
 
 
-def test_convert_media_placeholders_to_content_parts_preserves_text_order():
-    conversation = [{"role": "user", "content": "before <image> between <video> after"}]
+def test_normalized_vlm_sample_to_hf_example_expands_placeholders_and_threads_media():
+    image = object()
+    video = object()
+    sample = NormalizedVLMSample(
+        conversation=[
+            {"role": "user", "content": "before <image> between <video> after"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        images=[image],
+        videos=[video],
+        audio="audio-payload",
+    )
 
-    converted = convert_media_placeholders_to_content_parts(conversation)
+    example = normalized_vlm_sample_to_hf_example(sample)
 
-    assert converted == [
+    assert example["conversation"] == [
         {
             "role": "user",
             "content": [
                 {"type": "text", "text": "before"},
-                {"type": "image"},
+                {"type": "image", "image": image},
                 {"type": "text", "text": "between"},
-                {"type": "video"},
+                {"type": "video", "video": video},
                 {"type": "text", "text": "after"},
             ],
-        }
+        },
+        {"role": "assistant", "content": "answer"},
     ]
+    assert example["images"] == [image]
+    assert example["videos"] == [video]
+    assert example["audio"] == "audio-payload"
 
 
-def test_collect_media_from_conversation_handles_inline_image_and_video_payloads():
+def test_normalized_vlm_sample_to_hf_example_can_emit_media_first_content():
     image = object()
-    video = object()
-    conversation = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "image", "image": image},
-                {"type": "text", "text": "watch"},
-                {"type": "video", "video": video},
-            ],
-        }
+    sample = NormalizedVLMSample(
+        conversation=[{"role": "user", "content": "describe <image>"}],
+        images=[image],
+    )
+
+    example = normalized_vlm_sample_to_hf_example(sample, media_first=True)
+
+    assert example["conversation"][0]["content"] == [
+        {"type": "image", "image": image},
+        {"type": "text", "text": "describe"},
     ]
-
-    images, videos = collect_media_from_conversation(conversation)
-
-    assert images == [image]
-    assert videos == [video]
 
 
 def test_normalize_energon_vlm_sample_decodes_chatml_and_converts_images():
@@ -252,58 +260,3 @@ def test_normalize_hf_vlm_example_keeps_structured_conversation_and_top_level_me
     assert normalized.images == [image]
     assert normalized.videos is None
     assert normalized.audio == "audio-payload"
-
-
-def test_hf_processor_vlm_data_processor_encodes_one_sample_and_collects_visual_tensors():
-    processor = _Processor()
-    data_processor = HFProcessorVLMDataProcessor(
-        processor,
-        seq_length=8,
-        visual_keys=("pixel_values",),
-    )
-    conversation = [
-        {"role": "user", "content": "describe <image>"},
-        {"role": "assistant", "content": "answer"},
-    ]
-    image = object()
-    normalized = normalize_hf_vlm_example({"conversation": conversation, "image": image})
-
-    encoded = data_processor.encode_normalized(normalized)
-
-    assert encoded.input_ids.tolist() == [1, 2, 3, 4, 5]
-    assert encoded.loss_mask.tolist() == [0.0, 1.0, 1.0, 0.0, 0.0]
-    assert encoded.labels.tolist() == [IGNORE_INDEX, 3, 4, IGNORE_INDEX, IGNORE_INDEX]
-    assert encoded.visual_tensors["pixel_values"].shape == (1, 3, 4, 4)
-    templated_conversation = processor.template_inputs[0][0]
-    assert templated_conversation[0]["content"][1] == {"type": "image"}
-    assert processor.processor_inputs[0]["images"] == [image]
-
-
-def test_hf_processor_vlm_data_processor_truncates_partial_image_blocks_and_visual_tensors():
-    class _ImageBlockProcessor(_Processor):
-        def __call__(self, **kwargs):
-            self.processor_inputs.append(kwargs)
-            return {
-                "input_ids": torch.tensor([[1, 10, 10, 3, 4]]),
-                "pixel_values": torch.ones(1, 3, 4, 4),
-            }
-
-    processor = _ImageBlockProcessor()
-    data_processor = HFProcessorVLMDataProcessor(
-        processor,
-        seq_length=2,
-        visual_keys=("pixel_values",),
-    )
-    conversation = [
-        {"role": "user", "content": "describe <image>"},
-        {"role": "assistant", "content": "answer"},
-    ]
-    image = object()
-    normalized = normalize_hf_vlm_example({"conversation": conversation, "image": image})
-
-    encoded = data_processor.encode_normalized(normalized)
-
-    assert encoded.input_ids.tolist() == [1, processor.tokenizer.pad_token_id]
-    assert encoded.labels.tolist() == [IGNORE_INDEX, IGNORE_INDEX]
-    assert encoded.loss_mask.tolist() == [0.0, 0.0]
-    assert encoded.visual_tensors == {}

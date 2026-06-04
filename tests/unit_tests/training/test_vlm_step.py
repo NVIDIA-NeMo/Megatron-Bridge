@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 from megatron.bridge.training.vlm_step import (
     forward_step,
     get_batch,
@@ -51,7 +51,7 @@ def _make_batch(device="cpu"):
     # Visual inputs container
     pixel_values = torch.randn(1, 2, 3, 4, 4, device=device)
     image_grid_thw = torch.tensor([[[1, 2, 2], [1, 2, 2]]], device=device)
-    vi = Qwen2_5_VLVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
+    vi = GenericVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
 
     batch = {
         "tokens": tokens,
@@ -93,7 +93,7 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
 
     assert "visual_inputs" in out
     out_vi = out["visual_inputs"]
-    assert isinstance(out_vi, Qwen2_5_VLVisualInputs)
+    assert isinstance(out_vi, GenericVisualInputs)
     # Verify fields are preserved
     assert out_vi.pixel_values is not None and out_vi.image_grid_thw is not None
 
@@ -153,7 +153,7 @@ def test_get_batch_padding_paths(monkeypatch):
 
     # Make batch shorter than 128 to trigger ceil-to-128 padding path
     short_tokens = torch.tensor([[1, 2, 3, 4]])
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": short_tokens,
         "labels": torch.tensor([[2, 3, 4, -100]]),
@@ -231,7 +231,7 @@ def test_get_batch_enable_packing_path(monkeypatch):
     )
     position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
 
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": tokens,
         "labels": labels,
@@ -423,7 +423,7 @@ def test_forward_step_schedule_plan(monkeypatch):
             self.straggler_timer = _Strag()
 
     # Reuse small iterator producing already-sized batch
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": torch.tensor([[1, 2, 3, 4]]),
         "labels": torch.tensor([[2, 3, 4, -100]]),

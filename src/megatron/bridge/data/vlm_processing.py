@@ -17,20 +17,16 @@
 from __future__ import annotations
 
 import copy
-import logging
 import re
 import warnings
 from collections.abc import Mapping, MutableMapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
-
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,8 +57,8 @@ class NormalizedVLMSample:
     Output format:
         Shared processing treats this as the single boundary contract before
         model-specific tokenization and vision preprocessing.  It does not
-        contain batched tensors; ``HFProcessorVLMDataProcessor`` converts it into
-        ``HFProcessorEncodedSample``.
+        contain batched tensors; model-specific collators convert it into model
+        input tensors.
     """
 
     conversation: list[dict[str, Any]]
@@ -481,248 +477,3 @@ def pop_generic_visual_inputs(
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     return GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
-
-
-def convert_media_placeholders_to_content_parts(
-    conversation: Sequence[Mapping[str, Any]],
-    *,
-    image_pattern: str = "<image>",
-    video_pattern: str = "<video>",
-) -> list[dict[str, Any]]:
-    """Convert text ``<image>`` / ``<video>`` placeholders to processor content parts."""
-    pattern = r"({image}|{video})".format(image=re.escape(image_pattern), video=re.escape(video_pattern))
-    converted = copy.deepcopy(list(conversation))
-    for turn in converted:
-        content = turn.get("content")
-        if not isinstance(content, str) or not re.search(pattern, content):
-            continue
-        parts = re.split(pattern, content)
-        content_parts: list[dict[str, str]] = []
-        for part in parts:
-            if part == image_pattern:
-                content_parts.append({"type": "image"})
-            elif part == video_pattern:
-                content_parts.append({"type": "video"})
-            elif part.strip():
-                content_parts.append({"type": "text", "text": part.strip()})
-        turn["content"] = content_parts
-    return converted
-
-
-def collect_media_from_conversation(
-    conversation: Sequence[Mapping[str, Any]],
-) -> tuple[list[Any] | None, list[Any] | None]:
-    """Collect inline image/video payloads from HF-style conversation content."""
-    images: list[Any] = []
-    videos: list[Any] = []
-    for turn in conversation:
-        content = turn.get("content")
-        if not isinstance(content, list):
-            continue
-        for item in content:
-            if not isinstance(item, Mapping):
-                continue
-            if item.get("type") == "image":
-                if "image" in item:
-                    images.append(item["image"])
-                elif "path" in item:
-                    images.append(item["path"])
-            elif item.get("type") == "video":
-                if "video" in item:
-                    videos.append(item["video"])
-                elif "path" in item:
-                    videos.append(item["path"])
-    return images or None, videos or None
-
-
-@dataclass
-class HFProcessorEncodedSample:
-    """Per-sample tensors produced by the generic HF VLM processor path."""
-
-    input_ids: torch.Tensor
-    labels: torch.Tensor
-    loss_mask: torch.Tensor
-    visual_tensors: dict[str, torch.Tensor] = field(default_factory=dict)
-
-
-class HFProcessorVLMDataProcessor:
-    """Generic per-sample VLM processor shared by Energon and HF-style data sources."""
-
-    def __init__(
-        self,
-        processor: Any,
-        *,
-        seq_length: int,
-        visual_keys: Sequence[str] = ("pixel_values",),
-        min_pixels: int | None = None,
-        max_pixels: int | None = None,
-    ) -> None:
-        self.processor = processor
-        self.seq_length = seq_length
-        self.visual_keys = tuple(visual_keys)
-        self.min_pixels = min_pixels
-        self.max_pixels = max_pixels
-
-    @property
-    def tokenizer(self) -> Any:
-        """Return the underlying tokenizer."""
-        return get_processor_tokenizer(self.processor)
-
-    @property
-    def pad_token_id(self) -> int:
-        """Return the pad token id, falling back to 0 when absent."""
-        return getattr(self.tokenizer, "pad_token_id", None) or 0
-
-    @property
-    def image_token_id(self) -> int | None:
-        """Resolve the image token id from processor/tokenizer metadata."""
-        if hasattr(self.processor, "image_token_id"):
-            return self.processor.image_token_id
-        image_token = getattr(self.processor, "image_token", None)
-        if image_token is not None:
-            return self.tokenizer.convert_tokens_to_ids(image_token)
-        return None
-
-    @staticmethod
-    def _find_contiguous_blocks(input_ids: torch.Tensor, value: int) -> list[tuple[int, int]]:
-        mask = input_ids == value
-        blocks: list[tuple[int, int]] = []
-        idx = 0
-        while idx < mask.numel():
-            if bool(mask[idx]):
-                start = idx
-                while idx < mask.numel() and bool(mask[idx]):
-                    idx += 1
-                blocks.append((start, idx))
-            else:
-                idx += 1
-        return blocks
-
-    def encode(
-        self,
-        conversation: Sequence[Mapping[str, Any]],
-        *,
-        images: list[Any] | None = None,
-        videos: list[Any] | None = None,
-    ) -> HFProcessorEncodedSample:
-        """Encode one structured VLM conversation into tensors.
-
-        Expected input format:
-            ``conversation`` is a structured list of HF processor chat turns.
-            Optional ``images`` and ``videos`` override any inline media payloads
-            discoverable from the conversation.
-
-        Output format:
-            Returns one ``HFProcessorEncodedSample`` with unbatched ``input_ids``,
-            shifted ``labels``, shifted ``loss_mask``, and per-sample visual
-            tensors keyed by ``self.visual_keys``.
-        """
-        return self.encode_normalized(
-            NormalizedVLMSample(
-                conversation=copy.deepcopy(list(conversation)),
-                images=images,
-                videos=videos,
-            )
-        )
-
-    def encode_normalized(self, sample: NormalizedVLMSample) -> HFProcessorEncodedSample:
-        """Encode one source-normalized VLM sample into tensors.
-
-        Expected input format:
-            ``sample`` must follow ``NormalizedVLMSample``: structured
-            ``conversation`` plus optional processor-ready ``images`` and
-            ``videos`` payloads.  The method may additionally collect inline
-            image/video payloads from ``sample.conversation`` when top-level
-            modality fields are ``None``.
-
-        Output format:
-            Returns ``HFProcessorEncodedSample`` where all tensors are
-            per-sample, not batched: ``input_ids``/``labels``/``loss_mask`` have
-            shape ``[seq_len]`` and ``visual_tensors`` contains any configured
-            processor outputs such as ``pixel_values`` or ``image_grid_thw``.
-        """
-        media_images, media_videos = collect_media_from_conversation(sample.conversation)
-        images = sample.images if sample.images is not None else media_images
-        videos = sample.videos if sample.videos is not None else media_videos
-        proc_conversation = (
-            convert_media_placeholders_to_content_parts(sample.conversation)
-            if images is not None or videos is not None
-            else copy.deepcopy(sample.conversation)
-        )
-
-        prompt_text = self.processor.apply_chat_template(proc_conversation, tokenize=False)
-        proc_kwargs: dict[str, Any] = {"text": prompt_text, "return_tensors": "pt"}
-        if images is not None:
-            proc_kwargs["images"] = images
-        if videos is not None:
-            proc_kwargs["videos"] = videos
-        if self.min_pixels is not None:
-            proc_kwargs["min_pixels"] = self.min_pixels
-        if self.max_pixels is not None:
-            proc_kwargs["max_pixels"] = self.max_pixels
-
-        proc_output = self.processor(**proc_kwargs)
-        input_ids = proc_output["input_ids"]
-        if input_ids.dim() == 2:
-            input_ids = input_ids[0]
-        input_ids = input_ids.detach().cpu().to(dtype=torch.long).contiguous()
-
-        unshifted_loss_mask = build_assistant_loss_mask(
-            proc_conversation,
-            input_ids,
-            self.processor,
-            include_search_variants=False,
-            warn_on_all_masked=False,
-        )
-        labels, loss_mask = build_shifted_labels_and_loss_mask(input_ids, unshifted_loss_mask)
-
-        input_ids_pre_trunc = input_ids
-        input_ids = input_ids[: self.seq_length].clone()
-        labels = labels[: self.seq_length].clone()
-        loss_mask = loss_mask[: self.seq_length].clone()
-
-        num_images = len(images) if images is not None else 0
-        num_complete_images = num_images
-        if num_images > 0 and input_ids.numel() < input_ids_pre_trunc.numel():
-            image_token_id = self.image_token_id
-            if image_token_id is not None:
-                image_blocks = self._find_contiguous_blocks(input_ids_pre_trunc, int(image_token_id))
-                num_complete_images = sum(1 for _, end in image_blocks if end <= self.seq_length)
-                if num_complete_images < len(image_blocks):
-                    for start, end in image_blocks[num_complete_images:]:
-                        block_start = max(start, 0)
-                        block_end = min(end, self.seq_length)
-                        if block_start < block_end:
-                            input_ids[block_start:block_end] = self.pad_token_id
-                            labels[block_start:block_end] = IGNORE_INDEX
-                            loss_mask[block_start:block_end] = 0.0
-                    if num_complete_images < num_images:
-                        logger.warning(
-                            "Truncation to seq_length=%d removed %d of %d images whose token blocks did not fit.",
-                            self.seq_length,
-                            num_images - num_complete_images,
-                            num_images,
-                        )
-
-        visual_tensors: dict[str, torch.Tensor] = {}
-        for key in self.visual_keys:
-            value = proc_output.get(key)
-            if value is None:
-                continue
-            visual_tensors[key] = value if isinstance(value, torch.Tensor) else torch.as_tensor(value)
-
-        if num_complete_images < num_images:
-            for key in list(visual_tensors):
-                value = visual_tensors[key]
-                if value.dim() >= 1 and value.shape[0] == num_images:
-                    if num_complete_images > 0:
-                        visual_tensors[key] = value[:num_complete_images]
-                    else:
-                        del visual_tensors[key]
-
-        return HFProcessorEncodedSample(
-            input_ids=input_ids,
-            labels=labels,
-            loss_mask=loss_mask,
-            visual_tensors=visual_tensors,
-        )

@@ -38,7 +38,7 @@ from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
     process_vision,
     videohandler,
 )
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 @pytest.fixture(autouse=True)
@@ -318,7 +318,7 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             position_ids=torch.randn(1, 5),
             labels=torch.randn(1, 5),
             loss_mask=torch.randn(1, 5),
-            visual_inputs=Qwen2_5_VLVisualInputs(
+            visual_inputs=GenericVisualInputs(
                 pixel_values=torch.randn(1, 3, 14, 14),
                 image_grid_thw=torch.tensor([[1, 14, 14]]),
             ),
@@ -461,7 +461,7 @@ class TestQwenVLTaskEncoderLimits(unittest.TestCase):
             "position_ids": torch.tensor([[0, 1]]),
             "labels": torch.tensor([[2, -100]]),
             "loss_mask": torch.tensor([[1.0, 0.0]]),
-            "visual_inputs": Qwen2_5_VLVisualInputs(),
+            "visual_inputs": GenericVisualInputs(),
         }
 
         with patch.object(task_encoder_module, "qwen2_5_collate_fn", return_value=collated) as collate:

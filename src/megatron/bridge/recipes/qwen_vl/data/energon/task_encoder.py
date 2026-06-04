@@ -36,7 +36,7 @@ from megatron.bridge.data.energon.task_encoder_utils import (
 )
 from megatron.bridge.data.vlm_datasets.collate import qwen2_5_collate_fn
 from megatron.bridge.data.vlm_processing import normalize_energon_vlm_sample, normalized_vlm_sample_to_hf_example
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 def process_vision(
@@ -131,7 +131,7 @@ class QwenVLTaskBatch(Batch):
     position_ids: torch.Tensor
     labels: torch.Tensor
     loss_mask: torch.Tensor
-    visual_inputs: Qwen2_5_VLVisualInputs | None
+    visual_inputs: GenericVisualInputs | None
     attention_mask: torch.Tensor | None = None
 
 

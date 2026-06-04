@@ -14,8 +14,9 @@
 
 """Generic HF VLM task encoder for Energon dataloading.
 
-Works with any HF processor that handles tokenization + vision preprocessing
-in a single ``processor()`` call (e.g. Gemma3-VL, Ministral3, GLM-4.5V).
+Normalizes Energon ``ChatMLSample`` objects into HF-style multimodal examples
+and delegates tokenization, vision preprocessing, masking, and padding to the
+selected HF VLM collate function.
 """
 
 import dataclasses
@@ -31,8 +32,6 @@ from megatron.bridge.data.energon.task_encoder_utils import (
 )
 from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 from megatron.bridge.data.vlm_processing import (
-    HFProcessorEncodedSample,
-    HFProcessorVLMDataProcessor,
     normalize_energon_vlm_sample,
     normalized_vlm_sample_to_hf_example,
 )
@@ -46,7 +45,6 @@ class HFEnergonSample:
     __key__: str
     __subflavors__: Dict
     example: Dict[str, Any]
-    encoded: HFProcessorEncodedSample | None = None
 
 
 @dataclass
@@ -67,16 +65,16 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
     """Task encoder for HF VLMs that rely on ``processor()`` for tokenization + vision.
 
     Args:
-        processor: HF ``AutoProcessor`` instance. Must support ``apply_chat_template``
-            and ``__call__(text=..., images=..., ...)`` returning ``input_ids`` and
-            visual tensor keys.
-        seq_length: Maximum sequence length (tokens are truncated to this).
-        visual_keys: Which keys from the processor output to capture as visual
-            tensors (e.g. ``("pixel_values",)`` for Gemma3-VL / Ministral3,
-            ``("pixel_values", "pixel_values_videos", "image_grid_thw",
-            "video_grid_thw")`` for GLM-4.5V).
-        min_pixels: Optional min pixel constraint forwarded to the processor.
-        max_pixels: Optional max pixel constraint forwarded to the processor.
+        processor: HF ``AutoProcessor`` instance passed to the selected collate
+            function.
+        seq_length: Maximum sequence length accepted after collation.
+        visual_keys: Retained for compatibility with older generic encoder
+            configuration. Visual tensor selection now belongs to the selected
+            collate function.
+        min_pixels: Retained for compatibility. Pixel constraints should be
+            configured on the processor or handled by the collate function.
+        max_pixels: Retained for compatibility. Pixel constraints should be
+            configured on the processor or handled by the collate function.
     """
 
     def __init__(
@@ -94,13 +92,6 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.visual_keys: Tuple[str, ...] = tuple(visual_keys)
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
-        self._data_processor = HFProcessorVLMDataProcessor(
-            processor,
-            seq_length=seq_length,
-            visual_keys=self.visual_keys,
-            min_pixels=min_pixels,
-            max_pixels=max_pixels,
-        )
         collate_key = type(processor).__name__ if processor is not None else "default"
         self._collate_impl = collate_fn or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])
 
@@ -119,13 +110,11 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         """
         normalized_sample = normalize_energon_vlm_sample(sample)
         example = normalized_vlm_sample_to_hf_example(normalized_sample)
-        encoded = self._data_processor.encode_normalized(normalized_sample)
 
         return HFEnergonSample(
             __key__=sample.__key__,
             __subflavors__=sample.__subflavors__,
             example=example,
-            encoded=encoded,
         )
 
     def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
@@ -145,68 +134,14 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
     # batch
     # ------------------------------------------------------------------
 
-    def _batch_encoded_samples(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
-        """Pad per-sample encoded tensors and wrap visual tensors."""
-        encoded_samples = [sample.encoded for sample in samples]
-        if any(encoded is None for encoded in encoded_samples):
-            raise ValueError("All HFEnergonSample objects must contain encoded tensors for per-sample batching.")
-
-        encoded = [sample.encoded for sample in samples if sample.encoded is not None]
-        max_len = min(max(sample.input_ids.numel() for sample in encoded), self.seq_length)
-        pad_token_id = self._data_processor.pad_token_id
-        batch_size = len(encoded)
-
-        input_ids = torch.full((batch_size, max_len), pad_token_id, dtype=torch.long)
-        labels = torch.full((batch_size, max_len), -100, dtype=torch.long)
-        loss_mask = torch.zeros((batch_size, max_len), dtype=torch.float32)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
-        for idx, sample in enumerate(encoded):
-            length = min(sample.input_ids.numel(), max_len)
-            input_ids[idx, :length] = sample.input_ids[:length]
-            labels[idx, :length] = sample.labels[:length]
-            loss_mask[idx, :length] = sample.loss_mask[:length]
-            attention_mask[idx, :length] = 1
-
-        position_ids = torch.arange(max_len, dtype=torch.long).unsqueeze(0).expand(batch_size, -1).clone()
-
-        visual_kwargs: dict[str, torch.Tensor] = {}
-        allowed_visual_fields = {field.name for field in dataclasses.fields(GenericVisualInputs)}
-        for key in self.visual_keys:
-            if key not in allowed_visual_fields:
-                raise ValueError(f"Unsupported visual input key for GenericVisualInputs: {key}")
-            values = [sample.visual_tensors[key] for sample in encoded if key in sample.visual_tensors]
-            if not values:
-                continue
-            if values[0].dim() == 0:
-                visual_kwargs[key] = torch.stack(values)
-            else:
-                visual_kwargs[key] = torch.cat(values, dim=0)
-        visual_inputs = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
-
-        keys = [s.__key__ for s in samples]
-        return HFEnergonBatch(
-            **batch_metadata_kwargs(keys=keys),
-            __keys__=keys,
-            __subflavors__=[s.__subflavors__ for s in samples],
-            input_ids=input_ids,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            visual_inputs=visual_inputs,
-        )
-
     def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
         """Collate normalized samples with the selected HF VLM collator."""
-        if all(sample.encoded is not None for sample in samples):
-            return self._batch_encoded_samples(samples)
-
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
         if collated["input_ids"].shape[1] > self.seq_length:
             raise ValueError(
                 f"Collated seq_len {collated['input_ids'].shape[1]} exceeds seq_length {self.seq_length}. "
-                "Use encode_sample-produced HFEnergonSample objects so truncation can repair visual metadata."
+                "The selected HF VLM collator must enforce seq_length while preserving visual metadata."
             )
 
         keys = [s.__key__ for s in samples]
