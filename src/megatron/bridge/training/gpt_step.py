@@ -271,6 +271,9 @@ def _forward_step_common(
     # the helper computes the THD-correct Σᵢ sᵢ² for the attention term
     # instead of the pack-length² BSHD approximation. train.py resets these
     # before each step and reads accumulated values afterwards.
+    # get_batch CP-shards tokens along the sequence dim, so pass cp_size to recover
+    # the full per-microbatch token count for the linear terms. cu_seqlens stays
+    # full (not sharded), so the attention term needs no correction.
     accumulate_flops_metadata(
         state,
         tokens,
@@ -278,6 +281,7 @@ def _forward_step_common(
         cu_seqlens_argmin=cu_seqlens_argmin,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
         cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin,
+        cp_size=pg_collection.cp.size(),
     )
 
     forward_args = {

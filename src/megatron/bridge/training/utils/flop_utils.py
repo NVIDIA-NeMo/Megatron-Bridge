@@ -250,17 +250,26 @@ def accumulate_flops_metadata(
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
     num_vision_patches: int | torch.Tensor | None = None,
+    cp_size: int = 1,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
 
     Writes three accumulators consumed by ``train.py`` at end of step:
 
-    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
-      this microbatch contributes). Drives the linear MLP/proj/logit terms.
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1] * cp_size`` (padded total
+      tokens this microbatch contributes). Drives the linear MLP/proj/logit terms.
     - ``_flops_seqlen_sq_sum``: Σᵢ sᵢ² over real sub-sequence lengths derived
       from ``cu_seqlens`` when available (THD-correct attention work), else
-      ``mbs * seq_len²`` (BSHD fallback, matches legacy behavior).
+      ``mbs * (seq_len * cp_size)²`` (BSHD fallback, matches legacy behavior).
     - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+
+    ``cp_size`` is the number of context-parallel ranks ``tokens`` has been
+    sharded across along the sequence dim (so the full per-microbatch length is
+    ``tokens.shape[1] * cp_size``). Pass the CP degree from steps that CP-shard
+    the batch (e.g. ``gpt_step``); pass ``1`` (default) from steps that don't
+    (e.g. ``vlm_step``, where ``tokens`` is the full sequence). The attention
+    term needs no such correction — it derives from ``cu_seqlens``, which
+    describes the full packed sequence and is not CP-sharded.
 
     ``num_vision_patches`` is the precomputed number of vision patches in this
     microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
@@ -281,9 +290,15 @@ def accumulate_flops_metadata(
         return
 
     mbs = tokens.shape[0]
-    seq_len = tokens.shape[1]
+    # tokens may be CP-sharded along the sequence dim; recover the full per-
+    # microbatch length so the token-derived terms count the whole sequence
+    # (FLOPS are reported for the global batch, then divided by world size, which
+    # already includes CP). cp_size == 1 for steps that don't CP-shard tokens.
+    seq_len = tokens.shape[1] * cp_size
     _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
 
+    # The attention term derives from cu_seqlens, which describes the full packed
+    # sequence and is NOT CP-sharded, so it takes no cp_size correction.
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
         sq_delta = _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)

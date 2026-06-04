@@ -2105,6 +2105,37 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens)
         assert not hasattr(state, "_flops_vision_patches")
 
+    def test_cp_size_recovers_full_tokens_for_linear_term(self):
+        # Under CP, tokens are sharded along the sequence dim (tokens.shape[1] =
+        # full/cp). cp_size recovers the full per-microbatch token count for the
+        # linear (seqlen_sum) term. The THD attention term comes from cu_seqlens
+        # (not CP-sharded), so it is unaffected by cp_size.
+        state = _State()
+        tokens = torch.zeros(1, 512)  # this rank's shard
+        cu_seqlens = torch.tensor([0, 256, 1024])  # full (un-sharded) boundaries
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cp_size=4)
+        assert state._flops_seqlen_sum == 1 * 512 * 4  # full tokens recovered
+        assert state._flops_seqlen_sq_sum == 256**2 + 768**2  # from cu_seqlens, no cp factor
+
+    def test_cp_size_bshd_scales_sum_linearly_and_sq_quadratically(self):
+        # BSHD fallback (no cu_seqlens): both terms derive from the sharded
+        # tokens.shape[1], so recovering the full length scales seqlen_sum by cp
+        # and seqlen_sq by cp² (full_seq = shard * cp, full_seq² = shard² * cp²).
+        state = _State()
+        tokens = torch.zeros(2, 256)  # shard
+        accumulate_flops_metadata(state, tokens, cp_size=4)
+        assert state._flops_seqlen_sum == 2 * 256 * 4
+        assert state._flops_seqlen_sq_sum == 2 * (256 * 4) ** 2
+
+    def test_cp_size_one_is_identity(self):
+        # cp_size defaults to 1 (steps that don't CP-shard tokens) and must not
+        # change the legacy result.
+        state = _State()
+        tokens = torch.zeros(2, 512)
+        accumulate_flops_metadata(state, tokens, cp_size=1)
+        assert state._flops_seqlen_sum == 2 * 512
+        assert state._flops_seqlen_sq_sum == 2 * 512**2
+
     def test_empty_cu_seqlens_falls_back_to_bshd(self):
         # Degenerate cu_seqlens (only one element after argmin truncation)
         # yields no sub-seqs, so the helper must fall back to BSHD rather
