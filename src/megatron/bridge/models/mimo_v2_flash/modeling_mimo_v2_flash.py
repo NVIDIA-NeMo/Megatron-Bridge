@@ -268,6 +268,8 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
         )
 
     def forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+        if self._attention_value_scale is not None:
+            value = value * self._attention_value_scale
         return super().forward(query, key, value, attention_mask, attn_mask_type, **kwargs)
 
 
