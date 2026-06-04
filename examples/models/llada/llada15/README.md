@@ -66,11 +66,16 @@ working `megatron.bridge.training` against the installed Megatron-Core.
 
 | Script | Purpose | GPU? |
 |---|---|---|
-| `test_llada15_roundtrip.py` | Level-1 exact state-dict round-trip (HF → MCore → HF, per-tensor diff) | 1 GPU |
-| `test_llada15_parity.py` | Level-2 forward-pass logit parity (cosine sim, max diff, argmax / top-5 agreement) | 1 GPU |
-| `test_llada15_generation_parity.py` | Drives both models with the official ML-GSAI sampler; checks token-for-token agreement | 1 GPU |
 | `convert_llada15_hf_to_megatron.py` | One-shot HF → Megatron checkpoint conversion + save to disk | 1 GPU |
 | `run_llada15_chat.py` | Loads the saved Megatron checkpoint, applies the Llama3-style chat template, runs block-diffusion generation | 1 GPU |
+
+Automated tests for the bridge live under `tests/` (no HF checkpoint or GPU
+required for the unit tests):
+
+| Test | Purpose |
+|---|---|
+| `tests/unit_tests/diffusion/model/llada15/test_inference.py` | Block-diffusion generation loop (mask scheduling, batched EOS early-stop) |
+| `tests/functional_tests/test_groups/models/llada15/test_llada15_generate.py` | End-to-end generation on a converted checkpoint |
 
 Environment expected in the rest of this doc:
 
@@ -84,49 +89,24 @@ export PYTHONPATH=/opt/Megatron-Bridge/src
 
 ### 1. Verify the bridge (testing)
 
-The Bridge already supports LLaDA1.5; these checks confirm it on your
-machine. Run them in order — each builds confidence on top of the previous.
-
-#### Level 1: state-dict round-trip (exact match)
+The Bridge already supports LLaDA1.5. Run the unit tests (no HF checkpoint
+or GPU required) to confirm the generation loop on your machine:
 
 ```bash
-python3 examples/models/llada/llada15/test_llada15_roundtrip.py --hf-path "$HF_PATH"
+uv run python -m pytest tests/unit_tests/diffusion/model/llada15/test_inference.py
 ```
 
-Confirms every weight tensor round-trips bit-exactly through the bridge
-mappings. No floating-point arithmetic is involved, so this should report
-`Matched: 291, Mismatched: 0`.
-
-#### Level 2: forward-pass logit parity
+For end-to-end generation on a converted checkpoint, run the functional
+test:
 
 ```bash
-# Unmasked prompt
-python3 examples/models/llada/llada15/test_llada15_parity.py \
-    --hf-path "$HF_PATH" --prompt "The capital of France is"
-
-# Masked prompt (exercises the MDM path)
-python3 examples/models/llada/llada15/test_llada15_parity.py \
-    --hf-path "$HF_PATH" --prompt "The capital of France is" --mask-some
+uv run python -m pytest tests/functional_tests/test_groups/models/llada15/test_llada15_generate.py
 ```
 
-Reports cosine similarity, max diff (absolute and relative to logit range),
-argmax agreement, and top-5 overlap. Passes when bf16 noise stays within
-`cos_sim >= 0.999`, `rel_max_diff <= 5%`, all argmax match, and top-5
-overlap is `>= 4/5`.
-
-#### Generation parity (official sampler, token-for-token)
-
-```bash
-python3 examples/models/llada/llada15/test_llada15_generation_parity.py \
-    --hf-path "$HF_PATH" \
-    --prompt "The capital of France is" \
-    --gen-length 32 --block-length 32 --steps 32
-```
-
-Reimplements the official ML-GSAI/LLaDA `generate.py` algorithm
-(`add_gumbel_noise`, `low_confidence` remasking, per-block transfer
-schedule based on mask count) and drives both HF and Megatron models with
-it. Greedy decoding (`temperature=0`) makes the comparison deterministic.
+To re-validate HF ↔ Megatron numerical parity (cosine similarity, argmax
+agreement, generation token-for-token match), compare the bridge output
+against the reference [ML-GSAI/LLaDA](https://github.com/ML-GSAI/LLaDA)
+`generate.py` sampler on the same prompt, seed, and sampling settings.
 
 ### 2. Convert the checkpoint (one-time)
 
@@ -253,8 +233,9 @@ not invoke the trust_remote_code class):
   kwargs.
 - Set `model.config.use_cache = False` (no longer auto-populated).
 
-These shims live in `examples/models/llada/llada15/test_llada15_*.py` and are
-isolated from production code.
+These shims are only needed when loading the HF reference for parity
+testing against the [ML-GSAI/LLaDA](https://github.com/ML-GSAI/LLaDA)
+implementation; the bridge itself does not require them.
 
 ## Limitations
 
@@ -274,5 +255,3 @@ isolated from production code.
 - Model card: <https://huggingface.co/GSAI-ML/LLaDA-1.5>
 - Reference implementation: <https://github.com/ML-GSAI/LLaDA>
 - LLaDA paper: <https://arxiv.org/abs/2502.09992>
-- LLaDA2 integration skill (this repo): `skills/llada2-integration/SKILL.md`
-- Parity-testing skill (this repo): `skills/parity-testing/SKILL.md`

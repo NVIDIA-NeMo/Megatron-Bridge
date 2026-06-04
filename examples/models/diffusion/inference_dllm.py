@@ -33,7 +33,7 @@ other's dependencies (e.g. picking ``llada15`` never imports NemotronLabs'
 Examples:
     LLaDA1.5 (pure diffusion)::
 
-        python examples/diffusion/inference_dllm.py \\
+        python examples/models/diffusion/inference_dllm.py \\
             --model llada15 \\
             --hf-model /path/to/GSAI-ML/LLaDA-1.5 \\
             --megatron-path /path/to/llada15_megatron_ckpt \\
@@ -42,7 +42,7 @@ Examples:
 
     NemotronLabsDiffusion (block diffusion)::
 
-        torchrun --nproc_per_node=4 examples/diffusion/inference_dllm.py \\
+        torchrun --nproc_per_node=4 examples/models/diffusion/inference_dllm.py \\
             --model nemotron_labs_diffusion \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --megatron-path /path/to/ar_to_dlm_8b \\
@@ -51,7 +51,7 @@ Examples:
 
     NemotronLabsDiffusion autoregressive mode::
 
-        python examples/diffusion/inference_dllm.py \\
+        python examples/models/diffusion/inference_dllm.py \\
             --model nemotron_labs_diffusion --mode ar \\
             --hf-model mistralai/Ministral-3-3B-Base-2512 \\
             --megatron-path /path/to/ar_to_dlm_3b \\
