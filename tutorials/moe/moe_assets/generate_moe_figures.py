@@ -6,9 +6,10 @@ from __future__ import annotations
 import math
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
+import matplotlib.pyplot as plt
 from matplotlib.patches import FancyArrowPatch
+
 
 OUT = Path(__file__).resolve().parent
 
@@ -50,7 +51,9 @@ def fig_routing_topk() -> None:
             linewidth=1.2,
         )
     )
-    ax.text(4.02, 1.98, "Router\nsoftmax + top-k", ha="center", va="center", fontsize=9, color="white", fontweight="bold")
+    ax.text(
+        4.02, 1.98, "Router\nsoftmax + top-k", ha="center", va="center", fontsize=9, color="white", fontweight="bold"
+    )
 
     # Experts
     ex_x = [6.0, 7.05, 8.1, 9.15]
@@ -73,7 +76,9 @@ def fig_routing_topk() -> None:
         ax.text(x, 0.55, lab.replace(" ", "\n"), ha="center", va="center", fontsize=7, color="white")
 
     # Arrows token -> router
-    ax.add_patch(FancyArrowPatch((2.15, ty), (3.35, 1.98), arrowstyle="-|>", mutation_scale=12, color="#34495e", lw=1.4))
+    ax.add_patch(
+        FancyArrowPatch((2.15, ty), (3.35, 1.98), arrowstyle="-|>", mutation_scale=12, color="#34495e", lw=1.4)
+    )
 
     # Arrows router -> two experts (top-2)
     for x in (ex_x[1], ex_x[3]):
@@ -90,7 +95,9 @@ def fig_routing_topk() -> None:
         )
     ax.text(6.8, 1.35, "top-k (e.g. k=2)", fontsize=9, color="#c0392b", fontweight="bold")
 
-    ax.text(5.0, 2.85, "Sparse activation: only k experts compute per token", ha="center", fontsize=10, color="#2c3e50")
+    ax.text(
+        5.0, 2.85, "Sparse activation: only k experts compute per token", ha="center", fontsize=10, color="#2c3e50"
+    )
 
     save(fig, "moe_routing_topk.png")
 
@@ -532,7 +539,9 @@ def fig_moe_layer_schematic() -> None:
             zorder=1,
         )
     )
-    ax.text(c_plus[0], y_arrow_tip + 0.26, "Output", ha="center", va="bottom", fontsize=10, fontweight="bold", color=INK)
+    ax.text(
+        c_plus[0], y_arrow_tip + 0.26, "Output", ha="center", va="bottom", fontsize=10, fontweight="bold", color=INK
+    )
 
     # Title stacked just above Output (avoids fig.suptitle's extra vertical band).
     y_out_label = y_arrow_tip + 0.26
