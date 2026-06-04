@@ -16,6 +16,9 @@ import pytest
 import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
+import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
+import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
 
 
 pytestmark = pytest.mark.unit
@@ -100,9 +103,9 @@ def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
 
 
 def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
     # Stub process_vision_info to return (None, None)
-    monkeypatch.setattr(collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
@@ -140,7 +143,7 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
             }
 
     # Stub assistant text extraction to return a findable text.
-    monkeypatch.setattr(collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
 
     proc = _AudioProcessor()
     examples = [
@@ -160,7 +163,7 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
 
 
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     # Return list of N fake images for first example, None for second
     def _fake_pvi(conv):
@@ -170,7 +173,7 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
             return ([object(), object()], None)
         return (None, None)
 
-    monkeypatch.setattr(collate, "process_vision_info", _fake_pvi)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
@@ -184,7 +187,7 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
 
 
 def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     def _fake_pvi(conv):
         text = str(conv)
@@ -192,7 +195,7 @@ def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
             return (None, [[object(), object()]])
         return (None, None)
 
-    monkeypatch.setattr(collate, "process_vision_info", _fake_pvi)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "watch"}]}]},
@@ -214,7 +217,7 @@ def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     attention_mask = torch.ones_like(input_ids)
     grid_thws = torch.tensor([[1, 4, 4], [2, 6, 4]])
 
-    expanded_input_ids, expanded_attention_mask = collate._expand_image_tokens(
+    expanded_input_ids, expanded_attention_mask = kimi_collate._expand_image_tokens(
         input_ids,
         attention_mask,
         grid_thws,

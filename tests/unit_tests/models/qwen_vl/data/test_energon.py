@@ -24,9 +24,9 @@ import torch
 from megatron.energon import SkipSample
 from PIL import Image
 
-import megatron.bridge.recipes.qwen_vl.data.energon.task_encoder as task_encoder_module
+import megatron.bridge.models.qwen_vl.data.energon as task_encoder_module
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
-from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import (
+from megatron.bridge.models.qwen_vl.data.energon import (
     ChatMLSample,
     QwenVLTaskBatch,
     QwenVLTaskEncoder,

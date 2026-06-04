@@ -34,8 +34,8 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     get_ltor_masks_and_position_ids,  # noqa: F401  -- re-exported for backward compat
     videohandler,  # noqa: F401  -- re-exported for backward compat
 )
-from megatron.bridge.data.vlm_datasets.collate import qwen2_5_collate_fn
 from megatron.bridge.data.vlm_processing import normalize_energon_vlm_sample, normalized_vlm_sample_to_hf_example
+from megatron.bridge.models.qwen_vl.data.collate_fn import qwen2_5_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 

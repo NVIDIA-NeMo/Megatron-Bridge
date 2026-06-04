@@ -62,15 +62,10 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
-def test_vlm_conversation_dataset_basic(monkeypatch):
-    # Import locally to ensure monkeypatches apply to module under test
-    import megatron.bridge.data.vlm_datasets.collate as collate
+def test_vlm_conversation_dataset_basic():
     from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 
-    # Enable collate dependencies
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
-
-    proc = _DummyProcessor()
+    proc = Gemma3Processor()
     ds = VLMConversationDataset(base_examples=[_example()], target_length=3, processor=proc, collate_impl=None)
     assert len(ds) == 3
     # Wraps over base list
