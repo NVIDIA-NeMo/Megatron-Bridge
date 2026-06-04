@@ -20,6 +20,7 @@ selected HF VLM collate function.
 """
 
 import dataclasses
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -68,13 +69,12 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         processor: HF ``AutoProcessor`` instance passed to the selected collate
             function.
         seq_length: Maximum sequence length accepted after collation.
-        visual_keys: Retained for compatibility with older generic encoder
-            configuration. Visual tensor selection now belongs to the selected
-            collate function.
-        min_pixels: Retained for compatibility. Pixel constraints should be
-            configured on the processor or handled by the collate function.
-        max_pixels: Retained for compatibility. Pixel constraints should be
-            configured on the processor or handled by the collate function.
+        visual_keys: Processor output keys to retain when the selected collate
+            function supports configurable visual input selection.
+        min_pixels: Optional min pixel constraint forwarded when supported by
+            the selected collate function.
+        max_pixels: Optional max pixel constraint forwarded when supported by
+            the selected collate function.
     """
 
     def __init__(
@@ -94,6 +94,24 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.max_pixels = max_pixels
         collate_key = type(processor).__name__ if processor is not None else "default"
         self._collate_impl = collate_fn or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])
+
+    def _supported_collate_kwargs(self) -> dict[str, Any]:
+        """Return encoder options accepted by the selected collate function."""
+        try:
+            parameters = inspect.signature(self._collate_impl).parameters
+        except (TypeError, ValueError):
+            return {}
+
+        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+        candidates: dict[str, Any] = {"visual_keys": self.visual_keys}
+        if self.min_pixels is not None:
+            candidates["min_pixels"] = self.min_pixels
+        if self.max_pixels is not None:
+            candidates["max_pixels"] = self.max_pixels
+
+        if accepts_kwargs:
+            return candidates
+        return {key: value for key, value in candidates.items() if key in parameters}
 
     def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.
@@ -128,7 +146,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             The exact batch dictionary returned by the selected HF collate
             function for this processor type.
         """
-        return self._collate_impl(examples, self.processor)
+        return self._collate_impl(examples, self.processor, **self._supported_collate_kwargs())
 
     # ------------------------------------------------------------------
     # batch

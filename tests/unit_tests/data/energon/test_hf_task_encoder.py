@@ -226,6 +226,48 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
         self.assertEqual(batch.input_ids.shape, (1, 5))
         self.assertEqual(seen_examples, [encoded.example])
 
+    def test_collate_fn_threads_supported_encoder_options(self):
+        seen_kwargs = {}
+
+        def _collate(
+            examples,
+            processor,  # noqa: ARG001 - processor is part of the collate contract
+            *,
+            visual_keys,
+            min_pixels=None,
+            max_pixels=None,
+        ):
+            seen_kwargs.update(
+                {
+                    "examples": examples,
+                    "visual_keys": visual_keys,
+                    "min_pixels": min_pixels,
+                    "max_pixels": max_pixels,
+                }
+            )
+            return _make_collate_fn()(examples, processor)
+
+        encoder = HFTaskEncoder(
+            processor=self.processor,
+            seq_length=128,
+            visual_keys=("pixel_values", "image_sizes"),
+            min_pixels=16,
+            max_pixels=128,
+            collate_fn=_collate,
+        )
+        sample = HFEnergonSample(
+            __key__="manual",
+            __subflavors__={},
+            example={"conversation": [{"role": "user", "content": "manual"}]},
+        )
+
+        encoder.batch([sample])
+
+        self.assertEqual(seen_kwargs["examples"], [sample.example])
+        self.assertEqual(seen_kwargs["visual_keys"], ("pixel_values", "image_sizes"))
+        self.assertEqual(seen_kwargs["min_pixels"], 16)
+        self.assertEqual(seen_kwargs["max_pixels"], 128)
+
     def test_collate_fallback_rejects_oversized_batches(self):
         processor = _make_processor()
         encoder = HFTaskEncoder(

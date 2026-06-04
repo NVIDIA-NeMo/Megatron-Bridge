@@ -25,6 +25,7 @@ Most model collators follow the same high-level pipeline:
 """
 
 import warnings
+from collections.abc import Sequence
 from typing import Any
 
 import torch
@@ -62,6 +63,7 @@ PASSTHROUGH_VISUAL_KEYS = (
     "video_grid_thw",
     "image_sizes",
     "image_position_ids",
+    "mm_token_type_ids",
 )
 
 
@@ -864,7 +866,14 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
-def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def default_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: Sequence[str] = THW_GRID_VISUAL_KEYS,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+) -> dict[str, torch.Tensor]:
     """Default collate function for VLM models."""
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
@@ -883,14 +892,18 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     if tokenizer_for_padding is not None:
         tokenizer_for_padding.padding_side = "right"
     try:
-        batch = processor.apply_chat_template(
-            [example["conversation"] for example in examples],
-            tokenize=True,
-            padding=can_pad,
-            truncation=True,
-            return_tensors="pt",
-            return_dict=True,
-        )
+        template_kwargs: dict[str, Any] = {
+            "tokenize": True,
+            "padding": can_pad,
+            "truncation": True,
+            "return_tensors": "pt",
+            "return_dict": True,
+        }
+        if min_pixels is not None:
+            template_kwargs["min_pixels"] = min_pixels
+        if max_pixels is not None:
+            template_kwargs["max_pixels"] = max_pixels
+        batch = processor.apply_chat_template([example["conversation"] for example in examples], **template_kwargs)
     finally:
         if tokenizer_for_padding is not None and saved_padding_side is not None:
             tokenizer_for_padding.padding_side = saved_padding_side
@@ -919,14 +932,15 @@ def default_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     batch["labels"] = labels.masked_fill(loss_mask == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask
 
-    batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
-    visual_inputs = GenericVisualInputs(
-        pixel_values=batch.get("pixel_values"),
-        pixel_values_videos=batch.get("pixel_values_videos"),
-        image_grid_thw=batch.get("image_grid_thw"),
-        video_grid_thw=batch.get("video_grid_thw"),
-    )
-    for key in THW_GRID_VISUAL_KEYS:
+    if "pixel_values" in batch:
+        batch["pixel_values"] = batch["pixel_values"].to(torch.bfloat16)
+
+    visual_kwargs = {}
+    for key in visual_keys:
+        if key in batch:
+            visual_kwargs[key] = batch[key]
+    visual_inputs = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    for key in PASSTHROUGH_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
     return batch

@@ -29,8 +29,10 @@ class _DummyProcessor:
 
     def __init__(self):
         self.tokenizer = self._Tok()
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+        self.template_kwargs.append(kwargs)
         if tokenize:
             # Return dict mimicking HF processor output when tokenize=True
             # Minimal keys used by default_collate_fn
@@ -39,6 +41,8 @@ class _DummyProcessor:
             return {
                 "input_ids": input_ids,
                 "pixel_values": pixel_values,
+                "image_grid_thw": torch.tensor([[[1, 2, 2]]]),
+                "image_sizes": torch.tensor([[4, 4]]),
             }
         # Non-tokenized: just a string
         return "dummy"
@@ -70,7 +74,32 @@ def test_default_collate_builds_visual_inputs(monkeypatch):
     assert "visual_inputs" in batch
     vi = batch["visual_inputs"]
     # normalized_for_model called in training path; here we just assert fields present
-    assert hasattr(vi, "pixel_values")
+    assert vi.pixel_values is not None
+    assert vi.image_grid_thw is not None
+
+
+def test_default_collate_honors_visual_keys_and_pixel_constraints(monkeypatch):
+    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.default_collate_fn(
+        examples,
+        proc,
+        visual_keys=("pixel_values", "image_sizes"),
+        min_pixels=16,
+        max_pixels=128,
+    )
+
+    assert proc.template_kwargs[-1]["min_pixels"] == 16
+    assert proc.template_kwargs[-1]["max_pixels"] == 128
+    assert batch["visual_inputs"].pixel_values is not None
+    assert batch["visual_inputs"].image_sizes is not None
+    assert batch["visual_inputs"].image_grid_thw is None
+    assert "image_grid_thw" not in batch
+    assert "image_sizes" not in batch
 
 
 def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
