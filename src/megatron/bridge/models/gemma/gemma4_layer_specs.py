@@ -45,8 +45,10 @@
 #   Three extra layernorms gate the combination (post_feedforward_1/2, pre_feedforward_2).
 
 import copy
-from dataclasses import dataclass
-from typing import Optional, Tuple
+import types
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Callable, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -928,3 +930,292 @@ class Gemma4RotaryEmbedding(nn.Module):
             self.rope_sliding.get_cos_sin(max_seq_len, offset),
             self.rope_full.get_cos_sin(max_seq_len, offset),
         )
+
+
+# ---------------------------------------------------------------------------
+# Gemma-4 E4B Provider  (clean-MCore compatible: no Gemma4 CLI args needed)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Gemma4E4BProvider:
+    """Gemma-4 E4B (3.8B dense text) model provider for clean Megatron-Core.
+
+    All Gemma4-specific settings are encoded here as dataclass fields so that
+    no Gemma4-specific CLI arguments are required.  The provider builds a
+    standard MCore GPTModel and then attaches PLE modules, wires shared-KV
+    source references, and patches forward() to compute per-layer inputs.
+
+    Usage in parity_check_e4b.py::
+
+        provider = Gemma4E4BProvider()
+        model = provider.build(pre_process=True, post_process=True)
+        load_checkpoint([model], None, None)
+    """
+
+    # ---- Architecture (E4B defaults) ------------------------------------
+    num_layers: int = 42
+    hidden_size: int = 2560
+    ffn_hidden_size: int = 10240
+    num_attention_heads: int = 8
+    num_query_groups: int = 2          # KV heads (both sliding and global layers)
+    kv_channels: int = 256             # head_dim for sliding layers
+    seq_length: int = 131072
+    vocab_size: int = 262143
+    make_vocab_size_divisible_by: int = 128
+
+    # ---- Norms & activations --------------------------------------------
+    normalization: str = "RMSNorm"
+    layernorm_epsilon: float = 1e-6
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    # geglu-tanh: matches HF gelu_pytorch_tanh
+    activation_func: Callable = field(
+        default_factory=lambda: partial(F.gelu, approximate="tanh")
+    )
+
+    # ---- Embeddings ------------------------------------------------------
+    scale_embeddings_by_hidden_size: bool = True
+    share_embeddings_and_output_weights: bool = True
+
+    # ---- Dropout ---------------------------------------------------------
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+
+    # ---- Window attention (kept in clean MCore) --------------------------
+    window_size: Optional[Tuple[int, int]] = (511, 0)
+    window_attn_skip_freq: int = 6
+
+    # ---- dtype -----------------------------------------------------------
+    bf16: bool = True
+    fp16: bool = False
+
+    # ---- Gemma4-specific (read by gemma4_layer_specs via getattr) --------
+    global_kv_channels: int = 512
+    num_global_query_groups: int = 2
+    sliding_window_rope_base: float = 10000.0
+    full_attention_rope_base: float = 1000000.0
+    full_attention_rope_partial_factor: float = 0.25
+    num_kv_shared_layers: int = 18
+    per_layer_embed_vocab_size: int = 262144
+    per_layer_embed_dim: int = 256
+
+    def build(
+        self,
+        pre_process: bool = True,
+        post_process: bool = True,
+    ) -> "torch.nn.Module":
+        """Build a Gemma-4 E4B GPTModel and attach Bridge-specific components.
+
+        Steps:
+          1. Build TransformerConfig from this provider's fields.
+          2. Instantiate MCore GPTModel with get_gemma4_layer_spec.
+          3. Attach PLE modules (per_layer_embedding / proj / norm).
+          4. Wire shared-KV layer references.
+          5. Patch model.forward() to compute per_layer_inputs.
+        """
+        from megatron.core.models.gpt import GPTModel
+        from megatron.core.transformer.transformer_config import TransformerConfig
+
+        # Build a TransformerConfig with all standard fields
+        config_kwargs = {
+            "num_layers": self.num_layers,
+            "hidden_size": self.hidden_size,
+            "ffn_hidden_size": self.ffn_hidden_size,
+            "num_attention_heads": self.num_attention_heads,
+            "num_query_groups": self.num_query_groups,
+            "kv_channels": self.kv_channels,
+            "normalization": self.normalization,
+            "layernorm_epsilon": self.layernorm_epsilon,
+            "gated_linear_unit": self.gated_linear_unit,
+            "add_bias_linear": self.add_bias_linear,
+            "activation_func": self.activation_func,
+            "attention_dropout": self.attention_dropout,
+            "hidden_dropout": self.hidden_dropout,
+            "window_size": self.window_size,
+            "window_attn_skip_freq": self.window_attn_skip_freq,
+            "bf16": self.bf16,
+            "fp16": self.fp16,
+            "scale_embeddings_by_hidden_size": self.scale_embeddings_by_hidden_size,
+        }
+        config = TransformerConfig(**config_kwargs)
+
+        # Inject Gemma4-specific fields needed during GPTModel.__init__()
+        # (read by Gemma4SelfAttention / Gemma4TransformerLayer constructors via getattr)
+        # NOTE: sliding_window_rope_base / full_attention_rope_base are intentionally
+        # omitted here because clean MCore GPTModel.__init__() raises ValueError when
+        # it detects those attributes.  They are injected AFTER model construction.
+        for attr in (
+            "global_kv_channels",
+            "num_global_query_groups",
+            "num_kv_shared_layers",
+            "per_layer_embed_vocab_size",
+            "per_layer_embed_dim",
+        ):
+            setattr(config, attr, getattr(self, attr))
+
+        padded_vocab = (
+            (self.vocab_size + self.make_vocab_size_divisible_by - 1)
+            // self.make_vocab_size_divisible_by
+            * self.make_vocab_size_divisible_by
+        )
+
+        model = GPTModel(
+            config=config,
+            transformer_layer_spec=get_gemma4_layer_spec(config),
+            vocab_size=padded_vocab,
+            max_sequence_length=self.seq_length,
+            position_embedding_type="rope",
+            rotary_percent=1.0,
+            share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+            pre_process=pre_process,
+            post_process=post_process,
+        )
+
+        # Inject dual-RoPE attrs now that GPTModel.__init__() is complete
+        setattr(config, "sliding_window_rope_base", self.sliding_window_rope_base)
+        setattr(config, "full_attention_rope_base", self.full_attention_rope_base)
+        setattr(config, "full_attention_rope_partial_factor", self.full_attention_rope_partial_factor)
+
+        # Replace standard RoPE with Gemma4 dual-theta RoPE
+        model.rotary_pos_emb = Gemma4RotaryEmbedding(config)
+
+        # Attach PLE modules and wire shared-KV
+        if pre_process:
+            _attach_ple_modules(model, config, self)
+        wire_gemma4_kv_sharing(model)
+
+        # Patch forward to compute PLE before the decoder
+        _install_ple_forward(model)
+
+        return model
+
+
+def _attach_ple_modules(
+    model: "torch.nn.Module",
+    config: "TransformerConfig",
+    provider: Gemma4E4BProvider,
+) -> None:
+    """Add PLE embedding / projection / norm modules to a GPTModel instance."""
+    import megatron.core.tensor_parallel as tp
+
+    n_layers = provider.num_layers
+    ple_dim = provider.per_layer_embed_dim
+    ple_vocab = provider.per_layer_embed_vocab_size
+
+    model.per_layer_embedding = tp.VocabParallelEmbedding(
+        ple_vocab,
+        n_layers * ple_dim,
+        config=config,
+        init_method=config.init_method,
+    )
+    model.per_layer_model_proj = tp.ColumnParallelLinear(
+        provider.hidden_size,
+        n_layers * ple_dim,
+        config=config,
+        init_method=config.init_method,
+        bias=False,
+        gather_output=True,
+    )
+    model.per_layer_proj_norm = Gemma4RMSNorm(
+        config, ple_dim, eps=provider.layernorm_epsilon
+    )
+
+
+def _compute_per_layer_inputs(
+    model: "torch.nn.Module",
+    input_ids: "torch.Tensor",
+    decoder_input: "torch.Tensor",
+) -> "Optional[torch.Tensor]":
+    """Compute per_layer_inputs matching the formula in the pre-split GPTModel.
+
+    Returns tensor of shape [b, s_local, num_layers, ple_dim], or None.
+    """
+    if not hasattr(model, "per_layer_embedding") or model.per_layer_embedding is None:
+        return None
+    if input_ids is None or decoder_input is None:
+        return None
+
+    ple_dim: int = model.config.per_layer_embed_dim
+    n_layers: int = model.config.num_layers
+    b: int = input_ids.shape[0]
+
+    # 1. Token embedding: [b, s, n_layers * ple_dim]
+    tok_emb = model.per_layer_embedding(input_ids) * (ple_dim ** 0.5)
+
+    if getattr(model.config, "sequence_parallel", False):
+        from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
+        tok_emb = scatter_to_sequence_parallel_region(
+            tok_emb.transpose(0, 1)
+        ).transpose(0, 1)
+
+    s_local: int = tok_emb.shape[1]
+    tok_emb = tok_emb.view(b, s_local, n_layers, ple_dim)
+
+    # 2. Model projection: decoder_input [s_local, b, h] → [b, s_local, n*ple_dim]
+    mdl_proj, _ = model.per_layer_model_proj(decoder_input.transpose(0, 1))
+    mdl_proj = mdl_proj * (model.config.hidden_size ** -0.5)
+    mdl_proj = mdl_proj.view(b, s_local, n_layers, ple_dim)
+    mdl_proj = model.per_layer_proj_norm(mdl_proj)
+
+    # 3. Combine: (norm(proj) + tok_emb) × 1/√2
+    return (mdl_proj + tok_emb) * (2.0 ** -0.5)
+
+
+def _install_ple_forward(model: "torch.nn.Module") -> None:
+    """Patch model.forward() to compute PLE and inject as per_layer_inputs.
+
+    The patched forward:
+      1. Computes the embedding output once.
+      2. Computes PLE using that embedding output.
+      3. Passes decoder_input (pre-computed) to GPTModel.forward() so that
+         _preprocess() skips the embedding step (no double computation).
+      4. Merges PLE into extra_block_kwargs so TransformerBlock threads it
+         to each Gemma4TransformerLayer as per_layer_input.
+    """
+    _orig_class_forward = type(model).forward
+
+    def _ple_forward(
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        decoder_input=None,
+        labels=None,
+        inference_context=None,
+        packed_seq_params=None,
+        extra_block_kwargs=None,
+        runtime_gather_output=None,
+        **kwargs,
+    ):
+        # Compute embedding output (only once; passed to _preprocess to skip re-compute)
+        if decoder_input is None and getattr(self, "pre_process", True):
+            decoder_input = self.embedding(
+                input_ids=input_ids, position_ids=position_ids
+            )
+            if getattr(self.config, "scale_embeddings_by_hidden_size", False):
+                decoder_input = decoder_input * (self.config.hidden_size ** 0.5)
+
+        # Compute PLE and merge into extra_block_kwargs
+        per_layer_inputs = _compute_per_layer_inputs(self, input_ids, decoder_input)
+        if per_layer_inputs is not None:
+            extra_block_kwargs = {
+                **(extra_block_kwargs or {}),
+                "per_layer_inputs": per_layer_inputs,
+            }
+
+        return _orig_class_forward(
+            self,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            decoder_input=decoder_input,
+            labels=labels,
+            inference_context=inference_context,
+            packed_seq_params=packed_seq_params,
+            extra_block_kwargs=extra_block_kwargs,
+            runtime_gather_output=runtime_gather_output,
+            **kwargs,
+        )
+
+    model.forward = types.MethodType(_ple_forward, model)

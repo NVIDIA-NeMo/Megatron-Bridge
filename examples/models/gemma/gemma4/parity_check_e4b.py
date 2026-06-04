@@ -47,28 +47,23 @@ def _parse():
 
 
 def _build_megatron_argv(ckpt, tp=2, bf16=False):
+    # Gemma4-specific fields (global_kv_channels, sliding_window_rope_base, etc.)
+    # are no longer CLI flags in clean MCore. They are provided by Gemma4E4BProvider.
     return [
         "parity",
         "--use-mcore-models",
         "--num-layers", "42", "--hidden-size", "2560",
         "--ffn-hidden-size", "10240", "--num-attention-heads", "8",
         "--group-query-attention", "--num-query-groups", "2",
-        "--kv-channels", "256", "--global-kv-channels", "512",
-        "--num-global-query-groups", "2",
+        "--kv-channels", "256",
         "--seq-length", str(SEQ), "--max-position-embeddings", "131072",
         "--position-embedding-type", "rope", "--rotary-percent", "1.0",
-        "--sliding-window-rope-base", "10000",
-        "--full-attention-rope-base", "1000000",
-        "--full-attention-rope-partial-factor", "0.25",
         "--window-size", "511,0", "--window-attn-skip-freq", "6",
-        "--num-kv-shared-layers", "18",
-        "--geglu-tanh", "--normalization", "RMSNorm", "--norm-epsilon", "1e-6",
+        "--normalization", "RMSNorm", "--norm-epsilon", "1e-6",
         "--attention-dropout", "0.0", "--hidden-dropout", "0.0",
         "--disable-bias-linear",
         "--vocab-size", "262143", "--make-vocab-size-divisible-by", "128",
         "--scale-embeddings-by-hidden-size",
-        "--per-layer-embed-vocab-size", "262144", "--per-layer-embed-dim", "256",
-        "--spec", "megatron.bridge.models.gemma.gemma4_layer_specs", "gemma4_layer_spec",
         "--transformer-impl", "local", "--attention-backend", "unfused",
         "--tensor-model-parallel-size", str(tp), "--pipeline-model-parallel-size", "1",
         "--context-parallel-size", "1",
@@ -108,18 +103,15 @@ def main():
     initialize_megatron()
     rank = dist.get_rank()
 
-    from functools import partial
+    from megatron.bridge.models.gemma.gemma4_layer_specs import Gemma4E4BProvider
+    provider = Gemma4E4BProvider(bf16=args.bf16)
 
-    from gpt_builders import gpt_builder
-    from pretrain_gpt import model_provider
-    models = get_model(partial(model_provider, gpt_builder), ModelType.encoder_or_decoder)
+    models = get_model(
+        lambda pre_process=True, post_process=True, config=None, pg_collection=None:
+            provider.build(pre_process=pre_process, post_process=post_process),
+        ModelType.encoder_or_decoder,
+    )
     model = models[0]
-
-    # gpt_model.py calls wire_gemma4_kv_sharing from megatron.core, but this parity
-    # script uses the Bridge spec whose Gemma4SelfAttention is a different class.
-    # Re-wire explicitly using the Bridge's version so isinstance() matches.
-    from megatron.bridge.models.gemma.gemma4_layer_specs import wire_gemma4_kv_sharing
-    wire_gemma4_kv_sharing(model)
 
     load_checkpoint(models, None, None)
     model.eval()
