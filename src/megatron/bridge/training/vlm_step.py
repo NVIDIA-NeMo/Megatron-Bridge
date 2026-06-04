@@ -436,15 +436,18 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches. VLM packing is done
-    # in-batch, so ``cu_seqlens`` already lists the real sub-sequence boundaries
-    # with no trailing pad sub-sequence (see get_batch_from_iterator, where
-    # ``cu_seqlens_argmin == len(cu_seqlens)``). Hence there is no
-    # ``cu_seqlens_unpadded`` / ``*_argmin`` to pass here — those exist only for
-    # offline-packed THD SFT (gpt_step), where sub-sequences are padded to a
-    # multiple. Passing ``cu_seqlens`` alone gives the THD-correct Σᵢ sᵢ² for the
-    # attention term instead of the pack-length² BSHD approximation. train.py
-    # resets these before each step and reads accumulated values afterwards.
+    # Accumulate FLOPS metadata across micro-batches. Passing ``cu_seqlens`` gives
+    # the THD-correct Σᵢ sᵢ² for the attention term instead of the pack-length²
+    # BSHD approximation. At CP=1 (and no SP) VLM in-batch packing leaves
+    # ``cu_seqlens`` equal to the real sub-sequence boundaries, so this counts
+    # meaningful tokens only.
+    # NOTE: under CP>1 (or SP), sub-sequences are padded to ``pad_multiple`` (see
+    # get_batch above), so ``cu_seqlens`` carries that per-sub-seq padding and the
+    # attention-FLOPS estimate currently includes it (a small over-count). The
+    # real pre-pad boundaries are not surfaced here yet — tracked as a CP
+    # follow-up (the linear term also needs a *cp_size correction there, since
+    # gpt_step CP-shards tokens). train.py resets these before each step and reads
+    # accumulated values afterwards.
     # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
     # t*h*w per image/video), so compute it here and hand a plain scalar to the
     # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
