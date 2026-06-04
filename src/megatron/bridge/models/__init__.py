@@ -32,12 +32,12 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.exaone import (
+    Exaone4Bridge,
+)
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
     FalconH1ModelProvider,
-)
-from megatron.bridge.models.exaone import (
-    Exaone4Bridge,
 )
 from megatron.bridge.models.gemma import (
     CodeGemmaModelProvider2B,

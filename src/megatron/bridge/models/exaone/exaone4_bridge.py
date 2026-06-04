@@ -200,20 +200,22 @@ class Exaone4Bridge(MegatronModelBridge):
         # =====================================================================
         # Composite Mappings (require concatenation/splitting)
         # =====================================================================
-        mapping_list.extend([
-            # QKV: Merge separate Q, K, V projections into single QKV matrix
-            QKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-            ),
-            # Gated MLP: Merge gate and up projections into single FC1 matrix
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                # QKV: Merge separate Q, K, V projections into single QKV matrix
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="model.layers.*.self_attn.k_proj.weight",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                # Gated MLP: Merge gate and up projections into single FC1 matrix
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
 
         return MegatronMappingRegistry(*mapping_list)

@@ -18,6 +18,7 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.utils.import_utils import safe_import_from
 
+
 TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
 TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TERowParallelLinear")
 
