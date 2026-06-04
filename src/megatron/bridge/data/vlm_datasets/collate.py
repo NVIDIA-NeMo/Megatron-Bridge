@@ -866,7 +866,7 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     return batch
 
 
-def default_collate_fn(
+def gemma3_vl_collate_fn(
     examples: list,
     processor,
     *,
@@ -874,10 +874,7 @@ def default_collate_fn(
     min_pixels: int | None = None,
     max_pixels: int | None = None,
 ) -> dict[str, torch.Tensor]:
-    """Default collate function for VLM models."""
-    if not HAVE_QWEN_VL_UTILS:
-        raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
-
+    """Collate function for Gemma3 VL models."""
     skipped_tokens = extract_skipped_token_ids(processor)
 
     # If pad_token remains unset after the eos_token fallback, disable padding to
@@ -1289,9 +1286,9 @@ COLLATE_FNS = {
     "NemotronNanoVLV2Processor": nemotron_nano_v2_vl_collate_fn,
     "NemotronH_Nano_Omni_Reasoning_V3Processor": nemotron_omni_collate_fn,
     "PixtralProcessor": ministral3_collate_fn,  # Ministral3 uses PixtralProcessor
+    "Gemma3Processor": gemma3_vl_collate_fn,  # Gemma3 VL
     "Gemma4Processor": gemma4_vl_collate_fn,  # Gemma4 VL
     "Qwen2AudioProcessor": qwen2_audio_collate_fn,
     "Glm4vProcessor": glm4v_collate_fn,
     "KimiK25Processor": kimi_k25_vl_collate_fn,
-    "default": default_collate_fn,
 }

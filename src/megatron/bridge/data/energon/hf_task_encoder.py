@@ -93,7 +93,15 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
         collate_key = type(processor).__name__ if processor is not None else "default"
-        self._collate_impl = collate_fn or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])
+        if collate_fn is not None:
+            self._collate_impl = collate_fn
+        else:
+            if collate_key not in COLLATE_FNS:
+                raise ValueError(
+                    f"No VLM collate function registered for processor type '{collate_key}'. "
+                    "Add it to COLLATE_FNS or pass collate_fn explicitly."
+                )
+            self._collate_impl = COLLATE_FNS[collate_key]
 
     def _supported_collate_kwargs(self) -> dict[str, Any]:
         """Return encoder options accepted by the selected collate function."""

@@ -35,7 +35,7 @@ class _DummyProcessor:
         self.template_kwargs.append(kwargs)
         if tokenize:
             # Return dict mimicking HF processor output when tokenize=True
-            # Minimal keys used by default_collate_fn
+            # Minimal keys used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
             pixel_values = torch.randn(1, 1, 3, 4, 4)
             return {
@@ -63,14 +63,12 @@ class _DummyProcessor:
         return out
 
 
-def test_default_collate_builds_visual_inputs(monkeypatch):
-    # Force HAVE_QWEN_VL_UTILS True
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+def test_gemma3_vl_collate_builds_visual_inputs():
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
     ]
-    batch = collate.default_collate_fn(examples, proc)
+    batch = collate.gemma3_vl_collate_fn(examples, proc)
     assert "visual_inputs" in batch
     vi = batch["visual_inputs"]
     # normalized_for_model called in training path; here we just assert fields present
@@ -78,14 +76,13 @@ def test_default_collate_builds_visual_inputs(monkeypatch):
     assert vi.image_grid_thw is not None
 
 
-def test_default_collate_honors_visual_keys_and_pixel_constraints(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
     ]
 
-    batch = collate.default_collate_fn(
+    batch = collate.gemma3_vl_collate_fn(
         examples,
         proc,
         visual_keys=("pixel_values", "image_sizes"),
@@ -373,8 +370,18 @@ def test_kimi_k25_vl_collate_fn_multi_sample_batch():
 
 
 # ---------------------------------------------------------------------------
-# Gemma4 collate — registration and image_position_ids passthrough
+# Gemma collates — registration and image_position_ids passthrough
 # ---------------------------------------------------------------------------
+
+
+def test_gemma3_processor_registered_in_collate_fns():
+    """Gemma3Processor must be registered in COLLATE_FNS."""
+    assert "Gemma3Processor" in collate.COLLATE_FNS
+
+
+def test_gemma3_registered_fn_matches_collate_fn():
+    """The registered function for Gemma3Processor is Gemma3-VL specific."""
+    assert collate.COLLATE_FNS["Gemma3Processor"] is collate.gemma3_vl_collate_fn
 
 
 def test_gemma4_processor_registered_in_collate_fns():
