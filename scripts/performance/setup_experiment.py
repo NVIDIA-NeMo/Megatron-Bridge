@@ -305,22 +305,6 @@ def main(
             "to the cache directory. NullTokenizer to be used soon."
         )
 
-    # Disable PCT binding for certain models on specific hardware/precision combos
-    if (
-        model_family_name == "nemotronh"
-        and model_recipe_name == "nemotron_3_super"
-        and compute_dtype == "bf16"
-        and gpu == "b300"
-    ) or (
-        model_family_name == "deepseek"
-        and model_recipe_name == "deepseek_v3"
-        and gpu == "b300"
-        and config_variant != "large_scale"
-    ) or (
-        model_family_name == "llama" and task == "pretrain" and gpu == "b300"
-    ):
-        enable_pct_binding = False
-
     if wandb_key is not None:
         assert wandb_project_name is not None and wandb_experiment_name is not None, (
             "both wandb_project_name and wandb_experiment_name are required for logging with WandB"

@@ -494,9 +494,9 @@ def parse_cli_args():
     slurm_args.add_argument(
         "--enable_pct_binding",
         type=bool_arg,
-        help="Enable PCT binding. Enabled by default.",
+        help="Enable PCT binding. Disabled by default.",
         required=False,
-        default=True,
+        default=False,
     )
 
     # DGXCloud

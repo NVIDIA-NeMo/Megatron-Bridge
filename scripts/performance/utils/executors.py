@@ -69,7 +69,7 @@ def slurm_executor(
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
     packager: str = "git",
-    enable_pct_binding: bool = True,
+    enable_pct_binding: bool = False,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
