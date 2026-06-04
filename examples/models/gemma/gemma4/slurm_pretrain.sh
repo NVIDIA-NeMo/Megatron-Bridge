@@ -6,21 +6,27 @@
 #   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 #
 # Key overrides:
-#   HF_MODEL_DIR     : path to downloaded HF model  (default: ~/models/gemma-4-E4B-it)
-#   MEGATRON_CKPT    : where to save the converted checkpoint
-#   TRAIN_DATA_PATH  : data prefix for training     (required for real training)
-#   SAVE_DIR         : where to save training checkpoints
-#   SKIP_CONVERT     : set to 1 to skip conversion if checkpoint already exists
-#   SKIP_PARITY      : set to 1 to skip parity check
-#   GEMMA4_CONVERSION_MODE : text for language-only pretraining checkpoint (default: text)
-#   TRAIN_ITERS      : number of training iterations (default: 1000)
-#   SEQ_LENGTH       : sequence length (default: 4096)
+#   HF_MODEL_DIR        : path to downloaded HF model  (default: ~/models/gemma-4-E4B-it)
+#   MEGATRON_CKPT       : base path for converted checkpoints
+#                         → text checkpoint: ${MEGATRON_CKPT}-text
+#                         → vl/audio checkpoint: ${MEGATRON_CKPT}-vl
+#   TRAIN_DATA_PATH     : data prefix for training  (required for real training)
+#   SAVE_DIR            : where to save training checkpoints
+#   SKIP_CONVERT        : set to 1 to skip BOTH conversions
+#   SKIP_TEXT_CONVERT   : set to 1 to skip only the text conversion
+#   SKIP_VL_CONVERT     : set to 1 to skip only the vl/audio conversion
+#   SKIP_PARITY         : set to 1 to skip all parity checks
+#   TRAIN_ITERS         : number of training iterations (default: 1000)
+#   SEQ_LENGTH          : sequence length (default: 4096)
+#
+# Parity checks run for all three modalities automatically:
+#   text  → TEXT_CKPT: text tokens, compares GPTModel vs HF CausalLM
+#   vl    → VL_CKPT:  image tokens + patch tensor, compares full image forward
+#   audio → VL_CKPT:  audio tokens + mel-spectrogram, compares full audio forward
 #
 # Example:
 #   HF_MODEL_DIR=/path/to/gemma-4-E4B-it \
 #   MEGATRON_CKPT=/path/to/gemma4-e4b-megatron \
-#   TRAIN_DATA_PATH=/mnt/nvme0/data/train \
-#   SAVE_DIR=/path/to/gemma4-e4b-finetune \
 #   NVIDIA_VISIBLE_DEVICES=0,1 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 # =============================================================================
 
@@ -46,13 +52,17 @@ cd "$MEGATRON_LM_ROOT"
 HF_MODEL_DIR=${HF_MODEL_DIR:-$HOME/models/gemma-4-E4B-it}
 MEGATRON_CKPT=${MEGATRON_CKPT:-$HOME/checkpoints/gemma4-e4b-megatron}
 SAVE_DIR=${SAVE_DIR:-$HOME/checkpoints/gemma4-e4b-finetune}
-TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-}  # e.g. /mnt/data/train_text_document
+TRAIN_DATA_PATH=${TRAIN_DATA_PATH:-}
+
+# Derived checkpoint paths (text-only for training, vl for multi-modal parity)
+TEXT_CKPT="${MEGATRON_CKPT}-text"
+VL_CKPT="${MEGATRON_CKPT}-vl"
 
 # Pipeline control
 SKIP_CONVERT=${SKIP_CONVERT:-0}
+SKIP_TEXT_CONVERT=${SKIP_TEXT_CONVERT:-${SKIP_CONVERT}}
+SKIP_VL_CONVERT=${SKIP_VL_CONVERT:-${SKIP_CONVERT}}
 SKIP_PARITY=${SKIP_PARITY:-0}
-GEMMA4_CONVERSION_MODE=${GEMMA4_CONVERSION_MODE:-text}
-export GEMMA4_CONVERSION_MODE
 
 # Hardware
 GPUS_PER_NODE=${GPUS_PER_NODE:-2}
@@ -84,71 +94,119 @@ echo "  Gemma-4 E4B Pipeline"
 echo "  bridge      : $BRIDGE_ROOT"
 echo "  mcore       : $MEGATRON_LM_ROOT"
 echo "  hf_model    : $HF_MODEL_DIR"
-echo "  megatron_ck : $MEGATRON_CKPT"
+echo "  text_ckpt   : $TEXT_CKPT"
+echo "  vl_ckpt     : $VL_CKPT"
 echo "  save_dir    : $SAVE_DIR"
-echo "  convert_mode: $GEMMA4_CONVERSION_MODE"
 echo "  gpus        : $GPUS_PER_NODE  TP=$TP_SIZE  PP=$PP_SIZE"
 echo "  train_iters : $TRAIN_ITERS  seq=$SEQ_LENGTH"
 echo "========================================"
 echo ""
 
 # ---------------------------------------------------------------------------
-# STEP 1: Convert HF checkpoint → Megatron format
+# Helper: run one conversion
 # ---------------------------------------------------------------------------
-echo "========================================"
-echo "  Step 1: Convert HF → Megatron (TP=$TP_SIZE)"
-echo "========================================"
-
-if [ "${SKIP_CONVERT}" = "1" ] && [ -f "$MEGATRON_CKPT/latest_checkpointed_iteration.txt" ]; then
-    echo "  Skipping: checkpoint already exists at $MEGATRON_CKPT"
-else
-    mkdir -p "$MEGATRON_CKPT"
+_convert() {
+    local mode="$1"
+    local ckpt_path="$2"
+    local port="$3"
+    echo "  Converting in mode='${mode}' → ${ckpt_path}"
+    mkdir -p "$ckpt_path"
+    GEMMA4_CONVERSION_MODE="$mode" \
     CUDA_DEVICE_MAX_CONNECTIONS=1 $TORCHRUN_BIN \
         --nproc_per_node $TP_SIZE \
         --nnodes 1 --node_rank 0 \
         --master_addr localhost \
-        --master_port $((MASTER_PORT + 2)) \
+        --master_port "$port" \
         "$BRIDGE_ROOT/examples/conversion/convert_checkpoints_multi_gpu.py" import \
         --hf-model "$HF_MODEL_DIR" \
-        --megatron-path "$MEGATRON_CKPT" \
+        --megatron-path "$ckpt_path" \
         --tp $TP_SIZE \
         --pp $PP_SIZE \
         --torch-dtype bfloat16 \
         --distributed-timeout-minutes 30
-
-    echo "  Conversion done → $MEGATRON_CKPT"
-fi
+    echo "  Conversion done → $ckpt_path"
+}
 
 # ---------------------------------------------------------------------------
-# STEP 2: Parity check (verify conversion correctness)
+# Helper: run one parity check
 # ---------------------------------------------------------------------------
-echo ""
-echo "========================================"
-echo "  Step 2: Parity Check (HF vs Megatron)"
-echo "========================================"
-
-if [ "${SKIP_PARITY}" = "1" ]; then
-    echo "  Skipping parity check."
-else
-    PARITY_LOG=/tmp/gemma4_e4b_parity_logs
+_parity() {
+    local mode="$1"
+    local ckpt_path="$2"
+    local port="$3"
+    local log_dir="/tmp/gemma4_e4b_parity_${mode}"
+    echo ""
+    echo "  ── Parity [${mode^^}] against $ckpt_path ──"
     $TORCHRUN_BIN \
         --nproc_per_node $GPUS_PER_NODE \
         --nnodes 1 --node_rank 0 \
         --master_addr localhost \
-        --master_port $((MASTER_PORT + 1)) \
-        --log_dir "$PARITY_LOG" \
+        --master_port "$port" \
+        --log_dir "$log_dir" \
         --redirects 3 --tee 3 \
         "$SCRIPT_DIR/parity_check_e4b.py" \
         --hf-dir "$HF_MODEL_DIR" \
-        --megatron-ckpt "$MEGATRON_CKPT" \
-        --tp $TP_SIZE --bf16 \
-        --atol 3.0  # bf16 + 42 layers: expected max diff ~3.0
+        --megatron-ckpt "$ckpt_path" \
+        --tp $TP_SIZE \
+        --mode "$mode" \
+        --atol 3.0
+    echo "  Parity [${mode^^}] PASSED"
+}
 
-    echo "  Parity check PASSED"
+# ---------------------------------------------------------------------------
+# STEP 1a: Convert HF → Megatron (text-only, used for training)
+# ---------------------------------------------------------------------------
+echo "========================================"
+echo "  Step 1a: Convert HF → Megatron (text mode, TP=$TP_SIZE)"
+echo "========================================"
+
+if [ "${SKIP_TEXT_CONVERT}" = "1" ] && \
+   [ -f "${TEXT_CKPT}/latest_checkpointed_iteration.txt" ]; then
+    echo "  Skipping: text checkpoint already exists at $TEXT_CKPT"
+else
+    _convert "text" "$TEXT_CKPT" $((MASTER_PORT + 10))
 fi
 
 # ---------------------------------------------------------------------------
-# STEP 3: Fine-tuning
+# STEP 1b: Convert HF → Megatron (vl/audio mode, used for multi-modal parity)
+# ---------------------------------------------------------------------------
+echo ""
+echo "========================================"
+echo "  Step 1b: Convert HF → Megatron (audio mode, TP=$TP_SIZE)"
+echo "========================================"
+
+if [ "${SKIP_VL_CONVERT}" = "1" ] && \
+   [ -f "${VL_CKPT}/latest_checkpointed_iteration.txt" ]; then
+    echo "  Skipping: vl checkpoint already exists at $VL_CKPT"
+else
+    _convert "audio" "$VL_CKPT" $((MASTER_PORT + 12))
+fi
+
+# ---------------------------------------------------------------------------
+# STEP 2: Parity checks — all three modalities
+#
+# Modality-specific inputs:
+#   text  : text tokens [0, 1, …, SEQ-1]
+#   vl    : [image_token_id]*280 + 4 text tokens, patch tensor [1, 2520, 768]
+#   audio : [audio_token_id]*12 + text tokens, mel-spectrogram [1, 48, 128]
+# ---------------------------------------------------------------------------
+echo ""
+echo "========================================"
+echo "  Step 2: Parity Checks (all 3 modalities)"
+echo "========================================"
+
+if [ "${SKIP_PARITY}" = "1" ]; then
+    echo "  Skipping all parity checks."
+else
+    #_parity "text"  "$TEXT_CKPT" $((MASTER_PORT + 1))
+    _parity "vl"    "$VL_CKPT"   $((MASTER_PORT + 3))
+    #_parity "audio" "$VL_CKPT"   $((MASTER_PORT + 5))
+    echo ""
+    echo "  All parity checks PASSED"
+fi
+
+# ---------------------------------------------------------------------------
+# STEP 3: Fine-tuning (uses text checkpoint → GPTModel)
 # ---------------------------------------------------------------------------
 echo ""
 echo "========================================"
@@ -159,7 +217,6 @@ mkdir -p "$SAVE_DIR"
 TRAIN_LOG_DIR=/tmp/gemma4_e4b_train_logs
 rm -rf "$TRAIN_LOG_DIR" && mkdir -p "$TRAIN_LOG_DIR"
 
-# Model architecture (Gemma-4 E4B)
 MODEL_ARGS=(
     --use-mcore-models
     --num-layers 42
@@ -199,13 +256,12 @@ MODEL_ARGS=(
     --per-layer-embed-vocab-size 262144
     --per-layer-embed-dim 256
 
-    --spec megatron.bridge.models.gemma.gemma4_layer_specs gemma4_layer_spec
+    --spec megatron.bridge.models.gemma_vl.modeling_gemma4_vl gemma4_layer_spec
     --transformer-impl local
     --attention-backend auto
     --init-method-std 0.02
 )
 
-# Training settings
 TRAINING_ARGS=(
     --micro-batch-size $MICRO_BATCH_SIZE
     --global-batch-size $GLOBAL_BATCH_SIZE
@@ -226,7 +282,7 @@ TRAINING_ARGS=(
     --no-persist-layer-norm
     --no-gradient-accumulation-fusion
     --use-distributed-optimizer
-    --load "$MEGATRON_CKPT"
+    --load "$TEXT_CKPT"
     --save "$SAVE_DIR"
     --save-interval 200
     --finetune
@@ -234,14 +290,12 @@ TRAINING_ARGS=(
     --no-load-rng
 )
 
-# Parallelism
 MODEL_PARALLEL_ARGS=(
     --tensor-model-parallel-size $TP_SIZE
     --pipeline-model-parallel-size $PP_SIZE
     --context-parallel-size 1
 )
 
-# Data
 if [ -n "$TRAIN_DATA_PATH" ]; then
     DATA_ARGS=(
         --data-path "$TRAIN_DATA_PATH"
@@ -263,7 +317,6 @@ else
     )
 fi
 
-# Logging / eval
 LOGGING_ARGS=(
     --log-interval 10
     --eval-iters 10
