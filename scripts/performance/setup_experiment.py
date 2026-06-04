@@ -255,6 +255,7 @@ def main(
     nemo_home: str,
     account: str,
     partition: str,
+    qos: Optional[str],
     log_dir: str,
     gpus_per_node: int,
     time_limit: str,
@@ -392,6 +393,9 @@ def main(
 
     if nccl_ub:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
+
+    if qos:
+        additional_slurm_params = {**(additional_slurm_params or {}), "qos": qos}
 
     if kubeflow_namespace:
         executor = kubeflow_executor(
@@ -759,6 +763,7 @@ if __name__ == "__main__":
         nemo_home=args.nemo_home,
         account=args.account,
         partition=args.partition,
+        qos=args.qos,
         log_dir=args.log_dir,
         gpus_per_node=gpus_per_node,
         time_limit=args.time_limit,

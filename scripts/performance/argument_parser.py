@@ -411,6 +411,15 @@ def parse_cli_args():
         help="Slurm partition to use for experiment",
     )
     slurm_args.add_argument(
+        "--qos",
+        type=str,
+        default=None,
+        help="Slurm QOS to request via #SBATCH --qos. Required on clusters where the "
+        "user's association has no DefaultQOS and the alphabetically-first QOS is "
+        "incompatible with the requested resources (e.g. a cpu-only QOS rejecting a "
+        "GPU job).",
+    )
+    slurm_args.add_argument(
         "-t",
         "--time_limit",
         type=str,
