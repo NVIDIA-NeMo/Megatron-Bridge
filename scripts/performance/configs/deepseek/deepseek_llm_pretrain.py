@@ -136,10 +136,12 @@ def deepseek_v3_pretrain_config_gb200(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    if precision == "fp8_mx":
-        cfg.model.fine_grained_activation_offloading = True
-        cfg.model.offload_modules = ["core_attn", "attn_proj"]
-        cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+    # if precision == "fp8_mx":
+    #     cfg.model.fine_grained_activation_offloading = True
+    #     cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    #     cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+    cfg.model.moe_router_dtype = None
+    cfg.model.moe_aux_loss_coeff = 0.01
 
     return cfg
 

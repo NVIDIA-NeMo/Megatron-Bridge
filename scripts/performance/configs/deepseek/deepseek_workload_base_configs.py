@@ -203,8 +203,8 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2,
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
-    fp8_dot_product_attention=False,
-    recompute_modules=["mlp"],
+    fp8_dot_product_attention=True,
+    recompute_modules=["mlp", "mla_up_proj"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
 
