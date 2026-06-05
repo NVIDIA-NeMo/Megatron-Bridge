@@ -1,11 +1,12 @@
 ---
-name: review-pr-waves
-description: Multi-wave single-agent code review workflow for PRs, commits, and local diffs. Use when Codex is asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux.
+name: review-pr
+description: Structured single-agent code review workflow for PRs, commits, and local diffs. Use when asked to review code, understand a PR, rubber duck a change, prepare GitHub review comments, compare a change against Megatron Bridge conventions, or produce high-signal findings without subagents or tmux.
+when_to_use: Reviewing a GitHub PR, commit, local diff, or code change; preparing review comments; checking a change against Megatron Bridge conventions; assessing whether a PR is safe to merge; summarizing review findings and test gaps.
 ---
 
-# Review PR Waves
+# Review PR
 
-Use this skill to review a change in staged waves. Do not use subagents or tmux unless the user explicitly asks for them.
+Use this skill to review a change in staged passes. Do not use subagents or tmux unless the user explicitly asks for them.
 
 ## Ground Rules
 
@@ -23,7 +24,8 @@ Identify the review target and collect enough raw context to avoid guessing.
 For a GitHub PR:
 
 ```bash
-gh pr view <PR> --json number,title,state,baseRefName,headRefName,mergeStateStatus,author,files,reviewThreads
+gh pr view <PR> --json number,title,state,baseRefName,headRefName,mergeStateStatus,author,files,comments,reviews
+gh api repos/<owner>/<repo>/pulls/<PR>/comments --paginate
 gh pr diff <PR> --name-only
 gh pr diff <PR>
 ```
@@ -60,6 +62,8 @@ Run these passes sequentially as one agent. Keep notes separate so one lens does
 Check for logic bugs, shape or dtype mismatches, device movement mistakes, serialization compatibility, broken invariants, missing error handling, API misuse, and changes that silently alter existing behavior.
 
 For model or conversion changes, verify HF/MCore name mappings, tensor transforms, config mapping defaults, tied weights, sharding assumptions, AutoBridge selection, and parity-test implications.
+
+For changes that appear specific to one model or one training feature, check whether neighboring models or features share the same path and could regress. If common infrastructure is modified, examine it carefully and require the change to be necessary, generalizable, and covered by tests or clear reasoning.
 
 ### Integration And Runtime Behavior
 
@@ -104,7 +108,7 @@ Lead with findings, ordered by severity. Use this shape:
   Confidence: 90
 ```
 
-Use clickable file links when answering in Codex. Keep summaries brief and after the findings. Include:
+Use clickable file links when the response environment supports them. Keep summaries brief and after the findings. Include:
 
 - Open questions or assumptions.
 - Tests or commands run, with pass/fail status.
