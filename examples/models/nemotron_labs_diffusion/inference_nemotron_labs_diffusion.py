@@ -49,13 +49,16 @@ import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
 
-# Register NemotronLabsDiffusionBridge so AutoBridge can match NemotronLabsDiffusionModel architecture
-import megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge  # noqa: F401
+# Bridge + provider imports for direct model construction (avoids AutoBridge architecture validation)
+from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
+    NemotronLabsDiffusionBridge,
+)
 from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
     generate_ar,
     generate_dllm,
     set_tp_group,
 )
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 def parse_args():
@@ -152,11 +155,17 @@ def parse_args():
 
 
 def load_model(args):
-    """Load the NemotronLabsDiffusion model from a Megatron checkpoint via AutoBridge."""
-    from megatron.bridge import AutoBridge
+    """Load the NemotronLabsDiffusion model from a Megatron checkpoint.
 
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model, trust_remote_code=True, torch_dtype=torch.bfloat16)
-    model_provider = bridge.to_megatron_provider(load_weights=False)
+    Uses NemotronLabsDiffusionBridge directly so that both NemotronLabsDiffusion
+    HF configs (nvidia/Nemotron-Labs-Diffusion-*) and the original Ministral
+    base models (mistralai/Ministral-3-*) are accepted as --hf-model.
+    """
+    hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, trust_remote_code=True)
+    bridge = NemotronLabsDiffusionBridge()
+    model_provider = bridge.provider_bridge(hf_pretrained)
+    model_provider.share_embeddings_and_output_weights = False
+    model_provider.perform_initialization = False
     model_provider.tensor_model_parallel_size = args.tp
     model_provider.pipeline_model_parallel_size = 1
     model_provider.pipeline_dtype = torch.bfloat16
