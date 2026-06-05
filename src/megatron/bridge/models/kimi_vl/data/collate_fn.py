@@ -160,15 +160,12 @@ def kimi_k25_vl_collate_fn(
 
         # Pre-expand image tokens if we have grid_thws
         if "grid_thws" in sample_batch and sample_batch["grid_thws"] is not None:
-            # print(f"using grid_thws: {sample_batch['grid_thws']} and pre-expand mode")
             grid_thws = sample_batch["grid_thws"]
-            # print(f"before expand input_ids: {input_ids.shape}")
 
             input_ids, attention_mask = _expand_image_tokens(
                 input_ids, attention_mask, grid_thws, media_token_id, merge_kernel_size
             )
             all_grid_thws.append(grid_thws)
-            # print(f"after expand input_ids: {input_ids.shape}")
 
         if "pixel_values" in sample_batch:
             all_pixel_values.append(sample_batch["pixel_values"])
