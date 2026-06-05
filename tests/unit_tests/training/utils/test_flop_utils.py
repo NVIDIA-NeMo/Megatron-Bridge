@@ -2115,6 +2115,18 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sq_sum == 1 * 256**2
 
+    def test_zero_length_subseq_contributes_zero(self):
+        # A repeated cu_seqlens value yields a zero-length sub-seq. The Σᵢ sᵢ²
+        # computation no longer filters with a boolean mask (which would force a
+        # per-microbatch device sync); zero-length entries must still contribute 0,
+        # giving the same result as if they were dropped.
+        state = _State()
+        tokens = torch.zeros(1, 500)
+        # sub-seq lengths from [0, 100, 100, 500] -> [100, 0, 400]
+        cu_seqlens = torch.tensor([0, 100, 100, 500])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 100**2 + 0 + 400**2
+
     def test_thd_substantially_smaller_than_bshd_for_short_samples(self):
         # Regression check on the headline claim: a pack containing many
         # short samples has dramatically less attention work than the BSHD

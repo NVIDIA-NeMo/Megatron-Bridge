@@ -215,12 +215,20 @@ def _real_subseq_lengths(
     cu_seqlens_unpadded: torch.Tensor | None = None,
     cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
 ) -> torch.Tensor | None:
-    """Extract real (non-pad) sub-sequence lengths from cu_seqlens metadata.
+    """Extract sub-sequence lengths from cu_seqlens metadata.
 
     Prefers ``cu_seqlens_unpadded`` (true sub-sequence boundaries when
     ``pad_seq_to_mult > 1``) over the padded ``cu_seqlens``. Truncates by the
     corresponding ``*_argmin`` when provided. Returns ``None`` when no
     cu_seqlens info is available.
+
+    Runs once per micro-batch, so it must stay free of GPU→CPU syncs:
+    ``cu_seqlens`` is a (monotonic non-decreasing) cumulative sum, so the diffs
+    are always ``>= 0`` and we do **not** filter them — a boolean mask like
+    ``sub_seq_lens[sub_seq_lens > 0]`` would force a data-dependent-size device
+    sync every micro-batch (the cause of a ~7% throughput regression). Zero-length
+    entries (padding) contribute ``0`` to ``Σᵢ sᵢ²`` so dropping them is
+    unnecessary; the result is identical.
     """
     if cu_seqlens_unpadded is not None:
         cu = cu_seqlens_unpadded.squeeze()
@@ -237,8 +245,8 @@ def _real_subseq_lengths(
     if cu.numel() < 2:
         return cu.new_empty(0, dtype=torch.long)
 
-    sub_seq_lens = (cu[1:] - cu[:-1]).long()
-    return sub_seq_lens[sub_seq_lens > 0]
+    # No boolean mask here on purpose (see docstring): keep this sync-free.
+    return (cu[1:] - cu[:-1]).long()
 
 
 def accumulate_flops_metadata(
