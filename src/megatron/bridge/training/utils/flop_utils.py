@@ -292,11 +292,11 @@ def accumulate_flops_metadata(
     seq_len = tokens.shape[1]
     _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
 
-    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
-    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        sq_delta = _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
-    else:
-        sq_delta = mbs * seq_len**2
+    # >>> DEBUG ISOLATION BUILD — DO NOT MERGE <<<
+    # Skip ALL cu_seqlens torch ops; always use the trivial host-int BSHD value.
+    # If perf recovers, the per-microbatch cu_seqlens computation (not the call /
+    # the host-int accumulation) is the regression, validating a precompute fix.
+    sq_delta = mbs * seq_len**2
     _add_flops_accumulator(state, "_flops_seqlen_sq_sum", sq_delta)
 
     if num_vision_patches is not None:
