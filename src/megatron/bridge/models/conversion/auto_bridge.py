@@ -133,6 +133,10 @@ def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
     these prefixes from the expected source map lets those shards complete with
     only their real keys.
 
+    Precondition: only call this when the built model omits MTP (see
+    ``_model_omits_mtp``). The returned prefixes are always stripped, so calling
+    it for an MTP-enabled export would silently drop real nextn tensors.
+
     Returns the tuple of prefixes that exist in ``source`` and should be ignored.
     """
     prefixes: list[str] = []
@@ -140,7 +144,10 @@ def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
     if source.has_glob("mtp.*"):
         prefixes.append("mtp.")
 
-    # GLM nextn layer at index == num_hidden_layers.
+    # GLM nextn layer at index == num_hidden_layers. HF decoder layers are
+    # 0-indexed, so layer ``num_hidden_layers`` is one past the last real layer.
+    # ``configs`` is ordered hf_config-before-model_config so the HF value wins
+    # on conflict (source keys are HF-shaped).
     num_hidden_layers = _MISSING
     for config in configs:
         value = _get_config_field(config, "num_hidden_layers")
@@ -1097,9 +1104,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 or _model_omits_mtp(model_config)
             )
             ignored_source_key_prefixes = (
-                _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else None
-            )
-            ignored_source_key_prefixes = ignored_source_key_prefixes or None
+                _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else ()
+            ) or None
             source.save_generator(
                 generator,
                 path,

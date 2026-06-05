@@ -18,6 +18,7 @@ Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
@@ -35,6 +36,7 @@ from megatron.bridge.models.conversion.auto_bridge import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 
 
 def create_mock_pretrained_causal_lm():
@@ -45,6 +47,26 @@ def create_mock_pretrained_causal_lm():
             pass  # Skip actual initialization
 
     return MockPreTrainedCausalLM()
+
+
+def _make_fake_source(present):
+    """Build a ``SafeTensorsStateSource`` stand-in for ``save_hf_weights`` tests.
+
+    Uses ``Mock(spec=...)`` so the ``isinstance(source, SafeTensorsStateSource)``
+    gate in ``save_hf_weights`` stays satisfied without bypassing the real
+    ``__init__``. ``has_glob`` reports which source-key globs exist; the captured
+    ``save_generator`` kwargs are exposed on ``source.save_generator_kwargs`` for
+    assertions.
+    """
+    source = Mock(spec=SafeTensorsStateSource)
+    source.save_generator_kwargs = None
+    source.has_glob.side_effect = lambda pattern: pattern in present
+
+    def _capture_save_generator(generator, path, **kwargs):
+        source.save_generator_kwargs = kwargs
+
+    source.save_generator.side_effect = _capture_save_generator
+    return source
 
 
 class TestAutoBridge:
@@ -186,7 +208,7 @@ class TestAutoBridge:
         """A built model with a falsy mtp_num_layers has no MTP head."""
         assert _model_omits_mtp(None) is False
         # Unset attribute -> unknown -> do not assume omitted.
-        assert _model_omits_mtp(Mock(spec=[])) is False
+        assert _model_omits_mtp(SimpleNamespace()) is False
         # SkyRL forces mtp_num_layers=None -> head omitted from export.
         assert _model_omits_mtp(Mock(mtp_num_layers=None)) is True
         assert _model_omits_mtp(Mock(mtp_num_layers=0)) is True
@@ -217,6 +239,65 @@ class TestAutoBridge:
         # Both prefixes present.
         both = src("mtp.*", "model.layers.47.*")
         assert _mtp_source_key_prefixes(both, {"num_hidden_layers": 47}) == ("mtp.", "model.layers.47.")
+
+    def test_save_hf_weights_strips_nextn_prefix_when_mtp_omitted(self, tmp_path):
+        """Regression: a model built without an MTP head must strip the GLM nextn
+        layer prefix from the source map before streaming save.
+
+        This is the actual bug being fixed (45/48-shard checkpoint dropping
+        boundary shards on GLM-4.x glm4_moe_lite). Unlike the helper-level tests,
+        this asserts the orchestration in ``save_hf_weights`` wires the stripped
+        prefixes through to ``save_generator``. It fails if the
+        ``_model_omits_mtp(...)`` branch is removed, because the HF/saved configs
+        here do *not* explicitly disable MTP — the only signal is the built
+        model omitting the head.
+        """
+        source = _make_fake_source(present={"model.layers.47.*", "model.layers.46.*"})
+        # Built megatron model omits the MTP head (SkyRL forces mtp_num_layers=None).
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=None)
+
+        assert source.save_generator_kwargs is not None
+        assert source.save_generator_kwargs["ignored_source_key_prefixes"] == ("model.layers.47.",)
+
+    def test_save_hf_weights_keeps_all_keys_when_mtp_enabled(self, tmp_path):
+        """Counterpart: when the model keeps its MTP head, nothing is stripped.
+
+        Also guards the ``if mtp_disabled`` gate: if a future refactor drops the
+        gate and always calls ``_mtp_source_key_prefixes``, the helper would strip
+        the real ``model.layers.47.`` layer here and this assertion would fail.
+        """
+        source = _make_fake_source(present={"model.layers.47.*"})
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1)
+
+        assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
+
+    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
+        """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
+        behavior under test is the MTP prefix-resolution wiring.
+
+        ``num_hidden_layers=47`` with no MTP-disable field means the export
+        decision hinges purely on whether the *built* model omits the head
+        (``mtp_num_layers``).
+        """
+        hf_pretrained = create_mock_pretrained_causal_lm()
+        hf_pretrained.state = SimpleNamespace(source=source)
+        # HF config carries layer count but does NOT set any MTP-disable field.
+        hf_pretrained.config = SimpleNamespace(num_hidden_layers=47)
+        model_instance = SimpleNamespace(config=SimpleNamespace(mtp_num_layers=mtp_num_layers))
+
+        bridge_obj = object.__new__(AutoBridge)
+        bridge_obj.hf_pretrained = hf_pretrained
+
+        fake_model_bridge = Mock()
+        fake_model_bridge.stream_weights_megatron_to_hf.return_value = iter([])
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_bridge,
+            patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
+            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+        ):
+            mock_bridge.return_value = fake_model_bridge
+            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
