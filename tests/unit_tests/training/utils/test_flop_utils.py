@@ -2035,6 +2035,7 @@ class TestAccumulateFlopsMetadata:
         cu_seqlens = torch.tensor([0, 256, 512, 4096])
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sum == 1 * 4096
+        buffer_flops_metadata(state, batch_size=1)  # THD Σᵢ sᵢ² is finalized here (deferred off the forward path)
         assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
 
     def test_thd_padded_cu_seqlens_with_argmin(self):
@@ -2047,6 +2048,7 @@ class TestAccumulateFlopsMetadata:
         cu_seqlens = torch.tensor([0, 1024, 4096, 8192, 8192, 8192, 8192])
         argmin = torch.tensor(4)  # real entries [0, 1024, 4096, 8192]
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cu_seqlens_argmin=argmin)
+        buffer_flops_metadata(state, batch_size=1)
         assert state._flops_seqlen_sq_sum == 1024**2 + 3072**2 + 4096**2
 
     def test_thd_unpadded_takes_precedence_over_padded(self):
@@ -2064,6 +2066,7 @@ class TestAccumulateFlopsMetadata:
             cu_seqlens=cu_seqlens_padded,
             cu_seqlens_unpadded=cu_seqlens_unpadded,
         )
+        buffer_flops_metadata(state, batch_size=1)
         assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
 
     def test_accumulates_additively_across_microbatches(self):
@@ -2075,6 +2078,7 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_a)
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_b)
         assert state._flops_seqlen_sum == 2 * 128
+        buffer_flops_metadata(state, batch_size=1)
         assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
 
     def test_tokens_none_is_noop(self):
@@ -2113,6 +2117,7 @@ class TestAccumulateFlopsMetadata:
         tokens = torch.zeros(1, 256)
         cu_seqlens = torch.tensor([0])
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        buffer_flops_metadata(state, batch_size=1)
         assert state._flops_seqlen_sq_sum == 1 * 256**2
 
     def test_zero_length_subseq_contributes_zero(self):
@@ -2125,6 +2130,7 @@ class TestAccumulateFlopsMetadata:
         # sub-seq lengths from [0, 100, 100, 500] -> [100, 0, 400]
         cu_seqlens = torch.tensor([0, 100, 100, 500])
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        buffer_flops_metadata(state, batch_size=1)
         assert state._flops_seqlen_sq_sum == 100**2 + 0 + 400**2
 
     def test_thd_substantially_smaller_than_bshd_for_short_samples(self):
@@ -2136,6 +2142,7 @@ class TestAccumulateFlopsMetadata:
         # 32 sub-seqs of length 256 → pack length 8192.
         cu_seqlens = torch.tensor([i * 256 for i in range(33)])
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        buffer_flops_metadata(state, batch_size=1)
         thd_sq = state._flops_seqlen_sq_sum
         bshd_sq = 1 * 8192**2
         # 32 * 256² = 2,097,152 vs 8192² = 67,108,864 → 32× smaller.

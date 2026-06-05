@@ -444,6 +444,9 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        # Per-step cu_seqlens references; the THD Σᵢ sᵢ² is computed from these once
+        # per step in buffer_flops_metadata (off the per-microbatch forward path).
+        global_state._flops_cu_records = []
 
         (
             loss_dict,

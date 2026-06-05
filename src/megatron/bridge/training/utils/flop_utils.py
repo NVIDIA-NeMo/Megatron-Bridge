@@ -132,6 +132,25 @@ def buffer_flops_metadata(state, *, batch_size: int, vp_size: int | None = None)
     seqlen_sum = getattr(state, "_flops_seqlen_sum", 0)
     seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0)
     vision_patches = getattr(state, "_flops_vision_patches", 0)
+
+    # Compute the deferred THD Σᵢ sᵢ² for this step's packs, batched here (once per step,
+    # off the per-microbatch forward path) rather than inline in accumulate_flops_metadata.
+    # Reducing per pack and summing is identical to per-microbatch accumulation.
+    for cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin, mbs, seq_len in (
+        getattr(state, "_flops_cu_records", None) or []
+    ):
+        sub_seq_lens = _real_subseq_lengths(
+            cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin
+        )
+        if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+            seqlen_sq_sum = seqlen_sq_sum + _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
+        else:
+            # Degenerate cu_seqlens (no real sub-sequences) → BSHD fallback for this pack.
+            seqlen_sq_sum = seqlen_sq_sum + mbs * seq_len**2
+    state._flops_cu_records = []
+    # Write the combined (BSHD + THD) value back so it can be inspected/asserted.
+    state._flops_seqlen_sq_sum = seqlen_sq_sum
+
     if isinstance(vp_size, int) and vp_size > 1:
         seqlen_sum = seqlen_sum // vp_size
         seqlen_sq_sum = seqlen_sq_sum // vp_size
@@ -265,9 +284,12 @@ def accumulate_flops_metadata(
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
       this microbatch contributes). Drives the linear MLP/proj/logit terms.
-    - ``_flops_seqlen_sq_sum``: Σᵢ sᵢ² over real sub-sequence lengths derived
-      from ``cu_seqlens`` when available (THD-correct attention work), else
-      ``mbs * seq_len²`` (BSHD fallback, matches legacy behavior).
+    - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ². When ``cu_seqlens``
+      is present, only the references are buffered here (in ``_flops_cu_records``);
+      the actual Σᵢ sᵢ² is computed once per step in ``buffer_flops_metadata`` to
+      keep this per-microbatch path off the launch-bound forward critical path.
+      When ``cu_seqlens`` is absent (dense / non-packed), the cheap host-int BSHD
+      fallback ``mbs * seq_len²`` is accumulated inline.
     - ``_flops_vision_patches``: running total of ``num_vision_patches``.
 
     ``num_vision_patches`` is the precomputed number of vision patches in this
@@ -292,12 +314,23 @@ def accumulate_flops_metadata(
     seq_len = tokens.shape[1]
     _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
 
-    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
-    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-        sq_delta = _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
+    # Defer the THD Σᵢ sᵢ² computation OFF this per-microbatch path: it runs inside the
+    # pipeline schedule, interleaved with the forward pass, and the loop is launch-bound,
+    # so doing ~5 cu_seqlens torch ops here every micro-batch stalls CUDA run-ahead (a
+    # measured ~7% regression). Instead just hold the cu_seqlens references; the sum is
+    # computed once per step in ``buffer_flops_metadata`` (off the forward critical path).
+    # When cu_seqlens is absent (dense / non-packed), the cheap host-int BSHD fallback is
+    # inline (no torch ops).
+    if cu_seqlens is not None or cu_seqlens_unpadded is not None:
+        if getattr(state, "_flops_cu_records", None) is None:
+            state._flops_cu_records = []
+        # Carry mbs/seq_len so buffer_flops_metadata can apply the BSHD fallback if the
+        # cu_seqlens turns out degenerate (no real sub-sequences).
+        state._flops_cu_records.append(
+            (cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin, mbs, seq_len)
+        )
     else:
-        sq_delta = mbs * seq_len**2
-    _add_flops_accumulator(state, "_flops_seqlen_sq_sum", sq_delta)
+        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * seq_len**2)
 
     if num_vision_patches is not None:
         _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
