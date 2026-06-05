@@ -16,7 +16,7 @@
 NemotronLabsDiffusion HF <-> Megatron-Bridge checkpoint conversion.
 
 Uses NemotronLabsDiffusionAutoBridge, a thin AutoBridge subclass that bypasses
-architecture name validation (MinistralDiffEncoderModel doesn't end in
+architecture name validation (NemotronLabsDiffusionModel doesn't end in
 ForCausalLM/ForConditionalGeneration) and routes directly to NemotronLabsDiffusionBridge.
 
 Usage:
@@ -48,7 +48,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 
 
 class NemotronLabsDiffusionAutoBridge(AutoBridge):
-    """AutoBridge subclass for MinistralDiffEncoderModel.
+    """AutoBridge subclass for NemotronLabsDiffusionModel.
 
     AutoBridge rejects architectures not ending in ForCausalLM/ForConditionalGeneration
     in three places: _validate_config, _model_bridge (_causal_lm_architecture), and

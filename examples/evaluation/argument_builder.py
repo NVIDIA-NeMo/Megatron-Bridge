@@ -46,7 +46,14 @@ def build_cli_args_from_env_vars(parser: argparse.ArgumentParser) -> str:
             env_var_name = normalize_arg_name(long_arg_name)
             env_value = os.getenv(env_var_name)
 
-            if env_value is not None:
+            # Truthy check rather than `is not None`: an empty env value would
+            # emit `--flag ""`, which the consumer collapses via word-splitting
+            # in `$(python -m argument_builder)` so argparse sees `--flag` with
+            # no following value and errors (e.g. `argument --account: expected
+            # one argument`). On Kubeflow SLURM-only args like account/partition
+            # are empty, so treat empty env vars as unset — matching the
+            # training-side builder in scripts/performance/argument_builder.py.
+            if env_value:
                 if isinstance(action, argparse._StoreTrueAction):
                     is_true = env_value.lower() in ("true", "1", "yes", "on")
                     if is_true:
