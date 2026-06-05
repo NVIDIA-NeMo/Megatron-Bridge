@@ -29,6 +29,8 @@ from megatron.bridge.models.conversion.auto_bridge import (
     AutoBridge,
     _config_disables_mtp,
     _drop_readonly_config_properties,
+    _model_omits_mtp,
+    _mtp_source_key_prefixes,
     _saved_config_disables_mtp,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -179,6 +181,42 @@ class TestAutoBridge:
             json.dump({"num_nextn_predict_layers": 0}, f)
 
         assert _saved_config_disables_mtp(tmp_path) is True
+
+    def test_model_omits_mtp(self):
+        """A built model with a falsy mtp_num_layers has no MTP head."""
+        assert _model_omits_mtp(None) is False
+        # Unset attribute -> unknown -> do not assume omitted.
+        assert _model_omits_mtp(Mock(spec=[])) is False
+        # SkyRL forces mtp_num_layers=None -> head omitted from export.
+        assert _model_omits_mtp(Mock(mtp_num_layers=None)) is True
+        assert _model_omits_mtp(Mock(mtp_num_layers=0)) is True
+        assert _model_omits_mtp(Mock(mtp_num_layers=1)) is False
+
+    def test_mtp_source_key_prefixes(self):
+        """Resolve the MTP/nextn source-key prefixes to strip per architecture."""
+
+        def src(*present_globs):
+            present = set(present_globs)
+            return Mock(has_glob=lambda pattern: pattern in present)
+
+        # DeepSeek-style: dedicated mtp.* prefix.
+        assert _mtp_source_key_prefixes(src("mtp.*"), {}) == ("mtp.",)
+
+        # GLM glm4_moe_lite: nextn layer stored at index == num_hidden_layers.
+        glm_src = src("model.layers.47.*")
+        assert _mtp_source_key_prefixes(glm_src, {"num_hidden_layers": 47}) == ("model.layers.47.",)
+
+        # Nested text_config carries num_hidden_layers.
+        assert _mtp_source_key_prefixes(glm_src, {"text_config": {"num_hidden_layers": 47}}) == (
+            "model.layers.47.",
+        )
+
+        # No matching source keys -> nothing to strip.
+        assert _mtp_source_key_prefixes(src(), {"num_hidden_layers": 47}) == ()
+
+        # Both prefixes present.
+        both = src("mtp.*", "model.layers.47.*")
+        assert _mtp_source_key_prefixes(both, {"num_hidden_layers": 47}) == ("mtp.", "model.layers.47.")
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""

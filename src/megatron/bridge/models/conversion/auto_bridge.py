@@ -114,6 +114,68 @@ def _saved_config_disables_mtp(path: str | Path) -> bool:
         return _config_disables_mtp(json.load(f))
 
 
+def _mtp_source_key_prefixes(source: Any, *configs: Any) -> tuple[str, ...]:
+    """Source-checkpoint key prefixes for MTP/nextn tensors that must be ignored
+    when exporting a model built without an MTP head.
+
+    Different HF architectures name their Multi-Token-Prediction (nextn) tensors
+    differently:
+
+    * DeepSeek-style: a dedicated ``mtp.*`` prefix.
+    * GLM-4.x ``glm4_moe_lite``: the nextn layer is stored as a regular decoder
+      layer at index ``num_hidden_layers`` (i.e. one past the last real layer),
+      so its tensors live under ``model.layers.{num_hidden_layers}.*``.
+
+    When the megatron model is built without an MTP head the generator never
+    yields these tensors. If they remain in the source sharding map, the shards
+    that co-locate them with real (non-MTP) tensors can never be completed and
+    get dropped wholesale (taking real boundary params with them). Stripping
+    these prefixes from the expected source map lets those shards complete with
+    only their real keys.
+
+    Returns the tuple of prefixes that exist in ``source`` and should be ignored.
+    """
+    prefixes: list[str] = []
+
+    if source.has_glob("mtp.*"):
+        prefixes.append("mtp.")
+
+    # GLM nextn layer at index == num_hidden_layers.
+    num_hidden_layers = _MISSING
+    for config in configs:
+        value = _get_config_field(config, "num_hidden_layers")
+        if value is _MISSING or value is None:
+            text_config = _get_config_field(config, "text_config")
+            if text_config is not _MISSING:
+                value = _get_config_field(text_config, "num_hidden_layers")
+        if value is not _MISSING and value is not None:
+            num_hidden_layers = int(value)
+            break
+
+    if num_hidden_layers is not _MISSING:
+        nextn_prefix = f"model.layers.{num_hidden_layers}."
+        if source.has_glob(f"{nextn_prefix}*"):
+            prefixes.append(nextn_prefix)
+
+    return tuple(prefixes)
+
+
+def _model_omits_mtp(model_config: Any) -> bool:
+    """True when the *built* megatron model has no MTP head.
+
+    Unlike :func:`_config_disables_mtp` (which treats ``None``/unset as
+    "unspecified"), the built model's provider carries an explicit
+    ``mtp_num_layers``; a falsy value (``None`` or ``0``) means no MTP head was
+    instantiated, so the export generator will not yield any MTP/nextn tensors.
+    """
+    if model_config is None:
+        return False
+    value = _get_config_field(model_config, "mtp_num_layers")
+    if value is _MISSING:
+        return False
+    return not value
+
+
 # Preformatted display string for error/help messages
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
@@ -1029,10 +1091,15 @@ class AutoBridge(Generic[MegatronModelT]):
             source = self.hf_pretrained.state.source
             model_config = getattr(model_instance, "config", None)
             hf_config = getattr(self.hf_pretrained, "config", self.hf_pretrained)
-            mtp_disabled = _saved_config_disables_mtp(path) or any(
-                _config_disables_mtp(config) for config in (hf_config, model_config)
+            mtp_disabled = (
+                _saved_config_disables_mtp(path)
+                or any(_config_disables_mtp(config) for config in (hf_config, model_config))
+                or _model_omits_mtp(model_config)
             )
-            ignored_source_key_prefixes = ("mtp.",) if mtp_disabled and source.has_glob("mtp.*") else None
+            ignored_source_key_prefixes = (
+                _mtp_source_key_prefixes(source, hf_config, model_config) if mtp_disabled else None
+            )
+            ignored_source_key_prefixes = ignored_source_key_prefixes or None
             source.save_generator(
                 generator,
                 path,
