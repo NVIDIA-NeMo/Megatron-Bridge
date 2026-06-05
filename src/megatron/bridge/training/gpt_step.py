@@ -21,6 +21,8 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
     get_batch_on_this_cp_rank,
     get_model_config,
@@ -55,6 +57,66 @@ def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
     dataset_cfg = getattr(cfg, "dataset", None)
     uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
     return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg)
+
+
+def _get_pp_group_rank(pp_group) -> int:
+    """Return this rank's index within the pipeline-parallel group."""
+    if pp_group is not None and hasattr(pp_group, "rank"):
+        return pp_group.rank()
+    return parallel_state.get_pipeline_model_parallel_rank()
+
+
+def _get_pp_group_size(pp_group, cfg: ConfigContainer) -> int:
+    """Return the pipeline-parallel group size."""
+    if pp_group is not None and hasattr(pp_group, "size"):
+        return pp_group.size()
+
+    model_cfg = getattr(cfg, "model", None)
+    return getattr(model_cfg, "pipeline_model_parallel_size", 1)
+
+
+def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
+    """Return whether a parsed or raw pipeline layout stage owns MTP layers."""
+    if isinstance(layout, str):
+        layout = PipelineParallelLayerLayout.from_str(layout, pp_size)
+
+    if isinstance(layout, PipelineParallelLayerLayout):
+        stage_layout = layout.layout[pp_rank][vp_stage]
+    elif isinstance(layout, list):
+        stage_layout = layout[vp_stage * pp_size + pp_rank]
+    else:
+        return False
+
+    return any(
+        layer == "mtp" or layer == LayerType.mtp or getattr(layer, "name", None) == "mtp" for layer in stage_layout
+    )
+
+
+def _current_pp_stage_has_mtp(cfg: ConfigContainer, *, pg_collection) -> bool:
+    """Return whether the current PP/VPP stage owns the configured MTP block."""
+    model_cfg = getattr(cfg, "model", None)
+    layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
+    if layout is None:
+        return False
+
+    pp_group = getattr(pg_collection, "pp", None)
+    pp_rank = _get_pp_group_rank(pp_group)
+    pp_size = _get_pp_group_size(pp_group, cfg)
+    vp_stage = parallel_state.get_virtual_pipeline_model_parallel_rank()
+    if vp_stage is None:
+        vp_stage = 0
+
+    return _layout_stage_has_mtp(layout, pp_rank=pp_rank, pp_size=pp_size, vp_stage=vp_stage)
+
+
+def _current_pp_stage_needs_mtp_inputs(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
+    """Return whether this stage needs token ids for MTP embedding lookup."""
+    model_cfg = getattr(cfg, "model", None)
+    layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
+    if layout is None:
+        return is_last
+
+    return _current_pp_stage_has_mtp(cfg, pg_collection=pg_collection)
 
 
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
@@ -191,12 +253,15 @@ def get_batch(
     is_last = is_pp_last_stage(pg_collection.pp)
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
-    if is_middle and not include_full_batch_fields:
+    include_mtp_inputs = use_mtp and _current_pp_stage_needs_mtp_inputs(
+        cfg, pg_collection=pg_collection, is_last=is_last
+    )
+    if is_middle and not include_full_batch_fields and not include_mtp_inputs:
         return None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        use_mtp,
+        include_mtp_inputs,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
