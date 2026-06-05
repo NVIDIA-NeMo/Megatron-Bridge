@@ -20,7 +20,7 @@ import megatron.bridge.data.vlm_datasets.mock_provider as mock
 from megatron.bridge.training.config import DatasetBuildContext
 
 
-class _Proc:
+class Gemma3Processor:
     class _Tok:
         pad_token_id = 0
         eos_token_id = 2
@@ -57,7 +57,7 @@ class _Proc:
 def test_mock_provider_builds_splits(monkeypatch):
     import transformers
 
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: _Proc()))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
     provider = mock.MockVLMConversationProvider(seq_length=16, hf_processor_path="dummy/model", num_images=0)
     ctx = DatasetBuildContext(train_samples=2, valid_samples=1, test_samples=0)
     train_ds, valid_ds, test_ds = provider.build_datasets(ctx)
