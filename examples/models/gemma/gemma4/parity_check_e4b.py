@@ -95,6 +95,14 @@ def _parse():
         "--mode", choices=["text", "vl", "audio"], default=_default_mode,
         help="Parity mode. Default: $GEMMA4_CONVERSION_MODE or 'text'.",
     )
+    p.add_argument(
+        "--vl-image-tokens", type=int, default=IMAGE_NUM_TOKENS,
+        help=(
+            "Number of soft image tokens for VL parity. "
+            "Reduced counts (e.g. 14, 70) let you verify that max |diff| "
+            "scales with token count (bf16 accumulated error)."
+        ),
+    )
     return p.parse_args()
 
 
@@ -148,6 +156,7 @@ def _seq_len_for_mode(mode: str) -> int:
 def _make_vl_provider(args, hf_cfg, seq_len: int = AUDIO_SEQ, include_audio: bool = False):
     from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4DenseVLProvider
 
+    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
     return Gemma4DenseVLProvider(
         num_layers=42,
         hidden_size=2560,
@@ -175,6 +184,8 @@ def _make_vl_provider(args, hf_cfg, seq_len: int = AUDIO_SEQ, include_audio: boo
         audio_token_id=getattr(hf_cfg, "audio_token_id", AUDIO_TOKEN_ID),
         image_token_id=getattr(hf_cfg, "image_token_id", IMAGE_TOKEN_ID),
         bf16=args.bf16,
+        params_dtype=model_dtype,
+        autocast_dtype=model_dtype,
     )
 
 
@@ -189,7 +200,12 @@ def _build_text_models(args):
     from megatron.training import get_model
     from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4DenseProvider
 
-    provider = Gemma4DenseProvider(bf16=args.bf16)
+    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
+    provider = Gemma4DenseProvider(
+        bf16=args.bf16,
+        params_dtype=model_dtype,
+        autocast_dtype=model_dtype,
+    )
     return get_model(
         lambda pre_process=True, post_process=True, config=None, pg_collection=None:
             provider.build(pre_process=pre_process, post_process=post_process),
@@ -380,31 +396,51 @@ def _hf_logits_audio(args, input_ids_audio, audio_features):
 # ---------------------------------------------------------------------------
 
 
-def _make_vl_inputs(dtype):
-    """Create one synthetic image represented as Gemma4 patch tensors.
+def _vl_grid_for_tokens(n_tokens: int):
+    """Return (grid_h, grid_w) preserving the standard 42:60 (=7:10) aspect ratio.
 
-    The 42x60 patch grid has 2520 patches. With Gemma4's 3x3 vision pooling,
-    this produces 280 soft image tokens, matching the image_token_id slots.
+    The standard grid is 42×60 → 280 tokens.  For other counts we find (H,W)
+    with H*W=n_tokens and H/W≈7/10, then multiply by 3 to get the patch grid.
+    Falls back to a 3×(3*n_tokens) horizontal strip if no factorisation fits.
     """
-    image_pos = torch.full((BATCH, IMAGE_NUM_TOKENS), IMAGE_TOKEN_ID, dtype=torch.long)
+    target_ratio = 42 / 60  # 0.7
+    best = None
+    best_err = float("inf")
+    for h in range(1, n_tokens + 1):
+        if n_tokens % h == 0:
+            w = n_tokens // h
+            err = abs(h / w - target_ratio)
+            if err < best_err:
+                best_err = err
+                best = (h, w)
+    h_tok, w_tok = best
+    return 3 * h_tok, 3 * w_tok
+
+
+def _make_vl_inputs(dtype, n_tokens: int = IMAGE_NUM_TOKENS):
+    """Create synthetic patch tensors for VL parity with ``n_tokens`` image tokens.
+
+    The patch grid is chosen to preserve the 42:60 aspect ratio so that
+    pixel_position_ids stay comparable across different token counts.
+    The default (280) uses the standard Gemma4 42×60 grid.
+    """
+    grid_h, grid_w = _vl_grid_for_tokens(n_tokens)
+    num_patches = grid_h * grid_w
+
+    image_pos = torch.full((BATCH, n_tokens), IMAGE_TOKEN_ID, dtype=torch.long)
     text_pos = torch.arange(VL_TEXT_TOKENS, dtype=torch.long).unsqueeze(0)
     input_ids_vl = torch.cat([image_pos, text_pos], dim=1).cuda()
 
     torch.manual_seed(42)
-    pixel_values = torch.rand(
-        BATCH,
-        IMAGE_NUM_PATCHES,
-        IMAGE_PATCH_DIM,
-        dtype=dtype,
-    ).cuda()
+    pixel_values = torch.rand(BATCH, num_patches, IMAGE_PATCH_DIM, dtype=dtype).cuda()
 
     grid_x, grid_y = torch.meshgrid(
-        torch.arange(IMAGE_PATCH_GRID_W),
-        torch.arange(IMAGE_PATCH_GRID_H),
+        torch.arange(grid_w),
+        torch.arange(grid_h),
         indexing="xy",
     )
     image_position_ids = torch.stack([grid_x, grid_y], dim=-1)
-    image_position_ids = image_position_ids.reshape(1, IMAGE_NUM_PATCHES, 2).cuda()
+    image_position_ids = image_position_ids.reshape(1, num_patches, 2).cuda()
     return input_ids_vl, pixel_values, image_position_ids
 
 
@@ -471,7 +507,11 @@ def main():
         sys.exit(f"Error: Megatron-LM root not found: {MEGATRON_LM_ROOT}")
     os.chdir(MEGATRON_LM_ROOT)
 
-    seq_len = _seq_len_for_mode(args.mode)
+    vl_n_tokens = args.vl_image_tokens  # may differ from IMAGE_NUM_TOKENS
+    if args.mode == "vl":
+        seq_len = vl_n_tokens + VL_TEXT_TOKENS
+    else:
+        seq_len = _seq_len_for_mode(args.mode)
     sys.argv = _build_megatron_argv(args.megatron_ckpt, tp=args.tp, bf16=args.bf16, seq=seq_len)
 
     from megatron.core import mpu
@@ -502,7 +542,7 @@ def main():
     input_dtype = torch.bfloat16 if args.bf16 else torch.float32
 
     if args.mode == "vl":
-        input_ids_vl, pixel_values, image_position_ids = _make_vl_inputs(input_dtype)
+        input_ids_vl, pixel_values, image_position_ids = _make_vl_inputs(input_dtype, n_tokens=vl_n_tokens)
     elif args.mode == "audio":
         input_ids_audio, audio_features = _make_audio_inputs(input_dtype)
 

@@ -134,9 +134,13 @@ _parity() {
     local mode="$1"
     local ckpt_path="$2"
     local port="$3"
-    local log_dir="/tmp/gemma4_e4b_parity_${mode}"
+    local log_dir="${GEMMA4_LOG_ROOT:-/mnt/nvme0/kdg6245}/gemma4_e4b_parity_${mode}"
+    # VL image parity runs through a much longer bf16 path (280 image tokens),
+    # so it uses a wider tolerance than text/audio.
+    local atol=3.0
+    [ "$mode" = "vl" ] && atol=6.0
     echo ""
-    echo "  ── Parity [${mode^^}] against $ckpt_path ──"
+    echo "  ── Parity [${mode^^}] against $ckpt_path (atol=${atol}) ──"
     $TORCHRUN_BIN \
         --nproc_per_node $GPUS_PER_NODE \
         --nnodes 1 --node_rank 0 \
@@ -147,9 +151,9 @@ _parity() {
         "$SCRIPT_DIR/parity_check_e4b.py" \
         --hf-dir "$HF_MODEL_DIR" \
         --megatron-ckpt "$ckpt_path" \
-        --tp $TP_SIZE \
+        --tp $TP_SIZE --bf16 \
         --mode "$mode" \
-        --atol 3.0
+        --atol "$atol"
     echo "  Parity [${mode^^}] PASSED"
 }
 
@@ -198,9 +202,9 @@ echo "========================================"
 if [ "${SKIP_PARITY}" = "1" ]; then
     echo "  Skipping all parity checks."
 else
-    #_parity "text"  "$TEXT_CKPT" $((MASTER_PORT + 1))
+    _parity "text"  "$TEXT_CKPT" $((MASTER_PORT + 1))
     _parity "vl"    "$VL_CKPT"   $((MASTER_PORT + 3))
-    #_parity "audio" "$VL_CKPT"   $((MASTER_PORT + 5))
+    _parity "audio" "$VL_CKPT"   $((MASTER_PORT + 5))
     echo ""
     echo "  All parity checks PASSED"
 fi
@@ -214,7 +218,7 @@ echo "  Step 3: Training ($TRAIN_ITERS iters)"
 echo "========================================"
 
 mkdir -p "$SAVE_DIR"
-TRAIN_LOG_DIR=/tmp/gemma4_e4b_train_logs
+TRAIN_LOG_DIR=${TRAIN_LOG_DIR:-${GEMMA4_LOG_ROOT:-/mnt/nvme0/kdg6245}/gemma4_e4b_train_logs}
 rm -rf "$TRAIN_LOG_DIR" && mkdir -p "$TRAIN_LOG_DIR"
 
 MODEL_ARGS=(

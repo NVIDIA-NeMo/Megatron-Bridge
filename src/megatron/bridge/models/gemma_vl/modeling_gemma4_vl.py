@@ -27,6 +27,7 @@ Vision-Language model (Gemma4VLModel):
 """
 
 import copy
+import math
 import types
 import weakref
 from dataclasses import dataclass, field
@@ -74,6 +75,54 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Gemma-4 Dense layer specs
 # ---------------------------------------------------------------------------
+
+
+def _keep_hf_precision_buffers_in_fp32(module: nn.Module) -> None:
+    """Keep HF non-persistent precision-sensitive buffers in fp32 after casts.
+
+    HF Gemma4 registers buffers such as vision RoPE ``inv_freq`` and audio
+    ``inv_timescales`` as non-persistent fp32 buffers. A plain
+    ``module.to(dtype=bf16)`` casts them to bf16, but
+    ``from_pretrained(torch_dtype=bf16)`` keeps them in fp32.
+    """
+
+    for submodule in module.modules():
+        if "inv_freq" in submodule._buffers and hasattr(submodule, "compute_default_rope_parameters"):
+            device = submodule._buffers["inv_freq"].device
+            rope_type = getattr(submodule, "rope_type", "default")
+            if isinstance(rope_type, str):
+                if rope_type == "default":
+                    inv_freq, attention_scaling = submodule.compute_default_rope_parameters(
+                        submodule.config,
+                        device=device,
+                    )
+                else:
+                    from transformers.models.gemma4.modeling_gemma4 import ROPE_INIT_FUNCTIONS
+
+                    inv_freq, attention_scaling = ROPE_INIT_FUNCTIONS[rope_type](
+                        submodule.config,
+                        device=device,
+                    )
+                submodule._buffers["inv_freq"] = inv_freq.float()
+                if "original_inv_freq" in submodule._buffers:
+                    submodule._buffers["original_inv_freq"] = inv_freq.clone().float()
+                submodule.attention_scaling = attention_scaling
+
+        if "inv_timescales" in submodule._buffers and hasattr(submodule, "hidden_size"):
+            device = submodule._buffers["inv_timescales"].device
+            min_timescale = 1.0
+            max_timescale = 10000.0
+            num_timescales = submodule.hidden_size // 2
+            log_timescale_increment = math.log(max_timescale / min_timescale) / max(num_timescales - 1, 1)
+            inv_timescales = min_timescale * torch.exp(
+                torch.arange(num_timescales, device=device, dtype=torch.float32) * -log_timescale_increment
+            )
+            submodule._buffers["inv_timescales"] = inv_timescales.unsqueeze(0).unsqueeze(0)
+
+        for name in ("softcap",):
+            buffer = submodule._buffers.get(name)
+            if torch.is_tensor(buffer) and buffer.is_floating_point():
+                submodule._buffers[name] = buffer.float()
 
 
 class Gemma4RMSNorm(nn.Module):
@@ -458,6 +507,17 @@ class Gemma4DenseSelfAttention(SelfAttention):
         if output_gate:
             return query, key, value, gate
         return query, key, value
+
+    def forward(self, hidden_states: Tensor, attention_mask: Tensor, *args, **kwargs):
+        if isinstance(attention_mask, dict):
+            mask_key = "sliding_attention" if self.is_gemma4_sliding_layer else "full_attention"
+            attention_mask = attention_mask[mask_key]
+        return super().forward(
+            hidden_states,
+            attention_mask=attention_mask,
+            *args,
+            **kwargs,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1117,12 +1177,21 @@ class Gemma4VLModel(MegatronModule):
             # Vision encoder
             self.vision_tower = AutoModel.from_config(config.vision_config)
             self._init_embed_vision(config)
+            target_dtype = getattr(config, "params_dtype", None)
+            if target_dtype is not None:
+                self.vision_tower.to(dtype=target_dtype)
+                _keep_hf_precision_buffers_in_fp32(self.vision_tower)
+                self.embed_vision.to(dtype=target_dtype)
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
 
             # Audio encoder (optional — only when audio_config is provided)
             if getattr(config, "audio_config", None) is not None:
                 self.audio_tower = AutoModel.from_config(config.audio_config)
                 self._init_embed_audio(config)
+                if target_dtype is not None:
+                    self.audio_tower.to(dtype=target_dtype)
+                    _keep_hf_precision_buffers_in_fp32(self.audio_tower)
+                    self.embed_audio.to(dtype=target_dtype)
                 hook_hf_module_setattr_for_tp_grad_sync(self.audio_tower)
 
         self.language_model = self.config.provide_language_model(
@@ -1189,6 +1258,7 @@ class Gemma4VLModel(MegatronModule):
 
     def get_image_features(self, pixel_values, image_position_ids=None, **kwargs):
         """Extract and project image features using HF vision tower + embedder."""
+        _keep_hf_precision_buffers_in_fp32(self.vision_tower)
         vision_outputs = self.vision_tower(
             pixel_values=pixel_values,
             pixel_position_ids=image_position_ids,
@@ -1198,6 +1268,7 @@ class Gemma4VLModel(MegatronModule):
 
     def get_audio_features(self, input_features, **kwargs):
         """Extract and project audio features using HF audio tower + embedder."""
+        _keep_hf_precision_buffers_in_fp32(self.audio_tower)
         audio_outputs = self.audio_tower(input_features=input_features, **kwargs)
         return self.embed_audio(audio_outputs.last_hidden_state)
 
@@ -1277,7 +1348,7 @@ class Gemma4VLModel(MegatronModule):
 
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [S, B, H]
 
-        attention_mask = self._compute_attention_mask(input_ids)
+        attention_mask = self._compute_attention_mask(input_ids) if input_ids is not None else attention_mask
 
         pg_coll = getattr(self.config, "_pg_collection", None)
         if pg_coll is not None:
@@ -1328,7 +1399,7 @@ class Gemma4VLModel(MegatronModule):
                     param.requires_grad = False
 
     def _compute_attention_mask(self, input_ids: torch.Tensor) -> Optional[torch.Tensor]:
-        """Compute attention mask: causal, with bidirectional image groups."""
+        """Compute HF-style attention masks for full and sliding Gemma4 layers."""
         if not self.pre_process:
             return None
         batch_size, seq_len = input_ids.shape
@@ -1347,4 +1418,9 @@ class Gemma4VLModel(MegatronModule):
 
         bidir = _bidirectional_block_mask(input_ids == self.config.image_token_id)
 
-        return ~torch.logical_or(causal_mask, bidir.unsqueeze(1))
+        sliding_mask = ~torch.logical_or(causal_mask, bidir.unsqueeze(1))
+        full_mask = ~causal_mask
+        return {
+            "full_attention": full_mask,
+            "sliding_attention": sliding_mask,
+        }

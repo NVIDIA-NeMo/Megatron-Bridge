@@ -315,7 +315,11 @@ class Gemma4SelfAttention(SelfAttention):
         assert isinstance(rotary_pos_emb, (tuple, list)) and len(rotary_pos_emb) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
-        if _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern):
+        is_local = _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
+        if isinstance(attention_mask, dict):
+            attention_mask = attention_mask["sliding_attention" if is_local else "full_attention"]
+
+        if is_local:
             final_rotary_pos_emb = rotary_pos_emb[0]
         else:
             final_rotary_pos_emb = rotary_pos_emb[1]
