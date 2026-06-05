@@ -91,6 +91,8 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         "cu_seqlens_unpadded",
         "cu_seqlens_argmin",
         "cu_seqlens_unpadded_argmin",
+        "cu_seqlens_host",
+        "cu_seqlens_unpadded_host",
         "max_seqlen",
         "token_count",
     }
@@ -158,6 +160,16 @@ def get_batch_from_iterator(
         else:
             _batch_required_keys[key] = None
 
+    # Keep host copies of cu_seqlens for FLOPS accounting. These come straight from the
+    # dataloader (already on CPU), so computing Σᵢ sᵢ² from them is free — no GPU→CPU
+    # sync and no CUDA kernel launches per micro-batch (the prior device-tensor path cost
+    # ~7% by stalling CUDA run-ahead every micro-batch). The device copies above still
+    # feed the attention kernel.
+    for key in ("cu_seqlens", "cu_seqlens_unpadded"):
+        val = batch.get(key)
+        if val is not None:
+            _batch_required_keys[key + "_host"] = val.cpu()
+
     return _batch_required_keys
 
 
@@ -174,6 +186,8 @@ def get_batch(
     torch.Tensor,
     torch.Tensor | None,
     torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
 ]:
     """Generate a batch.
 
@@ -184,8 +198,9 @@ def get_batch(
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded, and
-        cu_seqlens_unpadded_argmin
+        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin, and host (CPU) copies of cu_seqlens /
+        cu_seqlens_unpadded (for sync-free FLOPS accounting)
     """
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
@@ -193,7 +208,7 @@ def get_batch(
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
     if is_middle and not include_full_batch_fields:
-        return None, None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -225,6 +240,8 @@ def get_batch(
         batch.get("max_seqlen"),
         batch.get("cu_seqlens_unpadded"),
         batch.get("cu_seqlens_unpadded_argmin"),
+        batch.get("cu_seqlens_host"),
+        batch.get("cu_seqlens_unpadded_host"),
     )
 
 
@@ -262,6 +279,8 @@ def _forward_step_common(
             max_seqlen,
             cu_seqlens_unpadded,
             cu_seqlens_unpadded_argmin,
+            cu_seqlens_host,
+            cu_seqlens_unpadded_host,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
@@ -271,12 +290,16 @@ def _forward_step_common(
     # the helper computes the THD-correct Σᵢ sᵢ² for the attention term
     # instead of the pack-length² BSHD approximation. train.py resets these
     # before each step and reads accumulated values afterwards.
+    # Pass the HOST copies of cu_seqlens so Σᵢ sᵢ² is computed on CPU — no
+    # per-micro-batch GPU→CPU sync or CUDA kernel launches on the forward path
+    # (the device-tensor path cost ~7% by stalling run-ahead). The host argmins
+    # are already on CPU. Values are identical to the device tensors.
     accumulate_flops_metadata(
         state,
         tokens,
-        cu_seqlens=cu_seqlens,
+        cu_seqlens=cu_seqlens_host,
         cu_seqlens_argmin=cu_seqlens_argmin,
-        cu_seqlens_unpadded=cu_seqlens_unpadded,
+        cu_seqlens_unpadded=cu_seqlens_unpadded_host,
         cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin,
     )
 
