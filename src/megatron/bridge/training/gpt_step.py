@@ -91,6 +91,7 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         "cu_seqlens_unpadded",
         "cu_seqlens_argmin",
         "cu_seqlens_unpadded_argmin",
+        "seqlen_sq",
         "max_seqlen",
         "token_count",
     }
@@ -142,6 +143,10 @@ def get_batch_from_iterator(
         required_host_keys.add("max_seqlen")
         if "cu_seqlens_unpadded_argmin" in batch:
             required_host_keys.add("cu_seqlens_unpadded_argmin")
+        # Precomputed per-pack Σᵢ sᵢ² for FLOPS — keep on host (it's a tiny int tensor),
+        # so the training loop adds an int instead of running cu_seqlens torch ops.
+        if "seqlen_sq" in batch:
+            required_host_keys.add("seqlen_sq")
 
     if not include_full_batch_fields:
         if is_first_pp_stage or use_mtp:
@@ -174,6 +179,7 @@ def get_batch(
     torch.Tensor,
     torch.Tensor | None,
     torch.Tensor | None,
+    torch.Tensor | None,
 ]:
     """Generate a batch.
 
@@ -184,8 +190,8 @@ def get_batch(
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded, and
-        cu_seqlens_unpadded_argmin
+        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin, and seqlen_sq (precomputed per-pack Σᵢ sᵢ² for FLOPS)
     """
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
@@ -193,7 +199,7 @@ def get_batch(
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
     if is_middle and not include_full_batch_fields:
-        return None, None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -225,6 +231,7 @@ def get_batch(
         batch.get("max_seqlen"),
         batch.get("cu_seqlens_unpadded"),
         batch.get("cu_seqlens_unpadded_argmin"),
+        batch.get("seqlen_sq"),
     )
 
 
@@ -262,18 +269,19 @@ def _forward_step_common(
             max_seqlen,
             cu_seqlens_unpadded,
             cu_seqlens_unpadded_argmin,
+            seqlen_sq,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches. For offline-packed THD
-    # SFT, ``cu_seqlens`` (and ``cu_seqlens_unpadded`` when ``pad_seq_to_mult
-    # > 1``) describe the real sub-sequence boundaries within the pack, so
-    # the helper computes the THD-correct Σᵢ sᵢ² for the attention term
-    # instead of the pack-length² BSHD approximation. train.py resets these
-    # before each step and reads accumulated values afterwards.
+    # Accumulate FLOPS metadata across micro-batches. ``seqlen_sq`` is the per-pack
+    # THD Σᵢ sᵢ² precomputed in the dataloader worker (see GPTSFTPackedDataset.collate_fn),
+    # so the training loop just sums an int — no per-micro-batch cu_seqlens torch ops on
+    # the launch-bound forward path. When it's absent (datasets that don't precompute),
+    # the helper falls back to deriving Σᵢ sᵢ² from cu_seqlens.
     accumulate_flops_metadata(
         state,
         tokens,
+        seqlen_sq=seqlen_sq,
         cu_seqlens=cu_seqlens,
         cu_seqlens_argmin=cu_seqlens_argmin,
         cu_seqlens_unpadded=cu_seqlens_unpadded,

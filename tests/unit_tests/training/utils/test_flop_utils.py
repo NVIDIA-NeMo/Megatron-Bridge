@@ -2149,6 +2149,36 @@ class TestAccumulateFlopsMetadata:
         assert thd_sq == 32 * 256**2
         assert bshd_sq // thd_sq == 32
 
+    def test_precomputed_seqlen_sq_used_directly(self):
+        # When the dataloader precomputed seqlen_sq (per-pack Σᵢ sᵢ²), accumulate adds it
+        # as a plain int with NO cu_seqlens torch ops and NO buffering.
+        state = _State()
+        tokens = torch.zeros(2, 4096)  # mbs=2 packs
+        accumulate_flops_metadata(state, tokens, seqlen_sq=torch.tensor([250_000, 1_000_000]))
+        assert state._flops_seqlen_sq_sum == 1_250_000
+        # No cu records buffered on the precomputed path.
+        assert getattr(state, "_flops_cu_records", None) in (None, [])
+
+    def test_precomputed_seqlen_sq_matches_cu_seqlens_path(self):
+        # The precomputed value (computed the dataloader way: argmin-truncated squared-diff
+        # sum, preferring unpadded) must equal what the cu_seqlens path produces. This is
+        # the correctness guarantee that moving the computation to the worker is exact.
+        cu_seqlens = torch.tensor([0, 256, 512, 4096])
+
+        # cu_seqlens path:
+        state_cu = _State()
+        tokens = torch.zeros(1, 4096)
+        accumulate_flops_metadata(state_cu, tokens, cu_seqlens=cu_seqlens)
+        buffer_flops_metadata(state_cu, batch_size=1)
+
+        # dataloader-precompute path (mirror sft.py collate: diffs² over argmin-truncated cu):
+        cu_list = cu_seqlens.tolist()
+        precomputed = sum((cu_list[i + 1] - cu_list[i]) ** 2 for i in range(len(cu_list) - 1))
+        state_pre = _State()
+        accumulate_flops_metadata(state_pre, tokens, seqlen_sq=torch.tensor([precomputed]))
+
+        assert state_pre._flops_seqlen_sq_sum == state_cu._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+
 
 @pytest.mark.unit
 class TestResolveGlobalFlopsSeqlenStats:
