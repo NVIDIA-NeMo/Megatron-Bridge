@@ -2718,7 +2718,10 @@ class TestFSDPDTensorFunctionality:
             optimizer=mock_optimizer,
             opt_param_scheduler=mock_scheduler,
             rng_state=None,
-            optim_sd_kwargs={"is_loading": True, "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"}},
+            optim_sd_kwargs={
+                "is_loading": True,
+                "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
+            },
         )
 
         assert result["optimizer"] == {"optimizer": {"param_groups": []}}

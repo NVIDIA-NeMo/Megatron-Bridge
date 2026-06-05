@@ -131,8 +131,6 @@ uv run --no-sync python scripts/training/run_recipe.py \
     train.micro_batch_size=1 \
     validation.eval_interval=100 \
     validation.eval_iters=10 \
-    scheduler.lr_warmup_iters=50 \
-    scheduler.lr_decay_iters="$TRAIN_ITERS" \
     logger.log_interval=1 \
     logger.tensorboard_dir="$SAVE_DIR/tb_logs" \
     logger.wandb_entity="$WANDB_ENTITY" \

@@ -87,16 +87,16 @@ def nemotron_3_ultra_pretrain_config(
     cfg.model.cross_entropy_fusion_impl = "te"
     cfg.mixed_precision = "bf16_mixed"
 
-    cfg.optimizer.lr = 4.5e-4
-    cfg.optimizer.min_lr = 4.5e-6
+    cfg.optimizer.lr = 2.5e-4
+    cfg.optimizer.min_lr = 2.5e-4
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
-    cfg.scheduler.lr_warmup_iters = 333
+    cfg.scheduler.lr_warmup_iters = 0
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
-    cfg.scheduler.lr_decay_style = "WSD"
+    cfg.scheduler.lr_decay_style = "constant"
 
     cfg.checkpoint.save_interval = 200
     cfg.checkpoint.ckpt_assume_constant_structure = True
