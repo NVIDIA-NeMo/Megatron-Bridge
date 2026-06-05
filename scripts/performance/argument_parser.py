@@ -326,7 +326,7 @@ def parse_cli_args():
     )
     data_args.add_argument(
         "--c4_train_shards",
-        nargs="*",
+        nargs="+",
         type=int,
         default=[6],
         help="C4 train shard indices to blend (e.g. 6 for the 8b dataset; 6 7 for the full dataset). Default: [6].",
