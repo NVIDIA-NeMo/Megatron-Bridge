@@ -89,12 +89,8 @@ def resolve_global_flops_seqlen_stats(
         local_seqlen_sq_sum //= vp_size
         local_vision_patches //= vp_size
 
-    use_all_reduce = (
-        dp_group is not None
-        and data_parallel_size > 1
-        and torch.distributed.is_available()
-        and torch.distributed.is_initialized()
-    )
+    # Temporary debug: force extrapolation while keeping the host sync.
+    use_all_reduce = False
     if use_all_reduce:
         device = torch.cuda.current_device() if torch.cuda.is_available() else None
         stats = torch.tensor(
