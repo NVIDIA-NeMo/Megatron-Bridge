@@ -1,0 +1,498 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Megatron Bridge for Gemma 4 text-only (CausalLM).
+
+Supports all Gemma 4 text variants:
+  - MoE (``enable_moe_block=True``): ``Gemma4ForCausalLM`` (26B-A4B and similar)
+  - Dense (``enable_moe_block=False``): same HF class, dispatched via ``Gemma4DenseProvider``
+
+Usage::
+
+  AutoBridge.from_hf_pretrained("google/gemma-4-26B-A4B")
+    └─ Gemma4Bridge (registered for Gemma4ForCausalLM)
+         ├─ provider_bridge()  MoE   → Gemma4ModelProvider
+         │                     Dense → Gemma4DenseProvider
+         └─ mapping_registry()  MoE path   → _moe_mapping_registry()
+                                 Dense path → _dense_mapping_registry()
+"""
+
+import re
+from typing import Any, Mapping
+
+import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
+
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+    QKVMapping,
+    ReplicatedMapping,
+    split_qkv_weights,
+)
+from megatron.bridge.models.conversion.peft_bridge import ABSENT_PROJECTION
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_theta_from_hf,
+)
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+# Register Gemma4 custom module types for AutoMapping
+AutoMapping.register_module_type("Gemma4TEDotProductAttention", "replicated")
+AutoMapping.register_module_type("Gemma4SelfAttention", "replicated")
+AutoMapping.register_module_type("Gemma4TransformerLayer", "replicated")
+AutoMapping.register_module_type("Gemma4TopKRouter", "replicated")
+AutoMapping.register_module_type("Gemma4MoELayer", "replicated")
+AutoMapping.register_module_type("SharedExpertMLP", "column")
+
+
+class _Gemma4QKVMapping(QKVMapping):
+    """QKV mapping tolerating missing v_proj on global attention layers (K=V)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_hf_name_mismatch = True
+
+
+class _Gemma4DenseQKVMapping(QKVMapping):
+    """QKV mapping tolerating missing k_proj AND v_proj on shared-KV layers."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.allow_hf_name_mismatch = True
+
+
+def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int]:
+    """Infer (sliding, global) interleaved attention pattern from layer_types list."""
+    for i, lt in enumerate(layer_types):
+        if lt == "full_attention":
+            sliding_count = i
+            full_count = 0
+            for j in range(i, len(layer_types)):
+                if layer_types[j] == "full_attention":
+                    full_count += 1
+                else:
+                    break
+            return (sliding_count, full_count)
+    return (len(layer_types), 0)
+
+
+# ---------------------------------------------------------------------------
+# Gemma4Bridge — text-only CausalLM bridge (MoE and Dense)
+# ---------------------------------------------------------------------------
+
+
+@MegatronModelBridge.register_bridge(
+    source="Gemma4ForCausalLM",
+    target=GPTModel,
+    provider=Gemma4ModelProvider,
+    model_type="gemma4",
+)
+class Gemma4Bridge(MegatronModelBridge):
+    """Megatron Bridge for Gemma 4 text-only (CausalLM).
+
+    Dispatches to Dense or MoE path based on ``enable_moe_block`` in HF config.
+    """
+
+    _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
+
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        if megatron_name in self._CONDITIONAL_MOE_FIELDS:
+            return getattr(hf_config, "enable_moe_block", True)
+        return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Gemma4ModelProvider | Gemma4DenseProvider":
+        hf_config = hf_pretrained.config
+        if not getattr(hf_config, "enable_moe_block", False):
+            self._is_dense = True
+            return self._build_dense_provider(hf_config)
+
+        self._is_dense = False
+        return self._build_moe_provider(hf_config)
+
+    def _build_dense_provider(self, hf_config) -> Gemma4DenseProvider:
+        """Build a Gemma4DenseProvider from HF config."""
+        rope_params = getattr(hf_config, "rope_parameters", {}) or {}
+        sliding_rope = rope_params.get("sliding_attention", {})
+        full_rope = rope_params.get("full_attention", {})
+
+        layer_types = getattr(hf_config, "layer_types", None)
+        if layer_types is not None:
+            layer_types = [layer_type == "sliding_attention" for layer_type in layer_types]
+
+        return Gemma4DenseProvider(
+            num_layers=hf_config.num_hidden_layers,
+            hidden_size=hf_config.hidden_size,
+            ffn_hidden_size=hf_config.intermediate_size,
+            num_attention_heads=hf_config.num_attention_heads,
+            num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=getattr(hf_config, "head_dim", 256),
+            global_kv_channels=getattr(hf_config, "global_head_dim", 512),
+            num_global_query_groups=getattr(
+                hf_config,
+                "num_global_key_value_heads",
+                getattr(hf_config, "num_key_value_heads", 2),
+            ),
+            seq_length=hf_config.max_position_embeddings,
+            vocab_size=hf_config.vocab_size,
+            normalization="RMSNorm",
+            layernorm_epsilon=hf_config.rms_norm_eps,
+            window_attn_skip_freq=layer_types if layer_types is not None else 6,
+            sliding_window_rope_base=sliding_rope.get("rope_theta", 10000.0),
+            full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
+            full_attention_rope_partial_factor=full_rope.get("partial_rotary_factor", 0.25),
+            num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
+            per_layer_embed_vocab_size=getattr(
+                hf_config, "vocab_size_per_layer_input", hf_config.vocab_size
+            ),
+            per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
+            bf16=True,
+        )
+
+    def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:
+        """Build a Gemma4ModelProvider from HF config (MoE path)."""
+        provider_kwargs = self.hf_config_to_provider_kwargs(hf_config)
+        provider = Gemma4ModelProvider(**provider_kwargs)
+
+        provider.window_size = getattr(hf_config, "sliding_window", 1024)
+        provider.rotary_base = (
+            rope_local_base_freq_from_hf(hf_config),
+            rope_theta_from_hf(hf_config),
+        )
+
+        head_dim = getattr(hf_config, "head_dim", 256)
+        provider.softmax_scale = 1.0
+        provider.kv_channels = head_dim
+        provider.qk_layernorm = True
+
+        provider.global_head_dim = getattr(hf_config, "global_head_dim", 512)
+        provider.num_global_key_value_heads = getattr(hf_config, "num_global_key_value_heads", 2)
+
+        rope_params = getattr(hf_config, "rope_parameters", {})
+        if isinstance(rope_params, dict):
+            full_attn_rope = rope_params.get("full_attention", {})
+            provider.global_rotary_percent = full_attn_rope.get("partial_rotary_factor", 0.25)
+
+        layer_types = getattr(hf_config, "layer_types", None)
+        if layer_types:
+            provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
+
+        if getattr(hf_config, "enable_moe_block", False):
+            provider.num_moe_experts = getattr(hf_config, "num_experts", 128)
+            provider.moe_router_topk = getattr(hf_config, "top_k_experts", 8)
+            provider.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", 704)
+            provider.moe_shared_expert_intermediate_size = getattr(hf_config, "intermediate_size", 2112)
+            provider.moe_shared_expert_overlap = False
+            provider.moe_shared_expert_gate = False
+            provider.moe_layer_freq = 1
+
+        provider.final_logit_softcapping = getattr(hf_config, "final_logit_softcapping", 30.0)
+        provider.bf16 = True
+        provider.params_dtype = torch.bfloat16
+        provider.autocast_dtype = torch.bfloat16
+        provider.make_vocab_size_divisible_by = 128
+
+        return provider
+
+    def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
+        """Un-fuse fused weights and drop synthesized keys on export."""
+        if not hf_state_dict:
+            return converted_weights_dict
+
+        result = {}
+        for hf_name, tensor in converted_weights_dict.items():
+            if hf_name not in hf_state_dict:
+                continue
+
+            if hf_name.endswith("router.proj.weight"):
+                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
+                if layer_match:
+                    layer_idx = layer_match.group(1)
+                    prefix = hf_name.rsplit("layers.", 1)[0]
+                    scale_key = f"{prefix}layers.{layer_idx}.router.scale"
+                    ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+                    if scale_key in hf_state_dict and ln2_key in hf_state_dict:
+                        router_scale = hf_state_dict[scale_key].float().to(tensor.device)
+                        ln2_weight = hf_state_dict[ln2_key].float().to(tensor.device)
+                        hidden_size = tensor.shape[-1]
+                        scalar_root_size = hidden_size**-0.5
+                        fusion_factor = router_scale * scalar_root_size / ln2_weight
+                        tensor = (tensor.float() / fusion_factor.unsqueeze(0)).to(tensor.dtype)
+
+            elif hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight")) and "experts" not in hf_name:
+                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
+                if layer_match:
+                    layer_idx = layer_match.group(1)
+                    prefix = hf_name.rsplit("layers.", 1)[0]
+                    pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
+                    pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+                    if pffl_key in hf_state_dict and pffl2_key in hf_state_dict:
+                        w_pffl = hf_state_dict[pffl_key].float().to(tensor.device)
+                        w_pffl2 = hf_state_dict[pffl2_key].float().to(tensor.device)
+                        correction = w_pffl / w_pffl2
+                        tensor = (tensor.float() / correction.unsqueeze(0)).to(tensor.dtype)
+
+            result[hf_name] = tensor
+
+        return result
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Handle special weight loading for Gemma 4."""
+        if isinstance(hf_param, dict) and "v" in hf_param:
+            k_name = hf_param["k"]
+            v_name = hf_param["v"]
+            q_name = hf_param["q"]
+
+            if k_name not in hf_state_dict and v_name not in hf_state_dict:
+                q_weight = hf_state_dict[q_name]
+                num_q_heads = 8
+                kv_head_dim = q_weight.shape[0] // num_q_heads
+                num_kv_heads = 2
+                kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
+                k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
+                return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
+
+            if v_name not in hf_state_dict and k_name in hf_state_dict:
+                hf_weights = {}
+                for role, name in hf_param.items():
+                    if role == "v":
+                        hf_weights[role] = hf_state_dict[k_name].clone()
+                    else:
+                        hf_weights[role] = hf_state_dict[name]
+                return hf_weights
+
+        if isinstance(hf_param, dict) and "gate" in hf_param:
+            gate_name = hf_param["gate"]
+            if "mlp.gate_proj" in gate_name:
+                return self._fuse_shared_expert_prenorm(hf_param, hf_state_dict)
+
+        if isinstance(hf_param, str) and hf_param.endswith("router.proj.weight"):
+            return self._fuse_router_weight(hf_param, hf_state_dict)
+
+        return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        proj_weight = hf_state_dict[hf_param]
+        layer_match = re.search(r"layers\.(\d+)\.", hf_param)
+        if layer_match is None:
+            return proj_weight
+        layer_idx = layer_match.group(1)
+        scale_key = f"model.layers.{layer_idx}.router.scale"
+        ln2_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+        if scale_key not in hf_state_dict or ln2_key not in hf_state_dict:
+            return proj_weight
+        router_scale = hf_state_dict[scale_key].float()
+        ln2_weight = hf_state_dict[ln2_key].float()
+        hidden_size = proj_weight.shape[-1]
+        scalar_root_size = hidden_size**-0.5
+        fusion_factor = router_scale * scalar_root_size / ln2_weight
+        fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
+        return fused_weight.to(proj_weight.dtype)
+
+    def _fuse_shared_expert_prenorm(
+        self, hf_param: dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        gate_name = hf_param["gate"]
+        layer_match = re.search(r"layers\.(\d+)\.", gate_name)
+        if layer_match is None:
+            return {role: hf_state_dict[name] for role, name in hf_param.items()}
+        layer_idx = layer_match.group(1)
+        pffl_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm.weight"
+        pffl2_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+        if pffl_key not in hf_state_dict or pffl2_key not in hf_state_dict:
+            return {role: hf_state_dict[name] for role, name in hf_param.items()}
+        w_pffl = hf_state_dict[pffl_key].float()
+        w_pffl2 = hf_state_dict[pffl2_key].float()
+        correction = w_pffl / w_pffl2
+        hf_weights = {}
+        for role, name in hf_param.items():
+            weight = hf_state_dict[name]
+            fused = weight.float() * correction.unsqueeze(0)
+            hf_weights[role] = fused.to(weight.dtype)
+        return hf_weights
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        if getattr(self, "_is_dense", False):
+            return self._dense_mapping_registry()
+        return self._moe_mapping_registry()
+
+    def _dense_mapping_registry(self, megatron_prefix: str = "") -> MegatronMappingRegistry:
+        """Parameter mappings for the Dense variant."""
+        mp = megatron_prefix
+        hp = self._hf_layer_prefix()
+        param_mappings = {
+            f"{mp}embedding.word_embeddings.weight": f"{hp}embed_tokens.weight",
+            f"{mp}decoder.final_layernorm.weight": f"{hp}norm.weight",
+            f"{mp}per_layer_embedding.weight": f"{hp}embed_tokens_per_layer.weight",
+            f"{mp}per_layer_model_proj.weight": f"{hp}per_layer_model_projection.weight",
+            f"{mp}decoder.layers.*.input_layernorm.weight": f"{hp}layers.*.input_layernorm.weight",
+            f"{mp}decoder.layers.*.post_self_attn_layernorm.weight": f"{hp}layers.*.post_attention_layernorm.weight",
+            f"{mp}decoder.layers.*.pre_mlp_layernorm.weight": f"{hp}layers.*.pre_feedforward_layernorm.weight",
+            f"{mp}decoder.layers.*.post_mlp_layernorm.weight": f"{hp}layers.*.post_feedforward_layernorm.weight",
+            f"{mp}decoder.layers.*.self_attention.q_layernorm.weight": f"{hp}layers.*.self_attn.q_norm.weight",
+            f"{mp}decoder.layers.*.self_attention.k_layernorm.weight": f"{hp}layers.*.self_attn.k_norm.weight",
+            f"{mp}decoder.layers.*.self_attention.linear_proj.weight": f"{hp}layers.*.self_attn.o_proj.weight",
+            f"{mp}decoder.layers.*.mlp.linear_fc2.weight": f"{hp}layers.*.mlp.down_proj.weight",
+        }
+        mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
+
+        mapping_list.append(
+            ReplicatedMapping(
+                megatron_param=f"{mp}per_layer_proj_norm.weight",
+                hf_param=f"{hp}per_layer_projection_norm.weight",
+            )
+        )
+        mapping_list.extend([
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.per_layer_input_gate.weight",
+                hf_param=f"{hp}layers.*.per_layer_input_gate.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.per_layer_projection.weight",
+                hf_param=f"{hp}layers.*.per_layer_projection.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.post_per_layer_input_norm.weight",
+                hf_param=f"{hp}layers.*.post_per_layer_input_norm.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param=f"{mp}decoder.layers.*.layer_scalar",
+                hf_param=f"{hp}layers.*.layer_scalar",
+            ),
+            _Gemma4DenseQKVMapping(
+                megatron_param=f"{mp}decoder.layers.*.self_attention.linear_qkv.weight",
+                q=f"{hp}layers.*.self_attn.q_proj.weight",
+                k=f"{hp}layers.*.self_attn.k_proj.weight",
+                v=f"{hp}layers.*.self_attn.v_proj.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param=f"{mp}decoder.layers.*.mlp.linear_fc1.weight",
+                gate=f"{hp}layers.*.mlp.gate_proj.weight",
+                up=f"{hp}layers.*.mlp.up_proj.weight",
+            ),
+        ])
+        return MegatronMappingRegistry(*mapping_list)
+
+    def _hf_layer_prefix(self) -> str:
+        """Text-only CausalLM: weights at ``model.*``; override in VL subclass."""
+        return "model."
+
+    def _moe_mapping_registry(self) -> MegatronMappingRegistry:
+        """Parameter mappings for the MoE variant."""
+        param_mappings = {
+            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
+            "decoder.final_layernorm.weight": "model.norm.weight",
+            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
+            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
+            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
+            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
+            "decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
+                "model.layers.*.post_attention_layernorm.weight"
+            ),
+            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.pre_feedforward_layernorm_2.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.post_layernorm.weight": (
+                "model.layers.*.post_feedforward_layernorm_1.weight"
+            ),
+            "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
+            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+        }
+
+        mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
+        mapping_list.extend([
+            _Gemma4QKVMapping(
+                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                q="model.layers.*.self_attn.q_proj.weight",
+                k="model.layers.*.self_attn.k_proj.weight",
+                v="model.layers.*.self_attn.v_proj.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                gate="model.layers.*.mlp.gate_proj.weight",
+                up="model.layers.*.mlp.up_proj.weight",
+            ),
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
+                gate="model.layers.*.mlp.gate_proj.weight",
+                up="model.layers.*.mlp.up_proj.weight",
+            ),
+            FusedGatedExpertMapping(
+                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                hf_param="model.layers.*.experts.gate_up_proj",
+            ),
+            FusedExpertMapping(
+                megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                hf_param="model.layers.*.experts.down_proj",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.layer_scalar",
+                hf_param="model.layers.*.layer_scalar",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
+                hf_param="model.layers.*.router.per_expert_scale",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.mlp.router.scale",
+                hf_param="model.layers.*.router.scale",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.pffl_weight",
+                hf_param="model.layers.*.pre_feedforward_layernorm.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
+                hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
+            ),
+            ReplicatedMapping(
+                megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
+                hf_param="model.layers.*.post_feedforward_layernorm.weight",
+            ),
+        ])
+        return MegatronMappingRegistry(*mapping_list)
+
+    def _split_qkv_linear_out_weight(self, megatron_model, linear_out_weight):
+        """Detect global vs sliding layers by tensor size for LoRA export."""
+        model = megatron_model[0] if isinstance(megatron_model, list) else megatron_model
+        config = model.config
+        feature_dim = linear_out_weight.shape[-1] if linear_out_weight.ndim == 2 else None
+
+        qkv_total_sliding = config.num_attention_heads + 2 * config.num_query_groups
+        expected_numel_sliding = qkv_total_sliding * config.kv_channels * (feature_dim or 1)
+
+        if linear_out_weight.numel() != expected_numel_sliding and hasattr(config, "global_head_dim"):
+            num_kv_global = config.num_global_key_value_heads
+            head_size_global = config.global_head_dim
+
+            class _GlobalAttnCfg:
+                num_attention_heads = config.num_attention_heads
+                num_query_groups = num_kv_global
+                kv_channels = head_size_global
+                hidden_size = config.hidden_size
+                attention_output_gate = getattr(config, "attention_output_gate", False)
+
+            q_out, k_out, _ = split_qkv_weights(_GlobalAttnCfg(), linear_out_weight, feature_dim=feature_dim)
+            return {"q_proj": q_out, "k_proj": k_out, "v_proj": ABSENT_PROJECTION}
+
+        return super()._split_qkv_linear_out_weight(megatron_model, linear_out_weight)

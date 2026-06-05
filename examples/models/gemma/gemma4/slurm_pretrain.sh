@@ -59,7 +59,7 @@ TEXT_CKPT="${MEGATRON_CKPT}-text"
 VL_CKPT="${MEGATRON_CKPT}-vl"
 
 # Pipeline control
-SKIP_CONVERT=${SKIP_CONVERT:-0}
+SKIP_CONVERT=${SKIP_CONVERT:-1}
 SKIP_TEXT_CONVERT=${SKIP_TEXT_CONVERT:-${SKIP_CONVERT}}
 SKIP_VL_CONVERT=${SKIP_VL_CONVERT:-${SKIP_CONVERT}}
 SKIP_PARITY=${SKIP_PARITY:-0}
@@ -210,7 +210,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# STEP 3: Fine-tuning (uses text checkpoint → GPTModel)
+# STEP 3: Fine-tuning via run_recipe.py + gemma4_e4b_pretrain_config
 # ---------------------------------------------------------------------------
 echo ""
 echo "========================================"
@@ -221,115 +221,18 @@ mkdir -p "$SAVE_DIR"
 TRAIN_LOG_DIR=${TRAIN_LOG_DIR:-${GEMMA4_LOG_ROOT:-/mnt/nvme0/kdg6245}/gemma4_e4b_train_logs}
 rm -rf "$TRAIN_LOG_DIR" && mkdir -p "$TRAIN_LOG_DIR"
 
-MODEL_ARGS=(
-    --use-mcore-models
-    --num-layers 42
-    --hidden-size 2560
-    --ffn-hidden-size 10240
-    --num-attention-heads 8
-    --group-query-attention
-    --num-query-groups 2
-    --kv-channels 256
-    --global-kv-channels 512
-    --num-global-query-groups 2
-
-    --seq-length $SEQ_LENGTH
-    --max-position-embeddings 131072
-
-    --position-embedding-type rope
-    --rotary-percent 1.0
-    --sliding-window-rope-base 10000
-    --full-attention-rope-base 1000000
-    --full-attention-rope-partial-factor 0.25
-
-    --window-size "511,0"
-    --window-attn-skip-freq 6
-    --num-kv-shared-layers 18
-
-    --geglu-tanh
-    --normalization RMSNorm
-    --norm-epsilon 1e-6
-    --attention-dropout 0.0
-    --hidden-dropout 0.0
-    --disable-bias-linear
-
-    --vocab-size 262143
-    --make-vocab-size-divisible-by 128
-    --scale-embeddings-by-hidden-size
-
-    --per-layer-embed-vocab-size 262144
-    --per-layer-embed-dim 256
-
-    --spec megatron.bridge.models.gemma_vl.modeling_gemma4_vl gemma4_layer_spec
-    --transformer-impl local
-    --attention-backend auto
-    --init-method-std 0.02
-)
-
-TRAINING_ARGS=(
-    --micro-batch-size $MICRO_BATCH_SIZE
-    --global-batch-size $GLOBAL_BATCH_SIZE
-    --train-iters $TRAIN_ITERS
-    --lr-warmup-iters 100
-    --lr $LR
-    --min-lr 2e-6
-    --lr-decay-style cosine
-    --lr-decay-iters $TRAIN_ITERS
-    --weight-decay 0.1
-    --adam-beta1 0.9
-    --adam-beta2 0.99
-    --clip-grad 1.0
-    --bf16
-    --calculate-per-token-loss
-    --no-masked-softmax-fusion
-    --no-rope-fusion
-    --no-persist-layer-norm
-    --no-gradient-accumulation-fusion
-    --use-distributed-optimizer
-    --load "$TEXT_CKPT"
-    --save "$SAVE_DIR"
-    --save-interval 200
-    --finetune
-    --no-load-optim
-    --no-load-rng
-)
-
-MODEL_PARALLEL_ARGS=(
-    --tensor-model-parallel-size $TP_SIZE
-    --pipeline-model-parallel-size $PP_SIZE
-    --context-parallel-size 1
-)
-
 if [ -n "$TRAIN_DATA_PATH" ]; then
-    DATA_ARGS=(
-        --data-path "$TRAIN_DATA_PATH"
-        --tokenizer-type HuggingFaceTokenizer
-        --tokenizer-model "$HF_MODEL_DIR"
-        --split "98,1,1"
-        --no-mmap-bin-files
-        --num-workers 4
+    DATASET_TYPE="llm-pretrain"
+    DATA_OVERRIDES=(
+        "dataset.blend=[[$TRAIN_DATA_PATH],null]"
+        "tokenizer.tokenizer_type=HuggingFaceTokenizer"
+        "tokenizer.tokenizer_model=$HF_MODEL_DIR"
     )
 else
     echo "  WARNING: TRAIN_DATA_PATH not set, using mock data."
-    DATA_ARGS=(
-        --mock-data
-        --tokenizer-type NullTokenizer
-        --split "99,1,0"
-        --no-create-attention-mask-in-dataloader
-        --no-mmap-bin-files
-        --num-workers 1
-    )
+    DATASET_TYPE="llm-pretrain-mock"
+    DATA_OVERRIDES=()
 fi
-
-LOGGING_ARGS=(
-    --log-interval 10
-    --eval-iters 10
-    --eval-interval 200
-    --tensorboard-dir "$SAVE_DIR/tensorboard"
-    --no-save-optim
-    --no-save-rng
-    --distributed-timeout-minutes 30
-)
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 
@@ -340,12 +243,15 @@ $TORCHRUN_BIN \
     --master_port $MASTER_PORT \
     --log_dir "$TRAIN_LOG_DIR" \
     --redirects 3 --tee 3 \
-    pretrain_gpt.py \
-    "${MODEL_ARGS[@]}" \
-    "${TRAINING_ARGS[@]}" \
-    "${MODEL_PARALLEL_ARGS[@]}" \
-    "${DATA_ARGS[@]}" \
-    "${LOGGING_ARGS[@]}"
+    "$BRIDGE_ROOT/scripts/training/run_recipe.py" \
+    --recipe gemma4_e4b_pretrain_config \
+    --dataset "$DATASET_TYPE" \
+    "checkpoint.pretrained_checkpoint=$TEXT_CKPT" \
+    "checkpoint.save=$SAVE_DIR" \
+    "train.train_iters=$TRAIN_ITERS" \
+    "model.seq_length=$SEQ_LENGTH" \
+    "dataset.seq_length=$SEQ_LENGTH" \
+    "${DATA_OVERRIDES[@]}"
 
 echo ""
 echo "========================================"

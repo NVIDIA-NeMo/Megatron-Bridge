@@ -22,17 +22,16 @@ from transformers import GenerationConfig, SiglipVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import (
+from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
-    Gemma4VLBridge,
     _infer_attn_pattern,
 )
+from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import Gemma4VLBridge
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
-    Gemma4ModelProvider,
     Gemma4VLModelProvider,
 )
-from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4DenseProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
@@ -664,10 +663,10 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.eos_token_id == 1
         assert p.vision_soft_tokens_per_image == 280
 
-    def test_dtype_is_bf16(self, bridge, mock_hf_pretrained_moe):
+    def test_dtype_is_fp32_for_vl(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)
-        assert p.bf16 is True
-        assert p.params_dtype == torch.bfloat16
+        assert p.bf16 is False
+        assert p.params_dtype == torch.float32
 
     def test_global_head_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)

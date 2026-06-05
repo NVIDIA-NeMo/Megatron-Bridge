@@ -1,0 +1,475 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Unit tests for Gemma4Bridge (CausalLM text-only)."""
+
+from unittest.mock import Mock
+
+import pytest
+import torch
+
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gemma.gemma4_bridge import (
+    Gemma4Bridge,
+    _infer_attn_pattern,
+)
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+# ===========================================================================
+# Fixtures
+# ===========================================================================
+
+
+@pytest.fixture
+def mock_hf_config_moe():
+    """Flat Gemma4 CausalLM config (MoE: 26B-A4B)."""
+    cfg = Mock(spec=[])
+    cfg.num_hidden_layers = 62
+    cfg.hidden_size = 2816
+    cfg.intermediate_size = 2112
+    cfg.moe_intermediate_size = 704
+    cfg.num_attention_heads = 8
+    cfg.num_key_value_heads = 4
+    cfg.head_dim = 256
+    cfg.global_head_dim = 512
+    cfg.num_global_key_value_heads = 2
+    cfg.initializer_range = 0.02
+    cfg.rms_norm_eps = 1e-6
+    cfg.vocab_size = 262144
+    cfg.max_position_embeddings = 131072
+    cfg.sliding_window = 1024
+    cfg.rope_theta = 1000000.0
+    cfg.rope_local_base_freq = 10000.0
+    cfg.rope_parameters = {"full_attention": {"partial_rotary_factor": 0.25}}
+    cfg.query_pre_attn_scalar = 1.0
+    cfg.hidden_act = "gelu_pytorch_tanh"
+    cfg.torch_dtype = "bfloat16"
+    cfg.enable_moe_block = True
+    cfg.num_experts = 128
+    cfg.top_k_experts = 8
+    cfg.layer_types = (
+        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    )
+    cfg.final_logit_softcapping = 30.0
+    return cfg
+
+
+@pytest.fixture
+def mock_hf_config_dense():
+    """Flat Gemma4 CausalLM config (Dense: enable_moe_block=False)."""
+    cfg = Mock(spec=[])
+    cfg.num_hidden_layers = 62
+    cfg.hidden_size = 2816
+    cfg.intermediate_size = 2112
+    cfg.moe_intermediate_size = 1408
+    cfg.num_attention_heads = 8
+    cfg.num_key_value_heads = 4
+    cfg.head_dim = 256
+    cfg.global_head_dim = 512
+    cfg.num_global_key_value_heads = 2
+    cfg.initializer_range = 0.02
+    cfg.rms_norm_eps = 1e-6
+    cfg.vocab_size = 262144
+    cfg.max_position_embeddings = 131072
+    cfg.sliding_window = 1024
+    cfg.rope_theta = 1000000.0
+    cfg.rope_local_base_freq = 10000.0
+    cfg.rope_parameters = {"full_attention": {"partial_rotary_factor": 0.25}}
+    cfg.query_pre_attn_scalar = 1.0
+    cfg.hidden_act = "gelu_pytorch_tanh"
+    cfg.torch_dtype = "bfloat16"
+    cfg.enable_moe_block = False
+    cfg.num_experts = 256
+    cfg.top_k_experts = 16
+    cfg.layer_types = (
+        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+    )
+    cfg.final_logit_softcapping = 30.0
+    return cfg
+
+
+@pytest.fixture
+def mock_pretrained_moe(mock_hf_config_moe):
+    p = Mock(spec=PreTrainedCausalLM)
+    p.config = mock_hf_config_moe
+    return p
+
+
+@pytest.fixture
+def mock_pretrained_dense(mock_hf_config_dense):
+    p = Mock(spec=PreTrainedCausalLM)
+    p.config = mock_hf_config_dense
+    return p
+
+
+@pytest.fixture
+def bridge():
+    return Gemma4Bridge()
+
+
+# ===========================================================================
+# Registration
+# ===========================================================================
+
+
+class TestGemma4BridgeRegistration:
+    def test_is_subclass_of_model_bridge(self):
+        assert issubclass(Gemma4Bridge, MegatronModelBridge)
+
+    def test_initialization(self, bridge):
+        assert isinstance(bridge, Gemma4Bridge)
+
+    def test_has_required_methods(self, bridge):
+        assert callable(getattr(bridge, "provider_bridge", None))
+        assert callable(getattr(bridge, "mapping_registry", None))
+        assert callable(getattr(bridge, "maybe_modify_loaded_hf_weight", None))
+        assert callable(getattr(bridge, "maybe_modify_converted_hf_weight", None))
+
+
+# ===========================================================================
+# provider_bridge — MoE path
+# ===========================================================================
+
+
+class TestGemma4BridgeProviderBridgeMoE:
+    def test_returns_moe_provider(self, bridge, mock_pretrained_moe):
+        assert isinstance(bridge.provider_bridge(mock_pretrained_moe), Gemma4ModelProvider)
+
+    def test_basic_transformer_config(self, bridge, mock_pretrained_moe):
+        p = bridge.provider_bridge(mock_pretrained_moe)
+        assert p.num_layers == 62
+        assert p.hidden_size == 2816
+        assert p.num_attention_heads == 8
+        assert p.num_query_groups == 4
+        assert p.kv_channels == 256
+        assert p.vocab_size == 262144
+        assert p.seq_length == 131072
+        assert p.init_method_std == 0.02
+        assert p.layernorm_epsilon == 1e-6
+
+    def test_moe_config(self, bridge, mock_pretrained_moe):
+        p = bridge.provider_bridge(mock_pretrained_moe)
+        assert p.num_moe_experts == 128
+        assert p.moe_router_topk == 8
+        assert p.moe_ffn_hidden_size == 704
+        assert p.moe_shared_expert_intermediate_size == 2112
+        assert p.moe_layer_freq == 1
+        assert p.moe_shared_expert_overlap is False
+        assert p.moe_shared_expert_gate is False
+
+    def test_window_size(self, bridge, mock_pretrained_moe):
+        assert bridge.provider_bridge(mock_pretrained_moe).window_size == 1024
+
+    def test_rotary_base_tuple(self, bridge, mock_pretrained_moe):
+        rb = bridge.provider_bridge(mock_pretrained_moe).rotary_base
+        assert isinstance(rb, tuple) and len(rb) == 2
+        assert rb[0] == 10000.0
+        assert rb[1] == 1000000.0
+
+    def test_softmax_scale_is_one(self, bridge, mock_pretrained_moe):
+        assert bridge.provider_bridge(mock_pretrained_moe).softmax_scale == 1.0
+
+    def test_qk_layernorm_enabled(self, bridge, mock_pretrained_moe):
+        assert bridge.provider_bridge(mock_pretrained_moe).qk_layernorm is True
+
+    def test_global_attention_config(self, bridge, mock_pretrained_moe):
+        p = bridge.provider_bridge(mock_pretrained_moe)
+        assert p.global_head_dim == 512
+        assert p.num_global_key_value_heads == 2
+        assert p.global_rotary_percent == 0.25
+
+    def test_interleaved_attn_pattern(self, bridge, mock_pretrained_moe):
+        assert bridge.provider_bridge(mock_pretrained_moe).interleaved_attn_pattern == (5, 1)
+
+    def test_logit_softcapping(self, bridge, mock_pretrained_moe):
+        assert bridge.provider_bridge(mock_pretrained_moe).final_logit_softcapping == 30.0
+
+    def test_dtype_is_bf16(self, bridge, mock_pretrained_moe):
+        p = bridge.provider_bridge(mock_pretrained_moe)
+        assert p.bf16 is True
+        assert p.params_dtype == torch.bfloat16
+
+    def test_different_hidden_sizes(self, bridge, mock_pretrained_moe):
+        for hs in [2048, 2816, 4096]:
+            mock_pretrained_moe.config.hidden_size = hs
+            assert bridge.provider_bridge(mock_pretrained_moe).hidden_size == hs
+
+    def test_different_layer_counts(self, bridge, mock_pretrained_moe):
+        for nl in [32, 46, 62]:
+            mock_pretrained_moe.config.num_hidden_layers = nl
+            assert bridge.provider_bridge(mock_pretrained_moe).num_layers == nl
+
+    def test_vocab_size_variants(self, bridge, mock_pretrained_moe):
+        for vs in [256000, 262144, 300000]:
+            mock_pretrained_moe.config.vocab_size = vs
+            assert bridge.provider_bridge(mock_pretrained_moe).vocab_size == vs
+
+
+# ===========================================================================
+# provider_bridge — Dense path
+# ===========================================================================
+
+
+class TestGemma4BridgeProviderBridgeDense:
+    def test_returns_dense_provider(self, bridge, mock_pretrained_dense):
+        assert isinstance(bridge.provider_bridge(mock_pretrained_dense), Gemma4DenseProvider)
+
+    def test_basic_config_preserved(self, bridge, mock_pretrained_dense):
+        p = bridge.provider_bridge(mock_pretrained_dense)
+        assert p.num_layers == 62
+        assert p.hidden_size == 2816
+        assert p.num_attention_heads == 8
+        assert p.num_query_groups == 4
+        assert p.vocab_size == 262144
+
+    def test_does_not_return_moe_provider(self, bridge, mock_pretrained_dense):
+        assert not isinstance(bridge.provider_bridge(mock_pretrained_dense), Gemma4ModelProvider)
+
+
+# ===========================================================================
+# _infer_attn_pattern helper
+# ===========================================================================
+
+
+class TestInferAttnPattern:
+    def test_5_sliding_1_global(self):
+        lt = ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
+        assert _infer_attn_pattern(lt) == (5, 1)
+
+    def test_all_sliding(self):
+        assert _infer_attn_pattern(["sliding_attention"] * 8) == (8, 0)
+
+    def test_single_sliding_then_global(self):
+        assert _infer_attn_pattern(["sliding_attention", "full_attention", "sliding_attention"]) == (1, 1)
+
+    def test_consecutive_global_layers(self):
+        lt = ["sliding_attention"] * 3 + ["full_attention", "full_attention"]
+        assert _infer_attn_pattern(lt) == (3, 2)
+
+    def test_global_at_start(self):
+        assert _infer_attn_pattern(["full_attention"] + ["sliding_attention"] * 5) == (0, 1)
+
+
+# ===========================================================================
+# maybe_modify_loaded_hf_weight
+# ===========================================================================
+
+
+class TestMaybeModifyLoadedHFWeight:
+    def _make_sd(self, layer_idx=0, hidden=8, num_experts=4):
+        p = f"model.layers.{layer_idx}"
+        return {
+            f"{p}.self_attn.q_proj.weight": torch.randn(hidden, hidden),
+            f"{p}.self_attn.k_proj.weight": torch.randn(hidden // 2, hidden),
+            f"{p}.router.proj.weight": torch.randn(num_experts, hidden),
+            f"{p}.router.scale": torch.ones(hidden),
+            f"{p}.pre_feedforward_layernorm_2.weight": torch.ones(hidden) * 2.0,
+            f"{p}.mlp.gate_proj.weight": torch.randn(16, hidden),
+            f"{p}.mlp.up_proj.weight": torch.randn(16, hidden),
+            f"{p}.pre_feedforward_layernorm.weight": torch.ones(hidden) * 3.0,
+        }
+
+    def test_kv_synthesis_when_both_absent(self, bridge):
+        sd = self._make_sd()
+        hf_param = {
+            "q": "model.layers.0.self_attn.q_proj.weight",
+            "k": "model.layers.0.self_attn.k_proj.weight",
+            "v": "model.layers.0.self_attn.v_proj.weight",
+        }
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+        assert isinstance(result, dict)
+        torch.testing.assert_close(result["v"], result["k"])
+
+    def test_kv_passthrough_when_v_present(self, bridge):
+        sd = self._make_sd()
+        sd["model.layers.0.self_attn.v_proj.weight"] = torch.randn(4, 8)
+        hf_param = {
+            "q": "model.layers.0.self_attn.q_proj.weight",
+            "k": "model.layers.0.self_attn.k_proj.weight",
+            "v": "model.layers.0.self_attn.v_proj.weight",
+        }
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+        assert result is not None
+
+    def test_router_weight_fusion(self, bridge):
+        hidden = 8
+        sd = self._make_sd(hidden=hidden)
+        hf_param = "model.layers.0.router.proj.weight"
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+        assert isinstance(result, torch.Tensor)
+        assert result.shape == sd[hf_param].shape
+        expected_factor = 1.0 * (hidden**-0.5) / 2.0
+        expected = (sd[hf_param].float() * expected_factor).to(sd[hf_param].dtype)
+        torch.testing.assert_close(result, expected)
+
+    def test_router_fusion_missing_keys_passthrough(self, bridge):
+        sd = {"model.layers.0.router.proj.weight": torch.randn(4, 8)}
+        result = bridge.maybe_modify_loaded_hf_weight("model.layers.0.router.proj.weight", sd)
+        torch.testing.assert_close(result, sd["model.layers.0.router.proj.weight"])
+
+    def test_shared_expert_prenorm_fusion(self, bridge):
+        hidden = 8
+        sd = self._make_sd(hidden=hidden)
+        hf_param = {
+            "gate": "model.layers.0.mlp.gate_proj.weight",
+            "up": "model.layers.0.mlp.up_proj.weight",
+        }
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+        assert isinstance(result, dict)
+        correction = 3.0 / 2.0
+        expected = (sd["model.layers.0.mlp.gate_proj.weight"].float() * correction).to(
+            sd["model.layers.0.mlp.gate_proj.weight"].dtype
+        )
+        torch.testing.assert_close(result["gate"], expected)
+
+    def test_shared_expert_fusion_missing_keys_passthrough(self, bridge):
+        sd = {
+            "model.layers.0.mlp.gate_proj.weight": torch.randn(4, 8),
+            "model.layers.0.mlp.up_proj.weight": torch.randn(4, 8),
+        }
+        hf_param = {"gate": "model.layers.0.mlp.gate_proj.weight", "up": "model.layers.0.mlp.up_proj.weight"}
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+        torch.testing.assert_close(result["gate"], sd["model.layers.0.mlp.gate_proj.weight"])
+
+
+# ===========================================================================
+# maybe_modify_converted_hf_weight
+# ===========================================================================
+
+
+class TestMaybeModifyConvertedHFWeight:
+    def _make_ref_sd(self, layer_idx=0, hidden=8, num_experts=4):
+        p = f"model.layers.{layer_idx}"
+        return {
+            f"{p}.router.proj.weight": torch.randn(num_experts, hidden),
+            f"{p}.router.scale": torch.ones(hidden),
+            f"{p}.pre_feedforward_layernorm_2.weight": torch.ones(hidden) * 2.0,
+            f"{p}.mlp.gate_proj.weight": torch.randn(16, hidden),
+            f"{p}.mlp.up_proj.weight": torch.randn(16, hidden),
+            f"{p}.pre_feedforward_layernorm.weight": torch.ones(hidden) * 3.0,
+        }
+
+    def test_drops_keys_absent_from_hf_sd(self, bridge):
+        hf_sd = {"model.layers.0.self_attn.q_proj.weight": torch.randn(8, 8)}
+        converted = {
+            "model.layers.0.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.layers.0.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, hf_sd)
+        assert "model.layers.0.self_attn.v_proj.weight" not in result
+        assert "model.layers.0.self_attn.q_proj.weight" in result
+
+    def test_router_weight_unfusion(self, bridge):
+        hidden = 8
+        ref_sd = self._make_ref_sd(hidden=hidden)
+        factor = 1.0 * (hidden**-0.5) / 2.0
+        fused = (ref_sd["model.layers.0.router.proj.weight"].float() * factor).to(
+            ref_sd["model.layers.0.router.proj.weight"].dtype
+        )
+        result = bridge.maybe_modify_converted_hf_weight(
+            None, {"model.layers.0.router.proj.weight": fused}, ref_sd
+        )
+        torch.testing.assert_close(
+            result["model.layers.0.router.proj.weight"],
+            ref_sd["model.layers.0.router.proj.weight"],
+            atol=1e-5, rtol=1e-5,
+        )
+
+    def test_shared_expert_gate_unfusion(self, bridge):
+        hidden = 8
+        ref_sd = self._make_ref_sd(hidden=hidden)
+        correction = 3.0 / 2.0
+        fused = (ref_sd["model.layers.0.mlp.gate_proj.weight"].float() * correction).to(
+            ref_sd["model.layers.0.mlp.gate_proj.weight"].dtype
+        )
+        result = bridge.maybe_modify_converted_hf_weight(
+            None, {"model.layers.0.mlp.gate_proj.weight": fused}, ref_sd
+        )
+        torch.testing.assert_close(
+            result["model.layers.0.mlp.gate_proj.weight"],
+            ref_sd["model.layers.0.mlp.gate_proj.weight"],
+            atol=1e-5, rtol=1e-5,
+        )
+
+    def test_empty_hf_state_dict_passthrough(self, bridge):
+        converted = {"some.weight": torch.randn(4, 4)}
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, {})
+        assert result is converted
+
+    def test_none_hf_state_dict_passthrough(self, bridge):
+        converted = {"some.weight": torch.randn(4, 4)}
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, None)
+        assert result is converted
+
+
+# ===========================================================================
+# mapping_registry
+# ===========================================================================
+
+
+class TestGemma4BridgeMappingRegistry:
+    def _collect_names(self, registry):
+        names = []
+        for m in registry.mappings:
+            if hasattr(m, "megatron_param"):
+                names.append(str(m.megatron_param))
+            hf = getattr(m, "hf_param", None)
+            if isinstance(hf, dict):
+                names.extend(str(v) for v in hf.values())
+            elif isinstance(hf, str):
+                names.append(hf)
+        return names
+
+    def test_returns_registry(self, bridge):
+        assert isinstance(bridge.mapping_registry(), MegatronMappingRegistry)
+
+    def test_has_mappings(self, bridge):
+        assert len(bridge.mapping_registry().mappings) > 0
+
+    def test_has_embeddings_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("embed_tokens" in n or "word_embeddings" in n for n in names)
+
+    def test_has_final_norm_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("norm" in n for n in names)
+
+    def test_has_qkv_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("linear_qkv" in n for n in names)
+
+    def test_has_router_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("router" in n for n in names)
+
+    def test_has_shared_expert_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("shared_experts" in n for n in names)
+
+    def test_has_post_moe_layernorm(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("post_moe_layernorm" in n for n in names)
+
+    def test_has_layer_scalar_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert any("layer_scalar" in n for n in names)
+
+    def test_uses_causal_lm_prefix(self, bridge):
+        """CausalLM bridge uses model.layers.* (not model.language_model.layers.*)."""
+        names = self._collect_names(bridge.mapping_registry())
+        hf_layer_names = [n for n in names if "layers" in n]
+        assert all("language_model" not in n for n in hf_layer_names)

@@ -198,7 +198,7 @@ def _build_text_models(args):
     """Text mode: GPTModel via Gemma4DenseProvider."""
     from megatron.core.enums import ModelType
     from megatron.training import get_model
-    from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4DenseProvider
+    from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
 
     model_dtype = torch.bfloat16 if args.bf16 else torch.float32
     provider = Gemma4DenseProvider(

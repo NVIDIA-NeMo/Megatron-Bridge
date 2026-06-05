@@ -1,118 +1,233 @@
-# Gemma 4 E4B Support
+# Gemma 4 E4B Examples
 
-**Gemma 4 E4B** (3.8B dense text model) integration for Megatron-Bridge, supporting
-HuggingFace checkpoint conversion, numerical parity verification (text / audio / VL image),
-and TP-distributed pretraining.
+This directory contains example scripts for the Gemma 4 E4B dense model.
 
-Works with **clean Megatron-Core** — no Gemma4-specific CLI arguments or
-`TransformerConfig` fields are required in MCore. All Gemma4 specifics live in Bridge via
-`Gemma4DenseProvider`, `Gemma4DenseVLProvider`, and `Gemma4VLModel`.
+Gemma 4 E4B is a dense Gemma 4 variant with text, vision, and audio support in
+the Hugging Face checkpoint. The Bridge implementation keeps the text-only path
+and the vision/audio path separated:
 
-## File map
+- `Gemma4ForCausalLM` is handled by `Gemma4Bridge` in
+  `megatron.bridge.models.gemma`.
+- `Gemma4ForConditionalGeneration` is handled by `Gemma4VLBridge` in
+  `megatron.bridge.models.gemma_vl`.
+- Shared language-model modules live under `megatron.bridge.models.gemma`; VL
+  modules extend that implementation without introducing a reverse dependency.
 
-| File | Purpose |
-|------|---------|
-| `src/megatron/bridge/models/gemma_vl/modeling_gemma4_vl.py` | Layer spec, `Gemma4DenseTransformerLayer`, dual-RoPE, PLE, shared-KV, `Gemma4DenseProvider`, `Gemma4VLModel` |
-| `src/megatron/bridge/models/gemma_vl/gemma4_vl_provider.py` | `Gemma4DenseVLProvider` (Dense VL/Audio), `Gemma4VLModelProvider` (MoE VL), `Gemma4ModelProvider` (MoE text) |
-| `src/megatron/bridge/models/gemma_vl/gemma4_vl_bridge.py` | Bridge-native HF ↔ Megatron conversion (`Gemma4VLBridge`) |
-| `examples/models/gemma/gemma4/parity_check_e4b.py` | Distributed parity check — `text`, `vl`, `audio` modes |
-| `examples/models/gemma/gemma4/slurm_pretrain.sh` | Full pipeline: text convert → VL convert → parity checks → training |
-| `tests/unit_tests/models/gemma_vl/test_gemma4_vl_provider.py` | Provider unit tests |
-| `tests/unit_tests/models/gemma_vl/test_gemma4_vl_bridge.py` | Bridge mapping unit tests |
-| `tests/unit_tests/models/gemma_vl/test_gemma4_vl_modeling.py` | VL model unit tests |
+## Requirements
 
-## Quick start
-
-### Step 1 — Convert HuggingFace weights
-
-Two separate checkpoints are needed: one text-only (for pretraining) and one VL/audio (for multimodal parity).
+Gemma 4 requires a Megatron-Core checkout on `PYTHONPATH`. Set
+`MEGATRON_LM_ROOT` to your Megatron-LM repository:
 
 ```bash
 export MEGATRON_LM_ROOT=/path/to/Megatron-LM
-export PYTHONPATH=$PWD/src:$MEGATRON_LM_ROOT
-
-# Text-only checkpoint (used for training)
-GEMMA4_CONVERSION_MODE=text \
-torchrun --nproc_per_node=2 \
-    examples/conversion/convert_checkpoints_multi_gpu.py import \
-    --hf-model /path/to/gemma-4-E4B-it \
-    --megatron-path /path/to/gemma4-e4b-megatron-text \
-    --tp 2 --pp 1 --torch-dtype bfloat16
-
-# VL/audio checkpoint (used for multimodal parity)
-GEMMA4_CONVERSION_MODE=audio \
-torchrun --nproc_per_node=2 \
-    examples/conversion/convert_checkpoints_multi_gpu.py import \
-    --hf-model /path/to/gemma-4-E4B-it \
-    --megatron-path /path/to/gemma4-e4b-megatron-vl \
-    --tp 2 --pp 1 --torch-dtype bfloat16
+export PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-}
 ```
 
-### Step 2 — Verify conversion (parity checks)
+Gemma 4 checkpoints may require a recent `transformers` version:
 
 ```bash
-# Text parity — GPTModel vs HF Gemma4ForCausalLM
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
-    examples/models/gemma/gemma4/parity_check_e4b.py \
-    --hf-dir /path/to/gemma-4-E4B-it \
-    --megatron-ckpt /path/to/gemma4-e4b-megatron-text \
-    --tp 2 --bf16 --mode text --atol 3.0
-
-# Audio parity — Gemma4VLModel (audio forward) vs HF
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
-    examples/models/gemma/gemma4/parity_check_e4b.py \
-    --hf-dir /path/to/gemma-4-E4B-it \
-    --megatron-ckpt /path/to/gemma4-e4b-megatron-vl \
-    --tp 2 --bf16 --mode audio --atol 3.0
-
-# VL image parity — Gemma4VLModel (image forward) vs HF
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
-    examples/models/gemma/gemma4/parity_check_e4b.py \
-    --hf-dir /path/to/gemma-4-E4B-it \
-    --megatron-ckpt /path/to/gemma4-e4b-megatron-vl \
-    --tp 2 --bf16 --mode vl --atol 10.0
+uv pip install -q --upgrade 'transformers>=5.5.0'
 ```
 
-**Expected results (bf16):**
+All scripts in this directory run `uv run --no-sync` to prevent `uv` from
+reverting the installed package versions.
+
+## Workspace Configuration
+
+All scripts use a `WORKSPACE` environment variable to define the base directory
+for checkpoints and results. By default, this is set to `/workspace`. You can
+override it:
+
+```bash
+export WORKSPACE=/your/custom/path
+```
+
+Directory structure:
+- `${WORKSPACE}/models/` - Converted Megatron checkpoints
+- `${WORKSPACE}/results/` - Training outputs and experiment results
+
+## Checkpoint Conversion
+
+Gemma 4 E4B has two useful conversion modes:
+
+- `GEMMA4_CONVERSION_MODE=text` imports the text-only GPTModel path, used for
+  text pretraining and text generation.
+- `GEMMA4_CONVERSION_MODE=audio` imports the full VL/audio model path, used for
+  multimodal parity checks.
+
+### Import HF → Megatron (text)
+
+```bash
+GEMMA4_CONVERSION_MODE=text \
+uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    --hf-model google/gemma-4-E4B-it \
+    --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it
+```
+
+### Import HF → Megatron (VL/audio)
+
+```bash
+GEMMA4_CONVERSION_MODE=audio \
+uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    --hf-model google/gemma-4-E4B-it \
+    --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it-vl
+```
+
+### Export Megatron → HF
+
+```bash
+uv run --no-sync python examples/conversion/convert_checkpoints.py export \
+    --hf-model google/gemma-4-E4B-it \
+    --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it/iter_0000000 \
+    --hf-path ${WORKSPACE}/models/gemma-4-E4B-it-hf-export
+```
+
+### Round-trip validation
+
+```bash
+GEMMA4_CONVERSION_MODE=text \
+uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+    examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+    --hf-model-id google/gemma-4-E4B-it \
+    --tp 2 --pp 1
+```
+
+See [conversion.sh](conversion.sh) for the full text-only import, export, and
+round-trip workflow.
+
+## Inference
+
+Text-only inference uses `hf_to_megatron_generate_text.py` with
+`GEMMA4_CONVERSION_MODE=text` so the bridge selects `Gemma4Bridge` and builds a
+`GPTModel`, not the full `Gemma4VLModel`.
+
+### Text generation from HF weights
+
+```bash
+GEMMA4_CONVERSION_MODE=text \
+uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+    examples/conversion/hf_to_megatron_generate_text.py \
+    --hf_model_path google/gemma-4-E4B-it \
+    --prompt "What is the capital of France?" \
+    --max_new_tokens 20 \
+    --tp 2 --pp 1
+```
+
+### Text generation from imported Megatron checkpoint
+
+```bash
+GEMMA4_CONVERSION_MODE=text \
+uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
+    examples/conversion/hf_to_megatron_generate_text.py \
+    --hf_model_path google/gemma-4-E4B-it \
+    --megatron_model_path ${WORKSPACE}/models/gemma-4-E4B-it/iter_0000000 \
+    --prompt "Explain entropy in one sentence." \
+    --max_new_tokens 50 \
+    --tp 2 --pp 1
+```
+
+See [inference.sh](inference.sh) for both examples.
+
+> **Note:** `google/gemma-4-E4B-it` is instruction tuned. For high-quality
+> assistant-style responses, use prompts and tokenization compatible with the
+> model's chat template. The simple generation script is intended as a Bridge
+> smoke test, not a production serving path.
+
+## Parity Checks
+
+[parity_check_e4b.py](parity_check_e4b.py) compares Megatron logits against the
+Hugging Face model in three modes:
+
+| Mode | Megatron model | HF model | Checkpoint |
+|------|---------------|----------|------------|
+| `text` | `Gemma4DenseProvider` → `GPTModel` | `Gemma4ForCausalLM` | text checkpoint |
+| `vl` | `Gemma4DenseVLProvider` → `Gemma4VLModel` | `Gemma4ForConditionalGeneration` | VL/audio checkpoint |
+| `audio` | `Gemma4DenseVLProvider` → `Gemma4VLModel` | `Gemma4ForConditionalGeneration` | VL/audio checkpoint |
+
+### Text parity
+
+```bash
+CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+    examples/models/gemma/gemma4/parity_check_e4b.py \
+    --hf-dir /path/to/gemma-4-E4B-it \
+    --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it \
+    --tp 2 --bf16 --mode text --atol 3.0
+```
+
+### Audio parity
+
+```bash
+CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+    examples/models/gemma/gemma4/parity_check_e4b.py \
+    --hf-dir /path/to/gemma-4-E4B-it \
+    --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it-vl \
+    --tp 2 --bf16 --mode audio --atol 3.0
+```
+
+### Vision parity
+
+```bash
+CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+    examples/models/gemma/gemma4/parity_check_e4b.py \
+    --hf-dir /path/to/gemma-4-E4B-it \
+    --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it-vl \
+    --tp 2 --bf16 --mode vl --atol 6.0
+```
+
+Expected bf16 results:
 
 | Mode | Typical max \|diff\| | atol | Notes |
-|------|---------------------|------|-------|
+|------|----------------------|------|-------|
 | text | ~2.94 | 3.0 | Softcap 30.0 applied before comparison |
-| audio | ~1.65 | 3.0 | 12 audio tokens, audio feature diff ~0.10 |
-| vl | ~8.11 | 10.0 | 280 image tokens — see note below |
+| audio | ~1.65 | 3.0 | 12 audio tokens |
+| vl | ~5.47 | 6.0 | 280 image tokens |
 
-> **VL bf16 tolerance (10.0):** The higher atol for VL image parity is expected and not a bug.
-> With 280 image tokens and a bf16 vision tower feature diff of ~0.22 max per token,
-> error accumulates through 42 transformer layers. The worst-case positions are consistently
-> at the image/text boundary (position 279 = last image token, 280 = first text token),
-> which is the hallmark of bf16 accumulated rounding from image features.
-> For comparison: audio passes at atol 3.0 with only 12 tokens and ~0.10 feature diff;
-> VL has 23× more tokens and 2× larger per-token diff, producing the observed ~8 floor.
->
-> **fp32 mode is not supported** for VL parity: the vision/audio towers are stored as
-> bfloat16 in the checkpoint, causing dtype mismatches when the rest of the model runs
-> in fp32. The parity test always runs bf16.
+The higher VL tolerance is expected. The image path injects many more modality
+tokens than the audio path, and bf16 vision feature differences accumulate
+through the language model. The worst positions are usually at the image/text
+boundary.
 
-### Step 3 — Or run all steps at once
+## Pretraining
+
+[slurm_pretrain.sh](slurm_pretrain.sh) runs the full workflow:
+
+1. Convert the text checkpoint.
+2. Convert the VL/audio checkpoint.
+3. Run text, audio, and VL parity checks.
+4. Launch Gemma 4 E4B text pretraining.
 
 ```bash
-NVIDIA_VISIBLE_DEVICES=0,1 \
 HF_MODEL_DIR=/path/to/gemma-4-E4B-it \
-MEGATRON_CKPT=/path/to/gemma4-e4b-megatron \
+MEGATRON_CKPT=${WORKSPACE}/models/gemma4-e4b-megatron \
 TRAIN_DATA_PATH=/path/to/data \
 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 ```
 
 The script derives paths automatically:
-- `${MEGATRON_CKPT}-text` — text conversion, used for training
-- `${MEGATRON_CKPT}-vl` — VL/audio conversion, used for parity checks
+- `${MEGATRON_CKPT}-text` - text conversion, used for training
+- `${MEGATRON_CKPT}-vl` - VL/audio conversion, used for parity checks
 
-Skip flags: `SKIP_CONVERT=1`, `SKIP_TEXT_CONVERT=1`, `SKIP_VL_CONVERT=1`, `SKIP_PARITY=1`.
+Skip flags:
+- `SKIP_CONVERT=1`
+- `SKIP_TEXT_CONVERT=1`
+- `SKIP_VL_CONVERT=1`
+- `SKIP_PARITY=1`
 
-## Running unit tests
+## Evaluation
+
+Use the parity checks above as the primary conversion sanity tests. The text
+mode verifies the pure LLM path, while the `vl` and `audio` modes verify that
+the multimodal wrapper preserves the Hugging Face behavior.
+
+For generation sanity checks, run [inference.sh](inference.sh). For production
+serving, export the checkpoint to Hugging Face format and run it with a serving
+runtime that supports the Gemma 4 chat template and multimodal preprocessing.
+
+## Running Unit Tests
 
 ```bash
-PYTHONPATH=$PWD/src python -m pytest \
+PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-} python -m pytest \
+    tests/unit_tests/models/gemma/test_gemma4_bridge.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_bridge.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_modeling.py \
@@ -126,82 +241,48 @@ NVIDIA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
     -m pytest tests/unit_tests/models/gemma_vl -v -k "TensorParallel"
 ```
 
-## Investigating VL parity error
+## Architecture Notes
 
-The `--vl-image-tokens N` flag in `parity_check_e4b.py` lets you test with fewer image tokens.
-The grid is chosen to preserve the standard 42:60 aspect ratio so positional encodings
-stay comparable:
+### Text and VL Separation
 
-```bash
-# T=70 tokens (21×30 grid, same 7:10 aspect ratio as default 42×60)
-python ... parity_check_e4b.py --mode vl --vl-image-tokens 70 --atol 99
+The text-only implementation lives in `megatron.bridge.models.gemma`:
 
-# T=140 tokens (30×42 grid, ≈7:10 aspect)
-python ... parity_check_e4b.py --mode vl --vl-image-tokens 140 --atol 99
-```
+- `modeling_gemma4.py` contains Dense/MoE layers, attention, dual RoPE, PLE,
+  shared-KV wiring, and output softcapping.
+- `gemma4_provider.py` contains `Gemma4DenseProvider` and
+  `Gemma4ModelProvider`.
+- `gemma4_bridge.py` registers `Gemma4ForCausalLM` and defines text checkpoint
+  mappings.
 
-Note: the absolute diff values depend heavily on the random patch content for each grid
-size, so the scaling is not perfectly monotonic across T values. The most reliable
-evidence for accumulated error is the consistently worst positions at the image/text
-boundary (last image token, first text token) across all token counts.
+The VL implementation lives in `megatron.bridge.models.gemma_vl`:
 
-## Implemented components
+- `modeling_gemma4_vl.py` contains only `Gemma4VLModel` and VL/audio forward
+  helpers.
+- `gemma4_vl_provider.py` contains `Gemma4DenseVLProvider` and
+  `Gemma4VLModelProvider`.
+- `gemma4_vl_bridge.py` registers `Gemma4ForConditionalGeneration` and adds
+  vision/audio mappings on top of the text mappings.
 
-### Language model (Dense / E4B)
+`gemma_vl` imports from `gemma`; `gemma` does not import from `gemma_vl`.
 
-| Component | Detail |
-|-----------|--------|
-| **4-norm structure** | `input_layernorm` → attention → `post_self_attn_layernorm` → MLP → `post_mlp_layernorm` |
-| **GQA + sliding/global mix** | `kv_channels=256` (sliding), `global_kv_channels=512` (global); `window_attn_skip_freq=6` |
-| **Dual RoPE** | Sliding θ=10 000 (full rotation), global θ=1 000 000 (partial factor=0.25); `Gemma4DenseRotaryEmbedding` |
-| **Q/K LayerNorm** | RMSNorm on queries and keys via `Gemma4DenseSelfAttention` |
-| **Shared KV** | Last 18 layers reuse KV from the last non-shared layer of the same type; wired by `wire_gemma4_kv_sharing()` |
-| **Per-Layer Embeddings (PLE)** | `per_layer_embedding` (vocab) + `per_layer_model_proj` (hidden→PLE) per layer; patched into `GPTModel.forward` via `_install_ple_forward()` |
-| **GEGLU activation** | `tanh`-approximate GELU; handled by Bridge's `GatedMLPMapping` |
-| **Logit softcapping** | `final_logit_softcapping=30.0` applied in `Gemma4DenseProvider.build()` |
-
-### Vision-Language model (`Gemma4VLModel`)
+### Dense E4B Language Model
 
 | Component | Detail |
 |-----------|--------|
-| **Vision encoder** | HF `Gemma4VisionTower` (SigLIP-based) loaded via `AutoModel.from_config(vision_config)` |
-| **Vision projector** | `Gemma4MultimodalEmbedder` (RMSNorm + linear, vision hidden → text hidden) |
-| **Image scatter** | Features scattered at `image_token_id=258880` positions with bidirectional attention within image blocks |
-| **Audio encoder** | HF audio tower (12-layer transformer, 128-bin mel, 4× subsampling, 1024→1536 projection) |
-| **Audio projector** | `Gemma4AudioEmbedder` (1536 → 2560) |
-| **Audio scatter** | Features scattered at `audio_token_id=258881` positions with bidirectional attention |
-| **PLE in VL path** | `lm_input_ids` replaces multimodal positions with `pad_token_id=0` before PLE lookup; embedding scaled by `√hidden_size` before scatter; post-scatter embeddings used for PLE `mdl_proj` (matching HF) |
-| **Causal mask** | VL forward uses pure causal mask (HF default without `mm_token_type_ids`) |
+| 4-norm structure | `input_layernorm` → attention → `post_self_attn_layernorm` → MLP → `post_mlp_layernorm` |
+| GQA + sliding/global mix | Sliding layers use 256-dim heads; global layers use 512-dim heads |
+| Dual RoPE | Sliding θ=10 000; global θ=1 000 000 with partial factor 0.25 |
+| Shared KV | Last 18 layers reuse KV from the last non-shared layer of the same attention type |
+| Per-Layer Embeddings | PLE modules are attached after `GPTModel` construction and threaded through `forward()` |
+| Logit softcapping | `final_logit_softcapping=30.0` is applied by the Gemma4 output layer |
 
-### Checkpoint conversion
+### VL and Audio Path
 
-```
-AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
-  └─ Gemma4VLBridge                  # registered for Gemma4ForConditionalGeneration
-       ├─ provider_bridge()
-       │    text mode  → Gemma4DenseProvider    (text-only pretraining)
-       │    vl/audio   → Gemma4DenseVLProvider  (full VL + Audio)
-       ├─ _dense_e4b_mapping_registry()
-       │    QKV / GEGLU / PLE / 4 norms / shared-KV synthesis
-       └─ maybe_modify_loaded_hf_weight()
-            shared-KV: synthesize zero K/V rows for last 18 layers
-            (HF stores no k/v proj for those layers)
-```
+`Gemma4VLModel` wraps the language model with HF vision/audio modules:
 
-### Parity check modes
-
-| Mode | Megatron model | HF model | Checkpoint |
-|------|---------------|----------|-----------|
-| `text` | `Gemma4DenseProvider` → `GPTModel` | `Gemma4ForCausalLM` | `*-text` |
-| `vl` | `Gemma4DenseVLProvider` → `Gemma4VLModel` (image forward) | `Gemma4ForConditionalGeneration` | `*-vl` |
-| `audio` | `Gemma4DenseVLProvider` → `Gemma4VLModel` (audio forward) | `Gemma4ForConditionalGeneration` | `*-vl` |
-
-### Key correctness fixes in VL forward
-
-Three bugs were found and fixed in the VL forward path (vs. the text-only path which passes cleanly):
-
-1. **PLE was completely skipped** — `Gemma4VLModel.forward` called `language_model.forward(input_ids=None, ...)`, causing `_compute_per_layer_inputs` to return early. Fixed by passing `input_ids=lm_input_ids`.
-
-2. **PLE token IDs at multimodal positions** — raw `audio_token_id` / `image_token_id` values were passed to `per_layer_embedding`, producing wrong PLE at multimodal positions. Fixed by replacing multimodal positions with `pad_token_id=0` in `lm_input_ids` (matching HF behavior).
-
-3. **Embedding scaling missing** — `language_model.embedding()` was called directly (bypassing the `_ple_forward` wrapper that applies `√hidden_size` scaling). Fixed by applying explicit scaling before the modality scatter.
+- Vision tower and projector weights are mapped under `vision_tower.*` and
+  `embed_vision.*`.
+- Audio tower and projector weights are mapped under `audio_tower.*` and
+  `embed_audio.*`.
+- Multimodal token positions are replaced with pad token IDs before PLE lookup,
+  matching Hugging Face behavior.

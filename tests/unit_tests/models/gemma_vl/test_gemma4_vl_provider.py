@@ -18,13 +18,12 @@ Gemma4DenseProvider (Dense), Gemma4VLModelProvider, and Gemma4DenseVLProvider.""
 import pytest
 import torch
 
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.gemma.modeling_gemma4 import _install_tied_kv
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
-    Gemma4ModelProvider,
     Gemma4VLModelProvider,
-    _install_tied_kv,
 )
-from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4DenseProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
