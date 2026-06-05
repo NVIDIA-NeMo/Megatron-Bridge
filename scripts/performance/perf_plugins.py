@@ -322,6 +322,8 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "kimi":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+            if model_family_name == "gpt_oss" and model_recipe_name == "gpt_oss_20b" and train_task == "pretrain":
+                del_cudnn_ln = False
         if model_family_name in ["llama"] and train_task in ["sft"]:
             del_cudnn_ln = False
         if model_recipe_name in ["nemotron_3_nano"]:

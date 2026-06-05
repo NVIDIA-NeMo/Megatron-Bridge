@@ -303,7 +303,7 @@ config = ConfigContainer(
         lr_decay_iters=1000,
     ),
     dataset=HFDatasetConfig(
-        dataset_name="squad",
+        dataset_name="rajpurkar/squad",
         process_example_fn=process_squad_example,
         seq_length=512,
     ),

@@ -65,6 +65,64 @@ def _make_batch(device="cpu"):
     return batch
 
 
+def _make_forward_step_state():
+    class _Timer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def start(self):
+            return self
+
+        def stop(self):
+            return self
+
+    class _StragglerTimer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):  # noqa: ARG002
+            return False
+
+    cfg = type(
+        "Cfg",
+        (),
+        {
+            "model": type("M", (), {"seq_length": 16, "pipeline_model_parallel_size": 1})(),
+            "dataset": type("D", (), {"skip_getting_attention_mask_from_dataset": True})(),
+            "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),
+        },
+    )()
+    return type("State", (), {"cfg": cfg, "timers": _Timer(), "straggler_timer": _StragglerTimer()})()
+
+
+def _patch_forward_step_deps(monkeypatch, model):
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, non_blocking=False: self)
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.get_model_config", lambda _: model.config, raising=True)
+    monkeypatch.setattr(
+        "megatron.bridge.training.vlm_step.get_pg_collection", lambda _: model.pg_collection, raising=True
+    )
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.is_pp_first_stage", lambda _: True, raising=True)
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.is_pp_last_stage", lambda _: True, raising=True)
+
+
+def _make_visual_forward_batch():
+    return {
+        "input_ids": torch.tensor([[1, 2, 3, 4]]),
+        "labels": torch.tensor([[2, 3, 4, -100]]),
+        "loss_mask": torch.ones(1, 4),
+        "position_ids": torch.arange(4).unsqueeze(0),
+        "attention_mask": torch.ones(1, 4, dtype=torch.bool),
+        "visual_inputs": GenericVisualInputs(
+            pixel_values=torch.randn(1, 3, 4, 4),
+            image_position_ids=torch.zeros(1, 4, 2, dtype=torch.long),
+            mm_token_type_ids=torch.ones(1, 4, dtype=torch.long),
+        ),
+    }
+
+
 def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
     # Simulate Training on CPU-only env by making .cuda a no-op that returns the same tensor
     class _NoCudaTensor(torch.Tensor):
@@ -121,6 +179,99 @@ class _MockPGCollection:
         pg = _MockProcessGroup()
         pg.size = lambda: self._cp_size
         return pg
+
+
+class _ForwardModelBase(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = type("C", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False})()
+        self.pg_collection = _MockPGCollection()
+        self.received_kwargs = None
+
+
+class _ForwardWrapper(torch.nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+        self.config = module.config
+        self.pg_collection = module.pg_collection
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **kwargs)
+
+
+class _Gemma4LikeForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        pixel_values=None,
+        image_position_ids=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "pixel_values": pixel_values,
+            "image_position_ids": image_position_ids,
+        }
+        return torch.tensor(0.0)
+
+
+class _MmTokenTypeForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        pixel_values=None,
+        image_position_ids=None,
+        mm_token_type_ids=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "pixel_values": pixel_values,
+            "image_position_ids": image_position_ids,
+            "mm_token_type_ids": mm_token_type_ids,
+        }
+        return torch.tensor(0.0)
+
+
+def test_forward_step_filters_unsupported_visual_kwargs(monkeypatch):
+    inner_model = _Gemma4LikeForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+
+    output, _ = forward_step(_make_forward_step_state(), _Iterator(_make_visual_forward_batch()), model)
+
+    assert output.item() == 0.0
+    assert inner_model.received_kwargs is not None
+    assert inner_model.received_kwargs["pixel_values"] is not None
+    assert inner_model.received_kwargs["image_position_ids"] is not None
+    assert "mm_token_type_ids" not in inner_model.received_kwargs
+
+
+def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
+    inner_model = _MmTokenTypeForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+
+    output, _ = forward_step(_make_forward_step_state(), _Iterator(_make_visual_forward_batch()), model)
+
+    assert output.item() == 0.0
+    assert inner_model.received_kwargs is not None
+    assert inner_model.received_kwargs["mm_token_type_ids"] is not None
 
 
 def test_get_batch_padding_paths(monkeypatch):
