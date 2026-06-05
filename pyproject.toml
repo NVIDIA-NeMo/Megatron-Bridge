@@ -109,6 +109,7 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
+managed = true
 # Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
 # mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
 # but kept here so they build correctly when installed.
@@ -128,7 +129,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@release_v2.16",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@f8a01cd5ac55a6b669bacc4b222242bfff2c822a",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",

@@ -400,11 +400,15 @@ class Qwen3ASRConfig(PretrainedConfig):
         support_languages=None,
         **kwargs,
     ):
-        super().__init__(**kwargs)
         if thinker_config is None:
             thinker_config = {}
 
-        self.thinker_config = Qwen3ASRThinkerConfig(**thinker_config)
+        if isinstance(thinker_config, Qwen3ASRThinkerConfig):
+            self.thinker_config = thinker_config
+        else:
+            self.thinker_config = Qwen3ASRThinkerConfig(**thinker_config)
+
+        super().__init__(**kwargs)
         self.support_languages = support_languages
 
     def get_text_config(self, decoder=False) -> "PretrainedConfig":

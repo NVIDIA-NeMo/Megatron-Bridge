@@ -525,15 +525,15 @@ class TestQwen3BridgeMTPMapping:
         "mtp.layers.0.enorm.weight",
         "mtp.layers.0.hnorm.weight",
         "mtp.layers.0.final_layernorm.weight",
-        "mtp.layers.0.transformer_layer.self_attention.linear_qkv.layer_norm_weight",
-        "mtp.layers.0.transformer_layer.self_attention.q_layernorm.weight",
-        "mtp.layers.0.transformer_layer.self_attention.k_layernorm.weight",
-        "mtp.layers.0.transformer_layer.self_attention.linear_proj.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.linear_qkv.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.q_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.k_layernorm.weight",
+        "mtp.layers.0.mtp_model_layer.self_attention.linear_proj.weight",
         # QKVMapping stores a wildcard pattern, not a concrete layer index
-        "mtp.layers.*.transformer_layer.self_attention.linear_qkv.weight",
-        "mtp.layers.0.transformer_layer.mlp.linear_fc1.layer_norm_weight",
-        "mtp.layers.0.transformer_layer.mlp.linear_fc1.weight",
-        "mtp.layers.0.transformer_layer.mlp.linear_fc2.weight",
+        "mtp.layers.*.mtp_model_layer.self_attention.linear_qkv.weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.layer_norm_weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc1.weight",
+        "mtp.layers.0.mtp_model_layer.mlp.linear_fc2.weight",
     )
 
     def _get_all_megatron_params(self, mapping_registry):

@@ -145,3 +145,13 @@ class TestNemotronVLBridgeMappingRegistry:
         assert any("language_model" in n for n in names)
         # QKV mappings should be present for both language and vision
         assert any("linear_qkv" in n for n in names)
+
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d_weight" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d_bias" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d.weight" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d.bias" in names
+
+        reverse_weight = registry.hf_to_megatron_lookup("language_model.backbone.layers.0.mixer.conv1d.weight")
+        reverse_bias = registry.hf_to_megatron_lookup("language_model.backbone.layers.0.mixer.conv1d.bias")
+        assert reverse_weight.megatron_param == "llava_model.language_model.decoder.layers.0.mixer.conv1d_weight"
+        assert reverse_bias.megatron_param == "llava_model.language_model.decoder.layers.0.mixer.conv1d_bias"

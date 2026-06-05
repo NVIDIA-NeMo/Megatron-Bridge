@@ -32,6 +32,14 @@ from megatron.bridge.models.deepseek import (
     DeepSeekV2Bridge,
     DeepSeekV3Bridge,
 )
+from megatron.bridge.models.ernie import (
+    Ernie45Bridge,
+)
+from megatron.bridge.models.ernie_vl import (
+    Ernie45VLBridge,
+    Ernie45VLModel,
+    Ernie45VLModelProvider,
+)
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
     FalconH1ModelProvider,
@@ -81,6 +89,10 @@ from megatron.bridge.models.llama_nemotron import (
 )
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+from megatron.bridge.models.mimo_v2_flash import (
+    MiMoV2FlashBridge,
+    MiMoV2FlashModelProvider,
+)
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
@@ -173,6 +185,12 @@ __all__ = [
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
+    # ERNIE Text-Only Models
+    "Ernie45Bridge",
+    # ERNIE VL Models
+    "Ernie45VLBridge",
+    "Ernie45VLModel",
+    "Ernie45VLModelProvider",
     "FalconH1Bridge",
     "FalconH1ModelProvider",
     "Gemma3ModelProvider",
@@ -204,6 +222,9 @@ __all__ = [
     "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",
+    # MiMo-V2-Flash
+    "MiMoV2FlashBridge",
+    "MiMoV2FlashModelProvider",
     # Nemotron Models
     "NemotronBridge",
     # Audio-Language Models
