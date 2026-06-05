@@ -335,7 +335,7 @@ class TestApplyDatasetOverride:
         config = _make_mock_config()
         result = apply_dataset_override(config, "llm-finetune", seq_length=512)
         assert isinstance(result.dataset, HFDatasetConfig)
-        assert result.dataset.dataset_name == "squad"
+        assert result.dataset.dataset_name == "rajpurkar/squad"
 
     def test_llm_finetune_extracts_dataset_name_from_cli(self):
         from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
