@@ -60,6 +60,7 @@ EP=${EP:-32}
 ETP=${ETP:-1}
 CP=${CP:-1}
 SP=${SP:-True}
+RECOMPUTE_MODULES=${RECOMPUTE_MODULES:-"[moe,layernorm,core_attn,moe_act,mlp,shared_experts]"}
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
 SAVE_DIR="${WORKSPACE}/results/${MODEL_NAME}_dclm_pretrain_tp${TP}_pp${PP}_ep${EP}_selective_${SLURM_JOB_ID}"
 WANDB_ENTITY=${WANDB_ENTITY:-nvidia-nemo-fw-public}
@@ -96,7 +97,7 @@ if [ "$WANDB_MODE" = "online" ] && [ -z "${WANDB_API_KEY:-}" ]; then
 fi
 
 export DCLM_DATA_DIR DCLM_PATTERN DCLM_CACHE EXTRA_OVERRIDES HF_MODEL_PATH RECIPE_NAME SAVE_DIR SEQ_LENGTH
-export TRAIN_ITERS SAVE_INTERVAL TP PP EP ETP CP SP GPUS_PER_NODE
+export TRAIN_ITERS SAVE_INTERVAL TP PP EP ETP CP SP RECOMPUTE_MODULES GPUS_PER_NODE
 export WANDB_ENTITY WANDB_PROJECT WANDB_EXP_NAME WORKDIR WORKSPACE
 
 CMD='
@@ -146,7 +147,7 @@ uv run --no-sync python scripts/training/run_recipe.py \
     model.seq_length="$SEQ_LENGTH" \
     dataset.sequence_length="$SEQ_LENGTH" \
     model.recompute_granularity=selective \
-    model.recompute_modules=[moe,layernorm,core_attn,moe_act] \
+    model.recompute_modules=${RECOMPUTE_MODULES} \
     dist.distributed_timeout_minutes=90 \
     "dataset.blend=[[${BLEND_PATHS}],null]" \
     dataset.split=\"9999,8,2\" \
@@ -169,7 +170,7 @@ echo "Recipe: ${RECIPE_NAME}"
 echo "HF model: ${HF_MODEL_PATH}"
 echo "DCLM data: ${DCLM_DATA_DIR}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
-echo "Recompute: selective [moe,layernorm,core_attn,moe_act]"
+echo "Recompute: selective ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"
