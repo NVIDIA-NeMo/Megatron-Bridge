@@ -285,6 +285,13 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
     """
+    # >>> DEBUG ISOLATION BUILD — DO NOT MERGE <<<
+    # Make the per-microbatch FLOPS accumulation a no-op to measure whether this
+    # call is the source of the throughput regression. If perf recovers to baseline,
+    # the cost is the per-microbatch device-op/Python overhead here; if it stays
+    # regressed, the cost is elsewhere (train.py buffer/flush or the data path).
+    return
+
     if tokens is None:
         return
 
