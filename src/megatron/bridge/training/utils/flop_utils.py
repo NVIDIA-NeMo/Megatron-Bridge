@@ -115,6 +115,84 @@ def resolve_global_flops_seqlen_stats(
     return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
 
 
+def buffer_flops_metadata(state, *, batch_size: int, vp_size: int | None = None) -> None:
+    """Append this step's per-rank FLOPS stats to ``state._flops_buffer`` (sync-free).
+
+    Hot-path replacement for a per-step ``resolve_global_flops_seqlen_stats`` call. The
+    on-device ``_flops_seqlen_sq_sum`` / ``_flops_vision_patches`` accumulators are
+    captured **by reference** (no ``.item()``, no all-reduce), to be reduced and turned
+    into FLOPS in bulk by :func:`flush_flops_buffer` at log/checkpoint boundaries. This
+    keeps the training loop free of the per-step device→host sync that otherwise stalls
+    CUDA run-ahead. The accumulators are reset each step *after* this call, but the
+    buffered references stay valid (reset rebinds the attribute to a fresh ``0``).
+
+    VPP over-counting is corrected here (per-rank, before buffering), identically to
+    ``resolve_global_flops_seqlen_stats``.
+    """
+    seqlen_sum = getattr(state, "_flops_seqlen_sum", 0)
+    seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0)
+    vision_patches = getattr(state, "_flops_vision_patches", 0)
+    if isinstance(vp_size, int) and vp_size > 1:
+        seqlen_sum = seqlen_sum // vp_size
+        seqlen_sq_sum = seqlen_sq_sum // vp_size
+        vision_patches = vision_patches // vp_size
+    if getattr(state, "_flops_buffer", None) is None:
+        state._flops_buffer = []
+    state._flops_buffer.append((seqlen_sum, seqlen_sq_sum, vision_patches, batch_size))
+
+
+def flush_flops_buffer(state, config, *, data_parallel_size: int, dp_group=None) -> float:
+    """Reduce all buffered per-step stats over DP, compute per-step FLOPS, fold into
+    ``state.train_state.floating_point_operations_so_far``; return the interval delta.
+
+    Performs exactly **one** all-reduce and **one** host sync regardless of how many
+    steps were buffered. Each buffered step is reduced as its own row and evaluated
+    through :func:`num_floating_point_operations` individually, so the nonlinear ViT /
+    SSM / sliding-window terms (which depend on per-step averages) stay exact — this is
+    *not* an interval-averaged approximation. ``SUM`` all-reduce is linear, so reducing
+    per row equals reducing per step. Idempotent (empty buffer → ``0.0``). The delta is
+    also added to ``state._flops_since_last_log`` for straggler reporting.
+    """
+    buf = getattr(state, "_flops_buffer", None)
+    if not buf:
+        return 0.0
+    device = torch.cuda.current_device() if torch.cuda.is_available() else None
+    rows = torch.zeros((len(buf), 3), dtype=torch.long, device=device)
+    for i, (seqlen_sum, seqlen_sq_sum, vision_patches, _batch_size) in enumerate(buf):
+        rows[i, 0] = seqlen_sum
+        rows[i, 1] = seqlen_sq_sum
+        rows[i, 2] = vision_patches
+    use_all_reduce = (
+        dp_group is not None
+        and data_parallel_size > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    )
+    if use_all_reduce:
+        torch.distributed.all_reduce(rows, op=torch.distributed.ReduceOp.SUM, group=dp_group)
+    else:
+        rows = rows * data_parallel_size
+    reduced = rows.tolist()  # single host sync per flush
+
+    delta = 0.0
+    for (g_seqlen_sum, g_seqlen_sq_sum, g_vision), (_s, _q, _v, batch_size) in zip(reduced, buf):
+        if g_seqlen_sum > 0:
+            delta += num_floating_point_operations(
+                config,
+                batch_size=batch_size,
+                seqlen_sum=g_seqlen_sum,
+                seqlen_squared_sum=g_seqlen_sq_sum,
+                num_vision_patches=max(g_vision, 0),
+            )
+        else:
+            delta += num_floating_point_operations(config, batch_size=batch_size)
+
+    state.train_state.floating_point_operations_so_far += delta
+    state._flops_since_last_log = getattr(state, "_flops_since_last_log", 0.0) + delta
+    state._flops_buffer = []
+    return delta
+
+
 def _add_flops_accumulator(state, name: str, delta) -> None:
     """Add an int or scalar tensor to a state accumulator."""
     current = getattr(state, name, 0)

@@ -23,6 +23,8 @@ import torch
 
 from megatron.bridge.training.utils.flop_utils import (
     accumulate_flops_metadata,
+    buffer_flops_metadata,
+    flush_flops_buffer,
     num_floating_point_operations,
     resolve_global_flops_seqlen_stats,
     vit_flops,
@@ -2201,3 +2203,101 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
         assert seqlen_sum == 40
         assert seqlen_sq_sum == 400
+
+
+@pytest.mark.unit
+class TestFlushFlopsBuffer:
+    """``buffer_flops_metadata`` + ``flush_flops_buffer`` must equal the per-step path."""
+
+    def _cfg(self):
+        return MockConfigContainer(
+            model=MockModelConfig(
+                is_hybrid_model=True,
+                hybrid_layer_pattern="*",
+                num_layers=2,
+                hidden_size=1024,
+                seq_length=1024,
+                ffn_hidden_size=4096,
+                num_attention_heads=8,
+                num_query_groups=8,
+                kv_channels=128,
+                vocab_size=32000,
+                gated_linear_unit=False,
+            )
+        )
+
+    def _state(self):
+        state = _State()
+        state.train_state = SimpleNamespace(floating_point_operations_so_far=0.0)
+        return state
+
+    def test_flush_equals_sum_of_per_step(self):
+        # Buffer several steps with *different* per-step stats, then flush. The folded
+        # cumulative must equal summing num_floating_point_operations per step (this is
+        # the property that keeps nonlinear ViT/SSM/SWA terms exact under deferral).
+        cfg = self._cfg()
+        steps = [
+            dict(seqlen_sum=1024, seqlen_sq=1024**2, vision=0, batch_size=1),
+            dict(seqlen_sum=4096, seqlen_sq=2 * 2048**2, vision=0, batch_size=4),
+            dict(seqlen_sum=2048, seqlen_sq=512**2 + 1536**2, vision=0, batch_size=2),
+        ]
+        state = self._state()
+        for s in steps:
+            state._flops_seqlen_sum = s["seqlen_sum"]
+            state._flops_seqlen_sq_sum = s["seqlen_sq"]
+            state._flops_vision_patches = s["vision"]
+            buffer_flops_metadata(state, batch_size=s["batch_size"])
+
+        # dp_group=None → extrapolation path with data_parallel_size=1 (identity).
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=1, dp_group=None)
+
+        expected = sum(
+            num_floating_point_operations(
+                cfg,
+                batch_size=s["batch_size"],
+                seqlen_sum=s["seqlen_sum"],
+                seqlen_squared_sum=s["seqlen_sq"],
+                num_vision_patches=s["vision"],
+            )
+            for s in steps
+        )
+        assert delta == expected
+        assert state.train_state.floating_point_operations_so_far == expected
+        assert state._flops_buffer == []
+        assert state._flops_since_last_log == expected
+
+    def test_flush_extrapolates_by_dp_size(self):
+        # Without a process group, each row scales by data_parallel_size — matching the
+        # resolve_global_flops_seqlen_stats fallback.
+        cfg = self._cfg()
+        state = self._state()
+        state._flops_seqlen_sum = 1024
+        state._flops_seqlen_sq_sum = 1024**2
+        state._flops_vision_patches = 0
+        buffer_flops_metadata(state, batch_size=1)
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=8, dp_group=None)
+        expected = num_floating_point_operations(
+            cfg, batch_size=1, seqlen_sum=1024 * 8, seqlen_squared_sum=(1024**2) * 8, num_vision_patches=0
+        )
+        assert delta == expected
+
+    def test_flush_empty_buffer_is_noop(self):
+        cfg = self._cfg()
+        state = self._state()
+        assert flush_flops_buffer(state, cfg, data_parallel_size=4, dp_group=None) == 0.0
+        assert state.train_state.floating_point_operations_so_far == 0.0
+
+    def test_buffer_accepts_tensor_accumulators_without_sync(self):
+        # The sq/vision accumulators are device tensors on GPU; buffering must not
+        # require .item(). Here (CPU) they're scalar tensors — flush coerces at the end.
+        cfg = self._cfg()
+        state = self._state()
+        state._flops_seqlen_sum = 1024
+        state._flops_seqlen_sq_sum = torch.tensor(1024**2)
+        state._flops_vision_patches = torch.tensor(0)
+        buffer_flops_metadata(state, batch_size=1)
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=1, dp_group=None)
+        expected = num_floating_point_operations(
+            cfg, batch_size=1, seqlen_sum=1024, seqlen_squared_sum=1024**2, num_vision_patches=0
+        )
+        assert delta == expected
