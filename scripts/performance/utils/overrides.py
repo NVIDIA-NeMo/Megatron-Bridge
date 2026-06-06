@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from utils.datasets import (
     create_c4_dataset_config,
     create_mock_dataset_config,
@@ -63,8 +64,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
     if hasattr(recipe.model, "apply_rope_fusion"):
         recipe.model.apply_rope_fusion = True
     if hasattr(recipe.model, "cross_entropy_fusion_impl"):
@@ -130,6 +129,9 @@ def _set_cuda_graph_overrides(
     elif recipe.model.cuda_graph_impl == "none":
         recipe.model.cuda_graph_scope = []
         recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+
+    if is_full_iteration_cuda_graph(recipe.model):
+        recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
 
@@ -233,6 +235,14 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
+    if settings.cutedsl_fused_grouped_mlp:
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        if settings.moe_a2a_overlap:
+            cfg.model.high_priority_a2a_comm_stream = True
+            cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    if settings.fp8_dot_product_attention is not None:
+        cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
