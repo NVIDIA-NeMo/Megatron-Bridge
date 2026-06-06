@@ -34,4 +34,6 @@ uv run --no-sync python examples/conversion/convert_checkpoints.py export \
 
 # Round-trip validation
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id google/gemma-4-E4B-it --tp 2 --pp 1
+    --hf-model-id google/gemma-4-E4B-it \
+    --output-dir ${WORKSPACE}/results/gemma-4-E4B-it-roundtrip \
+    --tp 2 --pp 1

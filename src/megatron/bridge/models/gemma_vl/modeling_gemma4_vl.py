@@ -95,6 +95,34 @@ def _keep_hf_precision_buffers_in_fp32(module: nn.Module) -> None:
                 submodule._buffers[name] = buffer.float()
 
 
+class _SimpleVisionEmbedder(nn.Module):
+    """Fallback Gemma4 vision projector for transformers versions without the HF class."""
+
+    def __init__(self, vision_hidden: int, text_hidden: int, eps: float):
+        super().__init__()
+        self.embedding_projection = nn.Linear(vision_hidden, text_hidden, bias=False)
+        self._eps = eps
+
+    def forward(self, x):
+        rms = x.float().pow(2).mean(-1, keepdim=True).add(self._eps).sqrt()
+        x = (x.float() / rms).to(x.dtype)
+        return self.embedding_projection(x)
+
+
+class _SimpleAudioEmbedder(nn.Module):
+    """Fallback Gemma4 audio projector for transformers versions without the HF class."""
+
+    def __init__(self, audio_proj_dim: int, text_hidden: int, eps: float):
+        super().__init__()
+        self.embedding_projection = nn.Linear(audio_proj_dim, text_hidden, bias=False)
+        self._eps = eps
+
+    def forward(self, x):
+        rms = x.float().pow(2).mean(-1, keepdim=True).add(self._eps).sqrt()
+        x = (x.float() / rms).to(x.dtype)
+        return self.embedding_projection(x)
+
+
 # ---------------------------------------------------------------------------
 # Gemma 4 Vision-Language model
 # ---------------------------------------------------------------------------
@@ -164,19 +192,7 @@ class Gemma4VLModel(MegatronModule):
             vision_hidden = config.vision_config.hidden_size
             text_hidden = config.text_config.hidden_size
             eps = config.vision_config.rms_norm_eps
-
-            class _SimpleVisionEmbedder(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.embedding_projection = nn.Linear(vision_hidden, text_hidden, bias=False)
-                    self._eps = eps
-
-                def forward(self, x):
-                    rms = x.float().pow(2).mean(-1, keepdim=True).add(self._eps).sqrt()
-                    x = (x.float() / rms).to(x.dtype)
-                    return self.embedding_projection(x)
-
-            self.embed_vision = _SimpleVisionEmbedder()
+            self.embed_vision = _SimpleVisionEmbedder(vision_hidden, text_hidden, eps)
 
     def _init_embed_audio(self, config):
         """Initialize the audio projector (audio encoder output → language space).
@@ -192,19 +208,7 @@ class Gemma4VLModel(MegatronModule):
             audio_proj_dim = config.audio_config.output_proj_dims
             text_hidden = config.text_config.hidden_size
             eps = getattr(config.audio_config, "rms_norm_eps", 1e-6)
-
-            class _SimpleAudioEmbedder(nn.Module):
-                def __init__(self):
-                    super().__init__()
-                    self.embedding_projection = nn.Linear(audio_proj_dim, text_hidden, bias=False)
-                    self._eps = eps
-
-                def forward(self, x):
-                    rms = x.float().pow(2).mean(-1, keepdim=True).add(self._eps).sqrt()
-                    x = (x.float() / rms).to(x.dtype)
-                    return self.embedding_projection(x)
-
-            self.embed_audio = _SimpleAudioEmbedder()
+            self.embed_audio = _SimpleAudioEmbedder(audio_proj_dim, text_hidden, eps)
 
     def set_input_tensor(self, input_tensor) -> None:
         self.language_model.set_input_tensor(input_tensor)

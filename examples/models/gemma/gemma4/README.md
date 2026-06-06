@@ -29,8 +29,9 @@ Gemma 4 checkpoints may require a recent `transformers` version:
 uv pip install -q --upgrade 'transformers>=5.5.0'
 ```
 
-All scripts in this directory run `uv run --no-sync` to prevent `uv` from
-reverting the installed package versions.
+The conversion and inference scripts use `uv run --no-sync` to prevent `uv`
+from reverting the installed package versions. Distributed launch examples use
+`uv run python -m torch.distributed.run`, following the repository convention.
 
 ## Workspace Configuration
 
@@ -45,6 +46,13 @@ export WORKSPACE=/your/custom/path
 Directory structure:
 - `${WORKSPACE}/models/` - Converted Megatron checkpoints
 - `${WORKSPACE}/results/` - Training outputs and experiment results
+
+`slurm_pretrain.sh` also requires `GEMMA4_LOG_ROOT` for parity and training
+logs:
+
+```bash
+export GEMMA4_LOG_ROOT=${WORKSPACE}/logs
+```
 
 ## Checkpoint Conversion
 
@@ -89,6 +97,7 @@ GEMMA4_CONVERSION_MODE=text \
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id google/gemma-4-E4B-it \
+    --output-dir ${WORKSPACE}/results/gemma-4-E4B-it-roundtrip \
     --tp 2 --pp 1
 ```
 
@@ -108,7 +117,7 @@ GEMMA4_CONVERSION_MODE=text \
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path google/gemma-4-E4B-it \
-    --prompt "What is the capital of France?" \
+    --prompt $'<start_of_turn>user\nWhat is the capital of France?<end_of_turn>\n<start_of_turn>model\n' \
     --max_new_tokens 20 \
     --tp 2 --pp 1
 ```
@@ -121,7 +130,7 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/conversion/hf_to_megatron_generate_text.py \
     --hf_model_path google/gemma-4-E4B-it \
     --megatron_model_path ${WORKSPACE}/models/gemma-4-E4B-it/iter_0000000 \
-    --prompt "Explain entropy in one sentence." \
+    --prompt $'<start_of_turn>user\nExplain entropy in one sentence.<end_of_turn>\n<start_of_turn>model\n' \
     --max_new_tokens 50 \
     --tp 2 --pp 1
 ```
@@ -147,7 +156,7 @@ Hugging Face model in three modes:
 ### Text parity
 
 ```bash
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+CUDA_DEVICE_MAX_CONNECTIONS=1 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/models/gemma/gemma4/parity_check_e4b.py \
     --hf-dir /path/to/gemma-4-E4B-it \
     --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it \
@@ -157,7 +166,7 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
 ### Audio parity
 
 ```bash
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+CUDA_DEVICE_MAX_CONNECTIONS=1 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/models/gemma/gemma4/parity_check_e4b.py \
     --hf-dir /path/to/gemma-4-E4B-it \
     --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it-vl \
@@ -167,7 +176,7 @@ CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
 ### Vision parity
 
 ```bash
-CUDA_DEVICE_MAX_CONNECTIONS=1 torchrun --nproc_per_node=2 \
+CUDA_DEVICE_MAX_CONNECTIONS=1 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     examples/models/gemma/gemma4/parity_check_e4b.py \
     --hf-dir /path/to/gemma-4-E4B-it \
     --megatron-ckpt ${WORKSPACE}/models/gemma-4-E4B-it-vl \
@@ -199,6 +208,7 @@ boundary.
 ```bash
 HF_MODEL_DIR=/path/to/gemma-4-E4B-it \
 MEGATRON_CKPT=${WORKSPACE}/models/gemma4-e4b-megatron \
+GEMMA4_LOG_ROOT=${WORKSPACE}/logs \
 TRAIN_DATA_PATH=/path/to/data \
 bash examples/models/gemma/gemma4/slurm_pretrain.sh
 ```
@@ -226,18 +236,20 @@ runtime that supports the Gemma 4 chat template and multimodal preprocessing.
 ## Running Unit Tests
 
 ```bash
-PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-} python -m pytest \
+PYTHONPATH=$PWD/src:${MEGATRON_LM_ROOT}:${PYTHONPATH:-} uv run --no-sync python -m pytest \
     tests/unit_tests/models/gemma/test_gemma4_bridge.py \
+    tests/unit_tests/models/gemma/test_gemma4_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_provider.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_bridge.py \
     tests/unit_tests/models/gemma_vl/test_gemma4_vl_modeling.py \
+    tests/unit_tests/recipes/test_gemma4_recipe.py \
     -v
 ```
 
 Multi-GPU unit tests (TP=2, requires 2 GPUs):
 
 ```bash
-NVIDIA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node=2 \
+NVIDIA_VISIBLE_DEVICES=0,1 uv run --no-sync python -m torch.distributed.run --nproc_per_node=2 \
     -m pytest tests/unit_tests/models/gemma_vl -v -k "TensorParallel"
 ```
 

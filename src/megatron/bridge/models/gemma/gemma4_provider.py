@@ -146,9 +146,9 @@ class Gemma4DenseProvider(GPTModelProvider):
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
 
-    num_moe_experts: int = 128
-    moe_router_topk: int = 8
-    moe_ffn_hidden_size: int = 704
+    num_moe_experts: Optional[int] = None
+    moe_router_topk: Optional[int] = None
+    moe_ffn_hidden_size: Optional[int] = None
 
     def finalize(self) -> None:
         super().finalize()
@@ -294,8 +294,10 @@ class Gemma4ModelProvider(GPTModelProvider):
         """Configure and instantiate a Megatron Core Gemma 4 MoE model."""
         rotary_base_local, rotary_base_global = self.rotary_base
         self.rotary_base = rotary_base_local
-        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-        self.rotary_base = (rotary_base_local, rotary_base_global)
+        try:
+            model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        finally:
+            self.rotary_base = (rotary_base_local, rotary_base_global)
 
         if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(

@@ -14,6 +14,7 @@
 
 """Unit tests for Gemma4Bridge (CausalLM) and Gemma4VLBridge (ConditionalGeneration)."""
 
+from collections import Counter
 from unittest.mock import Mock
 
 import pytest
@@ -564,6 +565,16 @@ class TestGemma4BridgeMappingRegistryCausal:
                 names.append(hf)
         return names
 
+    def _collect_hf_targets(self, registry):
+        targets = []
+        for m in registry.mappings:
+            hf = getattr(m, "hf_param", None)
+            if isinstance(hf, dict):
+                targets.extend(str(v) for v in hf.values())
+            elif isinstance(hf, str):
+                targets.append(hf)
+        return targets
+
     def test_returns_registry(self, causal_bridge):
         assert isinstance(causal_bridge.mapping_registry(), MegatronMappingRegistry)
 
@@ -603,6 +614,20 @@ class TestGemma4BridgeMappingRegistryCausal:
         names = self._collect_names(causal_bridge.mapping_registry())
         hf_names = [n for n in names if "layers" in n]
         assert all("language_model" not in n for n in hf_names)
+
+    def test_moe_registry_has_no_duplicate_non_layernorm_hf_targets(self, causal_bridge):
+        targets = self._collect_hf_targets(causal_bridge.mapping_registry())
+        duplicates = {
+            name: count
+            for name, count in Counter(targets).items()
+            if count > 1 and "input_layernorm" not in name
+        }
+        assert duplicates == {}
+
+    def test_moe_registry_does_not_map_plain_mlp_params(self, causal_bridge):
+        names = self._collect_names(causal_bridge.mapping_registry())
+        assert "decoder.layers.*.mlp.linear_fc1.weight" not in names
+        assert "decoder.layers.*.mlp.linear_fc2.weight" not in names
 
 
 # ===========================================================================
@@ -715,6 +740,16 @@ class TestGemma4VLBridgeMappingRegistry:
                 names.append(hf)
         return names
 
+    def _collect_hf_targets(self, registry):
+        targets = []
+        for m in registry.mappings:
+            hf = getattr(m, "hf_param", None)
+            if isinstance(hf, dict):
+                targets.extend(str(v) for v in hf.values())
+            elif isinstance(hf, str):
+                targets.append(hf)
+        return targets
+
     def test_returns_registry(self, bridge):
         assert isinstance(bridge.mapping_registry(), MegatronMappingRegistry)
 
@@ -758,6 +793,22 @@ class TestGemma4VLBridgeMappingRegistry:
         bridge.hf_config = mock_hf_config_moe
         names = self._collect_names(bridge.mapping_registry())
         assert any("post_shared_expert_layernorm" in n for n in names)
+
+    def test_moe_registry_has_no_duplicate_non_layernorm_hf_targets(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+        targets = self._collect_hf_targets(bridge.mapping_registry())
+        duplicates = {
+            name: count
+            for name, count in Counter(targets).items()
+            if count > 1 and "input_layernorm" not in name
+        }
+        assert duplicates == {}
+
+    def test_moe_registry_does_not_map_plain_mlp_params(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+        names = self._collect_names(bridge.mapping_registry())
+        assert "language_model.decoder.layers.*.mlp.linear_fc1.weight" not in names
+        assert "language_model.decoder.layers.*.mlp.linear_fc2.weight" not in names
 
     def test_has_post_moe_layernorm(self, bridge, mock_hf_config_moe):
         bridge.hf_config = mock_hf_config_moe

@@ -132,6 +132,17 @@ class Gemma4Bridge(MegatronModelBridge):
         rope_params = getattr(hf_config, "rope_parameters", {}) or {}
         sliding_rope = rope_params.get("sliding_attention", {})
         full_rope = rope_params.get("full_attention", {})
+        num_attention_heads = hf_config.num_attention_heads
+        num_query_groups = hf_config.num_key_value_heads
+        num_global_query_groups = getattr(
+            hf_config,
+            "num_global_key_value_heads",
+            num_query_groups,
+        )
+
+        self._dense_num_attention_heads = num_attention_heads
+        self._dense_num_query_groups = num_query_groups
+        self._dense_num_global_query_groups = num_global_query_groups
 
         layer_types = getattr(hf_config, "layer_types", None)
         if layer_types is not None:
@@ -141,15 +152,11 @@ class Gemma4Bridge(MegatronModelBridge):
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
             ffn_hidden_size=hf_config.intermediate_size,
-            num_attention_heads=hf_config.num_attention_heads,
-            num_query_groups=hf_config.num_key_value_heads,
+            num_attention_heads=num_attention_heads,
+            num_query_groups=num_query_groups,
             kv_channels=getattr(hf_config, "head_dim", 256),
             global_kv_channels=getattr(hf_config, "global_head_dim", 512),
-            num_global_query_groups=getattr(
-                hf_config,
-                "num_global_key_value_heads",
-                getattr(hf_config, "num_key_value_heads", 2),
-            ),
+            num_global_query_groups=num_global_query_groups,
             seq_length=hf_config.max_position_embeddings,
             vocab_size=hf_config.vocab_size,
             normalization="RMSNorm",
@@ -264,9 +271,13 @@ class Gemma4Bridge(MegatronModelBridge):
 
             if k_name not in hf_state_dict and v_name not in hf_state_dict:
                 q_weight = hf_state_dict[q_name]
-                num_q_heads = 8
+                num_q_heads = getattr(self, "_dense_num_attention_heads", 8)
                 kv_head_dim = q_weight.shape[0] // num_q_heads
-                num_kv_heads = 2
+                num_kv_heads = getattr(
+                    self,
+                    "_dense_num_global_query_groups",
+                    getattr(self, "_dense_num_query_groups", 2),
+                )
                 kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
                 k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
                 return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
@@ -402,7 +413,6 @@ class Gemma4Bridge(MegatronModelBridge):
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "decoder.final_layernorm.weight": "model.norm.weight",
             "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
@@ -415,8 +425,6 @@ class Gemma4Bridge(MegatronModelBridge):
                 "model.layers.*.post_feedforward_layernorm_1.weight"
             ),
             "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
-            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
         }
 
         mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
@@ -429,11 +437,6 @@ class Gemma4Bridge(MegatronModelBridge):
             ),
             GatedMLPMapping(
                 megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                 gate="model.layers.*.mlp.gate_proj.weight",
                 up="model.layers.*.mlp.up_proj.weight",
             ),

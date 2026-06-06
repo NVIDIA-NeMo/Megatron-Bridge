@@ -298,9 +298,6 @@ class Gemma4VLBridge(Gemma4Bridge):
             "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
                 "model.language_model.layers.*.input_layernorm.weight"
             ),
-            "language_model.decoder.layers.*.input_layernorm.weight": (
-                "model.language_model.layers.*.input_layernorm.weight"
-            ),
             "language_model.decoder.layers.*.self_attention.q_layernorm.weight": (
                 "model.language_model.layers.*.self_attn.q_norm.weight"
             ),
@@ -326,12 +323,6 @@ class Gemma4VLBridge(Gemma4Bridge):
                 "model.language_model.layers.*.post_feedforward_layernorm_1.weight"
             ),
             "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.router.proj.weight",
-            "language_model.decoder.layers.*.mlp.linear_fc2.weight": (
-                "model.language_model.layers.*.mlp.down_proj.weight"
-            ),
-            "language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": (
-                "model.language_model.layers.*.post_attention_layernorm.weight"
-            ),
         }
 
         mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
@@ -346,11 +337,6 @@ class Gemma4VLBridge(Gemma4Bridge):
         mapping_list.extend([
             GatedMLPMapping(
                 megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.language_model.layers.*.mlp.gate_proj.weight",
-                up="model.language_model.layers.*.mlp.up_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.linear_fc1.weight",
                 gate="model.language_model.layers.*.mlp.gate_proj.weight",
                 up="model.language_model.layers.*.mlp.up_proj.weight",
             ),

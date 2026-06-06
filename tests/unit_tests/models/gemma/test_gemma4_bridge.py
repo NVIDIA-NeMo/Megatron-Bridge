@@ -14,6 +14,7 @@
 
 """Unit tests for Gemma4Bridge (CausalLM text-only)."""
 
+from collections import Counter
 from unittest.mock import Mock
 
 import pytest
@@ -235,6 +236,7 @@ class TestGemma4BridgeProviderBridgeDense:
         assert p.num_attention_heads == 8
         assert p.num_query_groups == 4
         assert p.vocab_size == 262144
+        assert p.num_moe_experts is None
 
     def test_does_not_return_moe_provider(self, bridge, mock_pretrained_dense):
         assert not isinstance(bridge.provider_bridge(mock_pretrained_dense), Gemma4ModelProvider)
@@ -293,6 +295,22 @@ class TestMaybeModifyLoadedHFWeight:
         result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
         assert isinstance(result, dict)
         torch.testing.assert_close(result["v"], result["k"])
+
+    def test_kv_synthesis_uses_dense_provider_head_metadata(self, bridge, mock_pretrained_dense):
+        bridge.provider_bridge(mock_pretrained_dense)
+        q_weight = torch.randn(16, 8)
+        sd = {"model.layers.0.self_attn.q_proj.weight": q_weight}
+        hf_param = {
+            "q": "model.layers.0.self_attn.q_proj.weight",
+            "k": "model.layers.0.self_attn.k_proj.weight",
+            "v": "model.layers.0.self_attn.v_proj.weight",
+        }
+
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+
+        # q_weight has 8 query heads and global K/V uses 2 heads in the fixture.
+        assert result["k"].shape == (4, 8)
+        assert result["v"].shape == (4, 8)
 
     def test_kv_passthrough_when_v_present(self, bridge):
         sd = self._make_sd()
@@ -434,6 +452,16 @@ class TestGemma4BridgeMappingRegistry:
                 names.append(hf)
         return names
 
+    def _collect_hf_targets(self, registry):
+        targets = []
+        for m in registry.mappings:
+            hf = getattr(m, "hf_param", None)
+            if isinstance(hf, dict):
+                targets.extend(str(v) for v in hf.values())
+            elif isinstance(hf, str):
+                targets.append(hf)
+        return targets
+
     def test_returns_registry(self, bridge):
         assert isinstance(bridge.mapping_registry(), MegatronMappingRegistry)
 
@@ -473,3 +501,17 @@ class TestGemma4BridgeMappingRegistry:
         names = self._collect_names(bridge.mapping_registry())
         hf_layer_names = [n for n in names if "layers" in n]
         assert all("language_model" not in n for n in hf_layer_names)
+
+    def test_moe_registry_has_no_duplicate_non_layernorm_hf_targets(self, bridge):
+        targets = self._collect_hf_targets(bridge.mapping_registry())
+        duplicates = {
+            name: count
+            for name, count in Counter(targets).items()
+            if count > 1 and "input_layernorm" not in name
+        }
+        assert duplicates == {}
+
+    def test_moe_registry_does_not_map_plain_mlp_params(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert "decoder.layers.*.mlp.linear_fc1.weight" not in names
+        assert "decoder.layers.*.mlp.linear_fc2.weight" not in names

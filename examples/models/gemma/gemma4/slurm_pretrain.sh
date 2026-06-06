@@ -82,11 +82,11 @@ LR=${LR:-2e-5}
 # ---------------------------------------------------------------------------
 if [ ! -d "$HF_MODEL_DIR" ]; then
     echo "Error: HF model not found at $HF_MODEL_DIR"
-    echo "  Download with: huggingface-cli download google/gemma-4-E4B-it --local-dir $HF_MODEL_DIR"
+    echo "  Download with: hf download google/gemma-4-E4B-it --local-dir $HF_MODEL_DIR"
     exit 1
 fi
 
-TORCHRUN_BIN=${TORCHRUN_BIN:-torchrun}
+TORCHRUN_BIN=${TORCHRUN_BIN:-"uv run python -m torch.distributed.run"}
 
 echo ""
 echo "========================================"
@@ -134,7 +134,7 @@ _parity() {
     local mode="$1"
     local ckpt_path="$2"
     local port="$3"
-    local log_dir="${GEMMA4_LOG_ROOT:-/mnt/nvme0/kdg6245}/gemma4_e4b_parity_${mode}"
+    local log_dir="${GEMMA4_LOG_ROOT:?'Error: set GEMMA4_LOG_ROOT to a writable log directory'}/gemma4_e4b_parity_${mode}"
     # VL image parity runs through a much longer bf16 path (280 image tokens),
     # so it uses a wider tolerance than text/audio.
     local atol=3.0
@@ -218,7 +218,7 @@ echo "  Step 3: Training ($TRAIN_ITERS iters)"
 echo "========================================"
 
 mkdir -p "$SAVE_DIR"
-TRAIN_LOG_DIR=${TRAIN_LOG_DIR:-${GEMMA4_LOG_ROOT:-/mnt/nvme0/kdg6245}/gemma4_e4b_train_logs}
+TRAIN_LOG_DIR=${TRAIN_LOG_DIR:-${GEMMA4_LOG_ROOT:?'Error: set GEMMA4_LOG_ROOT to a writable log directory'}/gemma4_e4b_train_logs}
 rm -rf "$TRAIN_LOG_DIR" && mkdir -p "$TRAIN_LOG_DIR"
 
 if [ -n "$TRAIN_DATA_PATH" ]; then
