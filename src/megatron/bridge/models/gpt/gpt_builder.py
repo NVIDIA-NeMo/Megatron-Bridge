@@ -125,7 +125,13 @@ def modelopt_transformer_layer_spec(config: "GPTModelConfig") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelConfig") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.restore_modelopt_state:
+    if getattr(config, "use_dual_chunk_attention", False):
+        from megatron.bridge.models.gpt.dca_attention import validate_dual_chunk_attention_config
+        from megatron.bridge.models.gpt.dca_layer_spec import get_dca_gpt_layer_spec
+
+        validate_dual_chunk_attention_config(config)
+        return get_dca_gpt_layer_spec(config)
+    elif config.restore_modelopt_state:
         return modelopt_transformer_layer_spec(config)
     elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config.transformer)
@@ -183,6 +189,9 @@ class GPTModelConfig(ModelConfig):
     use_transformer_engine_full_layer_spec: bool = False
     use_transformer_engine_op_fuser: bool = False
     use_arbitrary_attention_mask: bool | None = None
+    use_dual_chunk_attention: bool = False
+    dca_chunk_size: int = 8192
+    dca_local_size: int = 1024
 
     @override
     def __getattr__(self, name: str, /) -> Any:
@@ -215,6 +224,9 @@ class GPTModelConfig(ModelConfig):
         """One time validation to run once config is ready to be used by builder."""
 
         self.transformer.finalize()
+        from megatron.bridge.models.gpt.dca_attention import validate_dual_chunk_attention_config
+
+        validate_dual_chunk_attention_config(self)
 
         if self.transformer.cuda_graph_impl != "none":
             assert self.transformer.use_te_rng_tracker, (
@@ -276,6 +288,9 @@ class GPTModelBuilder(ModelBuilder[MCoreGPTModel, GPTModelConfig]):
         Note:
             Virtual pipeline model parallelism is not supported for Mamba models.
         """
+        from megatron.bridge.models.gpt.dca_attention import validate_dual_chunk_attention_config
+
+        validate_dual_chunk_attention_config(self._model_config)
         transformer_layer_spec = self._model_config.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):
             # Check if the transformer_layer_spec function accepts vp_stage parameter
@@ -298,6 +313,8 @@ class GPTModelBuilder(ModelBuilder[MCoreGPTModel, GPTModelConfig]):
 
         # override spec with local backend if configured
         if self._model_config.attention_backend == AttnBackend.local:
+            if self._model_config.use_dual_chunk_attention:
+                raise ValueError("DCA is not compatible with attention_backend=local.")
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
 

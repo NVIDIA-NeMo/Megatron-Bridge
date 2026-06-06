@@ -119,7 +119,13 @@ def modelopt_transformer_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
 
 def default_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Determine the most appropriate layer specification based on availability."""
-    if config.use_transformer_engine_full_layer_spec:
+    if getattr(config, "use_dual_chunk_attention", False):
+        from megatron.bridge.models.gpt.dca_attention import validate_dual_chunk_attention_config
+        from megatron.bridge.models.gpt.dca_layer_spec import get_dca_gpt_layer_spec
+
+        validate_dual_chunk_attention_config(config)
+        return get_dca_gpt_layer_spec(config)
+    elif config.use_transformer_engine_full_layer_spec:
         return transformer_engine_full_layer_spec(config)
     else:
         return transformer_engine_layer_spec(config)
@@ -209,6 +215,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     # Set to False when using packed/remove-padding (THD) data format.
     use_arbitrary_attention_mask: Optional[bool] = None
 
+    use_dual_chunk_attention: bool = False
+    dca_chunk_size: int = 8192
+    dca_local_size: int = 1024
+
     _pg_collection: Optional[ProcessGroupCollection] = None
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
@@ -225,6 +235,10 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         # Validate fusion configurations
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
+
+        from megatron.bridge.models.gpt.dca_attention import validate_dual_chunk_attention_config
+
+        validate_dual_chunk_attention_config(self)
 
         if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
@@ -271,6 +285,8 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
             model_init_device_context = partial(torch.device, device="meta")
 
         if self.attention_backend == AttnBackend.local:
+            if self.use_dual_chunk_attention:
+                raise ValueError("DCA is not compatible with attention_backend=local.")
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
         # Determine pre/post flags if not provided using vp + pp stage

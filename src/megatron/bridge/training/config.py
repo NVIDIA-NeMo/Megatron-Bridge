@@ -1325,6 +1325,18 @@ class ConfigContainer(Container):
                     "When finetuning with CP>1, average_in_collective must be False"
                 )
 
+        if getattr(self.model, "use_dual_chunk_attention", False):
+            if self.model.context_parallel_size > 1:
+                raise ValueError("DCA does not support context_parallel_size > 1 yet.")
+            if getattr(self.dataset, "pack_sequences_in_batch", False):
+                raise ValueError("DCA does not support pack_sequences_in_batch=True yet.")
+            if (
+                isinstance(self.dataset, FinetuningDatasetConfig)
+                and self.dataset.packed_sequence_specs is not None
+                and self.dataset.packed_sequence_specs.packed_sequence_size > 0
+            ):
+                raise ValueError("DCA does not support packed sequence datasets yet.")
+
         self._validate_cp_comm_type()
 
         if (
