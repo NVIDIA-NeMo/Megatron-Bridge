@@ -321,6 +321,20 @@ def accumulate_flops_metadata(
     # cu_seqlens torch ops on this (per-microbatch, launch-bound) forward path. This is
     # what keeps throughput at baseline; the device-side cu_seqlens computation here cost
     # a measured ~7% by stalling CUDA run-ahead every micro-batch.
+    # >>> DEBUG (do-not-merge): one-shot report of which FLOPS path is live <<<
+    if not getattr(accumulate_flops_metadata, "_dbg_printed", False):
+        accumulate_flops_metadata._dbg_printed = True
+        import sys
+
+        _has_cu = cu_seqlens is not None or cu_seqlens_unpadded is not None
+        print(
+            f"[FLOPS-DEBUG] accumulate: seqlen_sq={'PRESENT (precompute live)' if seqlen_sq is not None else 'None'}"
+            f" cu_seqlens={'present' if _has_cu else 'None'}"
+            f" path={'PRECOMPUTE' if seqlen_sq is not None else ('DEFER-cu' if _has_cu else 'BSHD-inline')}",
+            file=sys.stderr,
+            flush=True,
+        )
+
     if seqlen_sq is not None:
         total_sq = seqlen_sq.sum() if isinstance(seqlen_sq, torch.Tensor) else seqlen_sq
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", int(total_sq))
