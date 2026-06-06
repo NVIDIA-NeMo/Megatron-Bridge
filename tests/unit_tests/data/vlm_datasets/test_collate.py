@@ -17,11 +17,17 @@ import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
+import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask as canonical_build_assistant_loss_mask
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
+    assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
 
 
 class _DummyProcessor:
@@ -551,7 +557,7 @@ def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  #
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
-    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(9, 128))
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
@@ -578,7 +584,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
     loaded_paths = []
-    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
         "load_audio",
@@ -609,7 +615,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
 def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
 
-    monkeypatch.setattr(collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(vl_utils, "maybe_path_or_url_to_data_urls", lambda *args, **kwargs: (["frame-1"], {"fps": 1}))
     monkeypatch.setattr(vl_utils, "pil_image_from_base64", lambda data_url: f"decoded-{data_url}")
 
