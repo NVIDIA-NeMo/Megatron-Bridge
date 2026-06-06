@@ -17,7 +17,7 @@
 import pytest
 import torch
 
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider, Gemma4RotaryEmbedding
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -176,3 +176,62 @@ class TestGemma4ModelProviderOverride:
     def test_override_vocab_size(self):
         p = Gemma4ModelProvider(vocab_size=300000)
         assert p.vocab_size == 300000
+
+
+class TestGemma4RotaryEmbeddingProportionalShape:
+    """Regression tests for the global-attention proportional RoPE layout.
+
+    Gemma 4's ``full_attention`` layers use ``rope_type="proportional"`` in the
+    HF config. HF's ``_compute_proportional_rope_parameters`` builds ``inv_freq``
+    of length ``head_dim // 2`` -- ``int(head_dim * partial_rotary_factor) // 2``
+    real frequencies followed by zero-padding -- so ``rotate_half`` pairs head-dim
+    lanes ``(i, i + head_dim // 2)``.
+
+    These guard against the regression where the global ``inv_freq`` was built with
+    only the real frequencies (length 64 on the 31B/26B family) and no zero-pad,
+    which left the shape at 64 instead of 256 and paired the wrong head-dim lanes.
+    """
+
+    GLOBAL_HEAD_DIM = 512
+    GLOBAL_ROTARY_PERCENT = 0.25
+    GLOBAL_ROTARY_BASE = 1_000_000
+
+    @pytest.fixture
+    def global_rope(self):
+        # Mirrors how Gemma4ModelProvider.provide() constructs the RoPE module,
+        # but CPU-only (use_cpu_initialization=True) so the test needs no GPU.
+        return Gemma4RotaryEmbedding(
+            kv_channels=256,
+            rotary_percent=1.0,
+            rotary_base=self.GLOBAL_ROTARY_BASE,
+            rotary_base_local=10_000,
+            use_cpu_initialization=True,
+            global_kv_channels=self.GLOBAL_HEAD_DIM,
+            global_rotary_percent=self.GLOBAL_ROTARY_PERCENT,
+        )
+
+    def test_inv_freq_length_is_head_dim_half(self, global_rope):
+        """HF proportional RoPE pads inv_freq to head_dim // 2 (256), not the bare
+        real-frequency count (64)."""
+        assert global_rope.inv_freq.shape[0] == self.GLOBAL_HEAD_DIM // 2
+
+    def test_inv_freq_real_and_zero_pad_counts(self, global_rope):
+        """64 real (non-zero) frequencies followed by 192 trailing zeros."""
+        dim = int(self.GLOBAL_HEAD_DIM * self.GLOBAL_ROTARY_PERCENT)  # 128
+        num_real = dim // 2  # 64
+        num_pad = self.GLOBAL_HEAD_DIM // 2 - num_real  # 192
+        inv = global_rope.inv_freq
+        assert int((inv != 0).sum()) == num_real
+        assert int((inv == 0).sum()) == num_pad
+        assert torch.all(inv[:num_real] > 0)
+        assert torch.all(inv[num_real:] == 0)
+
+    def test_real_frequencies_use_proportional_denominator(self, global_rope):
+        """Real frequencies follow HF's proportional formula with the full head_dim
+        denominator: inv_freq[i] = 1 / base^(2i / head_dim)."""
+        dim = int(self.GLOBAL_HEAD_DIM * self.GLOBAL_ROTARY_PERCENT)  # 128
+        num_real = dim // 2  # 64
+        expected_real = 1.0 / (
+            self.GLOBAL_ROTARY_BASE ** (torch.arange(0, dim, 2, dtype=torch.float32) / self.GLOBAL_HEAD_DIM)
+        )
+        torch.testing.assert_close(global_rope.inv_freq[:num_real].float(), expected_real)

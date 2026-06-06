@@ -653,17 +653,22 @@ class Gemma4RotaryEmbedding(RotaryEmbedding):
         super().__init__(
             kv_channels=global_kv_channels,
             rotary_base=rotary_base,
-            rotary_percent=global_rotary_percent,
+            rotary_percent=1.0,
             **global_kwargs,
         )
 
         # Fix global inv_freq to match HF's proportional RoPE formula.
         # HF proportional: inv_freq = 1/(base^(arange / head_dim)) not 1/(base^(arange / dim))
         # where dim = int(head_dim * percent) and head_dim = global_kv_channels
+        # HF also zero-pads inv_freq to length head_dim//2 so rotate_half pairs (i, i+head_dim//2).
         dim = int(global_kv_channels * global_rotary_percent)  # 128
         device = self.inv_freq.device
-        self.inv_freq = 1.0 / (
-            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)
+        self.inv_freq = torch.cat(
+            [
+                1.0
+                / (rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)),
+                torch.zeros(global_kv_channels // 2 - dim // 2, dtype=torch.float32, device=device),
+            ]
         )
 
         # Local RoPE: full rotary with low theta
