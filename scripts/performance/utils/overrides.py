@@ -32,6 +32,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     parse_hydra_overrides,
 )
 from utils.datasets import (
+    create_c4_dataset_config,
     create_mock_dataset_config,
     create_rp2_dataset_config,
     create_squad_dataset_config,
@@ -379,6 +380,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
+            index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
+        )
+    elif args.data == "c4":
+        if not args.c4_root:
+            raise ValueError("--c4_root is required for c4 dataset")
+        recipe.dataset = create_c4_dataset_config(
+            seq_length=recipe.dataset.sequence_length,
+            c4_root=args.c4_root,
+            train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
