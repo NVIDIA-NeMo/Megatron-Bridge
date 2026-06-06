@@ -189,7 +189,7 @@ def build_train_valid_test_datasets_for_num_epochs(
     except TypeError as error:
         raise ValueError("num_epochs requires a training dataset with a finite length") from error
 
-    cfg.resolve_num_epochs(train_dataset_size)
+    cfg._resolve_num_epochs(train_dataset_size)
     return train_ds, valid_ds, test_ds
 
 
@@ -279,6 +279,10 @@ def build_train_valid_test_data_loaders(
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
 
+    # Only the batch sampler pads partial global batches. Other samplers keep
+    # the established drop-last behavior for incomplete local microbatches.
+    keep_partial_final_global_batch = cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"
+
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
         train_ds,
@@ -294,7 +298,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=dp_rank,
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
-        drop_last=not (cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"),
+        drop_last=not keep_partial_final_global_batch,
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size

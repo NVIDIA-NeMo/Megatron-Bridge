@@ -528,6 +528,8 @@ class TrainingConfig(MTrainTrainingConfig):
     num_epochs: float | None = None
     """Number of passes over a finite training dataset. Supports fractional epochs."""
 
+    _train_iters_from_num_epochs: bool = field(default=False, init=False, repr=False)
+
     check_optimizer_step_success: bool = True
     """Checks optimizer.step() succeeded at each training step ."""
 
@@ -552,7 +554,7 @@ class TrainingConfig(MTrainTrainingConfig):
         has_num_epochs = self.num_epochs is not None
         num_training_modes = sum(
             (
-                has_train_iters and not getattr(self, "_train_iters_from_num_epochs", False),
+                has_train_iters and not self._train_iters_from_num_epochs,
                 has_train_samples,
                 has_num_epochs,
             )
@@ -1499,7 +1501,7 @@ class ConfigContainer(Container):
                 "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
             )
 
-    def resolve_num_epochs(self, train_dataset_size: int) -> None:
+    def _resolve_num_epochs(self, train_dataset_size: int) -> None:
         """Calculate training iterations from the size of a finite training dataset."""
         assert self.train.num_epochs is not None, "num_epochs must be set before resolving epoch-based training"
         assert train_dataset_size > 0, "train dataset must contain at least one sample"

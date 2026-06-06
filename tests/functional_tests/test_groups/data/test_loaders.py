@@ -21,8 +21,8 @@ from types import SimpleNamespace
 import torch
 
 from megatron.bridge.data.loaders import (
-    build_train_valid_test_datasets_for_num_epochs,
     build_train_valid_test_data_loaders,
+    build_train_valid_test_datasets_for_num_epochs,
     get_blend_and_blend_per_split,
     get_train_valid_test_num_samples,
 )
@@ -425,3 +425,30 @@ class TestEpochBasedDataLoaders:
         )
 
         assert mock_build_loader.call_args.kwargs["drop_last"] is False
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
+    def test_epoch_based_single_loader_drops_incomplete_final_batch(
+        self, mock_build_loader, _mock_rank, _mock_world_size, _mock_broadcast
+    ):
+        cfg = create_simple_test_config()
+        cfg.train.num_epochs = 1.0
+        cfg.validation.eval_iters = 0
+        cfg.dataset = FinetuningDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            dataloader_type="single",
+        )
+        train_ds = mock.MagicMock()
+        train_ds.__len__.return_value = 100
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=mock.Mock(return_value=(train_ds, None, None)),
+            dp_group=object(),
+        )
+
+        assert mock_build_loader.call_args.kwargs["drop_last"] is True

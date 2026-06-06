@@ -2888,7 +2888,9 @@ class TestSampleBasedTraining:
         )
 
         try:
-            with pytest.raises(AssertionError, match="One of train_iters, train_samples, or num_epochs must be provided"):
+            with pytest.raises(
+                AssertionError, match="One of train_iters, train_samples, or num_epochs must be provided"
+            ):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3091,6 +3093,9 @@ class TestSampleBasedTraining:
 class TestEpochBasedTraining:
     """Tests for epoch-based training configuration and resolution."""
 
+    def test_epoch_based_training_sentinel_is_declared_field(self):
+        assert "_train_iters_from_num_epochs" in {field.name for field in fields(TrainingConfig)}
+
     def test_epoch_based_training_resolves_fractional_epochs(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.5, global_batch_size=32)
         dataset_cfg = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
@@ -3105,18 +3110,37 @@ class TestEpochBasedTraining:
             container.validate()
             assert container.train.train_iters is None
 
-            container.resolve_num_epochs(train_dataset_size=100)
+            container._resolve_num_epochs(train_dataset_size=100)
 
             assert container.train.train_iters == 6
+            assert container.train._train_iters_from_num_epochs is True
+            container.train.finalize()
             assert container.scheduler.lr_decay_iters == 6
             assert container.scheduler.lr_decay_steps == 192
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_epoch_based_training_rejects_other_training_modes(self):
-        train_cfg = create_test_training_config(train_iters=10, num_epochs=1.0)
+    @pytest.mark.parametrize(
+        "training_overrides",
+        [
+            {"train_iters": 10, "num_epochs": 1.0},
+            {"train_iters": None, "train_samples": 100, "num_epochs": 1.0},
+        ],
+    )
+    def test_epoch_based_training_rejects_other_training_modes(self, training_overrides):
+        train_cfg = create_test_training_config(**training_overrides)
 
         with pytest.raises(AssertionError, match="Cannot specify more than one"):
+            train_cfg.finalize()
+
+    def test_epoch_based_training_rejects_rampup_batch_size(self):
+        train_cfg = create_test_training_config(
+            train_iters=None,
+            num_epochs=1.0,
+            rampup_batch_size=[16, 8, 5000],
+        )
+
+        with pytest.raises(AssertionError, match="Batch size rampup not supported with epoch-based training"):
             train_cfg.finalize()
 
     def test_epoch_based_training_requires_finite_finetuning_dataset(self):

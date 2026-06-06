@@ -86,6 +86,20 @@ class SetupOutput(NamedTuple):
     pg_collection: ProcessGroupCollection
 
 
+def _bind_dataset_provider_context(
+    provider: Callable,
+    *,
+    tokenizer: Any,
+    pg_collection: ProcessGroupCollection,
+) -> Callable:
+    signature_params = inspect.signature(provider).parameters
+    if "tokenizer" in signature_params:
+        provider = partial(provider, tokenizer=tokenizer)
+    if "pg_collection" in signature_params:
+        provider = partial(provider, pg_collection=pg_collection)
+    return provider
+
+
 def setup(
     state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
@@ -203,15 +217,15 @@ def setup(
 
             cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
 
-    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
-    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
-
     if cfg.train.num_epochs is not None:
         if should_fire(callback_manager, "on_data_init_start"):
             raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
-        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, train_valid_test_datasets_provider)
+        epoch_datasets_provider = _bind_dataset_provider_context(
+            train_valid_test_datasets_provider,
+            tokenizer=tokenizer,
+            pg_collection=pg_collection,
+        )
+        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, epoch_datasets_provider)
 
         def cached_datasets_provider(_train_val_test_num_samples, _dataset_config):
             """Return datasets built before optimizer and scheduler initialization."""
@@ -359,6 +373,11 @@ def setup(
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
+    train_valid_test_datasets_provider = _bind_dataset_provider_context(
+        train_valid_test_datasets_provider,
+        tokenizer=tokenizer,
+        pg_collection=pg_collection,
+    )
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,
