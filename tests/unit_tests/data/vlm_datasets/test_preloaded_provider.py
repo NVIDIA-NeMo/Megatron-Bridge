@@ -22,7 +22,7 @@ import megatron.bridge.data.vlm_datasets.preloaded_provider as pre
 from megatron.bridge.training.config import DatasetBuildContext
 
 
-class _DummyProcessor:
+class Gemma3Processor:
     class _Tok:
         pad_token_id = 0
         eos_token_id = 2
@@ -98,7 +98,7 @@ def test_load_and_build_provider(monkeypatch):
     # Stub AutoProcessor
     import transformers
 
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: _DummyProcessor()))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
 
     provider = pre.PreloadedVLMConversationProvider(
         seq_length=16, hf_processor_path="dummy/model", train_data_path=path

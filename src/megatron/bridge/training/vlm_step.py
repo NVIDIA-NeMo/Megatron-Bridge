@@ -14,7 +14,9 @@
 
 import logging
 import math
+from collections.abc import Mapping
 from functools import partial
+from inspect import Parameter, signature
 from typing import Any, Iterable
 
 import torch
@@ -37,6 +39,51 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _unwrap_forward_module(model: Any) -> Any:
+    """Return the innermost wrapped module used for forward signature checks."""
+    module = model
+    seen_ids = set()
+    while hasattr(module, "module") and id(module) not in seen_ids:
+        seen_ids.add(id(module))
+        wrapped = getattr(module, "module")
+        if wrapped is None or wrapped is module:
+            break
+        module = wrapped
+    return module
+
+
+def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Drop visual kwargs that the target model forward cannot consume.
+
+    Shared VLM processors may return model-specific fields such as
+    ``mm_token_type_ids``.  Keep those fields for models that accept them, but
+    avoid passing them through wrappers into models with stricter signatures.
+    """
+    if not visual_kwargs:
+        return {}
+
+    forward_module = _unwrap_forward_module(model)
+    forward = getattr(forward_module, "forward", getattr(forward_module, "__call__", None))
+    if forward is None:
+        return dict(visual_kwargs)
+
+    try:
+        forward_signature = signature(forward)
+    except (TypeError, ValueError):
+        return dict(visual_kwargs)
+
+    params = forward_signature.parameters.values()
+    if any(param.kind == Parameter.VAR_KEYWORD for param in params):
+        return dict(visual_kwargs)
+
+    supported_kwargs = {
+        name
+        for name, param in forward_signature.parameters.items()
+        if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    }
+    return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
 def get_batch_from_iterator(
@@ -460,7 +507,8 @@ def forward_step(
     }
 
     if visual_inputs is not None:
-        forward_args.update(visual_inputs.normalized_for_model())
+        visual_kwargs = visual_inputs.normalized_for_model()
+        forward_args.update(_filter_visual_kwargs_for_model(model, visual_kwargs))
 
     # Add packed sequence support
     if cu_seqlens is not None:
