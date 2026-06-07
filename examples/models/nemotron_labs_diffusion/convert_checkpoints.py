@@ -21,12 +21,12 @@ ForCausalLM/ForConditionalGeneration) and routes directly to NemotronLabsDiffusi
 
 Usage:
   # HF -> Megatron-Bridge
-  python examples/diffusion/recipes/nemotron_labs_diffusion/convert_checkpoints.py import \
+  python examples/models/nemotron_labs_diffusion/convert_checkpoints.py import \
     --hf-model /path/to/hf_model \
     --megatron-path /path/to/mb_checkpoint
 
   # Megatron-Bridge -> HF
-  python examples/diffusion/recipes/nemotron_labs_diffusion/convert_checkpoints.py export \
+  python examples/models/nemotron_labs_diffusion/convert_checkpoints.py export \
     --hf-model /path/to/hf_model \
     --megatron-path /path/to/mb_checkpoint \
     --hf-path /path/to/output_hf

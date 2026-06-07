@@ -41,5 +41,5 @@ diffusion/
 ## Examples
 
 Model examples for FLUX and WAN are in `examples/models/flux/` and
-`examples/models/wan/`. Diffusion language model recipe examples remain in
-`examples/diffusion/recipes/`.
+`examples/models/wan/`. Diffusion language model recipe examples are in
+`examples/models/nemotron_labs_diffusion/`.
