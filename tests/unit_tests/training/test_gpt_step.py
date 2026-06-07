@@ -154,7 +154,6 @@ class TestGetBatch:
             out_max_seqlen,
             out_cu_seqlens_unpadded,
             out_cu_seqlens_unpadded_argmin,
-            out_seqlen_sq,
         ) = get_batch(
             _Iterator(batch),
             _make_cfg(packed_sequence_specs=object()),
@@ -172,7 +171,6 @@ class TestGetBatch:
         assert torch.equal(out_max_seqlen, max_seqlen)
         assert torch.equal(out_cu_seqlens_unpadded, cu_seqlens_unpadded)
         assert torch.equal(out_cu_seqlens_unpadded_argmin, cu_seqlens_unpadded_argmin)
-        assert out_seqlen_sq is None  # this batch dict has no precomputed seqlen_sq
 
     def test_middle_pp_stage_keeps_non_packed_fast_path(self, monkeypatch):
         """Middle PP stages without attention metadata keep the all-None fast path."""
@@ -186,7 +184,7 @@ class TestGetBatch:
             pg_collection=_MockPGCollection(),
         )
 
-        assert result == (None, None, None, None, None, None, None, None, None, None, None)
+        assert result == (None, None, None, None, None, None, None, None, None, None)
         data_iterator.__next__.assert_not_called()
 
     def test_forward_common_passes_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
@@ -229,7 +227,6 @@ class TestGetBatch:
                 max_seqlen,
                 None,
                 None,
-                None,  # seqlen_sq (precomputed) — None here; FLOPS falls back to cu_seqlens
             ),
         )
         monkeypatch.setattr(
