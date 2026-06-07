@@ -1059,18 +1059,12 @@ class GPTSFTPackedDataset(GPTSFTDataset):
             # cu_seqlens torch ops per micro-batch — those stalled CUDA run-ahead by ~7%.
             # This mirrors flop_utils._real_subseq_lengths exactly (prefer unpadded; argmin
             # truncation; squared-diff sum) so the FLOPS value is identical.
+            # >>> DEBUG (do-not-merge): emit ZERO seqlen_sq (skip the real Σᵢ sᵢ² compute).
+            # accumulate still takes path=PRECOMPUTE (adds 0), so NO Σᵢ sᵢ² is computed
+            # anywhere. If this recovers ~570 TFLOP/s, the collate compute was the cost;
+            # if it stays ~542, the collate is exonerated and the cost is elsewhere.
             sq_cu = cu_seqlens_batch.get("cu_seqlens_unpadded", cu_seqlens_batch["cu_seqlens"])
-            sq_argmin = cu_seqlens_batch.get("cu_seqlens_unpadded_argmin", cu_seqlens_argmin)
-            seqlen_sq = []
-            for row in range(sq_cu.shape[0]):
-                n = int(sq_argmin[row].item())
-                cu_row = sq_cu[row, :n]
-                if cu_row.numel() < 2:
-                    seqlen_sq.append(0)
-                else:
-                    diffs = (cu_row[1:] - cu_row[:-1]).long()
-                    seqlen_sq.append(int((diffs * diffs).sum().item()))
-            cu_seqlens_batch["seqlen_sq"] = torch.LongTensor(seqlen_sq)
+            cu_seqlens_batch["seqlen_sq"] = torch.zeros(sq_cu.shape[0], dtype=torch.long)
 
             processed_batch.update(cu_seqlens_batch)
         else:
