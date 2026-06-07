@@ -15,8 +15,13 @@ and the vision/audio path separated:
 
 ## Requirements
 
-Gemma 4 requires a Megatron-Core checkout on `PYTHONPATH`. Set
-`MEGATRON_LM_ROOT` to your Megatron-LM repository:
+Gemma 4 requires a Megatron-Core checkout on `PYTHONPATH`. The Bridge Gemma 4
+provider is designed to work with a clean Megatron-Core checkout: Gemma 4
+specific features such as dual RoPE, per-layer embeddings, shared KV, and
+embedding scaling are implemented or patched on the Bridge side rather than as
+Gemma 4 specific Megatron-Core arguments or `TransformerConfig` fields.
+
+Set `MEGATRON_LM_ROOT` to your Megatron-LM repository:
 
 ```bash
 export MEGATRON_LM_ROOT=/path/to/Megatron-LM
@@ -29,23 +34,23 @@ Gemma 4 checkpoints may require a recent `transformers` version:
 uv pip install -q --upgrade 'transformers>=5.5.0'
 ```
 
-The conversion and inference scripts use `uv run --no-sync` to prevent `uv`
-from reverting the installed package versions. Distributed launch examples use
+The conversion and inference scripts use `uv run --no-sync` where they depend on
+the current Python environment package versions. Distributed launch examples use
 `uv run python -m torch.distributed.run`, following the repository convention.
 
 ## Workspace Configuration
 
-All scripts use a `WORKSPACE` environment variable to define the base directory
-for checkpoints and results. By default, this is set to `/workspace`. You can
-override it:
+The examples below use a `WORKSPACE` environment variable to keep checkpoints,
+logs, and results in one place:
 
 ```bash
 export WORKSPACE=/your/custom/path
 ```
 
-Directory structure:
+Suggested directory structure:
 - `${WORKSPACE}/models/` - Converted Megatron checkpoints
 - `${WORKSPACE}/results/` - Training outputs and experiment results
+- `${WORKSPACE}/logs/` - Parity and training logs
 
 `slurm_pretrain.sh` also requires `GEMMA4_LOG_ROOT` for parity and training
 logs:
@@ -254,6 +259,18 @@ NVIDIA_VISIBLE_DEVICES=0,1 uv run --no-sync python -m torch.distributed.run --np
 ```
 
 ## Architecture Notes
+
+### Clean Megatron-Core Compatibility
+
+Gemma 4 keeps model-specific behavior in Bridge:
+
+- `Gemma4DenseProvider` builds a standard `GPTModel`, then installs Gemma 4
+  dual RoPE, shared-KV wiring, PLE modules, and checkpoint load aliases.
+- `modeling_gemma4.py` patches only the created Gemma 4 decoder instance to
+  thread `per_layer_inputs` through clean Megatron-Core's generic
+  `extra_block_kwargs` path.
+- No Gemma 4 specific Megatron-Core CLI arguments or `TransformerConfig` fields
+  are required for the dense text path.
 
 ### Text and VL Separation
 

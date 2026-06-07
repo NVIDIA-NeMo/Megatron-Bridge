@@ -69,6 +69,7 @@ GPUS_PER_NODE=${GPUS_PER_NODE:-2}
 TP_SIZE=2
 PP_SIZE=1
 MASTER_PORT=${MASTER_PORT:-6200}
+export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 # Training hyperparameters
 TRAIN_ITERS=${TRAIN_ITERS:-1000}
@@ -233,8 +234,6 @@ else
     DATASET_TYPE="llm-pretrain-mock"
     DATA_OVERRIDES=()
 fi
-
-export CUDA_DEVICE_MAX_CONNECTIONS=1
 
 $TORCHRUN_BIN \
     --nproc_per_node $GPUS_PER_NODE \

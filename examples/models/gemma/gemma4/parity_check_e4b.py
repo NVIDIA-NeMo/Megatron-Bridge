@@ -135,7 +135,6 @@ def _build_megatron_argv(ckpt, tp=2, bf16=False, seq=SEQ):
         "--attention-dropout", "0.0", "--hidden-dropout", "0.0",
         "--disable-bias-linear",
         "--vocab-size", "262143", "--make-vocab-size-divisible-by", "128",
-        "--scale-embeddings-by-hidden-size",
         "--transformer-impl", "local", "--attention-backend", "unfused",
         "--tensor-model-parallel-size", str(tp), "--pipeline-model-parallel-size", "1",
         "--context-parallel-size", "1",
@@ -273,7 +272,7 @@ def _forward_vl(model, input_ids_vl, pixel_values, image_position_ids):
     """VL mode: full Gemma4VLModel forward with image input."""
     inner = _unwrap(model)
     with torch.no_grad():
-        out, _ = inner(
+        out = inner(
             input_ids=input_ids_vl,
             attention_mask=None,
             position_ids=None,
@@ -291,7 +290,7 @@ def _forward_audio(model, input_ids_audio, audio_features):
     """
     inner = _unwrap(model)
     with torch.no_grad():
-        out, _ = inner(
+        out = inner(
             input_ids=input_ids_audio,
             attention_mask=None,
             position_ids=None,

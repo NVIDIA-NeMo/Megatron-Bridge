@@ -25,7 +25,10 @@ from megatron.bridge.models.gemma.gemma4_provider import (
     Gemma4ModelProvider,
     _install_gemma4_dense_load_state_aliases,
 )
-from megatron.bridge.models.gemma.modeling_gemma4 import _install_tied_kv
+from megatron.bridge.models.gemma.modeling_gemma4 import (
+    _install_tied_kv,
+    _patch_ple_block_threading,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -139,6 +142,120 @@ class TestGemma4DenseLoadStateAliases:
         _install_gemma4_dense_load_state_aliases(model)
         _install_gemma4_dense_load_state_aliases(model)
         assert model._gemma4_dense_load_state_aliases_installed is True
+
+
+class TestGemma4PLEBlockThreading:
+    """Bridge-side compatibility patch for clean MCore TransformerBlock instances."""
+
+    class _Layer(nn.Module):
+        def __init__(self, layer_number):
+            super().__init__()
+            self.layer_number = layer_number
+            self.per_layer_inputs_seen = []
+
+        def forward(self, hidden_states, attention_mask=None, context=None, **kwargs):
+            self.per_layer_inputs_seen.append(kwargs.get("per_layer_input"))
+            return hidden_states, context
+
+    class _Decoder(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = nn.ModuleList(
+                [
+                    TestGemma4PLEBlockThreading._Layer(1),
+                    TestGemma4PLEBlockThreading._Layer(2),
+                ]
+            )
+
+        def _get_layer(self, index):
+            return self.layers[index]
+
+        def forward(self, hidden_states, attention_mask=None):
+            context = None
+            for layer in self.layers:
+                hidden_states, context = layer(
+                    hidden_states=hidden_states,
+                    attention_mask=attention_mask,
+                    context=context,
+                )
+            return hidden_states
+
+    class _RecomputeDecoder(_Decoder):
+        class _Config:
+            fp8 = False
+            fp4 = False
+            distribute_saved_activations = False
+            recompute_method = "uniform"
+            recompute_num_layers = 2
+
+        def __init__(self):
+            super().__init__()
+            self.config = self._Config()
+            self.num_layers_per_pipeline_rank = 2
+
+        def _checkpointed_forward(self, **kwargs):
+            raise AssertionError("original checkpointed forward should not run when PLE is present")
+
+    def test_patches_decoder_instance_without_changing_class_signature(self):
+        decoder = self._Decoder()
+        class_forward = type(decoder).forward
+        _patch_ple_block_threading(decoder)
+        _patch_ple_block_threading(decoder)
+
+        assert type(decoder).forward is class_forward
+        assert decoder._gemma4_ple_threading_patched is True
+
+    def test_threads_per_layer_inputs_to_each_layer(self):
+        decoder = self._Decoder()
+        _patch_ple_block_threading(decoder)
+
+        hidden_states = torch.zeros(3, 2, 5)
+        per_layer_inputs = torch.arange(2 * 3 * 2 * 4, dtype=torch.float32).view(2, 3, 2, 4)
+
+        decoder(hidden_states=hidden_states, attention_mask=None, per_layer_inputs=per_layer_inputs)
+
+        assert torch.equal(
+            decoder.layers[0].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 0, :].transpose(0, 1),
+        )
+        assert torch.equal(
+            decoder.layers[1].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 1, :].transpose(0, 1),
+        )
+        assert not hasattr(decoder, "_gemma4_current_per_layer_inputs")
+
+    def test_checkpointed_forward_keeps_per_layer_inputs_as_checkpoint_input(self):
+        decoder = self._RecomputeDecoder()
+        _patch_ple_block_threading(decoder)
+
+        hidden_states = torch.zeros(3, 2, 5)
+        per_layer_inputs = torch.arange(2 * 3 * 2 * 4, dtype=torch.float32).view(2, 3, 2, 4)
+        decoder._gemma4_current_per_layer_inputs = per_layer_inputs
+
+        def fake_checkpoint(forward_func, _distribute_saved_activations, *args):
+            assert args[-1] is per_layer_inputs
+            return forward_func(*args)
+
+        with patch("megatron.core.tensor_parallel.checkpoint", side_effect=fake_checkpoint):
+            decoder._checkpointed_forward(
+                hidden_states=hidden_states,
+                attention_mask=None,
+                context=None,
+                context_mask=None,
+                rotary_pos_emb=None,
+                attention_bias=None,
+                packed_seq_params=None,
+                use_inner_quantization_context=False,
+            )
+
+        assert torch.equal(
+            decoder.layers[0].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 0, :].transpose(0, 1),
+        )
+        assert torch.equal(
+            decoder.layers[1].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 1, :].transpose(0, 1),
+        )
 
 
 class TestGemma4ModelProviderDefaults:
