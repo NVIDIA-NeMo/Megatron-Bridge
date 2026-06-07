@@ -21,6 +21,7 @@ import transformer_engine.pytorch as te
 from megatron.core.transformer.moe.moe_utils import apply_random_logits
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
+from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.utils.import_utils import safe_import
 
 
@@ -38,6 +39,44 @@ class LoRALinear(AdapterWrapper):
     where the adapter's output is added to the main module's output. It extends the AdapterWrapper
     class to provide a specific implementation of the forward method.
     """
+
+    @property
+    def weight(self) -> torch.Tensor:
+        """Return the effective base weight, including the LoRA delta when enabled."""
+        base_weight = self.to_wrap.weight
+        if not self._adapter_enabled:
+            return base_weight
+
+        linear_in_weight = self.adapter.linear_in.weight
+        linear_out_weight = self.adapter.linear_out.weight
+        tp_size = 1
+        if getattr(self.adapter, "input_is_parallel", False):
+            if linear_out_weight.shape[0] != base_weight.shape[0]:
+                tp_size = base_weight.shape[0] // linear_out_weight.shape[0]
+        elif linear_in_weight.shape[0] != linear_out_weight.shape[1]:
+            tp_size = linear_out_weight.shape[1] // linear_in_weight.shape[0]
+
+        merged_weight = LoRAMerge().merge(
+            base_weight,
+            linear_out_weight,
+            linear_in_weight,
+            self.adapter.alpha,
+            self.adapter.dim,
+            tp_size=tp_size,
+            tp_group=getattr(self.adapter, "tp_group", None),
+            scale=getattr(self.adapter, "scale", None),
+        )
+        if merged_weight.shape != base_weight.shape:
+            raise RuntimeError(
+                "LoRA effective weight shape mismatch: "
+                f"base={tuple(base_weight.shape)}, merged={tuple(merged_weight.shape)}"
+            )
+        return merged_weight.to(device=base_weight.device, dtype=base_weight.dtype)
+
+    @property
+    def bias(self) -> torch.Tensor | None:
+        """Return the wrapped linear bias."""
+        return getattr(self.to_wrap, "bias", None)
 
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """Forward pass that combines the wrapped module output with the adapter output.

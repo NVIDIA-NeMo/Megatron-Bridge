@@ -28,8 +28,9 @@ from megatron.bridge.peft import canonical_lora as canonical_lora_module
 from megatron.bridge.peft import lora as lora_module
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
-from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
+from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     AdapterAttributes,
     GroupedExpertLinearAdapter,
@@ -933,7 +934,7 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with patch("megatron.bridge.peft.lora_merge.dist") as mock_dist:
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -990,7 +991,7 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with patch("megatron.bridge.peft.lora_merge.dist") as mock_dist:
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
