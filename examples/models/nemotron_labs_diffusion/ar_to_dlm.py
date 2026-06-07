@@ -22,7 +22,7 @@ Use --hf-path to override the HuggingFace model ID or local model path.
 
 Examples:
     3B model, first job from AR checkpoint (finetune=true skips optimizer state):
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py \
             --model-size 3b \
             --hf-path mistralai/Ministral-3-3B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document \
@@ -30,13 +30,13 @@ Examples:
             checkpoint.finetune=true
 
     3B model, subsequent jobs (resume from DLM checkpoint):
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py \
             --model-size 3b \
             --hf-path mistralai/Ministral-3-3B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     8B model with TP=4:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py \
             --model-size 8b \
             --hf-path mistralai/Ministral-3-8B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document \
@@ -44,7 +44,7 @@ Examples:
             checkpoint.finetune=true
 
     14B model with TP=8:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/ar_to_dlm.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py \
             --model-size 14b \
             --hf-path mistralai/Ministral-3-14B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document \
