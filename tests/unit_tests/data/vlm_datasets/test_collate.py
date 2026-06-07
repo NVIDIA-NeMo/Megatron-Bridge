@@ -16,9 +16,18 @@ import pytest
 import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
+import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
+import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
+import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask as canonical_build_assistant_loss_mask
 
 
 pytestmark = pytest.mark.unit
+
+
+def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
+    assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
 
 
 class _DummyProcessor:
@@ -29,21 +38,25 @@ class _DummyProcessor:
 
     def __init__(self):
         self.tokenizer = self._Tok()
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+        self.template_kwargs.append(kwargs)
         if tokenize:
             # Return dict mimicking HF processor output when tokenize=True
-            # Minimal keys used by default_collate_fn
+            # Minimal keys used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
             pixel_values = torch.randn(1, 1, 3, 4, 4)
             return {
                 "input_ids": input_ids,
                 "pixel_values": pixel_values,
+                "image_grid_thw": torch.tensor([[[1, 2, 2]]]),
+                "image_sizes": torch.tensor([[4, 4]]),
             }
         # Non-tokenized: just a string
         return "dummy"
 
-    def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+    def __call__(self, text=None, images=None, videos=None, padding=True, return_tensors="pt", **kwargs):
         # Minimal shape/value outputs used by qwen2_5_collate_fn
         input_ids = torch.tensor([[1, 2, 3]])
         out = {"input_ids": input_ids}
@@ -52,27 +65,53 @@ class _DummyProcessor:
             n = len(images)
             out["pixel_values"] = torch.randn(1, n, 3, 4, 4)
             out["image_grid_thw"] = torch.tensor([[[1, 2, 2]] * n])
+        if videos is not None:
+            n = len(videos)
+            out["pixel_values_videos"] = torch.randn(1, n, 3, 4, 4)
+            out["video_grid_thw"] = torch.tensor([[[2, 2, 2]] * n])
         return out
 
 
-def test_default_collate_builds_visual_inputs(monkeypatch):
-    # Force HAVE_QWEN_VL_UTILS True
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+def test_gemma3_vl_collate_builds_visual_inputs():
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
     ]
-    batch = collate.default_collate_fn(examples, proc)
+    batch = collate.gemma3_vl_collate_fn(examples, proc)
     assert "visual_inputs" in batch
     vi = batch["visual_inputs"]
     # normalized_for_model called in training path; here we just assert fields present
-    assert hasattr(vi, "pixel_values")
+    assert vi.pixel_values is not None
+    assert vi.image_grid_thw is not None
+
+
+def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    batch = collate.gemma3_vl_collate_fn(
+        examples,
+        proc,
+        visual_keys=("pixel_values", "image_sizes"),
+        min_pixels=16,
+        max_pixels=128,
+    )
+
+    assert proc.template_kwargs[-1]["min_pixels"] == 16
+    assert proc.template_kwargs[-1]["max_pixels"] == 128
+    assert batch["visual_inputs"].pixel_values is not None
+    assert batch["visual_inputs"].image_sizes is not None
+    assert batch["visual_inputs"].image_grid_thw is None
+    assert "image_grid_thw" not in batch
+    assert "image_sizes" not in batch
 
 
 def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
     # Stub process_vision_info to return (None, None)
-    monkeypatch.setattr(collate, "process_vision_info", lambda conv: (None, None))
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
@@ -109,8 +148,8 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
                 "feature_attention_mask": torch.ones(n, 16),
             }
 
-    # Stub _gather_assistant_text_segments to return a findable text
-    monkeypatch.setattr(collate, "_gather_assistant_text_segments", lambda ex: ["dummy"])
+    # Stub assistant text extraction to return a findable text.
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
 
     proc = _AudioProcessor()
     examples = [
@@ -130,7 +169,7 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
 
 
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     # Return list of N fake images for first example, None for second
     def _fake_pvi(conv):
@@ -140,7 +179,7 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
             return ([object(), object()], None)
         return (None, None)
 
-    monkeypatch.setattr(collate, "process_vision_info", _fake_pvi)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
     proc = _DummyProcessor()
     examples = [
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
@@ -153,13 +192,38 @@ def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     assert hasattr(vi, "pixel_values")
 
 
+def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+
+    def _fake_pvi(conv):
+        text = str(conv)
+        if "watch" in text:
+            return (None, [[object(), object()]])
+        return (None, None)
+
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "watch"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, proc)
+
+    vi = batch["visual_inputs"]
+    assert vi.pixel_values_videos is not None
+    assert vi.video_grid_thw is not None
+    assert "pixel_values_videos" not in batch
+    assert "video_grid_thw" not in batch
+
+
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     image_token_id = 163605
     input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
     attention_mask = torch.ones_like(input_ids)
     grid_thws = torch.tensor([[1, 4, 4], [2, 6, 4]])
 
-    expanded_input_ids, expanded_attention_mask = collate._expand_image_tokens(
+    expanded_input_ids, expanded_attention_mask = kimi_collate._expand_image_tokens(
         input_ids,
         attention_mask,
         grid_thws,
@@ -315,8 +379,18 @@ def test_kimi_k25_vl_collate_fn_multi_sample_batch():
 
 
 # ---------------------------------------------------------------------------
-# Gemma4 collate — registration and image_position_ids passthrough
+# Gemma collates — registration and image_position_ids passthrough
 # ---------------------------------------------------------------------------
+
+
+def test_gemma3_processor_registered_in_collate_fns():
+    """Gemma3Processor must be registered in COLLATE_FNS."""
+    assert "Gemma3Processor" in collate.COLLATE_FNS
+
+
+def test_gemma3_registered_fn_matches_collate_fn():
+    """The registered function for Gemma3Processor is Gemma3-VL specific."""
+    assert collate.COLLATE_FNS["Gemma3Processor"] is collate.gemma3_vl_collate_fn
 
 
 def test_gemma4_processor_registered_in_collate_fns():
@@ -337,7 +411,7 @@ def test_gemma4_registered_fn_matches_alias():
 class _Gemma4ProcessorBase:
     """Minimal Gemma4Processor stub for ministral3_collate_fn tests.
 
-    create_multiturn_loss_mask_by_search calls tokenizer(text, add_special_tokens=False)
+    build_assistant_loss_mask calls tokenizer(text, add_special_tokens=False)
     so _Tok must be callable.
     """
 
@@ -476,14 +550,14 @@ class _NemotronOmniProcessor:
         return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
 
 
-def _zero_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
-    return [0] * int(input_ids.shape[0])
+def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+    return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
 
 
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(9, 128))
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
@@ -510,7 +584,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
     loaded_paths = []
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(
         omni_utils,
         "load_audio",
@@ -541,7 +615,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
 def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
 
-    monkeypatch.setattr(collate, "create_multiturn_loss_mask_by_search", _zero_loss_mask)
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
     monkeypatch.setattr(vl_utils, "maybe_path_or_url_to_data_urls", lambda *args, **kwargs: (["frame-1"], {"fps": 1}))
     monkeypatch.setattr(vl_utils, "pil_image_from_base64", lambda data_url: f"decoded-{data_url}")
 

@@ -61,6 +61,7 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "auto"
+    cfg.model.calculate_per_token_loss = False
     cfg.model.cpu_offloading_num_layers = 95
     cfg.model.cuda_graph_warmup_steps = 2
     cfg.model.fused_single_qkv_rope = True
@@ -219,9 +220,9 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.moe_expert_rank_capacity_factor = 1.2
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.model.cuda_graph_warmup_steps = 5
-        cfg.model.calculate_per_token_loss = False
         cfg.ddp.average_in_collective = True
-        cfg.ddp.overlap_param_gather = False  # CG errors if True
+        cfg.ddp.overlap_param_gather = True
+        cfg.optimizer.overlap_param_gather = True
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 768
@@ -302,7 +303,6 @@ def gpt_oss_20b_pretrain_config_gb300(
         cfg.model.cuda_graph_modules = "full_iteration"
         cfg.model.cuda_graph_scope = None
         cfg.model.use_transformer_engine_op_fuser = True
-        cfg.model.calculate_per_token_loss = False
         cfg.model.moe_expert_rank_capacity_factor = 2
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.ddp.average_in_collective = True

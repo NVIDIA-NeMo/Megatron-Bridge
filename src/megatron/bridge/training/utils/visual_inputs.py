@@ -24,9 +24,19 @@ import torch
 class GenericVisualInputs:
     """Container for visual modality tensors produced by HF processors.
 
-    Works with any HF-encoder VLM (Gemma3-VL, Ministral3, GLM-4.5V, etc.).
-    Compatible with ``vlm_step.py`` iteration over ``__dict__`` and
-    ``.normalized_for_model()`` call.
+    Expected input format:
+        Optional HF processor tensor outputs. Qwen-style processors may provide
+        batched image/video tensors with shape ``[B, N, C, H, W]`` and THW grid
+        metadata with shape ``[B, N, 3]``. Other processors may provide already
+        flat tensors such as ``[N, C, H, W]`` / ``[N, 3]`` or model-specific
+        fields such as ``image_sizes`` and ``image_position_ids``.
+
+    Output format:
+        ``as_model_kwargs()`` returns all non-None fields unchanged.
+        ``normalized_for_model()`` returns non-None fields with Qwen-style
+        image/video tensors flattened to ``[B*N, C, H, W]`` and THW metadata
+        flattened to ``[B*N, 3]``. Already-flat tensors and non-Qwen fields are
+        passed through unchanged.
     """
 
     pixel_values: Optional[torch.Tensor] = None
@@ -47,41 +57,7 @@ class GenericVisualInputs:
         return result
 
     def normalized_for_model(self) -> dict[str, torch.Tensor]:
-        """Return non-None fields — no shape normalization needed for generic encoders."""
-        return self.as_model_kwargs()
-
-
-@dataclass
-class Qwen2_5_VLVisualInputs:
-    """Container for Qwen2/Qwen2.5-VL visual modality tensors.
-
-    Fields mirror the processor outputs for Qwen2/Qwen2.5-VL. Shapes may be
-    normalized for model consumption via normalized_for_model().
-    """
-
-    # Image tensors, e.g., Qwen2.5-VL processor output.
-    pixel_values: Optional[torch.Tensor] = None
-
-    # Video tensors, e.g., Qwen2.5-VL processor output.
-    pixel_values_videos: Optional[torch.Tensor] = None
-
-    # Per-image (T, H, W) grid metadata.
-    image_grid_thw: Optional[torch.Tensor] = None
-
-    # Per-video (T, H, W) grid metadata.
-    video_grid_thw: Optional[torch.Tensor] = None
-
-    def as_model_kwargs(self) -> dict[str, torch.Tensor]:
-        """Return a mapping of non-None fields suitable for model forward kwargs."""
-        result: dict[str, torch.Tensor] = {}
-        for f in fields(self):
-            value = getattr(self, f.name)
-            if value is not None:
-                result[f.name] = value
-        return result
-
-    def normalized_for_model(self) -> dict[str, torch.Tensor]:
-        """Return non-None fields with shapes normalized for model expectations.
+        """Return non-None fields with Qwen-style batched visual tensors flattened.
 
         - pixel_values: [B, N, C, H, W] -> [B*N, C, H, W]
         - pixel_values_videos: [B, N, C, H, W] -> [B*N, C, H, W]
