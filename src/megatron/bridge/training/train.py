@@ -316,13 +316,6 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
-    # FLOPS accounting: per-step stats are buffered (sync-free) and drained at log /
-    # checkpoint boundaries by flush_flops_buffer, so the hot path performs no per-step
-    # device→host sync or DP collective. DP context is stashed on state so saves can flush.
-    global_state._flops_buffer = []
-    global_state._flops_since_last_log = 0.0
-    global_state._flops_dp_group = pg_collection.dp
-    global_state._flops_dp_size = dp_size
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
@@ -444,9 +437,6 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
-        # Per-step cu_seqlens references; the THD Σᵢ sᵢ² is computed from these once
-        # per step in buffer_flops_metadata (off the per-microbatch forward path).
-        global_state._flops_cu_records = []
 
         (
             loss_dict,
@@ -553,18 +543,28 @@ def train(
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
-        # Buffer this step's per-microbatch FLOPS stats (sync-free: no .item(), no
-        # collective). The DP reduction and the FLOPS formula are deferred to log /
-        # checkpoint boundaries (flush_flops_buffer), keeping the hot path free of the
-        # per-step device→host sync that stalls CUDA run-ahead. Deferral is exact: each
-        # buffered step is reduced and evaluated as its own row, so ViT / SSM /
-        # sliding-window (per-step-average) terms are unchanged.
-        flop_utils.buffer_flops_metadata(
+        # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
+        # step's FLOPS into the running total. The per-microbatch sub-sequence sums are
+        # accumulated on-device (sync-free) by accumulate_flops_metadata; here we do one
+        # exact SUM all-reduce over the pure DP group (CP ranks share cu_seqlens, so
+        # reducing over DP×CP would double-count) plus one host sync — once per step, at
+        # the existing end-of-step sync boundary alongside the loss all-reduce.
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
             global_state,
-            batch_size=batch_size,
+            data_parallel_size=dp_size,
             vp_size=config.model.virtual_pipeline_model_parallel_size,
+            dp_group=pg_collection.dp,
         )
+        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
+            config,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+            num_vision_patches=num_vision_patches,
+        )
+        global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
+        num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
         if not config.logger.skip_train_metrics_log:
@@ -665,20 +665,13 @@ def train(
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
-        # Drain the FLOPS buffer at log boundaries so the cumulative + since-last-log
-        # counters (used for straggler throughput reporting) are current. One reduce +
-        # one host sync per log interval — not per step.
-        if config.logger.log_interval and global_state.train_state.step % config.logger.log_interval == 0:
-            flop_utils.flush_flops_buffer(global_state, config, data_parallel_size=dp_size, dp_group=pg_collection.dp)
-            num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
             bool(getattr(config.straggler, "log_straggler", False)),
             straggler_timer,
             global_state.train_state.step,
-            global_state._flops_since_last_log,
+            num_floating_point_operations_since_last_log_event,
         )
-        global_state._flops_since_last_log = num_floating_point_operations_since_last_log_event
         maybe_check_weight_hash_across_dp_replicas(
             model,
             config.train.check_weight_hash_across_dp_replicas_interval,
@@ -734,10 +727,6 @@ def train(
                 train_data_iterator=train_data_iterator,
                 callback_manager=callback_manager,
             )
-
-    # Drain any FLOPS buffered after the last flush so the final cumulative is complete
-    # (idempotent; the final save above already flushes when it runs).
-    flop_utils.flush_flops_buffer(global_state, config, data_parallel_size=dp_size, dp_group=pg_collection.dp)
 
     _delete_cuda_graphs(cuda_graph_helper)
 
@@ -1261,18 +1250,6 @@ def save_checkpoint_and_time(
     """
     timers = state.timers
     energy_monitor = state.energy_monitor
-
-    # Drain any buffered per-step FLOPS so the cumulative saved in the checkpoint is
-    # current. flush is idempotent (empty buffer → no-op) and runs only on saves, so it
-    # keeps the per-step hot path sync-free while guaranteeing correctness at save time.
-    flushed = flop_utils.flush_flops_buffer(
-        state,
-        state.cfg,
-        data_parallel_size=getattr(state, "_flops_dp_size", 1),
-        dp_group=getattr(state, "_flops_dp_group", None),
-    )
-    if flushed:
-        num_floating_point_operations_so_far = state.train_state.floating_point_operations_so_far
 
     # Stop timer to get accurate train interval time and exclude checkpointing duration
     timers("interval-time").stop()

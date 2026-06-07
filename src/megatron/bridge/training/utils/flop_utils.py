@@ -115,103 +115,6 @@ def resolve_global_flops_seqlen_stats(
     return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
 
 
-def buffer_flops_metadata(state, *, batch_size: int, vp_size: int | None = None) -> None:
-    """Append this step's per-rank FLOPS stats to ``state._flops_buffer`` (sync-free).
-
-    Hot-path replacement for a per-step ``resolve_global_flops_seqlen_stats`` call. The
-    on-device ``_flops_seqlen_sq_sum`` / ``_flops_vision_patches`` accumulators are
-    captured **by reference** (no ``.item()``, no all-reduce), to be reduced and turned
-    into FLOPS in bulk by :func:`flush_flops_buffer` at log/checkpoint boundaries. This
-    keeps the training loop free of the per-step device→host sync that otherwise stalls
-    CUDA run-ahead. The accumulators are reset each step *after* this call, but the
-    buffered references stay valid (reset rebinds the attribute to a fresh ``0``).
-
-    VPP over-counting is corrected here (per-rank, before buffering), identically to
-    ``resolve_global_flops_seqlen_stats``.
-    """
-    seqlen_sum = getattr(state, "_flops_seqlen_sum", 0)
-    seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0)
-    vision_patches = getattr(state, "_flops_vision_patches", 0)
-
-    # Compute the deferred THD Σᵢ sᵢ² for this step's packs, batched here (once per step,
-    # off the per-microbatch forward path) rather than inline in accumulate_flops_metadata.
-    # Reducing per pack and summing is identical to per-microbatch accumulation.
-    for cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin, mbs, seq_len in (
-        getattr(state, "_flops_cu_records", None) or []
-    ):
-        sub_seq_lens = _real_subseq_lengths(
-            cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin
-        )
-        if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
-            seqlen_sq_sum = seqlen_sq_sum + _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
-        else:
-            # Degenerate cu_seqlens (no real sub-sequences) → BSHD fallback for this pack.
-            seqlen_sq_sum = seqlen_sq_sum + mbs * seq_len**2
-    state._flops_cu_records = []
-    # Write the combined (BSHD + THD) value back so it can be inspected/asserted.
-    state._flops_seqlen_sq_sum = seqlen_sq_sum
-
-    if isinstance(vp_size, int) and vp_size > 1:
-        seqlen_sum = seqlen_sum // vp_size
-        seqlen_sq_sum = seqlen_sq_sum // vp_size
-        vision_patches = vision_patches // vp_size
-    if getattr(state, "_flops_buffer", None) is None:
-        state._flops_buffer = []
-    state._flops_buffer.append((seqlen_sum, seqlen_sq_sum, vision_patches, batch_size))
-
-
-def flush_flops_buffer(state, config, *, data_parallel_size: int, dp_group=None) -> float:
-    """Reduce all buffered per-step stats over DP, compute per-step FLOPS, fold into
-    ``state.train_state.floating_point_operations_so_far``; return the interval delta.
-
-    Performs exactly **one** all-reduce and **one** host sync regardless of how many
-    steps were buffered. Each buffered step is reduced as its own row and evaluated
-    through :func:`num_floating_point_operations` individually, so the nonlinear ViT /
-    SSM / sliding-window terms (which depend on per-step averages) stay exact — this is
-    *not* an interval-averaged approximation. ``SUM`` all-reduce is linear, so reducing
-    per row equals reducing per step. Idempotent (empty buffer → ``0.0``). The delta is
-    also added to ``state._flops_since_last_log`` for straggler reporting.
-    """
-    buf = getattr(state, "_flops_buffer", None)
-    if not buf:
-        return 0.0
-    device = torch.cuda.current_device() if torch.cuda.is_available() else None
-    rows = torch.zeros((len(buf), 3), dtype=torch.long, device=device)
-    for i, (seqlen_sum, seqlen_sq_sum, vision_patches, _batch_size) in enumerate(buf):
-        rows[i, 0] = seqlen_sum
-        rows[i, 1] = seqlen_sq_sum
-        rows[i, 2] = vision_patches
-    use_all_reduce = (
-        dp_group is not None
-        and data_parallel_size > 1
-        and torch.distributed.is_available()
-        and torch.distributed.is_initialized()
-    )
-    if use_all_reduce:
-        torch.distributed.all_reduce(rows, op=torch.distributed.ReduceOp.SUM, group=dp_group)
-    else:
-        rows = rows * data_parallel_size
-    reduced = rows.tolist()  # single host sync per flush
-
-    delta = 0.0
-    for (g_seqlen_sum, g_seqlen_sq_sum, g_vision), (_s, _q, _v, batch_size) in zip(reduced, buf):
-        if g_seqlen_sum > 0:
-            delta += num_floating_point_operations(
-                config,
-                batch_size=batch_size,
-                seqlen_sum=g_seqlen_sum,
-                seqlen_squared_sum=g_seqlen_sq_sum,
-                num_vision_patches=max(g_vision, 0),
-            )
-        else:
-            delta += num_floating_point_operations(config, batch_size=batch_size)
-
-    state.train_state.floating_point_operations_so_far += delta
-    state._flops_since_last_log = getattr(state, "_flops_since_last_log", 0.0) + delta
-    state._flops_buffer = []
-    return delta
-
-
 def _add_flops_accumulator(state, name: str, delta) -> None:
     """Add an int or scalar tensor to a state accumulator."""
     current = getattr(state, name, 0)
@@ -272,7 +175,6 @@ def accumulate_flops_metadata(
     state,
     tokens: torch.Tensor | None,
     *,
-    seqlen_sq: int | torch.Tensor | None = None,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
     cu_seqlens_unpadded: torch.Tensor | None = None,
@@ -285,13 +187,14 @@ def accumulate_flops_metadata(
 
     - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
       this microbatch contributes). Drives the linear MLP/proj/logit terms.
-    - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ². Preferred source is
-      ``seqlen_sq`` — the per-pack value precomputed in the dataloader worker (free,
-      overlapped), added here as a plain host int with no torch ops. If ``seqlen_sq``
-      is absent, the ``cu_seqlens`` references are buffered (in ``_flops_cu_records``)
-      and the sum is computed once per step in ``buffer_flops_metadata`` (off the
-      launch-bound forward path). If ``cu_seqlens`` is also absent (dense / non-packed),
-      the cheap host-int BSHD fallback ``mbs * seq_len²`` is accumulated inline.
+    - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ², computed inline from
+      ``cu_seqlens`` (preferring ``cu_seqlens_unpadded``). The per-pack sub-sequence
+      lengths are reduced via :func:`_scalar_sum_for_accumulator`, which keeps the
+      result **on-device** (no ``.item()``) — so the per-microbatch path stays
+      sync-free and the single host sync happens once per step in
+      :func:`resolve_global_flops_seqlen_stats`. When ``cu_seqlens`` is absent
+      (dense / non-packed) or degenerate, the host-int BSHD fallback
+      ``mbs * seq_len²`` is accumulated instead (bit-exact with the pre-fix value).
     - ``_flops_vision_patches``: running total of ``num_vision_patches``.
 
     ``num_vision_patches`` is the precomputed number of vision patches in this
@@ -299,10 +202,6 @@ def accumulate_flops_metadata(
     caller — which knows its own encoder's layout — computes the count and passes
     a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
     be an ``int`` or a scalar ``Tensor`` (a device tensor avoids a host sync here).
-
-    The BSHD fallback applies when cu_seqlens is not provided (e.g. dense
-    pretraining or non-packed SFT) and reproduces the existing single-pack-as-
-    one-sequence computation.
 
     For THD packed training (offline packed LLM SFT or VLM in-batch packing),
     treating the whole pack as one length-``seq_len`` sequence over-counts
@@ -316,26 +215,18 @@ def accumulate_flops_metadata(
     seq_len = tokens.shape[1]
     _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
 
-    # Fast path: the per-pack THD Σᵢ sᵢ² was precomputed in the dataloader worker and
-    # handed in as ``seqlen_sq`` (a host int / CPU int tensor). Just add it — NO
-    # cu_seqlens torch ops on this (per-microbatch, launch-bound) forward path. This is
-    # what keeps throughput at baseline; the device-side cu_seqlens computation here cost
-    # a measured ~7% by stalling CUDA run-ahead every micro-batch.
-    if seqlen_sq is not None:
-        total_sq = seqlen_sq.sum() if isinstance(seqlen_sq, torch.Tensor) else seqlen_sq
-        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", int(total_sq))
-    # Fallback (datasets that don't precompute): defer the cu_seqlens Σᵢ sᵢ² OFF this
-    # path — hold the references and compute once per step in ``buffer_flops_metadata``
-    # (off the forward critical path). Carry mbs/seq_len for the degenerate-cu BSHD
-    # fallback. When cu_seqlens is also absent (dense / non-packed), use the cheap
-    # host-int BSHD value inline.
-    elif cu_seqlens is not None or cu_seqlens_unpadded is not None:
-        if getattr(state, "_flops_cu_records", None) is None:
-            state._flops_cu_records = []
-        state._flops_cu_records.append(
-            (cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin, mbs, seq_len)
-        )
+    # THD attention term Σᵢ sᵢ², computed inline from cu_seqlens. The squared
+    # sub-sequence lengths stay on-device (``_scalar_sum_for_accumulator`` returns a
+    # device tensor, no host sync) so the launch-bound forward path is not stalled; the
+    # single sync is deferred to the per-step reduce. cu_seqlens is monotonic, so the
+    # diffs are >= 0 and zero-length padding entries contribute 0 — no boolean mask
+    # (which would force a data-dependent-size sync) is needed.
+    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
+    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
     else:
+        # No cu_seqlens (dense / non-packed) or a degenerate pack with no real
+        # sub-sequences → BSHD fallback (single pack-length sequence).
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * seq_len**2)
 
     if num_vision_patches is not None:
