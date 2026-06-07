@@ -14,6 +14,7 @@
 
 """Unit tests for Gemma 4 text-only providers."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -26,6 +27,7 @@ from megatron.bridge.models.gemma.gemma4_provider import (
     _install_gemma4_dense_load_state_aliases,
 )
 from megatron.bridge.models.gemma.modeling_gemma4 import (
+    _gemma4_checkpointed_forward,
     _install_tied_kv,
     _patch_ple_block_threading,
 )
@@ -207,6 +209,74 @@ class TestGemma4PLEBlockThreading:
             per_layer_inputs[:, :, 1, :].transpose(0, 1),
         )
         assert not hasattr(decoder, "_gemma4_current_per_layer_inputs")
+
+    def test_recompute_checkpoint_args_carry_per_layer_inputs(self, monkeypatch):
+        class _RecomputeLayer(nn.Module):
+            def __init__(self, layer_number):
+                super().__init__()
+                self.layer_number = layer_number
+                self.per_layer_inputs_seen = []
+
+            def forward(self, hidden_states, attention_mask=None, context=None, **kwargs):
+                self.per_layer_inputs_seen.append(kwargs.get("per_layer_input"))
+                return hidden_states, context
+
+        class _RecomputeDecoder(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(
+                    fp8=False,
+                    fp4=False,
+                    recompute_method="uniform",
+                    recompute_num_layers=1,
+                    distribute_saved_activations=False,
+                )
+                self.layers = nn.ModuleList([_RecomputeLayer(1), _RecomputeLayer(2)])
+                self.num_layers_per_pipeline_rank = len(self.layers)
+
+        checkpoint_args = []
+
+        def _fake_checkpoint(function, distribute_saved_activations, *args):
+            del distribute_saved_activations
+            checkpoint_args.append(args)
+            return function(*args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            _RecomputeLayer,
+        )
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.checkpoint",
+            _fake_checkpoint,
+        )
+
+        decoder = _RecomputeDecoder()
+        hidden_states = torch.zeros(3, 2, 5)
+        per_layer_inputs = torch.arange(2 * 3 * 2 * 4, dtype=torch.float32).view(2, 3, 2, 4)
+
+        _gemma4_checkpointed_forward(
+            decoder,
+            hidden_states=hidden_states,
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=None,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            per_layer_inputs=per_layer_inputs,
+        )
+
+        assert checkpoint_args
+        assert all(args[-1] is per_layer_inputs for args in checkpoint_args)
+        assert torch.equal(
+            decoder.layers[0].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 0, :].transpose(0, 1),
+        )
+        assert torch.equal(
+            decoder.layers[1].per_layer_inputs_seen[-1],
+            per_layer_inputs[:, :, 1, :].transpose(0, 1),
+        )
 
 
 class TestGemma4ModelProviderDefaults:

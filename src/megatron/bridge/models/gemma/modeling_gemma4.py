@@ -933,6 +933,139 @@ def _gemma4_layer_input(
     return per_layer_inputs[:, :, global_layer_idx, :].transpose(0, 1)
 
 
+def _gemma4_checkpointed_forward(
+    self: "torch.nn.Module",
+    hidden_states: Tensor,
+    attention_mask: Tensor,
+    context: "Optional[Tensor]",
+    context_mask: "Optional[Tensor]",
+    rotary_pos_emb: Tensor,
+    attention_bias: "Optional[Tensor]",
+    packed_seq_params: PackedSeqParams,
+    use_inner_quantization_context: bool,
+    padding_mask: "Optional[Tensor]" = None,
+    extract_layer_indices: "Optional[set[int]]" = None,
+    layer_offset: int = 0,
+    per_layer_inputs: "Optional[Tensor]" = None,
+):
+    """MCore recompute helper variant that carries Gemma4 PLE through checkpoint args."""
+    from contextlib import nullcontext
+
+    from megatron.core import tensor_parallel
+    from megatron.core.extensions.transformer_engine import HAVE_TE as _HAVE_TE
+    from megatron.core.fp4_utils import get_fp4_context
+    from megatron.core.fp8_utils import get_fp8_context
+
+    te_checkpoint = None
+    if _HAVE_TE:
+        from megatron.core.extensions.transformer_engine import te_checkpoint
+
+    if extract_layer_indices is None:
+        extract_layer_indices = set()
+    intermediate_hidden_states = []
+
+    def custom(start: int, end: int):
+        def custom_forward(
+            hidden_states,
+            attention_mask,
+            context,
+            context_mask,
+            rotary_pos_emb,
+            padding_mask=None,
+            per_layer_inputs=None,
+        ):
+            for index in range(start, end):
+                layer = self.layers[index]
+
+                if use_inner_quantization_context:
+                    if self.config.fp8:
+                        inner_quantization_context = get_fp8_context(self.config, layer.layer_number - 1)
+                    elif self.config.fp4:
+                        inner_quantization_context = get_fp4_context(self.config, layer.layer_number - 1)
+                    else:
+                        inner_quantization_context = nullcontext()
+                else:
+                    inner_quantization_context = nullcontext()
+
+                layer_kwargs = dict(
+                    hidden_states=hidden_states,
+                    attention_mask=attention_mask,
+                    context=context,
+                    context_mask=context_mask,
+                    rotary_pos_emb=rotary_pos_emb,
+                    attention_bias=attention_bias,
+                    inference_context=None,
+                    packed_seq_params=packed_seq_params,
+                    padding_mask=padding_mask,
+                    per_layer_input=_gemma4_layer_input(per_layer_inputs, layer),
+                )
+                with inner_quantization_context:
+                    if isinstance(layer, TransformerLayer):
+                        hidden_states, context = layer(**layer_kwargs)
+                    else:
+                        for k in ("context", "context_mask", "attention_bias", "padding_mask", "per_layer_input"):
+                            layer_kwargs.pop(k, None)
+                        hidden_states = layer(**layer_kwargs)
+                        context = None
+
+                if isinstance(hidden_states, tuple):
+                    hidden_states = hidden_states[0]
+            return hidden_states, context
+
+        return custom_forward
+
+    def chunk_runner(start: int, end: int, use_checkpoint: bool):
+        nonlocal hidden_states, context
+        cf = custom(start, end)
+        args = (hidden_states, attention_mask, context, context_mask, rotary_pos_emb, padding_mask, per_layer_inputs)
+        if use_checkpoint:
+            if self.config.fp8 or self.config.fp4:
+                hidden_states, context = te_checkpoint(
+                    cf,
+                    self.config.distribute_saved_activations,
+                    tensor_parallel.random.get_cuda_rng_tracker,
+                    self.pg_collection.tp,
+                    *args,
+                )
+            else:
+                hidden_states, context = tensor_parallel.checkpoint(
+                    cf, self.config.distribute_saved_activations, *args
+                )
+        else:
+            hidden_states, context = cf(*args)
+
+        if self.config.recompute_method == "uniform":
+            if (end - 1 + layer_offset) in extract_layer_indices:
+                intermediate_hidden_states.append(hidden_states)
+        else:
+            if (start + layer_offset) in extract_layer_indices:
+                intermediate_hidden_states.append(hidden_states)
+
+    if self.config.recompute_method == "uniform":
+        layer_idx = 0
+        while layer_idx < self.num_layers_per_pipeline_rank:
+            chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
+            chunk_runner(layer_idx, chunk_end, True)
+            layer_idx += self.config.recompute_num_layers
+    elif self.config.recompute_method == "block":
+        recompute_skip_num_layers = 0
+        for layer_idx in range(self.num_layers_per_pipeline_rank):
+            if (self.config.fp8 or self.config.fp4) and not hidden_states.requires_grad:
+                recompute_skip_num_layers += 1
+            use_checkpoint = (
+                layer_idx >= recompute_skip_num_layers
+                and layer_idx < self.config.recompute_num_layers + recompute_skip_num_layers
+            )
+            chunk_runner(layer_idx, layer_idx + 1, use_checkpoint)
+    else:
+        raise ValueError("Invalid activation recompute method.")
+
+    if len(extract_layer_indices) > 0:
+        return hidden_states, intermediate_hidden_states
+
+    return hidden_states
+
+
 def _patch_ple_block_threading(decoder: "torch.nn.Module") -> None:
     """Patch one Gemma4 decoder instance to thread PLE inputs through clean MCore.
 
@@ -975,12 +1108,30 @@ def _patch_ple_block_threading(decoder: "torch.nn.Module") -> None:
     orig_decoder_forward = decoder.forward
 
     def _decoder_forward(self, *args, per_layer_inputs=None, **kwargs):
+        from megatron.core.transformer import transformer_block as transformer_block_module
+
         previous = getattr(self, "_gemma4_current_per_layer_inputs", None)
         had_previous = hasattr(self, "_gemma4_current_per_layer_inputs")
+        orig_checkpointed_forward = transformer_block_module.checkpointed_forward
         self._gemma4_current_per_layer_inputs = per_layer_inputs
+
+        def _checkpointed_forward_with_ple(block, *cf_args, **cf_kwargs):
+            block_per_layer_inputs = getattr(block, "_gemma4_current_per_layer_inputs", None)
+            if block is not self or block_per_layer_inputs is None:
+                return orig_checkpointed_forward(block, *cf_args, **cf_kwargs)
+            return _gemma4_checkpointed_forward(
+                block,
+                *cf_args,
+                **cf_kwargs,
+                per_layer_inputs=block_per_layer_inputs,
+            )
+
+        if per_layer_inputs is not None:
+            transformer_block_module.checkpointed_forward = _checkpointed_forward_with_ple
         try:
             return orig_decoder_forward(*args, **kwargs)
         finally:
+            transformer_block_module.checkpointed_forward = orig_checkpointed_forward
             if had_previous:
                 self._gemma4_current_per_layer_inputs = previous
             else:
