@@ -356,7 +356,7 @@ class TestLoRAFinetune:
             packed_sequence_specs = None
 
         config = HFDatasetConfig(
-            dataset_name="squad",
+            dataset_name="rajpurkar/squad",
             process_example_fn=process_squad_example,
             seq_length=seq_length,
             seed=seed,

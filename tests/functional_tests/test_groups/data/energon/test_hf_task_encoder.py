@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional test: HFEncoderVLMTaskEncoder with a toy HF-encoder VLM model.
+"""Functional test: HFTaskEncoder with a toy HF VLM model.
 
 Exercises the full pipeline:
-  1. HFEncoderVLMTaskEncoder.encode_sample() — encoding ChatML samples with images
-  2. HFEncoderVLMTaskEncoder.batch() — padding and collating
-  3. HFEncoderVLMTaskEncoder.encode_batch() — wrapping visual tensors in GenericVisualInputs
+  1. HFTaskEncoder.encode_sample() — encoding ChatML samples with images
+  2. HFTaskEncoder.batch() — padding and collating
+  3. HFTaskEncoder.encode_batch() — wrapping visual tensors in GenericVisualInputs
   4. vlm_step.forward_step — consuming the batch dict during training
   5. pretrain — running 2 iterations end-to-end with checkpoint verification
 """
@@ -31,7 +31,7 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.energon.hf_encoder_task_encoder import HFEncoderVLMTaskEncoder
+from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
@@ -58,11 +58,11 @@ def _make_chatml_sample(key, conversation, imgs=None, videos=None):
 
 
 @dataclass(kw_only=True)
-class MockEnergonHFEncoderProvider(DatasetProvider):
-    """DatasetProvider that exercises HFEncoderVLMTaskEncoder with synthetic data.
+class MockEnergonHFProvider(DatasetProvider):
+    """DatasetProvider that exercises HFTaskEncoder with synthetic data.
 
     Creates synthetic ChatML conversations with random images, encodes them
-    through the full HFEncoderVLMTaskEncoder pipeline (encode_sample → batch →
+    through the full HFTaskEncoder pipeline (encode_sample → batch →
     encode_batch), and returns infinite iterators over the resulting batch dicts.
     """
 
@@ -104,7 +104,7 @@ class MockEnergonHFEncoderProvider(DatasetProvider):
                 hf_path=self.hf_processor_path,
             ),
         )
-        task_encoder = HFEncoderVLMTaskEncoder(
+        task_encoder = HFTaskEncoder(
             processor=processor,
             seq_length=self.seq_length,
             visual_keys=("pixel_values",),
@@ -123,14 +123,14 @@ class MockEnergonHFEncoderProvider(DatasetProvider):
         return _infinite_iter(), _infinite_iter(), None
 
 
-class TestHFEncoderEnergonVLMTraining:
-    """End-to-end test: HF encoder task encoder → VLM training for 2 iterations."""
+class TestHFTaskEncoderEnergonVLMTraining:
+    """End-to-end test: HF task encoder → VLM training for 2 iterations."""
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.pleasefixme
-    def test_hf_encoder_vlm_pretrain_2_iters(self, tmp_path):
+    def test_hf_task_encoder_vlm_pretrain_2_iters(self, tmp_path):
         """Train a Gemma3-VL 4B model (random weights) for 2 iterations using
-        batches produced by HFEncoderVLMTaskEncoder with GenericVisualInputs.
+        batches produced by HFTaskEncoder with GenericVisualInputs.
         """
         pytest.importorskip("transformer_engine_torch")
 
@@ -175,7 +175,7 @@ class TestHFEncoderEnergonVLMTraining:
         cfg.logger.log_interval = 1
         cfg.logger.tensorboard_dir = tensorboard_dir
 
-        cfg.dataset = MockEnergonHFEncoderProvider(
+        cfg.dataset = MockEnergonHFProvider(
             seq_length=test_seq_length,
             hf_processor_path="google/gemma-3-4b-it",
             micro_batch_size=cfg.train.micro_batch_size,
