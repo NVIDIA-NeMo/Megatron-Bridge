@@ -14,10 +14,14 @@
 
 import pytest
 import torch
+from PIL import Image
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+import megatron.bridge.models.glm_vl.data.collate_fn as glm_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
+import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
+import megatron.bridge.models.nemotron_vl.data.collate_fn as nemotron_vl_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask as canonical_build_assistant_loss_mask
@@ -554,6 +558,10 @@ def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  #
     return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
 
 
+def _one_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+    return torch.ones(int(input_ids.shape[0]), dtype=torch.float32)
+
+
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
@@ -643,3 +651,198 @@ def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     assert batch["input_ids"].tolist() == [[1, NEMO_IMAGE_TOKEN_ID, 7, 8]]
     assert batch["visual_inputs"].pixel_values.dtype == torch.bfloat16
     assert batch["visual_inputs"].pixel_values.shape == (1, 3, 16, 16)
+
+
+class _MinistralFallbackProcessor:
+    chat_template = None
+
+    class _Tok:
+        pad_token_id = 0
+        added_tokens_decoder = {}
+
+    def __init__(self):
+        self.tokenizer = self._Tok()
+        self.calls = []
+
+    def __call__(self, text=None, images=None, padding=True, truncation=True, return_tensors="pt"):
+        self.calls.append(
+            {
+                "text": text,
+                "images": images,
+                "padding": padding,
+                "truncation": truncation,
+                "return_tensors": return_tensors,
+            }
+        )
+        return {
+            "input_ids": torch.tensor([[5, 6, 7, 0], [8, 9, 0, 0]], dtype=torch.long),
+            "pixel_values": torch.ones(2, 3, 4, 4),
+            "image_sizes": torch.tensor([[4, 4], [4, 4]], dtype=torch.long),
+        }
+
+
+def test_ministral3_collate_fallback_builds_text_and_loads_images(monkeypatch, tmp_path):
+    monkeypatch.setattr(ministral3_collate, "build_assistant_loss_mask", _one_assistant_loss_mask)
+
+    image_path = tmp_path / "fallback.png"
+    Image.new("RGB", (2, 2), color="white").save(image_path)
+    inline_image = object()
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": inline_image},
+                        {"type": "text", "text": "describe"},
+                        "now",
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "ok"}]},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "image", "path": str(image_path)}]},
+                {"role": "assistant", "content": "done"},
+            ]
+        },
+    ]
+    proc = _MinistralFallbackProcessor()
+
+    batch = collate.ministral3_collate_fn(examples, proc)
+
+    assert proc.calls[0]["text"] == ["User: [IMG] describe now\nAssistant: ok", "User: [IMG]\nAssistant: done"]
+    assert proc.calls[0]["images"][0] == [inline_image]
+    assert proc.calls[0]["images"][1][0].size == (2, 2)
+    assert "pixel_values" not in batch
+    assert "image_sizes" not in batch
+    assert batch["visual_inputs"].pixel_values.shape == (2, 3, 4, 4)
+    assert batch["visual_inputs"].image_sizes.tolist() == [[4, 4], [4, 4]]
+    assert batch["labels"].shape == batch["input_ids"].shape
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 3], [0, 1, 2, 3]]
+
+
+class _GLMVLProcessor:
+    class _Tok:
+        pad_token_id = 0
+        added_tokens_decoder = {}
+
+    def __init__(self):
+        self.tokenizer = self._Tok()
+        self.template_calls = []
+
+    def apply_chat_template(
+        self,
+        conversations,
+        tokenize=True,
+        padding=True,
+        truncation=True,
+        return_tensors="pt",
+        return_dict=True,
+    ):
+        self.template_calls.append(
+            {
+                "conversations": conversations,
+                "tokenize": tokenize,
+                "padding": padding,
+                "truncation": truncation,
+                "return_tensors": return_tensors,
+                "return_dict": return_dict,
+            }
+        )
+        return {
+            "input_ids": torch.tensor([[11, 12, 13]], dtype=torch.long),
+            "pixel_values": torch.ones(1, 1, 3, 4, 4),
+            "image_grid_thw": torch.tensor([[[1, 2, 2]]], dtype=torch.long),
+            "mm_token_type_ids": torch.tensor([[0, 1, 0]], dtype=torch.long),
+        }
+
+
+def test_glm4v_collate_wraps_mm_token_type_ids_with_visual_inputs(monkeypatch):
+    monkeypatch.setattr(glm_collate, "build_assistant_loss_mask", _one_assistant_loss_mask)
+    proc = _GLMVLProcessor()
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "what?"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = glm_collate.glm4v_collate_fn(examples, proc)
+
+    assert proc.template_calls[0]["return_dict"] is True
+    assert "pixel_values" not in batch
+    assert "image_grid_thw" not in batch
+    assert "mm_token_type_ids" not in batch
+    assert batch["visual_inputs"].pixel_values.shape == (1, 1, 3, 4, 4)
+    assert batch["visual_inputs"].image_grid_thw.tolist() == [[[1, 2, 2]]]
+    assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0]]
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0]]
+    assert batch["labels"][0, -1].item() == -100
+
+
+class _NemotronVLTokenizer:
+    pad_token = None
+    eos_token = "<eos>"
+    added_tokens_decoder = {}
+
+    def convert_tokens_to_ids(self, token):
+        return {
+            "<video>": NEMO_VIDEO_TOKEN_ID,
+            "<image>": NEMO_IMAGE_TOKEN_ID,
+        }[token]
+
+
+class _NemotronVLProcessor:
+    def __init__(self):
+        self.tokenizer = _NemotronVLTokenizer()
+        self.calls = []
+
+    def apply_chat_template(self, conversations, tokenize=False):
+        self.calls.append(("apply_chat_template", conversations, tokenize))
+        return "video prompt"
+
+    def __call__(self, text=None, videos=None, videos_kwargs=None, return_tensors="pt"):
+        self.calls.append(("processor", text, videos, videos_kwargs, return_tensors))
+        return {
+            "input_ids": torch.tensor([[1, 131073, NEMO_VIDEO_TOKEN_ID, 131074, 7]], dtype=torch.long),
+            "pixel_values_videos": torch.ones(1, 3, 4, 4),
+            "num_patches": torch.tensor([1], dtype=torch.long),
+        }
+
+
+def test_nemotron_vl_video_collate_decodes_frames_and_normalizes_video_token(monkeypatch):
+    import megatron.bridge.models.nemotron_vl.nemotron_vl_utils as vl_utils
+
+    monkeypatch.setattr(nemotron_vl_collate, "build_assistant_loss_mask", _one_assistant_loss_mask)
+    monkeypatch.setattr(vl_utils, "maybe_path_or_url_to_data_urls", lambda *args, **kwargs: (["frame-1"], {"fps": 2}))
+    monkeypatch.setattr(vl_utils, "pil_image_from_base64", lambda data_url: f"decoded-{data_url}")
+    monkeypatch.setattr(vl_utils, "adjust_image_tokens", lambda batch, *args, **kwargs: batch)
+    proc = _NemotronVLProcessor()
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "video", "path": "/tmp/video.mp4"},
+                        {"type": "text", "text": "describe"},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            ]
+        }
+    ]
+
+    batch = nemotron_vl_collate.nemotron_nano_v2_vl_collate_fn(examples, proc)
+
+    processor_call = [call for call in proc.calls if call[0] == "processor"][0]
+    assert processor_call[2] == [["decoded-frame-1"]]
+    assert processor_call[3] == {"video_metadata": {"fps": 2}}
+    assert batch["input_ids"].tolist() == [[1, 131073, NEMO_IMAGE_TOKEN_ID, 131074, 7]]
+    assert batch["visual_inputs"].pixel_values.dtype == torch.bfloat16
+    assert batch["visual_inputs"].pixel_values.shape == (1, 3, 4, 4)
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 1.0, 1.0, 0.0]]
