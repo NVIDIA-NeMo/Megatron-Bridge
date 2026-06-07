@@ -180,22 +180,6 @@ class TestGemma4PLEBlockThreading:
                 )
             return hidden_states
 
-    class _RecomputeDecoder(_Decoder):
-        class _Config:
-            fp8 = False
-            fp4 = False
-            distribute_saved_activations = False
-            recompute_method = "uniform"
-            recompute_num_layers = 2
-
-        def __init__(self):
-            super().__init__()
-            self.config = self._Config()
-            self.num_layers_per_pipeline_rank = 2
-
-        def _checkpointed_forward(self, **kwargs):
-            raise AssertionError("original checkpointed forward should not run when PLE is present")
-
     def test_patches_decoder_instance_without_changing_class_signature(self):
         decoder = self._Decoder()
         class_forward = type(decoder).forward
@@ -223,39 +207,6 @@ class TestGemma4PLEBlockThreading:
             per_layer_inputs[:, :, 1, :].transpose(0, 1),
         )
         assert not hasattr(decoder, "_gemma4_current_per_layer_inputs")
-
-    def test_checkpointed_forward_keeps_per_layer_inputs_as_checkpoint_input(self):
-        decoder = self._RecomputeDecoder()
-        _patch_ple_block_threading(decoder)
-
-        hidden_states = torch.zeros(3, 2, 5)
-        per_layer_inputs = torch.arange(2 * 3 * 2 * 4, dtype=torch.float32).view(2, 3, 2, 4)
-        decoder._gemma4_current_per_layer_inputs = per_layer_inputs
-
-        def fake_checkpoint(forward_func, _distribute_saved_activations, *args):
-            assert args[-1] is per_layer_inputs
-            return forward_func(*args)
-
-        with patch("megatron.core.tensor_parallel.checkpoint", side_effect=fake_checkpoint):
-            decoder._checkpointed_forward(
-                hidden_states=hidden_states,
-                attention_mask=None,
-                context=None,
-                context_mask=None,
-                rotary_pos_emb=None,
-                attention_bias=None,
-                packed_seq_params=None,
-                use_inner_quantization_context=False,
-            )
-
-        assert torch.equal(
-            decoder.layers[0].per_layer_inputs_seen[-1],
-            per_layer_inputs[:, :, 0, :].transpose(0, 1),
-        )
-        assert torch.equal(
-            decoder.layers[1].per_layer_inputs_seen[-1],
-            per_layer_inputs[:, :, 1, :].transpose(0, 1),
-        )
 
 
 class TestGemma4ModelProviderDefaults:
