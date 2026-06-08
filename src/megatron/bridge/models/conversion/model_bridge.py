@@ -1291,7 +1291,7 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 )
                 if merged_result is not None:
                     for hf_name, tensor in merged_result.items():
-                        yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
+                        yield HFWeightTuple(hf_name, tensor.detach().cpu() if cpu else tensor.detach())
                 continue
 
             # --- Standard export path ---
