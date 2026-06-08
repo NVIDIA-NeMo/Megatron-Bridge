@@ -12,24 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the multi-adapter LoRA implementation.
+"""Unit tests for the :class:`MultiLoRA` PEFT object.
 
-Mirrors the structure of ``test_lora.py``/``test_lora_layers.py`` but covers the
-multi-adapter specific behaviour:
+Mirrors ``test_lora.py``: covers the multi-adapter LoRA configuration, the
+``transform`` module-matching / constructor wiring, and a GPU-gated end-to-end
+application to a real Megatron GPT model.
 
-* :class:`MultiLoRA` transform / module-matching logic.
-* :class:`MultiLoRALinear` per-slot rank/alpha bookkeeping and rank masking.
-* The standalone slot-management helpers (routing, init/clear, expose/hide, load).
-
-The transform and slot tests run on CPU by patching the heavy
-``ParallelLinearAdapter`` / ``MultiLoRALinear`` dependencies with light fakes
-that share the same weight layout. A single Megatron integration test exercises
-the real construction path and is gated on a GPU being available.
+``MultiLoRALinear`` is patched out with a lightweight recording fake so the
+matching logic runs on CPU; the layer module itself (slot bookkeeping, helpers,
+export seam) is exercised in ``test_multi_lora_layers.py``.
 """
 
 import datetime
 import os
-from contextlib import ExitStack
 from unittest.mock import patch
 
 import megatron.core.parallel_state as parallel_state
@@ -41,19 +36,8 @@ from megatron.core.transformer.module import MegatronModule
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft import multi_lora as multi_lora_module
-from megatron.bridge.peft import multi_lora_layers as multi_lora_layers_module
 from megatron.bridge.peft.multi_lora import MultiLoRA
-from megatron.bridge.peft.multi_lora_layers import (
-    MultiLoRALinear,
-    _iter_multi_lora_modules,
-    clear_adapter_slot,
-    expose_adapter_slot,
-    hide_adapters,
-    init_adapter_slot,
-    load_adapter,
-    set_tokens_per_adapter_slot,
-)
-from megatron.bridge.peft.utils import AdapterAttributes
+from megatron.bridge.peft.multi_lora_layers import MultiLoRALinear
 
 
 # ======================================================================
@@ -74,65 +58,6 @@ class FakeMultiLoRALinear(nn.Module):
         self.init_kwargs = kwargs
 
 
-class _FakeParallelLinearAdapter(nn.Module):
-    """CPU stand-in for ``ParallelLinearAdapter`` with the same weight layout.
-
-    For TP=1 the real adapter exposes ``linear_in.weight`` of shape
-    ``(dim, in_features)`` and ``linear_out.weight`` of shape
-    ``(out_features, dim)``; plain ``nn.Linear`` layers reproduce that exactly,
-    which is all the rank-mask / slot bookkeeping logic touches.
-    """
-
-    def __init__(
-        self,
-        in_features: int,
-        out_features: int,
-        dim: int,
-        base_linear_name: str,
-        *,
-        alpha: float | None = None,
-        **_: object,
-    ) -> None:
-        super().__init__()
-        self.dim = dim
-        self.alpha = alpha if alpha is not None else dim
-        self.base_linear_name = base_linear_name
-        self.linear_in = nn.Linear(in_features, dim, bias=False)
-        self.linear_out = nn.Linear(dim, out_features, bias=False)
-        nn.init.xavier_normal_(self.linear_in.weight)
-        nn.init.zeros_(self.linear_out.weight)
-
-
-def _fake_get_attrs(module: nn.Module, *args, **kwargs) -> AdapterAttributes:
-    """Return adapter attributes for a plain ``nn.Linear`` ``to_wrap``."""
-    return AdapterAttributes(
-        input_is_parallel=getattr(module, "_test_input_is_parallel", False),
-        in_features=module.in_features,
-        out_features=module.out_features,
-        disable_tensor_parallel_comm=False,
-        disable_sequence_parallel_comm=True,
-        base_linear_is_parallel=True,
-    )
-
-
-def _build_multi_lora_linear(
-    in_features: int = 16,
-    out_features: int = 32,
-    n_adapters: int = 2,
-    dim: int = 8,
-    alpha: float = 16,
-    full_name: str = "decoder.layers.0.self_attention.linear_proj",
-) -> MultiLoRALinear:
-    """Construct a ``MultiLoRALinear`` (requires the fake-adapter patches to be active)."""
-    return MultiLoRALinear(
-        to_wrap=nn.Linear(in_features, out_features),
-        n_adapters=n_adapters,
-        dim=dim,
-        alpha=alpha,
-        full_name=full_name,
-    )
-
-
 def multi_lora_linear_patch():
     """Patch ``MultiLoRALinear`` in the transform module with a recording fake."""
     return patch.object(multi_lora_module, "MultiLoRALinear", FakeMultiLoRALinear)
@@ -141,14 +66,6 @@ def multi_lora_linear_patch():
 def multi_lora_topk_router_patch(router_cls: type):
     """Patch ``TopKRouter`` in the transform module with a dummy router type."""
     return patch.object(multi_lora_module, "TopKRouter", router_cls)
-
-
-def adapter_deps_patch() -> ExitStack:
-    """Patch the layer module's adapter construction dependencies for CPU use."""
-    stack = ExitStack()
-    stack.enter_context(patch.object(multi_lora_layers_module, "ParallelLinearAdapter", _FakeParallelLinearAdapter))
-    stack.enter_context(patch.object(multi_lora_layers_module, "get_adapter_attributes_from_linear", _fake_get_attrs))
-    return stack
 
 
 # ======================================================================
@@ -407,211 +324,6 @@ class TestMultiLoRATransform:
         assert len(transformed) == 3
         for chunk in transformed:
             assert isinstance(chunk.linear_qkv, FakeMultiLoRALinear)
-
-
-# ======================================================================
-# MultiLoRALinear: per-slot rank/alpha bookkeeping + rank masking
-# ======================================================================
-
-
-class TestMultiLoRALinearSlots:
-    """Slot init/clear, rank masking, weight reset, and state-dict layout."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_adapter_deps(self):
-        with adapter_deps_patch():
-            yield
-
-    def test_slot_defaults_after_construction(self) -> None:
-        layer = _build_multi_lora_linear(n_adapters=3, dim=8)
-
-        assert layer.n_adapters == 3
-        assert layer.max_rank == 8
-        assert layer.tokens_per_adapter is None
-        assert torch.equal(layer.alpha_values, torch.ones(3))
-        assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
-
-    def test_init_adapter_slot_sets_rank_alpha_and_masks(self) -> None:
-        layer = _build_multi_lora_linear(dim=8)
-        with torch.no_grad():
-            layer.adapters[0].linear_in.weight.fill_(1.0)
-            layer.adapters[0].linear_out.weight.fill_(1.0)
-
-        layer.init_adapter_slot(0, rank=4, alpha=16)
-
-        assert layer.alpha_values[0] == 16
-        assert layer.rank_values[0] == 4
-        a = layer.adapters[0].linear_in.weight  # (dim, in)
-        b = layer.adapters[0].linear_out.weight  # (out, dim)
-        assert torch.all(a[4:] == 0)
-        assert torch.all(a[:4] == 1)
-        assert torch.all(b[:, 4:] == 0)
-        assert torch.all(b[:, :4] == 1)
-
-    def test_init_adapter_slot_full_rank_does_not_mask(self) -> None:
-        layer = _build_multi_lora_linear(dim=8)
-        with torch.no_grad():
-            layer.adapters[1].linear_in.weight.fill_(1.0)
-            layer.adapters[1].linear_out.weight.fill_(1.0)
-
-        layer.init_adapter_slot(1, rank=8, alpha=8)
-
-        assert layer.rank_values[1] == 8
-        assert torch.all(layer.adapters[1].linear_in.weight == 1)
-        assert torch.all(layer.adapters[1].linear_out.weight == 1)
-
-    @pytest.mark.parametrize("bad_rank", [0, -1, 9])
-    def test_init_adapter_slot_rejects_out_of_range_rank(self, bad_rank: int) -> None:
-        layer = _build_multi_lora_linear(dim=8)
-        with pytest.raises(AssertionError):
-            layer.init_adapter_slot(0, rank=bad_rank, alpha=16)
-
-    def test_clear_adapter_slot_resets_state_and_weights(self) -> None:
-        layer = _build_multi_lora_linear(dim=8)
-        layer.init_adapter_slot(0, rank=4, alpha=16)
-        with torch.no_grad():
-            layer.adapters[0].linear_out.weight.fill_(1.0)
-
-        layer.clear_adapter_slot(0)
-
-        assert layer.alpha_values[0] == 0
-        assert layer.rank_values[0] == layer.max_rank
-        # B is re-initialised to zero on clear.
-        assert torch.all(layer.adapters[0].linear_out.weight == 0)
-
-    def test_reset_adapter_zeroes_b_matrix(self) -> None:
-        layer = _build_multi_lora_linear(dim=8)
-        with torch.no_grad():
-            layer.adapters[1].linear_out.weight.fill_(1.0)
-
-        layer.reset_adapter(1)
-
-        assert torch.all(layer.adapters[1].linear_out.weight == 0)
-
-    def test_state_dict_contains_base_and_all_adapter_slots(self) -> None:
-        layer = _build_multi_lora_linear(n_adapters=2, dim=8)
-
-        keys = set(layer.state_dict().keys())
-
-        assert {"weight", "bias"}.issubset(keys)
-        assert "adapters.0.linear_in.weight" in keys
-        assert "adapters.0.linear_out.weight" in keys
-        assert "adapters.1.linear_in.weight" in keys
-        assert "adapters.1.linear_out.weight" in keys
-
-
-# ======================================================================
-# Standalone model-level slot helpers
-# ======================================================================
-
-
-class _MultiLoRAContainer(nn.Module):
-    """Container with several ``MultiLoRALinear`` modules plus an unrelated linear."""
-
-    def __init__(self, n_layers: int = 3) -> None:
-        super().__init__()
-        self.mods = nn.ModuleList([_build_multi_lora_linear() for _ in range(n_layers)])
-        self.other = nn.Linear(4, 4)
-
-
-class TestMultiLoRAModelHelpers:
-    """Routing, init/clear, expose/hide and load helpers operating over a model."""
-
-    @pytest.fixture(autouse=True)
-    def _patch_adapter_deps(self):
-        with adapter_deps_patch():
-            yield
-
-    def test_iter_multi_lora_modules_single_model(self) -> None:
-        container = _MultiLoRAContainer(n_layers=3)
-
-        found = list(_iter_multi_lora_modules(container))
-
-        assert len(found) == 3
-        assert {id(m) for m in found} == {id(m) for m in container.mods}
-
-    def test_iter_multi_lora_modules_list_of_chunks(self) -> None:
-        chunks = [_MultiLoRAContainer(n_layers=2), _MultiLoRAContainer(n_layers=1)]
-
-        found = list(_iter_multi_lora_modules(chunks))
-
-        assert len(found) == 3
-
-    def test_set_tokens_per_adapter_slot(self) -> None:
-        container = _MultiLoRAContainer(n_layers=2)
-        tokens = torch.tensor([3, 5], dtype=torch.int32)
-
-        set_tokens_per_adapter_slot(container, tokens)
-
-        for module in container.mods:
-            assert module.tokens_per_adapter is tokens
-
-    def test_init_and_clear_adapter_slot_across_model(self) -> None:
-        container = _MultiLoRAContainer(n_layers=2)
-
-        init_adapter_slot(container, 1, rank=4, alpha=16)
-        for module in container.mods:
-            assert module.rank_values[1] == 4
-            assert module.alpha_values[1] == 16
-
-        clear_adapter_slot(container, 1)
-        for module in container.mods:
-            assert module.alpha_values[1] == 0
-            assert module.rank_values[1] == module.max_rank
-
-    def test_expose_adapter_slot_exposes_then_restores(self) -> None:
-        container = _MultiLoRAContainer(n_layers=2)
-        slot0 = [m.adapters[0] for m in container.mods]
-        adapters_lists = [m.adapters for m in container.mods]
-
-        with expose_adapter_slot(container, 0):
-            for module, expected in zip(container.mods, slot0):
-                assert "adapters" not in module._modules
-                assert module.adapter is expected
-
-        for module, expected_list, expected_slot in zip(container.mods, adapters_lists, slot0):
-            assert "adapter" not in module._modules
-            assert module.adapters is expected_list
-            assert module.adapters[0] is expected_slot
-
-    def test_hide_adapters_hides_then_restores(self) -> None:
-        container = _MultiLoRAContainer(n_layers=2)
-        adapters_lists = [m.adapters for m in container.mods]
-
-        with hide_adapters(container):
-            for module in container.mods:
-                assert "adapters" not in module._modules
-
-        for module, expected_list in zip(container.mods, adapters_lists):
-            assert module.adapters is expected_list
-
-    def test_load_adapter_copies_into_target_slot(self) -> None:
-        container = _MultiLoRAContainer(n_layers=2)
-
-        # Snapshot slot 0 and build a checkpoint from its (slot-independent) names.
-        slot0_before = {}
-        target_state = {}
-        with expose_adapter_slot(container, 0):
-            for name, param in container.named_parameters():
-                if ".adapter." in name:
-                    slot0_before[name] = param.detach().clone()
-                    target_state[name] = torch.randn_like(param)
-
-        # Saving from slot 0 and loading into slot 1 must work: the slot index is
-        # stripped from the names while a slot is exposed.
-        loaded = load_adapter(container, 1, target_state)
-        assert loaded == len(target_state)
-
-        with expose_adapter_slot(container, 1):
-            slot1 = {name: p for name, p in container.named_parameters() if ".adapter." in name}
-            for name, expected in target_state.items():
-                assert torch.equal(slot1[name], expected)
-
-        # Slot 0 must be untouched by the load into slot 1.
-        with expose_adapter_slot(container, 0):
-            for name, param in container.named_parameters():
-                if ".adapter." in name:
-                    assert torch.equal(param, slot0_before[name])
 
 
 # ======================================================================
