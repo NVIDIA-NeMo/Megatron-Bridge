@@ -115,6 +115,10 @@ def _set_last_pp_stage(monkeypatch):
     monkeypatch.setattr("megatron.bridge.training.gpt_step.is_pp_last_stage", lambda pg: True)
 
 
+def _set_distributed_initialized(monkeypatch):
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+
+
 class _NoopTimer:
     def __call__(self, *args, **kwargs):
         return self
@@ -213,6 +217,7 @@ class TestGetBatch:
     def test_middle_pp_stage_without_mtp_keeps_fast_path_when_mtp_enabled(self, monkeypatch):
         """Global MTP does not force ordinary middle PP stages to load a batch."""
         _set_middle_pp_stage(monkeypatch)
+        _set_distributed_initialized(monkeypatch)
         data_iterator = MagicMock()
 
         result = get_batch(
@@ -232,6 +237,7 @@ class TestGetBatch:
     def test_standalone_mtp_middle_pp_stage_loads_tokens_and_position_ids(self, monkeypatch):
         """A middle PP stage that owns MTP receives input ids for MCore MTP."""
         _set_middle_pp_stage(monkeypatch)
+        _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
             lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
@@ -289,6 +295,7 @@ class TestGetBatch:
     def test_standalone_mtp_loss_stage_skips_mtp_inputs(self, monkeypatch):
         """The loss-only final PP stage does not load token ids for standalone MTP."""
         _set_last_pp_stage(monkeypatch)
+        _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
             lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
