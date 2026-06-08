@@ -55,6 +55,7 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
 
 
 def apply_qwen3_moe_perf_configs(cfg: ConfigContainer, base_cfg) -> None:
+    """Apply common Qwen3 MoE performance settings and full-iteration CG defaults."""
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     if is_full_iteration_cuda_graph(cfg.model):
