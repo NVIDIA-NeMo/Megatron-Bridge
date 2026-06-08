@@ -316,6 +316,11 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    # Anchor for interval-average throughput logging: training_log reports the FLOPS
+    # performed over each logging interval as the delta of
+    # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
+    # or the checkpoint value on resume) so the first interval's delta is correct.
+    global_state._flops_at_last_log = global_state.train_state.floating_point_operations_so_far
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
