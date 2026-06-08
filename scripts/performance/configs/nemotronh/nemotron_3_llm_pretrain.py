@@ -24,7 +24,6 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pr
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import nemotron_3_super_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import nemotron_3_super_bf16_with_nvfp4_mixed
-from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -57,22 +56,6 @@ def set_nemotron_3_super_common_configs(cfg: ConfigContainer, precision: str) ->
         cfg.model.moe_router_padding_for_quantization = True
 
 
-def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
-    """Apply defaults required by full-iteration CUDA graph capture with dropless MoE.
-    Dropless MoE produces variable-shaped per-expert tensors that CG cannot
-    capture; we pad to a fixed capacity (pad_experts + capacity factor) and use
-    MCore PR #4247 paged stashing to recover memory. Callers should gate on
-    `is_full_iteration_cuda_graph(cfg.model)`.
-    """
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
-    if cfg.model.moe_expert_rank_capacity_factor is None:
-        cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    cfg.model.cuda_graph_warmup_steps = 2
-
-
 def nemotron_3_super_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -93,9 +76,6 @@ def nemotron_3_super_pretrain_config_gb300(
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
-
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -120,9 +100,6 @@ def nemotron_3_super_pretrain_config_gb200(
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
-
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -172,9 +149,6 @@ def nemotron_3_super_pretrain_config_b300(
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
 
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
-
     return cfg
 
 
@@ -198,9 +172,6 @@ def nemotron_3_super_pretrain_config_b200(
     set_workload_base_configs(cfg, base_cfg)
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
-
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
