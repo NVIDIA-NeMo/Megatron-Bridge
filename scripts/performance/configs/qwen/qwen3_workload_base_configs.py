@@ -202,6 +202,11 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = QWEN3_235B_A22B_PRETRAIN_CONFI
 QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V2,
     virtual_pipeline_model_parallel_size=12,
+    moe_a2a_overlap=True,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
 )
 QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = QWEN3_235B_A22B_PRETRAIN_CONFIG_GB300_FP8_CS_V2
 
