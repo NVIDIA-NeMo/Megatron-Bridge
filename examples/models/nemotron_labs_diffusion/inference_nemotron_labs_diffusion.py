@@ -21,13 +21,13 @@ NemotronLabsDiffusion checkpoint. Supports both dLLM (block diffusion) and AR mo
 
 Examples:
     Single prompt, dLLM mode (default):
-        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
+        $ torchrun --nproc_per_node=4 examples/models/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_8b \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --prompts "The capital of France is"
 
     AR mode:
-        $ python examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
+        $ python examples/models/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_3b \\
             --hf-model mistralai/Ministral-3-3B-Base-2512 \\
             --mode ar \\
@@ -35,7 +35,7 @@ Examples:
             --prompts "Once upon a time"
 
     Multiple prompts with custom diffusion settings:
-        $ torchrun --nproc_per_node=4 examples/diffusion/recipes/nemotron_labs_diffusion/inference_nemotron.py \\
+        $ torchrun --nproc_per_node=4 examples/models/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \\
             --megatron-path /path/to/checkpoints/ar_to_dlm_8b \\
             --hf-model mistralai/Ministral-3-8B-Base-2512 \\
             --prompts "Prompt one" --prompts "Prompt two" \\
@@ -49,7 +49,7 @@ import torch
 import torch.distributed as dist
 from transformers import AutoTokenizer
 
-# Register NemotronLabsDiffusionBridge so AutoBridge can match MinistralDiffEncoderModel architecture
+# Register NemotronLabsDiffusionBridge so AutoBridge can match NemotronLabsDiffusionModel architecture
 import megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge  # noqa: F401
 from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
     generate_ar,

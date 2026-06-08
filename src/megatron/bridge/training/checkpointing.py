@@ -2536,35 +2536,22 @@ def _load_checkpoint_from_path(
                 and optimizer is not None
                 and not getattr(optimizer, "is_stub_optimizer", False)
             ):
-                # For MegatronMIMO with global torch_dist checkpoints, skip
-                # optimizer.load_state_dict(): dist_checkpointing only saves
-                # common state from rank 0, but non-colocated MegatronMIMO has different
-                # common state per rank (each rank only holds its active
-                # module's param_groups).  The sharded param states are already
-                # loaded by dist_checkpointing.load, and the optimizer was
-                # pre-initialized via sharded_state_dict(is_loading=True).
-                # Local checkpoints save per-rank state, so the skip does not
-                # apply — each rank has its own correct optimizer state.
-                # TODO: Make dist_checkpointing.save collect common state from
-                # all ranks in MegatronMIMO, or have MegatronMIMO replicate all modules' common
-                # state on every rank during save.  That fix belongs in MCore.
-                if not (ckpt_type == CheckpointType.GLOBAL and _is_megatron_mimo):
-                    if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
-                        # Local checkpoints save LayerWiseDistributedOptimizer state to a
-                        # separate per-rank file at the base local checkpoint directory rather
-                        # than embedding it in the sharded distributed checkpoint.
-                        # Load it back from that file here.
-                        dp_rank = pg_collection.dp.rank()
-                        local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
-                        optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
-                        optimizer.load_state_dict_from_file(optim_ckpt_path)
-                    else:
-                        # torch.no_grad() is needed for local checkpoints: the
-                        # DistributedOptimizer copies loaded tensors into main
-                        # params via .copy_(), which fails on leaf Variables that
-                        # require grad without this context.
-                        with torch.no_grad():
-                            optimizer.load_state_dict(state_dict["optimizer"])
+                if isinstance(optimizer, LayerWiseDistributedOptimizer) and ckpt_type == CheckpointType.LOCAL:
+                    # Local checkpoints save LayerWiseDistributedOptimizer state to a
+                    # separate per-rank file at the base local checkpoint directory rather
+                    # than embedding it in the sharded distributed checkpoint.
+                    # Load it back from that file here.
+                    dp_rank = pg_collection.dp.rank()
+                    local_ckpt_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
+                    optim_ckpt_path = os.path.join(local_ckpt_dir, f"layer_wise_optimizer_{dp_rank}.pt")
+                    optimizer.load_state_dict_from_file(optim_ckpt_path)
+                else:
+                    # torch.no_grad() is needed for local checkpoints: the
+                    # DistributedOptimizer copies loaded tensors into main
+                    # params via .copy_(), which fails on leaf Variables that
+                    # require grad without this context.
+                    with torch.no_grad():
+                        optimizer.load_state_dict(state_dict["optimizer"])
 
             if opt_param_scheduler is not None:
                 if "lr_scheduler" in state_dict:

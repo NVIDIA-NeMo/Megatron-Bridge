@@ -22,19 +22,19 @@ Configuration is overridden via CLI dotlist overrides.
 
 Examples:
     3B model:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 3b \
             --hf-path mistralai/Ministral-3-3B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     8B model with TP=4:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 8b \
             --hf-path mistralai/Ministral-3-8B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document
 
     14B model with TP=8:
-        $ torchrun --nproc_per_node=8 examples/diffusion/recipes/nemotron_labs_diffusion/continuous_pretraining.py \
+        $ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/continuous_pretraining.py \
             --model-size 14b \
             --hf-path mistralai/Ministral-3-14B-Base-2512 \
             --data-paths /path/to/dclm/merged_tokenized_text_document

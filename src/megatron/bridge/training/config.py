@@ -1736,6 +1736,12 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+    if cfg.profiling is not None:
+        cfg.profiling.finalize()
+        if cfg.profiling.nvtx_ranges:
+            from megatron.core.utils import configure_nvtx_profiling
+
+            configure_nvtx_profiling(enabled=True)
 
     # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
@@ -1765,6 +1771,20 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
             )
         config.ddp.use_distributed_optimizer = True
         config.optimizer.use_distributed_optimizer = True
+
+    ddp_overlap = config.ddp.overlap_param_gather
+    optimizer_overlap = config.optimizer.overlap_param_gather
+
+    if ddp_overlap or optimizer_overlap:
+        if ddp_overlap != optimizer_overlap:
+            warn_rank_0(
+                f"overlap_param_gather settings were not in sync: "
+                f"ddp.overlap_param_gather={ddp_overlap}, "
+                f"optimizer.overlap_param_gather={optimizer_overlap}. "
+                f"Automatically enabling overlap_param_gather for both settings."
+            )
+        config.ddp.overlap_param_gather = True
+        config.optimizer.overlap_param_gather = True
 
 
 def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
