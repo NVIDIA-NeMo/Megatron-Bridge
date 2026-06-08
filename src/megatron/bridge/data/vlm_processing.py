@@ -444,9 +444,9 @@ def _warn_if_all_masked(
     warn_on_all_masked: bool,
 ) -> None:
     if warn_on_all_masked and len(mask) > 0 and float(mask.sum().item()) == 0.0:
-        warnings.warn("*" * 100, stacklevel=2)
-        warnings.warn(f"All tokens are masked for example:\n{example_or_conversation}.", stacklevel=2)
-        warnings.warn("*" * 100, stacklevel=2)
+        warnings.warn("*" * 100, stacklevel=3)
+        warnings.warn(f"All tokens are masked for example:\n{example_or_conversation}.", stacklevel=3)
+        warnings.warn("*" * 100, stacklevel=3)
 
 
 def _get_chat_template(*objects: Any) -> str | None:
