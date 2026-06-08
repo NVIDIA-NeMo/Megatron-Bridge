@@ -35,6 +35,7 @@ BASE_GPT_OSS_20B_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
     global_batch_size=16,
     micro_batch_size=2,
+    cutedsl_fused_grouped_mlp=True,
 )
 
 
