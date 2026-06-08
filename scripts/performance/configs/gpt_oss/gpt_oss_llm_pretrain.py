@@ -66,6 +66,7 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.tokenizer.hf_tokenizer_kwargs = {"use_fast": True}
     cfg.tokenizer.vocab_size = 128256
     cfg.optimizer.adam_eps = 1e-05
+    cfg.optimizer.overlap_param_gather = True
     cfg.dataset.create_attention_mask = False
     cfg.dataset.defer_npy_index_mmap = True
     cfg.dataset.fast_cache_load = True
@@ -73,6 +74,7 @@ def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.fsdp_double_buffer = True
     cfg.ddp.nccl_ub = True
+    cfg.ddp.overlap_param_gather = True
     cfg.rng.te_rng_tracker = True
     cfg.scheduler.start_weight_decay = 0.1
     cfg.scheduler.end_weight_decay = 0.1
@@ -201,8 +203,6 @@ def gpt_oss_20b_pretrain_config_gb200(
         cfg.model.moe_mlp_glu_interleave_size = 32
         cfg.model.cuda_graph_warmup_steps = 5
         cfg.ddp.average_in_collective = True
-        cfg.ddp.overlap_param_gather = True
-        cfg.optimizer.overlap_param_gather = True
         cfg.optimizer.lr = 0.0004
         cfg.optimizer.min_lr = 0.0004
         cfg.validation.eval_interval = 768
