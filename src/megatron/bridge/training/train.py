@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
+from megatron.core.distributed import finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
@@ -311,6 +312,20 @@ def train(
         forward_backward_func = PagedStashRunner(
             model_config, copy_main_params, model, optimizer, forward_backward_func
         )
+
+    # FGO: wrap finalize_model_grads to async-reload offloaded optimizer
+    # states before grad finalize. H2D overlaps with grad all-reduce. Mirrors
+    # mcore training.py:3140. Only set when FGO is requested; otherwise leave
+    # finalize_model_grads_func untouched (mcore default).
+    if config.optimizer.offload_optimizer_states:
+
+        def finalize_model_grads_with_state_reload(*fmg_args, **fmg_kwargs):
+            for optim_instance in optimizer.chained_optimizers:
+                if isinstance(optim_instance, DistributedOptimizer):
+                    optim_instance.reload_offloaded_states()
+            return finalize_model_grads(*fmg_args, **fmg_kwargs)
+
+        model_config.finalize_model_grads_func = finalize_model_grads_with_state_reload
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
@@ -847,6 +862,15 @@ def train_step(
 
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
+        # FGO: offload optimizer states to CPU at the start of each step so the
+        # async D2H transfer overlaps with forward/backward. Mirrors mcore
+        # training.py:2030. Reload is wired into finalize_model_grads_func in
+        # train() pre-loop setup; release is below after the param buffer copy.
+        if optim_config.offload_optimizer_states:
+            for optim_instance in optimizer.chained_optimizers:
+                if isinstance(optim_instance, DistributedOptimizer):
+                    optim_instance.offload_states()
+
         # Set grad to zero.
         for model_chunk in model:
             model_chunk.zero_grad_buffer()
@@ -858,6 +882,13 @@ def train_step(
             reuse_grad_buf_for_mxfp8_param_ag=cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag,
             overlap_param_gather=cfg.ddp.overlap_param_gather,
         )
+
+        # FGO: release GPU memory for offloaded states once D2H completes.
+        # Mirrors mcore training.py:2073 (after _copy_main_params_to_param_buffer).
+        if optim_config.offload_optimizer_states:
+            for optim_instance in optimizer.chained_optimizers:
+                if isinstance(optim_instance, DistributedOptimizer):
+                    optim_instance.release_offloaded_gpu_states()
 
         # Handle finetuning vs pretraining data consumption
         seq_length = getattr(model_config, "seq_length", cfg.model.seq_length)  # Default for pretraining
