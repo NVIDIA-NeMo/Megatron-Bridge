@@ -9,7 +9,7 @@ when_to_use: Enabling sequence packing or long-context SFT, or investigating a c
 
 For stable background and recommendation level, see:
 
-- @docs/training/packed-sequences.md
+- @docs/training/packed-sequences.mdx
 - @skills/nemo-mbridge-perf-sequence-packing/card.yaml
 
 ## Enablement

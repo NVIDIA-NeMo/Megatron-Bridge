@@ -1,0 +1,59 @@
+---
+title: "Documentation Development"
+description: "Guidance for editing Megatron Bridge documentation after the Fern MDX migration."
+---
+
+# Documentation Development
+
+Megatron Bridge documentation now uses Fern MDX. Live documentation pages are stored as `.mdx` files under `docs/`, while Fern configuration is stored under `docs/fern/`.
+
+## Repository Layout
+
+| Path | Purpose |
+| --- | --- |
+| `docs/**/*.mdx` | Live hand-written documentation pages. |
+| `docs/fern/docs.yml` | Fern site configuration, global theme, version list, and redirects. |
+| `docs/fern/fern.config.json` | Fern CLI organization and version configuration. |
+| `docs/fern/versions/nightly.yml` | Nightly navigation that points back to hoisted live MDX pages. |
+| `docs/images/` and `docs/training/images/` | Static image assets used by MDX pages. |
+
+## Edit Pages
+
+Use standard Markdown plus Fern MDX components such as `Note`, `Tip`, `Warning`, `Cards`, `Card`, `Tabs`, `Tab`, and `Accordion`.
+
+When adding a page:
+
+1. Place the page in the canonical section that matches its reader intent.
+2. Use `.mdx` as the file extension.
+3. Add frontmatter with at least `title` and `description`.
+4. Link with Fern routes such as `/training/checkpointing` instead of Sphinx `.html` or `.md` paths.
+5. Update `docs/fern/versions/nightly.yml` only when adding a new top-level folder or a page that should be pinned explicitly.
+
+## Canonical Sections
+
+- `about/`: Product overview, architecture, and release notes.
+- `get-started/`: Prerequisites, installation, quickstarts, and migration paths.
+- `models/`: Supported model-family documentation.
+- `training/`: Training configuration, performance, reliability, and customization guides.
+- `model-optimization/`: ModelOpt quantization, distillation, and pruning workflows.
+- `use-cases/`: Procedural or integration guides that do not fit a single product area.
+- `reference/`: Lookup-oriented API placeholders and performance references.
+- `troubleshooting/`: Known issues and problem-resolution guidance.
+- `resources/`: Documentation maps, contributing resources, and supplementary pages.
+
+## API Reference
+
+The previous Sphinx site generated API pages with `autodoc2` under `docs/apidocs/`. That generated tree is intentionally excluded from this migration.
+
+For now, link API mentions to [API Reference](/reference/api) or to source files on GitHub. A follow-up decision is needed for generated static MDX API pages versus hand-maintained API reference pages.
+
+## Local Preview
+
+Do not publish from a local development environment. If local preview is needed, use the Fern CLI from `docs/fern/` with the configured Fern version.
+
+```bash
+cd docs/fern
+npx -y fern-api@$(jq -r .version fern.config.json) docs dev
+```
+
+This migration did not run Fern build, preview, or publish commands.

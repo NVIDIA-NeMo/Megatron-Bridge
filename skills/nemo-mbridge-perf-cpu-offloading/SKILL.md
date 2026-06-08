@@ -9,7 +9,7 @@ when_to_use: Enabling CPU offload to reduce GPU memory, or investigating a commi
 
 ## References
 
-- Stable docs: @docs/training/cpu-offloading.md
+- Stable docs: @docs/training/cpu-offloading.mdx
 - Structured metadata: @skills/nemo-mbridge-perf-cpu-offloading/card.yaml
 
 ## What It Is

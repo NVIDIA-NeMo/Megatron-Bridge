@@ -39,8 +39,8 @@ known_limitations:
   - Not every public recipe enables overlap even when the feature exists.
   - Repo docs do not provide benchmark-backed proof for optimal overlap settings.
 evidence:
-  - docs/training/communication-overlap.md
-  - docs/performance-guide.md
+  - docs/training/communication-overlap.mdx
+  - docs/training/performance-tuning.mdx
   - src/megatron/bridge/training/comm_overlap.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/training/mixed_precision.py

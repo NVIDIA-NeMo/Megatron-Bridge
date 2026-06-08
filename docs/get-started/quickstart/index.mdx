@@ -1,0 +1,48 @@
+---
+title: "Quickstart"
+description: "Quickstart paths for using Megatron Bridge for conversion and training."
+---
+
+# Quickstart
+
+Use these quickstart paths to get to a working Megatron Bridge workflow quickly.
+
+<Cards>
+
+<Card title="Hugging Face Conversion" href="/get-started/quickstart/hugging-face-conversion">
+Load a supported Hugging Face model, create a Megatron provider, and export weights.
+</Card>
+
+<Card title="Training Recipes" href="/training/recipe-usage">
+Launch model-specific recipes and override training configuration.
+</Card>
+
+<Card title="Training Configuration" href="/training/config-container-overview">
+Understand the `ConfigContainer` object used by training workflows.
+</Card>
+
+<Card title="Supported Models" href="/models">
+Choose a model-family guide before running model-specific scripts.
+</Card>
+
+</Cards>
+
+## Minimal Conversion Flow
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
+provider = bridge.to_megatron_provider()
+provider.tensor_model_parallel_size = 1
+provider.pipeline_model_parallel_size = 1
+provider.finalize()
+model = provider.provide_distributed_model(wrap_with_ddp=False)
+bridge.save_hf_pretrained(model, "./hf_exports/llama32_1b")
+```
+
+## Next Steps
+
+- [Hugging Face Conversion Quickstart](/get-started/quickstart/hugging-face-conversion)
+- [Training and Customization](/training)
+- [Troubleshooting](/troubleshooting)

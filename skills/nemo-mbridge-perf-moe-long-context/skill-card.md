@@ -19,9 +19,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [MoE Optimization Docs](docs/training/moe-optimization.md) <br>
-- [Activation Recomputation Docs](docs/training/activation-recomputation.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [MoE Optimization Docs](docs/training/moe-optimization.mdx) <br>
+- [Activation Recomputation Docs](docs/training/activation-recomputation.mdx) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 
 
 ## Skill Output: <br>

@@ -1,0 +1,32 @@
+---
+title: "Prerequisites"
+description: "System, software, credential, and repository prerequisites for Megatron Bridge."
+---
+
+# Prerequisites
+
+Megatron Bridge workflows range from lightweight conversion experiments to large multi-node training jobs. Confirm the following prerequisites before installation.
+
+## Hardware Requirements
+
+- NVIDIA GPU access is recommended for conversion validation, inference, and training.
+- Multi-GPU or multi-node systems are required for tensor, pipeline, context, expert, or data-parallel training at scale.
+- Sufficient local or shared storage is required for Hugging Face artifacts, Megatron checkpoints, logs, and profiling outputs.
+
+## Software Requirements
+
+- Linux or a compatible container runtime environment.
+- Python package tooling for installing the repository.
+- Docker with NVIDIA GPU support if you use the NeMo Framework container.
+- Git with submodule support for `3rdparty/Megatron-LM`.
+
+## Credentials
+
+- Hugging Face Hub access token for gated model repositories.
+- Optional experiment tracking credentials for integrations such as Weights & Biases.
+
+## Related Topics
+
+- [Installation](/get-started/installation)
+- [Hugging Face Conversion Quickstart](/get-started/quickstart/hugging-face-conversion)
+- [Supported Models](/models)

@@ -163,7 +163,7 @@ known_limitations:
   - no automatic selection of optimal recompute_modules
   - memory savings from layernorm are negligible on most architectures
 evidence:
-  - docs/training/activation-recomputation.md
+  - docs/training/activation-recomputation.mdx
   - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
   - src/megatron/bridge/recipes/llama/llama3.py
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py

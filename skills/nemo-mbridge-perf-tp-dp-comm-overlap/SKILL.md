@@ -9,7 +9,7 @@ when_to_use: Enabling TP/DP/PP comm overlap, or tracing a throughput regression 
 
 For stable background and recommendation level, see:
 
-- @docs/training/communication-overlap.md
+- @docs/training/communication-overlap.mdx
 
 ## Enablement
 

@@ -1,0 +1,55 @@
+---
+title: "Installation"
+description: "Install Megatron Bridge from source or use the NeMo Framework container."
+---
+
+# Installation
+
+Megatron Bridge is typically used from a source checkout or inside the NeMo Framework container. The container path provides the most complete environment for GPU training and model-family examples.
+
+## Installation Methods
+
+<Tabs>
+
+<Tab title="NeMo Framework Container">
+
+Start a NeMo Framework container from the NVIDIA NGC catalog and mount your checkout:
+
+```bash
+docker run --rm -it -w /workdir -v $(pwd):/workdir \
+  --entrypoint bash \
+  --gpus all \
+  nvcr.io/nvidia/nemo:${TAG}
+```
+
+</Tab>
+
+<Tab title="Source Checkout">
+
+Install from a local checkout for development and documentation work:
+
+```bash
+git clone https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
+cd Megatron-Bridge
+git submodule update --init --recursive
+```
+
+Follow the repository contribution guide for the current development install command.
+
+</Tab>
+
+</Tabs>
+
+## Verify Access
+
+If you plan to use gated Hugging Face models, set `HF_TOKEN` before running conversion workflows:
+
+```bash
+export HF_TOKEN=<your_hugging_face_token>
+```
+
+## Next Steps
+
+- Run the [Hugging Face Conversion Quickstart](/get-started/quickstart/hugging-face-conversion).
+- Browse [Supported Models](/models).
+- Review [Training and Customization](/training).

@@ -7,7 +7,7 @@ when_to_use: Reducing GPU memory via activation recompute, or investigating a co
 
 # Activation Recompute
 
-Stable docs: @docs/training/activation-recomputation.md
+Stable docs: @docs/training/activation-recomputation.mdx
 Card: @skills/nemo-mbridge-perf-activation-recompute/card.yaml
 
 ## What It Is

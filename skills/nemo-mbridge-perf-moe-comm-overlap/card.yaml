@@ -35,8 +35,8 @@ known_limitations:
   - Public recipes are often conservative and leave MoE overlap disabled by default.
   - Repo evidence is stronger for validation logic than for end-to-end throughput gains.
 evidence:
-  - docs/training/communication-overlap.md
-  - docs/parallelisms.md
+  - docs/training/communication-overlap.mdx
+  - docs/training/parallelisms.mdx
   - src/megatron/bridge/training/comm_overlap.py
   - src/megatron/bridge/training/flex_dispatcher_backend.py
   - src/megatron/bridge/training/config.py

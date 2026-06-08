@@ -19,8 +19,8 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Bridge Resiliency Documentation](docs/training/resiliency.md) <br>
-- [Megatron Bridge Checkpointing Documentation](docs/training/checkpointing.md) <br>
+- [Megatron Bridge Resiliency Documentation](docs/training/resiliency.mdx) <br>
+- [Megatron Bridge Checkpointing Documentation](docs/training/checkpointing.mdx) <br>
 - [Megatron Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 

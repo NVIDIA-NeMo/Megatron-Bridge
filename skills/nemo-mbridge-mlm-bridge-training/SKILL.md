@@ -9,7 +9,7 @@ when_to_use: Running training, comparing MLM vs Bridge loss curves, translating 
 
 For how they differ, the arg mapping tables, gotchas, and translation script, see:
 
-- @docs/megatron-lm-to-megatron-bridge.md
+- @docs/get-started/migration/megatron-lm-to-megatron-bridge.mdx
 
 ## First Answer Checklist
 
@@ -122,7 +122,7 @@ SFT/PEFT variants use `_sft_config` / `_peft_config` suffix.
 ## Megatron-Core Submodule
 
 For what the submodule is and why two versions exist, see
-@docs/megatron-lm-to-megatron-bridge.md.
+@docs/get-started/migration/megatron-lm-to-megatron-bridge.mdx.
 
 ### Check current version
 

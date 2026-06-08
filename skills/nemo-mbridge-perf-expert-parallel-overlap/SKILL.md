@@ -9,7 +9,7 @@ when_to_use: Enabling EP overlap to hide dispatch/combine latency, or tracing a 
 
 ## References
 
-- Stable docs: @docs/training/communication-overlap.md
+- Stable docs: @docs/training/communication-overlap.mdx
 - Structured metadata: @skills/nemo-mbridge-perf-expert-parallel-overlap/card.yaml
 
 ## What It Is

@@ -2,7 +2,7 @@
 
 This directory contains example scripts for **Qwen3-Omni thinker-side support** in Megatron Bridge.
 
-For model introduction and implementation notes, see the [Qwen3-Omni documentation](../../../../docs/models/qwen/qwen3-omni.md).
+For model introduction and implementation notes, see the [Qwen3-Omni documentation](../../../../docs/models/qwen/qwen3-omni.mdx).
 
 ## Current Scope
 

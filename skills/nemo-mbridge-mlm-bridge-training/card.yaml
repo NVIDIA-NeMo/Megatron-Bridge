@@ -24,7 +24,7 @@ feature_meaning:
     overrides, launch commands, or standalone recipe files.
 recommended_path:
   correlation_testing: vanilla_gpt_pretrain_config
-  arg_mapping_reference: docs/megatron-lm-to-megatron-bridge.md
+  arg_mapping_reference: docs/get-started/migration/megatron-lm-to-megatron-bridge.mdx
 known_constraints:
   - MLM requires --eval-iters and --eval-interval (no defaults).
   - Bridge scheduler asserts lr_warmup_iters < lr_decay_iters.
@@ -36,7 +36,7 @@ known_limitations:
   - Model-specific recipes carry their own vocab_size which may not match the tokenizer.
   - Translation script covers common args but may not handle all edge cases.
 evidence:
-  - docs/megatron-lm-to-megatron-bridge.md
+  - docs/get-started/migration/megatron-lm-to-megatron-bridge.mdx
   - scripts/training/run_recipe.py
   - scripts/translate_mlm_to_bridge.py
   - 3rdparty/Megatron-LM/pretrain_gpt.py

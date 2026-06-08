@@ -1,0 +1,33 @@
+instances:
+  - url: megatron-bridge.docs.buildwithfern.com/nemo/megatron-bridge
+    custom-domain: docs.nvidia.com/nemo/megatron-bridge
+    multi-source: true
+
+title: NVIDIA NeMo Megatron Bridge
+
+global-theme: nvidia
+
+logo:
+  href: /nemo/megatron-bridge/nightly
+  right-text: Megatron Bridge
+
+navbar-links:
+  - type: github
+    value: https://github.com/NVIDIA-NeMo/Megatron-Bridge
+
+versions:
+  - display-name: Nightly
+    path: versions/nightly.yml
+    slug: nightly
+
+redirects:
+  - source: "/nemo/megatron-bridge/index.html"
+    destination: "/nemo/megatron-bridge/nightly"
+  - source: "/nemo/megatron-bridge/index"
+    destination: "/nemo/megatron-bridge/nightly"
+  - source: "/nemo/megatron-bridge/nightly/:path*/index.html"
+    destination: "/nemo/megatron-bridge/nightly/:path*"
+  - source: "/nemo/megatron-bridge/:path*/index.html"
+    destination: "/nemo/megatron-bridge/:path*"
+  - source: "/nemo/megatron-bridge/:path*.html"
+    destination: "/nemo/megatron-bridge/:path*"

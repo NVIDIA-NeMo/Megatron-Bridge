@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen 3 vision-language models.
 
-For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.md).
+For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.mdx).
 
 ## Workspace Configuration
 

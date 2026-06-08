@@ -1,0 +1,129 @@
+---
+title: "Training and Customization"
+description: ""
+---
+
+# Training and Customization
+
+This directory contains comprehensive documentation for training and customizing models with Megatron Bridge. Learn how to configure training, optimize performance, and customize training workflows.
+
+## Quick Navigation
+
+### I want to
+
+**🚀 Get started with training**
+-> Start with [Configuration Container Overview](/training/config-container-overview) to understand the training setup
+
+**⚙️ Configure training parameters**
+-> See [Training Loop Settings](/training/training-loop-settings) and [Optimizer & Scheduler](/training/optimizer-scheduler)
+
+**📊 Monitor and profile training**
+-> Check [Logging](/training/logging) and [Profiling](/training/profiling) guides
+
+**💾 Manage checkpoints**
+-> Read [Checkpointing](/training/checkpointing) for saving and resuming training
+
+**⚡ Optimize performance**
+-> Explore [Performance Guide](/training/performance-tuning) and [Performance Summary](/reference/performance/summary)
+
+**🔧 Customize training**
+-> See [PEFT](/training/peft), [Distillation](/model-optimization/distillation), [Entry Points](/training/entry-points), and [Callbacks](/training/callbacks)
+
+## Core Training Documentation
+
+### Configuration and Setup
+
+| Document | Purpose | When to Read |
+|----------|---------|--------------|
+| **[Configuration Container Overview](/training/config-container-overview)** | Central configuration object for all training settings | First time setting up training |
+| **[Entry Points](/training/entry-points)** | Training entry points and execution flow | Understanding how training starts |
+| **[Training Loop Settings](/training/training-loop-settings)** | Training loop parameters and configuration | Configuring batch sizes, iterations, validation |
+
+### Optimization and Performance
+
+| Document | Purpose | When to Read |
+|----------|---------|--------------|
+| **[Optimizer & Scheduler](/training/optimizer-scheduler)** | Optimizer and learning rate scheduler configuration | Setting up optimization |
+| **[Mixed Precision](/training/mixed-precision)** | Mixed precision training for memory efficiency | Reducing memory usage |
+| **[Communication Overlap](/training/communication-overlap)** | Overlapping communication with computation | Optimizing distributed training |
+| **[Hierarchical Context Parallel](/training/hierarchical-context-parallel)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
+| **[Attention Optimizations](/training/attention-optimizations)** | Optimizing attention mechanisms | Improving training speed |
+| **[Activation Recomputation](/training/activation-recomputation)** | Gradient checkpointing strategies | Reducing memory footprint |
+| **[CPU Offloading](/training/cpu-offloading)** | Offloading to CPU for memory management | Working with limited GPU memory |
+
+### Monitoring and Debugging
+
+| Document | Purpose | When to Read |
+|----------|---------|--------------|
+| **[Logging](/training/logging)** | Logging configuration and TensorBoard/WandB integration | Monitoring training progress |
+| **[Profiling](/training/profiling)** | Performance profiling and analysis | Identifying bottlenecks |
+| **[Theoretical Memory Estimator](/training/memory-estimator)** | Formula-based per-GPU memory planning | Sizing dense and MoE training configs |
+| **[Resiliency](/training/resiliency)** | Handling failures and recovery | Building robust training pipelines |
+
+### Advanced Features
+
+| Document | Purpose | When to Read |
+|----------|---------|--------------|
+| **[PEFT](/training/peft)** | Parameter-Efficient Fine-Tuning (LoRA, etc.) | Fine-tuning with limited resources |
+| **[Packed Sequences](/training/packed-sequences)** | Sequence packing for efficiency | Optimizing data loading |
+| **[Megatron FSDP](/training/megatron-fsdp)** | Stable overview of Megatron FSDP | Choosing an FSDP path |
+| **[Distillation](/model-optimization/distillation)** | Knowledge distillation techniques | Transferring knowledge between models |
+| **[Checkpointing](/training/checkpointing)** | Checkpoint saving, loading, and resuming | Managing training state |
+| **[Callbacks](/training/callbacks)** | Inject custom logic into training loop | Custom logging, metrics, third-party integrations |
+
+## Training Workflow
+
+A typical training workflow involves:
+
+1. **Configure Training** - Set up `ConfigContainer` with model, data, and training parameters
+2. **Prepare Data** - Configure dataset loading and preprocessing
+3. **Set Optimization** - Configure optimizer, scheduler, and mixed precision
+4. **Enable Monitoring** - Set up logging and profiling
+5. **Configure Checkpointing** - Set up checkpoint saving and resuming
+6. **Launch Training** - Start training with configured entry points
+7. **Monitor Progress** - Track metrics via logging and profiling
+8. **Resume if Needed** - Use checkpointing to resume from saved state
+
+## Related Documentation
+
+- **[Main Documentation Index](/)** - Return to main documentation
+- **[Performance Guide](/training/performance-tuning)** - Comprehensive performance optimization guide
+- **[Performance Summary](/reference/performance/summary)** - Quick performance reference
+- **[Recipe Usage](/training/recipe-usage)** - Using training recipes
+- **[Parallelisms](/training/parallelisms)** - Understanding distributed training strategies
+- **[Bridge Guide](/get-started/quickstart/hugging-face-conversion)** - Working with Hugging Face models
+
+## Common Training Scenarios
+
+### 🆕 First-Time Training Setup
+
+1. [Configuration Container Overview](/training/config-container-overview) - Understand the configuration system
+2. [Entry Points](/training/entry-points) - Learn how to start training
+3. [Training Loop Settings](/training/training-loop-settings) - Configure basic training parameters
+4. [Logging](/training/logging) - Set up monitoring
+
+### ⚡ Performance Optimization
+
+1. [Performance Guide](/training/performance-tuning) - Comprehensive optimization strategies
+2. [Mixed Precision](/training/mixed-precision) - Enable mixed precision training
+3. [Communication Overlap](/training/communication-overlap) - Optimize distributed training
+4. [Activation Recomputation](/training/activation-recomputation) - Reduce memory usage
+5. [Profiling](/training/profiling) - Identify bottlenecks
+
+### 💾 Production Training
+
+1. [Checkpointing](/training/checkpointing) - Reliable checkpoint management
+2. [Resiliency](/training/resiliency) - Handle failures gracefully
+3. [Logging](/training/logging) - Comprehensive monitoring
+4. [Profiling](/training/profiling) - Performance analysis
+
+### 🔧 Customization
+
+1. [PEFT](/training/peft) - Parameter-efficient fine-tuning
+2. [Distillation](/model-optimization/distillation) - Knowledge distillation
+3. [Entry Points](/training/entry-points) - Custom training workflows
+4. [Callbacks](/training/callbacks) - Inject custom logic (third-party integrations)
+
+---
+
+**Ready to start training?** Begin with [Configuration Container Overview](/training/config-container-overview) or return to the [main documentation](/resources/documentation-map).

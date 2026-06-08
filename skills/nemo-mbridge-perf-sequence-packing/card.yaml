@@ -63,11 +63,11 @@ known_limitations:
   - Qwen3.5-VL disables pack_sequences_in_batch.
   - The repo does not contain checked-in benchmark results validating long-context throughput claims.
 evidence:
-  - docs/training/packed-sequences.md
-  - docs/performance-guide.md
-  - docs/training/multi-token-prediction.md
-  - docs/models/llama/llama3.md
-  - docs/training/hierarchical-context-parallel.md
+  - docs/training/packed-sequences.mdx
+  - docs/training/performance-tuning.mdx
+  - docs/training/multi-token-prediction.mdx
+  - docs/models/llama/llama3.mdx
+  - docs/training/hierarchical-context-parallel.mdx
   - src/megatron/bridge/data/datasets/packed_sequence.py
   - src/megatron/bridge/data/datasets/sft.py
   - src/megatron/bridge/training/utils/packed_seq_utils.py

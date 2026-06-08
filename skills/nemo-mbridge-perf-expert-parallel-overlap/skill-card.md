@@ -19,8 +19,8 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Communication Overlap Documentation](docs/training/communication-overlap.mdx) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 - [Megatron-Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
