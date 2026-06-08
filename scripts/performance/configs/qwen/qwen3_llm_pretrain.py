@@ -47,6 +47,7 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
 
 def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     """Apply MoE defaults required by full-iteration CUDA graph capture."""
+    cfg.model.offload_modules = []
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
     cfg.model.moe_expert_rank_capacity_factor = 1.5
@@ -76,7 +77,7 @@ def qwen3_235b_a22b_pretrain_config_gb300(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
+    if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
     return cfg
@@ -104,7 +105,7 @@ def qwen3_235b_a22b_pretrain_config_gb200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
+    if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
     return cfg
@@ -132,8 +133,6 @@ def qwen3_235b_a22b_pretrain_config_vr200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -160,8 +159,6 @@ def qwen3_235b_a22b_pretrain_config_b300(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -188,8 +185,6 @@ def qwen3_235b_a22b_pretrain_config_b200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -216,8 +211,6 @@ def qwen3_235b_a22b_pretrain_config_h100(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -244,7 +237,7 @@ def qwen3_30b_a3b_pretrain_config_gb300(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
+    if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
     return cfg
@@ -272,7 +265,7 @@ def qwen3_30b_a3b_pretrain_config_gb200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
+    if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
     return cfg
@@ -300,8 +293,6 @@ def qwen3_30b_a3b_pretrain_config_vr200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -328,8 +319,6 @@ def qwen3_30b_a3b_pretrain_config_b300(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -356,8 +345,6 @@ def qwen3_30b_a3b_pretrain_config_b200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -384,8 +371,6 @@ def qwen3_30b_a3b_pretrain_config_h100(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
