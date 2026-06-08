@@ -110,23 +110,23 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Bridge offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect.
    >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size.
 
-   <!-- TODO: support megatron custom fsdp -->
-   <!-- > 1. Megatron-Bridge supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods. -->
-   <!-- > -->
-   <!-- >    > 1. To use PyTorch FSDP2: -->
-   <!-- >    > -->
-   <!-- >    >    > 1. `DistributedInitConfig.use_torch_fsdp2=True` -->
-   <!-- >    > -->
-   <!-- >    > 2. To use Custom Megatron FSDP: -->
-   <!-- >    > -->
-   <!-- >    >    > 1. `recipe.trainer.strategy.fsdp="megatron"` -->
-   <!-- >    >    > 2. `recipe.trainer.strategy.ddp.data_parallel_sharding_strategy="optim_grads_params"` -->
-   <!-- > -->
-   <!-- > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios: -->
-   <!-- > -->
-   <!-- >    > 1. Small models with a large sequence, thus the parameter AllGather and gradient ReduceScatter can effectively be hidden under computation and the short communication overlap causes minor interference to the computation under overlap. -->
-   <!-- >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Bridge offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect. -->
-   <!-- >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size. -->
+   {/* TODO: support megatron custom fsdp */}
+   {/* > 1. Megatron-Bridge supports two Fully Sharded Data Parallelism (FSDP) implementations: PyTorch-native FSDP and a custom Megatron FSDP built within Megatron Core. While both follow the same sharding principles, the custom implementation is further optimized for performance. The performance gain of the custom FSDP comes primarily from minimizing the data movement to the communication tensors and reusing communication buffers. Both FSDP methods can be used in combination with per-tensor sharding methods. */}
+   {/* > */}
+   {/* >    > 1. To use PyTorch FSDP2: */}
+   {/* >    > */}
+   {/* >    >    > 1. `DistributedInitConfig.use_torch_fsdp2=True` */}
+   {/* >    > */}
+   {/* >    > 2. To use Custom Megatron FSDP: */}
+   {/* >    > */}
+   {/* >    >    > 1. `recipe.trainer.strategy.fsdp="megatron"` */}
+   {/* >    >    > 2. `recipe.trainer.strategy.ddp.data_parallel_sharding_strategy="optim_grads_params"` */}
+   {/* > */}
+   {/* > 2. FSDP can be preferred over TP+PP+DP mappings in the following scenarios: */}
+   {/* > */}
+   {/* >    > 1. Small models with a large sequence, thus the parameter AllGather and gradient ReduceScatter can effectively be hidden under computation and the short communication overlap causes minor interference to the computation under overlap. */}
+   {/* >    > 2. In FSDP training, activation storage remains as the main memory bottleneck because FSDP only shards model state memory, and a large per-GPU activation is needed to hide the costly FSDP communication. On GB200 GPUs, Megatron-Bridge offers an option to offload activations to the host memory via a high-speed chip-to-chip interconnect. */}
+   {/* >    > 3. Baseline training is host performance-bound, but FSDP allows for larger per-GPU tensor sizes by eliminating TP or enabling a larger micro-batch size. */}
 
 4. Heterogeneous Encoder Parallelism
 
@@ -188,9 +188,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    >    > 1. `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives = 16>`
    >    >    > 2. `NVTE_BWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives = 16>`
 
-<!-- 2. Custom Megatron FSDP -->
+{/* 2. Custom Megatron FSDP */}
 
-<!--    > 1. Unless you specify the communication bucket size, MCORE FSDP uses fixed communication overlap that overlaps the parameter AllGather and gradient ReduceScatter of each Transformer layer with its associated forward and backward computations. -->
+{/*    > 1. Unless you specify the communication bucket size, MCORE FSDP uses fixed communication overlap that overlaps the parameter AllGather and gradient ReduceScatter of each Transformer layer with its associated forward and backward computations. */}
 
 3. Tensor-parallel (TP) communication (with sequence parallelism)
 
@@ -793,5 +793,5 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `TPOverlapCfg.fp8_buf`
 - `TPOverlapCfg.num_sm`
 - `TPOverlapCfg.num_split`
-<!-- - `garbageCollectionCallback.gc_interval_val` -->
-<!-- - `NsysPlugin` -->
+{/* - `garbageCollectionCallback.gc_interval_val` */}
+{/* - `NsysPlugin` */}

@@ -22,7 +22,7 @@ several CP communication backends:
 |---|---|---|---|
 | `"p2p"` | Ring-exchange of KV chunks | Yes | None |
 | `"all_gather"` | All-gather full KV before attention | No | None |
-| `"a2a"` | All-to-all: scatter heads, gather full sequence (Ulysses-style) | N/A | **CP <= num_kv_heads** |
+| `"a2a"` | All-to-all: scatter heads, gather full sequence (Ulysses-style) | N/A | **CP \<= num_kv_heads** |
 | `"a2a+p2p"` | Hierarchical: a2a within inner group, p2p across outer group | Partial (p2p part) | Requires `hierarchical_context_parallel_sizes` |
 
 **HCP (`a2a+p2p`)** exists to scale CP beyond the KV head count by combining
@@ -70,7 +70,7 @@ Model: 8 KV heads. Cluster: 4 nodes x 8 GPUs. Goal: train 128K sequences.
 | Option | TP | CP | `cp_comm_type` | Notes |
 |---|---|---|---|---|
 | A | 1 | 16 | `a2a+p2p` with `[8,2]` | a2a intra-node (8 GPUs), p2p across 2 node-groups |
-| B | 2 | 4 | `a2a` | CP=4 <= 8 KV heads. Simpler. Often same throughput. |
+| B | 2 | 4 | `a2a` | CP=4 \<= 8 KV heads. Simpler. Often same throughput. |
 | C | 1 | 16 | `p2p` | Works but no a2a bandwidth benefit intra-node |
 
 In practice, **option B is usually preferred** -- benchmarks showed identical
