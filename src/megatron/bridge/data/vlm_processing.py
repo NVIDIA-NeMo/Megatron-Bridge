@@ -401,10 +401,15 @@ def gather_assistant_text_segments(
 
 def tokenize_text_without_special_tokens(tokenizer: Any, text: str) -> list[int]:
     """Tokenize text using a HF-like tokenizer without adding special tokens."""
-    if hasattr(tokenizer, "encode"):
-        tokens = tokenizer.encode(text, add_special_tokens=False)
-    else:
-        tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
+    try:
+        if hasattr(tokenizer, "encode"):
+            tokens = tokenizer.encode(text, add_special_tokens=False)
+        elif callable(tokenizer):
+            tokens = tokenizer(text, add_special_tokens=False)["input_ids"]
+        else:
+            return []
+    except (KeyError, TypeError, ValueError):
+        return []
     return _as_token_id_list(tokens)
 
 

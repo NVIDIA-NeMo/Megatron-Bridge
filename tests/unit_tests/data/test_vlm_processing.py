@@ -73,6 +73,14 @@ class _Processor:
         return output
 
 
+class _NonTokenizingProcessor:
+    class _Tok:
+        pad_token_id = 0
+        eos_token_id = 99
+
+    tokenizer = _Tok()
+
+
 class _GenerationMaskTokenizer(_Tokenizer):
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -331,6 +339,20 @@ def test_build_assistant_loss_mask_text_fallback_does_not_search_newline_for_emp
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), warn_on_all_masked=False)
 
     assert mask.tolist() == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_build_assistant_loss_mask_handles_non_tokenizing_tokenizer():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([1, 2, 3])
+
+    mask = build_assistant_loss_mask(example, input_ids, _NonTokenizingProcessor(), warn_on_all_masked=False)
+
+    assert mask.tolist() == [0.0, 0.0, 0.0]
 
 
 def test_build_assistant_loss_mask_uses_template_diff_for_non_chatml_same_text():

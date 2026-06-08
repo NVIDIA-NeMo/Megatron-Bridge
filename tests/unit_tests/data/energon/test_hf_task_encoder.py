@@ -288,7 +288,7 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
 class TestHFTaskEncoderEncodeBatch(unittest.TestCase):
     def test_encode_batch(self):
         processor = _make_processor()
-        encoder = HFTaskEncoder(processor=processor, seq_length=128)
+        encoder = HFTaskEncoder(processor=processor, seq_length=128, collate_fn=_make_collate_fn())
 
         pv = torch.randn(2, 3, 4, 4)
         batch = HFEnergonBatch(
@@ -312,7 +312,7 @@ class TestHFTaskEncoderEncodeBatch(unittest.TestCase):
 
     def test_encode_batch_no_visuals(self):
         processor = _make_processor()
-        encoder = HFTaskEncoder(processor=processor, seq_length=128)
+        encoder = HFTaskEncoder(processor=processor, seq_length=128, collate_fn=_make_collate_fn())
 
         batch = HFEnergonBatch(
             **batch_metadata_kwargs(keys=["k1"]),

@@ -13,6 +13,7 @@ skills/build-and-dependency/SKILL
 skills/bump-dependency/SKILL
 skills/testing/SKILL
 skills/cicd/SKILL
+skills/review-pr/SKILL
 skills/nemo-mbridge-mlm-bridge-training/SKILL
 skills/nemo-mbridge-recipe-recommender/SKILL
 ```
