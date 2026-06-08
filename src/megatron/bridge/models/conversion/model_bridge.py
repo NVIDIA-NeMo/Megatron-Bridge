@@ -497,6 +497,10 @@ class MegatronModelBridge(
             f"Unsupported activation function: {activation_func}. Supported: {list(ACTIVATION_FUNC_MAP.values())}"
         )
 
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Return whether an HF config field should be mapped to provider kwargs."""
+        return True
+
     def hf_config_to_provider_kwargs(self, hf_config) -> dict:
         """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
 
@@ -524,7 +528,11 @@ class MegatronModelBridge(
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
-            if has_value and megatron_name not in provider_kwargs:
+            if (
+                has_value
+                and megatron_name not in provider_kwargs
+                and self._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+            ):
                 provider_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
