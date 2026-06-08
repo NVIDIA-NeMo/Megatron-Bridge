@@ -137,7 +137,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     _pg_collection: Optional[ProcessGroupCollection] = None
 
     # MTP
-    mtp_num_layers: int = 0
+    mtp_num_layers: int | None = 0
     mtp_hybrid_override_pattern: Optional[str] = None
     keep_mtp_spec_in_bf16: bool = False
 
