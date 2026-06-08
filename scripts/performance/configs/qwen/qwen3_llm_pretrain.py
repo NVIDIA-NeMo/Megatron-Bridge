@@ -54,14 +54,6 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
 
-def apply_qwen3_moe_perf_configs(cfg: ConfigContainer, base_cfg) -> None:
-    """Apply common Qwen3 MoE performance settings and full-iteration CG defaults."""
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
-
-
 def qwen3_235b_a22b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -82,7 +74,10 @@ def qwen3_235b_a22b_pretrain_config_gb300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -107,7 +102,10 @@ def qwen3_235b_a22b_pretrain_config_gb200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -132,7 +130,10 @@ def qwen3_235b_a22b_pretrain_config_vr200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -157,7 +158,10 @@ def qwen3_235b_a22b_pretrain_config_b300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -182,7 +186,10 @@ def qwen3_235b_a22b_pretrain_config_b200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -207,7 +214,10 @@ def qwen3_235b_a22b_pretrain_config_h100(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -232,7 +242,10 @@ def qwen3_30b_a3b_pretrain_config_gb300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -257,7 +270,10 @@ def qwen3_30b_a3b_pretrain_config_gb200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -282,7 +298,10 @@ def qwen3_30b_a3b_pretrain_config_vr200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -307,7 +326,10 @@ def qwen3_30b_a3b_pretrain_config_b300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -332,7 +354,10 @@ def qwen3_30b_a3b_pretrain_config_b200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
@@ -357,7 +382,10 @@ def qwen3_30b_a3b_pretrain_config_h100(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    apply_qwen3_moe_perf_configs(cfg, base_cfg)
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
