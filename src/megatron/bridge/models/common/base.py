@@ -12,17 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import is_dataclass
 from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
 from typing import Any
 
 from megatron.training.models.base import (
     BuildConfigT,  # noqa: F401
     ModelBuilder,  # noqa: F401
-    ModelConfig as _MegatronModelConfig,
     ModelT,  # noqa: F401
     Serializable,  # noqa: F401
     compose_hooks,  # noqa: F401
+)
+from megatron.training.models.base import (
+    ModelConfig as _MegatronModelConfig,
 )
 
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix

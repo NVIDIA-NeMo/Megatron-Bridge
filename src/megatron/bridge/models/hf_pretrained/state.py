@@ -877,7 +877,8 @@ class SafeTensorsStateSource(StateSource):
                 for filename in list(files_to_save.keys()):
                     keys_for_file = files_to_save[filename]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
-                    output_file_path = output_path / filename
+                    output_file_path = _resolve_output_shard_path(output_path, filename)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
