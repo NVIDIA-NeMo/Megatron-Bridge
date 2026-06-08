@@ -19,6 +19,9 @@ versions:
   - display-name: Nightly
     path: versions/nightly.yml
     slug: nightly
+  - display-name: "v0.4 (26.04)"
+    path: versions/v0.4.yml
+    slug: v0.4
 
 redirects:
   - source: "/nemo/megatron-bridge/index.html"

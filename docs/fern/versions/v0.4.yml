@@ -1,0 +1,50 @@
+navigation:
+  - section: "Documentation"
+    contents:
+      - page: "Home"
+        path: ../../index.mdx
+  - section: "About"
+    contents:
+      - folder: ../../about
+        title: "Overview"
+        title-source: frontmatter
+  - section: "Get Started"
+    contents:
+      - folder: ../../get-started
+        title: "Getting Started"
+        title-source: frontmatter
+  - section: "Supported Models"
+    contents:
+      - folder: ../../models
+        title: "Supported Models"
+        title-source: frontmatter
+  - section: "Training and Customization"
+    contents:
+      - folder: ../../training
+        title: "Training and Customization"
+        title-source: frontmatter
+  - section: "Model Optimization"
+    contents:
+      - folder: ../../model-optimization
+        title: "Model Optimization"
+        title-source: frontmatter
+  - section: "Use Cases"
+    contents:
+      - folder: ../../use-cases
+        title: "Use Cases"
+        title-source: frontmatter
+  - section: "Reference"
+    contents:
+      - folder: ../../reference
+        title: "Reference"
+        title-source: frontmatter
+  - section: "Troubleshooting"
+    contents:
+      - folder: ../../troubleshooting
+        title: "Troubleshooting"
+        title-source: frontmatter
+  - section: "Resources"
+    contents:
+      - folder: ../../resources
+        title: "Resources"
+        title-source: frontmatter
