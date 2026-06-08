@@ -15,7 +15,7 @@ Data Parallelism (DP) replicates the model across multiple GPUs. Data batches ar
 
 Distributed Data Parallelism (DDP) keeps the model copies consistent by synchronizing parameter gradients across data-parallel GPUs before each parameter update. More specifically, it sums the gradients of all model copies using all-reduce communication collectives.
 
-![Distributed Data Parallelism](images/ddp.gif)
+![Distributed Data Parallelism](../images/ddp.gif)
 *Figure: Distributed Data Parallelism synchronizes gradients across multiple GPUs using all-reduce operations.*
 
 ### Distributed Optimizer
@@ -59,10 +59,10 @@ Model Parallelism (MP) is a distributed model deployment method that partitions 
 
 Tensor Parallelism (TP) is a model-parallel partitioning method that distributes the parameter tensor of an individual layer across GPUs. In addition to reducing model state memory usage, it also saves activation memory as the per-GPU tensor sizes shrink. However, the reduced per-GPU tensor size increases CPU overhead due to smaller per-GPU kernel workloads.
 
-![Tensor Parallelism Overview](images/tp1.png)
+![Tensor Parallelism Overview](../images/tp1.png)
 *Figure 1: Tensor Parallelism distributes individual layer parameters across multiple GPUs.*
 
-![Tensor Parallelism Implementation](images/tp2.png)
+![Tensor Parallelism Implementation](../images/tp2.png)
 *Figure 2: Detailed view of how tensor parallelism splits weight matrices and synchronizes computations.*
 
 #### Enable Tensor Parallelism
@@ -93,7 +93,7 @@ Megatron Bridge integrates TP through the implementation from Megatron Core. For
 
 Pipeline Parallelism (PP) is a technique that assigns consecutive layers or segments of a neural network to different GPUs. This division allows each GPU to process different stages of the network sequentially.
 
-![Pipeline Parallelism](images/pp.gif)
+![Pipeline Parallelism](../images/pp.gif)
 *Figure: Pipeline Parallelism distributes consecutive layers across multiple GPUs, processing batches in a pipeline fashion.*
 
 #### Enable Pipeline Parallelism
@@ -140,7 +140,7 @@ Expert Parallelism (EP) is a type of model parallelism that distributes experts 
 
 MoE is a machine learning technique where multiple specialized models (experts, usually multi-layer perceptrons) are combined to solve a complex task. Each expert focuses on a specific subtask or domain, while a gating network dynamically activates the most appropriate expert based on the current input.
 
-![Expert Parallelism](images/ep.png)
+![Expert Parallelism](../images/ep.png)
 *Figure: Expert Parallelism distributes MoE experts across multiple GPUs while keeping other layers replicated.*
 
 #### Basic MoE Configuration
@@ -333,7 +333,7 @@ In LLM training, a large memory space is needed to store the input activations o
 
 Sequence Parallelism (SP) extends tensor-level model parallelism by distributing computing load and activation memory across multiple GPUs along the sequence dimension of transformer layers. This method is particularly useful for portions of the layer that have previously not been parallelized, enhancing overall model performance and efficiency.
 
-![Sequence Parallelism](images/sp.png)
+![Sequence Parallelism](../images/sp.png)
 *Figure: Sequence Parallelism distributes the sequence dimension across multiple GPUs, reducing activation memory.*
 
 #### Enable Sequence Parallelism
