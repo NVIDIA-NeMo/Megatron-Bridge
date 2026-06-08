@@ -24,7 +24,6 @@ from typing import Any, Callable, Optional, Union
 import torch
 import torch.profiler
 from megatron.core.distributed import DistributedDataParallel as DDP
-from megatron.core.distributed import finalize_model_grads
 from megatron.core.distributed.fsdp.mcore_fsdp_adapter import FullyShardedDataParallel as megatron_FSDP
 from megatron.core.full_cuda_graph import FullCudaGraphWrapper
 from megatron.core.num_microbatches_calculator import (
@@ -313,17 +312,22 @@ def train(
             model_config, copy_main_params, model, optimizer, forward_backward_func
         )
 
-    # FGO: wrap finalize_model_grads to async-reload offloaded optimizer
+    # FGO: wrap finalize_model_grads_func to async-reload offloaded optimizer
     # states before grad finalize. H2D overlaps with grad all-reduce. Mirrors
-    # mcore training.py:3140. Only set when FGO is requested; otherwise leave
-    # finalize_model_grads_func untouched (mcore default).
+    # mcore training.py:3140 in intent, but DELEGATES to whatever
+    # finalize_model_grads_func was previously bound. setup.py:443 already
+    # binds it to partial(finalize_model_grads, pg_collection=pg_collection),
+    # and setup_megatron_mimo.py:107 binds it to a MIMO-specific
+    # finalize_model_grads_multimodule — calling the bare module-level
+    # finalize_model_grads here would drop those bindings.
     if config.optimizer.offload_optimizer_states:
+        _orig_finalize = model_config.finalize_model_grads_func
 
         def finalize_model_grads_with_state_reload(*fmg_args, **fmg_kwargs):
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
                     optim_instance.reload_offloaded_states()
-            return finalize_model_grads(*fmg_args, **fmg_kwargs)
+            return _orig_finalize(*fmg_args, **fmg_kwargs)
 
         model_config.finalize_model_grads_func = finalize_model_grads_with_state_reload
 
