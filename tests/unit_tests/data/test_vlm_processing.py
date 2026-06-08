@@ -390,10 +390,10 @@ def test_build_assistant_loss_mask_uses_explicit_boundary_config_before_text_sea
             {"role": "assistant", "content": "answer"},
         ]
     }
-    input_ids = torch.tensor([100, 3, 4, 101, 102, 3, 4, 101])
+    input_ids = torch.tensor([100, 3, 4, 101, 102, 3, 4, 103])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"user": [101], "assistant": [103]},
     )
 
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
@@ -411,7 +411,7 @@ def test_build_assistant_loss_mask_boundary_config_splits_nested_parts():
     input_ids = torch.tensor([100, 8, 101, 102, 200, 30, 31, 201, 32, 202, 40, 41, 203, 33, 101])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"user": [101], "assistant": [101]},
         masked_roles=("assistant", "tool_call"),
         part_start_tokens={"reasoning": [200], "tool_call": [202]},
         part_end_tokens={"reasoning": [201], "tool_call": [203]},
@@ -432,7 +432,7 @@ def test_build_assistant_loss_mask_boundary_config_splits_parts_only_in_assistan
     input_ids = torch.tensor([99, 202, 50, 203, 101, 102, 202, 60, 203, 101])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"system": [99], "assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"system": [101], "assistant": [101]},
         masked_roles=("tool_call",),
         part_start_tokens={"tool_call": [202]},
         part_end_tokens={"tool_call": [203]},
@@ -453,7 +453,7 @@ def test_build_assistant_loss_mask_boundary_config_can_match_omni_whole_assistan
     input_ids = torch.tensor([100, 8, 101, 102, 202, 60, 203, 101])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"user": [101], "assistant": [101]},
         masked_roles=("assistant",),
         include_start_tokens_for_roles=("assistant",),
     )
@@ -472,7 +472,7 @@ def test_build_assistant_loss_mask_boundary_config_can_include_part_boundary_tok
     input_ids = torch.tensor([102, 202, 60, 203, 101])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"assistant": [101]},
         masked_roles=("tool_call",),
         part_start_tokens={"tool_call": [202]},
         part_end_tokens={"tool_call": [203]},
@@ -494,7 +494,7 @@ def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
     input_ids = torch.tensor([102, 55, 3, 101])
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"assistant": [102]},
-        end_tokens=[101],
+        role_end_tokens={"assistant": [101]},
         trim_leading_token_ids=(55,),
     )
 
