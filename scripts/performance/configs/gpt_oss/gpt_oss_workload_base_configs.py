@@ -225,8 +225,8 @@ GPT_OSS_120B_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
 GPT_OSS_120B_PRETRAIN_CONFIG_B300_FP8_MX_V2 = replace(
     GPT_OSS_120B_PRETRAIN_CONFIG_B300_BF16_V2,
     # expert_model_parallel_size=16,
-    cuda_graph_impl="full_iteration",
-    cuda_graph_scope=[],
+    # cuda_graph_impl="full_iteration",
+    # cuda_graph_scope=[],
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
     fp8_dot_product_attention=True,
