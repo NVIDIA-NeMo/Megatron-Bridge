@@ -22,6 +22,7 @@ from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_30b_a3b_pretrain_config
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,22 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
 
+def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    """Apply MoE defaults required by full-iteration CUDA graph capture."""
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+
+def apply_qwen3_235b_perf_configs(cfg: ConfigContainer, base_cfg) -> None:
+    set_qwen3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+
+
 def qwen3_235b_a22b_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -64,8 +81,7 @@ def qwen3_235b_a22b_pretrain_config_gb300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
@@ -90,8 +106,7 @@ def qwen3_235b_a22b_pretrain_config_gb200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
@@ -116,8 +131,7 @@ def qwen3_235b_a22b_pretrain_config_vr200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
@@ -142,8 +156,7 @@ def qwen3_235b_a22b_pretrain_config_b300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
@@ -168,8 +181,7 @@ def qwen3_235b_a22b_pretrain_config_b200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
@@ -194,8 +206,7 @@ def qwen3_235b_a22b_pretrain_config_h100(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    set_qwen3_common_configs(cfg)
-    set_workload_base_configs(cfg, base_cfg)
+    apply_qwen3_235b_perf_configs(cfg, base_cfg)
 
     return cfg
 
