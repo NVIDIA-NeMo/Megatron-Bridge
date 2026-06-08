@@ -331,6 +331,23 @@ class TestGemma4VLBridgeMappingRegistry:
         names = self._collect_names(bridge.mapping_registry())
         assert any("post_moe_layernorm" in n for n in names)
 
+    def test_dense_mlp_pre_norm_maps_to_pre_feedforward_layernorm(self, bridge):
+        """Dense MLP fused pre-norm must load pre_feedforward_layernorm, not post_attention_layernorm.
+
+        Regression test for the bug where linear_fc1.layer_norm_weight (the
+        TE-fused pre-MLP RMSNorm) was mapped to post_attention_layernorm,
+        leaving the dense MLP without its real pre-FFN normalization.
+        """
+        hf_target = None
+        for m in bridge.mapping_registry().mappings:
+            megatron_param = getattr(m, "megatron_param", "")
+            if isinstance(megatron_param, str) and megatron_param.endswith("mlp.linear_fc1.layer_norm_weight"):
+                hf_target = m.hf_param
+                break
+        assert hf_target is not None, "linear_fc1.layer_norm_weight mapping not found"
+        assert hf_target.endswith("pre_feedforward_layernorm.weight")
+        assert "post_attention_layernorm" not in hf_target
+
 
 # ---------------------------------------------------------------------------
 # Edge cases
