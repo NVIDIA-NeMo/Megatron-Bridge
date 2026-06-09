@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -995,3 +996,149 @@ class TestExportAdapterCkpt:
             bridge.export_adapter_ckpt(str(ckpt_dir), output)
 
         bridge.save_hf_adapter.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# examples/conversion/adapter/export_adapter.py
+# ---------------------------------------------------------------------------
+
+
+class TestExportAdapterScript:
+    def test_load_lora_config_falls_back_to_defaults_on_parse_error(self, tmp_path, caplog):
+        from examples.conversion.adapter import export_adapter
+
+        from megatron.bridge.peft.lora import LoRA
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        (ckpt / "run_config.yaml").write_text("not: valid: yaml: [[[")
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.read_run_config", side_effect=ValueError("bad yaml")),
+            caplog.at_level(logging.WARNING),
+        ):
+            lora = export_adapter._load_lora_config(ckpt)
+
+        assert isinstance(lora, LoRA)
+        assert lora.dim == LoRA().dim
+        assert "Using defaults" in caplog.text
+
+    def test_load_lora_config_reads_parent_run_config(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        parent = tmp_path / "run"
+        iter_dir = parent / "iter_0000001"
+        iter_dir.mkdir(parents=True)
+        (parent / "run_config.yaml").write_text(yaml.dump({"peft": {"_target_": "LoRA", "dim": 4, "alpha": 8}}))
+
+        lora = export_adapter._load_lora_config(iter_dir)
+
+        assert lora.dim == 4
+        assert lora.alpha == 8
+
+    def test_get_loaded_model_key_prefers_exact_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._get_loaded_model_key({"model": {}, "model0": {}}, tmp_path) == "model"
+
+    def test_get_loaded_model_key_accepts_prefixed_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._get_loaded_model_key({"model0": {}}, tmp_path) == "model0"
+
+    def test_get_loaded_model_key_raises_clear_error_when_missing(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(RuntimeError, match="has no 'model' key"):
+            export_adapter._get_loaded_model_key({"optimizer": {}}, tmp_path)
+
+    @pytest.mark.parametrize(
+        ("tp", "pp", "ep", "etp", "expected"),
+        [
+            (1, 1, 1, 1, False),
+            (2, 1, 1, 1, True),
+            (1, 2, 1, 1, True),
+            (1, 1, 2, 1, True),
+            (1, 1, 1, 2, True),
+        ],
+    )
+    def test_uses_distributed_export(self, tp, pp, ep, etp, expected):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(tp=tp, pp=pp, ep=ep, etp=etp)
+
+        assert export_adapter._uses_distributed_export(args) is expected
+
+    def test_configure_cuda_device_requires_cuda(self):
+        from examples.conversion.adapter import export_adapter
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.is_available", return_value=False),
+            pytest.raises(RuntimeError, match="requires CUDA"),
+        ):
+            export_adapter._configure_cuda_device()
+
+    def test_configure_cuda_device_uses_local_rank(self):
+        from examples.conversion.adapter import export_adapter
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.is_available", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.get_local_rank_preinit", return_value=2),
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.set_device") as mock_set_device,
+        ):
+            device = export_adapter._configure_cuda_device()
+
+        mock_set_device.assert_called_once_with(2)
+        assert device == torch.device("cuda", 2)
+
+    def test_export_adapter_distributed_raises_clear_error_for_missing_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunk = MagicMock()
+        model_chunk.to.return_value = model_chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [model_chunk]
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter._generate_model_state_dict", return_value={"model": {}}),
+            patch(
+                "examples.conversion.adapter.export_adapter.apply_peft_adapter_filter_to_state_dict",
+                side_effect=lambda state_dict, _lora: state_dict,
+            ),
+            patch(
+                "examples.conversion.adapter.export_adapter.dist_checkpointing.load", return_value={"optimizer": {}}
+            ),
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch(
+                "examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"
+            ) as mock_destroy_mp,
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group") as mock_destroy_pg,
+            pytest.raises(RuntimeError, match="has no 'model' key"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        model_chunk.load_state_dict.assert_not_called()
+        mock_destroy_mp.assert_called_once()
+        mock_destroy_pg.assert_called_once()

@@ -42,6 +42,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import logging
+from collections.abc import Mapping
 from pathlib import Path
 
 import torch
@@ -58,6 +60,8 @@ from megatron.bridge.training.checkpointing import (
 from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
+
+logger = logging.getLogger(__name__)
 
 _DTYPE_ALIASES: dict[str, torch.dtype] = {
     "bf16": torch.bfloat16,
@@ -127,25 +131,39 @@ def _load_lora_config(ckpt_path: Path) -> LoRA | VLMLoRA:
     if not cfg_file.exists() and ckpt_path.parent != ckpt_path:
         cfg_file = ckpt_path.parent / "run_config.yaml"
     if cfg_file.exists():
-        run_cfg_dict = read_run_config(str(cfg_file))
-        peft_cfg = run_cfg_dict.get("peft", {}) or {}
-        if "VLMLoRA" in peft_cfg.get("_target_", ""):
-            peft_class = VLMLoRA
-        allowed_keys = {
-            "target_modules",
-            "exclude_modules",
-            "dim",
-            "alpha",
-            "dropout",
-            "dropout_position",
-            "normalize_moe_lora",
-            "share_expert_adapters",
-            "freeze_language_model",
-            "freeze_vision_model",
-            "freeze_vision_projection",
-        }
-        peft_cfg = {key: value for key, value in peft_cfg.items() if key in allowed_keys}
+        try:
+            run_cfg_dict = read_run_config(str(cfg_file))
+        except Exception as err:
+            logger.warning("Failed to read LoRA settings from %s: %s. Using defaults.", cfg_file, err)
+        else:
+            peft_cfg = run_cfg_dict.get("peft", {}) or {}
+            if "VLMLoRA" in peft_cfg.get("_target_", ""):
+                peft_class = VLMLoRA
+            allowed_keys = {
+                "target_modules",
+                "exclude_modules",
+                "dim",
+                "alpha",
+                "dropout",
+                "dropout_position",
+                "normalize_moe_lora",
+                "share_expert_adapters",
+                "freeze_language_model",
+                "freeze_vision_model",
+                "freeze_vision_projection",
+            }
+            peft_cfg = {key: value for key, value in peft_cfg.items() if key in allowed_keys}
     return peft_class(**peft_cfg)
+
+
+def _get_loaded_model_key(loaded_sd: Mapping[str, object], ckpt_path: Path) -> str:
+    if "model" in loaded_sd:
+        return "model"
+
+    model_key = next((key for key in loaded_sd if key.startswith("model")), None)
+    if model_key is None:
+        raise RuntimeError(f"Checkpoint at {ckpt_path} has no 'model' key. Available keys: {list(loaded_sd.keys())}")
+    return model_key
 
 
 def _uses_distributed_export(args: argparse.Namespace) -> bool:
@@ -190,7 +208,7 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
         sharded_state_dict = _generate_model_state_dict(model, {})
         sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
         loaded_sd = dist_checkpointing.load(sharded_state_dict, str(ckpt_path))
-        model_key = "model" if "model" in loaded_sd else next(key for key in loaded_sd if key.startswith("model"))
+        model_key = _get_loaded_model_key(loaded_sd, ckpt_path)
         model[0].load_state_dict(loaded_sd[model_key], strict=False)
 
         bridge.save_hf_adapter(
