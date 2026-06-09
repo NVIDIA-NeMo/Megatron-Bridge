@@ -313,13 +313,14 @@ def train(
         )
 
     # FGO: wrap finalize_model_grads_func to async-reload offloaded optimizer
-    # states before grad finalize. H2D overlaps with grad all-reduce. Mirrors
-    # mcore training.py:3140 in intent, but DELEGATES to whatever
-    # finalize_model_grads_func was previously bound. setup.py:443 already
-    # binds it to partial(finalize_model_grads, pg_collection=pg_collection),
-    # and setup_megatron_mimo.py:107 binds it to a MIMO-specific
-    # finalize_model_grads_multimodule — calling the bare module-level
-    # finalize_model_grads here would drop those bindings.
+    # states before grad finalize, so H2D can overlap with grad all-reduce
+    # (mirrors mcore's FGO reload-on-grad-finalize pattern in its train()).
+    # DELEGATE to whatever finalize_model_grads_func was previously bound:
+    # `_update_model_config_funcs` in setup.py already binds it to
+    # `partial(finalize_model_grads, pg_collection=pg_collection)`, and
+    # `_update_megatron_mimo_model_config_funcs` binds it to a multimodule
+    # variant for MIMO — calling the bare module-level `finalize_model_grads`
+    # here would drop those bindings.
     if config.optimizer.offload_optimizer_states:
         _orig_finalize = model_config.finalize_model_grads_func
 
@@ -866,10 +867,11 @@ def train_step(
 
     rerun_state_machine = get_rerun_state_machine()
     while rerun_state_machine.should_run_forward_backward(data_iterator):
-        # FGO: offload optimizer states to CPU at the start of each step so the
-        # async D2H transfer overlaps with forward/backward. Mirrors mcore
-        # training.py:2030. Reload is wired into finalize_model_grads_func in
-        # train() pre-loop setup; release is below after the param buffer copy.
+        # FGO: offload optimizer states to CPU at the start of each step so
+        # the async D2H transfer overlaps with forward/backward. Mirrors the
+        # FGO offload site at the top of mcore's train_step forward-backward
+        # loop body. Reload is wired into finalize_model_grads_func in train()
+        # pre-loop setup; release is below after the param buffer copy.
         if optim_config.offload_optimizer_states:
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
@@ -888,7 +890,8 @@ def train_step(
         )
 
         # FGO: release GPU memory for offloaded states once D2H completes.
-        # Mirrors mcore training.py:2073 (after _copy_main_params_to_param_buffer).
+        # Mirrors mcore's post-`_copy_main_params_to_param_buffer` release
+        # site in its train_step.
         if optim_config.offload_optimizer_states:
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
