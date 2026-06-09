@@ -263,20 +263,26 @@ class TestGemma3VLBridgeMappingRegistry:
         """Test mapping_registry handles vision tower parameters correctly."""
         registry = gemma3_vl_bridge.mapping_registry()
 
-        # Should contain vision tower parameter mappings
-        mappings = registry.mappings
-        mapping_names = []
-        for mapping in mappings:
-            if hasattr(mapping, "megatron_param"):
-                mapping_names.append(str(getattr(mapping, "megatron_param")))
-            hf = getattr(mapping, "hf_param", None)
-            if isinstance(hf, dict):
-                mapping_names.extend([str(v) for v in hf.values()])
-            elif isinstance(hf, str):
-                mapping_names.append(hf)
+        # Find the ReplicatedMapping for vision_tower
+        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
 
-        has_vision_tower = any("vision_tower" in name for name in mapping_names)
-        assert has_vision_tower, "Should contain vision tower parameter mappings"
+        vision_mappings = [
+            m
+            for m in registry.mappings
+            if isinstance(m, ReplicatedMapping) and "vision_tower" in str(getattr(m, "megatron_param", ""))
+        ]
+        assert len(vision_mappings) == 1, "Should have exactly one ReplicatedMapping for vision_tower"
+
+        vt_mapping = vision_mappings[0]
+        assert str(vt_mapping.megatron_param) == "vision_tower.**", (
+            "Megatron vision_tower param should use wildcard"
+        )
+        # Critical: HF param must include the vision_model.* wrapper present in the
+        # google/gemma-3-4b-it checkpoint (old format keys from SiglipVisionModel).
+        # Without this, all ~11,800 vision_tower keys fail to load.
+        assert str(vt_mapping.hf_param) == "vision_tower.vision_model.**", (
+            "HF param must map through vision_model.** to match SiglipVisionModel checkpoint keys"
+        )
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""
