@@ -195,6 +195,16 @@ class DataloaderConfig:
     trust_remote_code: Optional[bool] = None
     """Whether remote code execution should be trusted for a given HF path."""
 
+    dataloader_save: str | None = None
+    """Directory to save dataloader stream-position state into during checkpointing (currently
+    Energon's SavableDataLoader), so a resumed run continues over the same data. None disables
+    dataloader state saving. Typically set to the checkpoint save directory."""
+
+    dataloader_load: str | None = None
+    """Directory to restore dataloader stream-position state from on resume. When None, falls
+    back to ``checkpoint.load``. Missing state files are skipped, so checkpoints saved without
+    dataloader state still resume."""
+
     def finalize(self):
         """Finalize dataloader config field constraints."""
         if self.num_workers == 0 and self.persistent_workers:

@@ -262,6 +262,13 @@ class EnergonDataloader:
     def save_state(self):
         return self._dataloader.save_state_rank()
 
+    def restore_state(self, state):
+        # Restore the Energon loader to the saved stream position, then rebuild the cyclic
+        # iterator. Must run before iteration starts (no workers spawned yet), which is the
+        # case when called right after dataloader construction on resume.
+        self._dataloader.restore_state_rank(state)
+        self._iter = iter(cyclic_iter(self._dataloader))
+
 
 def cyclic_iter(iter):
     """

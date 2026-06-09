@@ -52,6 +52,7 @@ from megatron.bridge.training.checkpointing import (
     get_rng_state,
     init_checkpointing_context,
     load_checkpoint,
+    maybe_load_dataloader_state,
     read_metadata,
     save_checkpoint,
 )
@@ -4046,3 +4047,58 @@ class TestLayerWiseOptimizerCheckpointing:
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.
         mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
+
+
+class TestMaybeLoadDataloaderState:
+    """Tests for restoring Energon dataloader stream-position state on resume."""
+
+    @staticmethod
+    def _pg(pp=0, tp=0, dp=0):
+        """Mock ProcessGroupCollection with configurable pp/tp/dp ranks."""
+        pg = Mock()
+        pg.pp.rank.return_value = pp
+        pg.tp.rank.return_value = tp
+        pg.dp.rank.return_value = dp
+        return pg
+
+    def test_noop_when_no_path(self):
+        """No load path => nothing restored."""
+        train_iterator = Mock()
+        maybe_load_dataloader_state(train_iterator, 10, None, pg_collection=self._pg())
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    def test_noop_when_iterator_is_none(self):
+        """No iterator => no-op (must not raise)."""
+        maybe_load_dataloader_state(None, 10, "/some/path", pg_collection=self._pg())
+
+    def test_noop_when_iterable_lacks_restore_state(self):
+        """Non-Energon iterables (no restore_state) are skipped without error."""
+        train_iterator = Mock(spec=["iterable"])
+        train_iterator.iterable = Mock(spec=[])  # hasattr(..., "restore_state") is False
+        maybe_load_dataloader_state(train_iterator, 10, "/some/path", pg_collection=self._pg())
+
+    def test_noop_on_non_first_rank(self, tmp_path):
+        """Only pp-rank-0 & tp-rank-0 load; other ranks return early."""
+        train_iterator = Mock()
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg(pp=1))
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    def test_missing_file_warns_and_skips(self, tmp_path):
+        """A missing state file is tolerated so pre-feature checkpoints still resume."""
+        train_iterator = Mock()
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.torch.load")
+    def test_restores_from_file(self, mock_load, tmp_path):
+        """Happy path: per-DP-rank file is loaded and restore_state is called with the saved dict."""
+        train_iterator = Mock()
+        iter_dir = get_checkpoint_name(str(tmp_path), 10)
+        os.makedirs(iter_dir, exist_ok=True)
+        # dp_rank defaults to 0 => dprank000.
+        Path(iter_dir, "train_dataloader_dprank000.pt").touch()
+        mock_load.return_value = {"dataloader_state_dict": {"step": 7}}
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        train_iterator.iterable.restore_state.assert_called_once_with({"step": 7})

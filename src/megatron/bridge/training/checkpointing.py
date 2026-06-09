@@ -1129,7 +1129,7 @@ def save_checkpoint(
         model,
         train_data_iterator,
         train_state.step,
-        getattr(cfg.dataset, "dataloader_save", None),
+        cfg.dataset.dataloader_save,
         pg_collection=pg_collection,
     )
 
@@ -1631,6 +1631,53 @@ def maybe_save_dataloader_state(
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
     torch.save(dataloader_save_dict, data_state_save_path)
+
+
+def maybe_load_dataloader_state(
+    train_iterator: Any,
+    iteration: int,
+    dataloader_load_path: str | None = None,
+    *,
+    pg_collection: ProcessGroupCollection,
+) -> None:
+    """Restore the dataloader state written by ``maybe_save_dataloader_state``, if present.
+
+    Mirrors the save side: reads ``{dataloader_load_path}/iter_{iteration}/
+    train_dataloader_dprank{dp_rank:03d}.pt`` and calls ``restore_state`` on the iterator's
+    iterable so a resumed run continues over the same data. No-op when the path or iterator is
+    missing, the iterable doesn't support ``restore_state`` (non-Energon dataloaders), or the
+    state file is absent (so resuming from checkpoints saved without dataloader state still works).
+
+    Args:
+        train_iterator: The training data iterator (built after the model checkpoint load).
+        iteration: The iteration the run resumed from (used to locate the state file).
+        dataloader_load_path: Base path the dataloader state was saved under (the checkpoint dir).
+        pg_collection: Process groups, used to gate per-DP-rank loading like the save side.
+    """
+    if train_iterator is None or not dataloader_load_path:
+        return
+    # VPP yields a list of iterators; the save side handles only the single-iterator case.
+    if isinstance(train_iterator, list):
+        return
+    iterable = getattr(train_iterator, "iterable", None)
+    if iterable is None or not hasattr(iterable, "restore_state"):
+        return
+
+    # Only the ranks that actually load data (pp/tp rank 0) restore, one file per DP rank.
+    is_first_rank = (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0)
+    if not is_first_rank:
+        return
+
+    dp_rank = pg_collection.dp.rank()
+    iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
+    data_state_load_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
+    if not os.path.isfile(data_state_load_path):
+        print_rank_0(f"no dataloader checkpoint at {data_state_load_path}; dataloader starts fresh")
+        return
+
+    print_rank_0(f"restoring dataloader checkpoint at iteration {iteration} from {data_state_load_path}")
+    loaded = torch.load(data_state_load_path, weights_only=False)
+    iterable.restore_state(loaded["dataloader_state_dict"])
 
 
 def save_tokenizer_assets(

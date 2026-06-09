@@ -42,6 +42,7 @@ from megatron.bridge.training.checkpointing import (
     CheckpointManager,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -357,6 +358,18 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the Energon dataloader stream position from the loaded checkpoint so a resumed
+    # run continues over the same data. No-op for non-Energon dataloaders or checkpoints saved
+    # without dataloader state. Runs after the iterator is built and the model checkpoint load
+    # restored state.train_state.step.
+    if should_load_checkpoint:
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            cfg.dataset.dataloader_load or cfg.checkpoint.load,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()

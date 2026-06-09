@@ -81,3 +81,32 @@ class TestEnergonProvider:
         assert list(train_iter) == [1, 2]
         assert list(val_iter) == [3, 4]
         assert list(test_iter) == [3, 4]
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_train_split_preserves_save_state(self, mock_datamodule_cls):
+        """The train split must be returned un-wrapped (not iter(...)) so the downstream
+        RerunDataIterator retains save_state/restore_state for checkpoint save and resume."""
+        mock_dataset_instance = MagicMock()
+        mock_datamodule_cls.return_value = mock_dataset_instance
+
+        # Stands in for the EnergonDataloader wrapper (exposes save_state/restore_state).
+        train_loader = MagicMock()
+        mock_dataset_instance.train_dataloader.return_value = train_loader
+        mock_dataset_instance.val_dataloader.side_effect = lambda: iter([])
+        mock_dataset_instance.seq_length = 2048
+
+        provider = EnergonProvider(
+            path="test/path",
+            image_processor=MagicMock(),
+            seq_length=2048,
+            micro_batch_size=1,
+            global_batch_size=8,
+            num_workers=1,
+            task_encoder=MagicMock(),
+        )
+
+        train_iter, _, _ = provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        # Returned object is the dataloader itself, not iter(...), so save_state survives wrapping.
+        assert train_iter is train_loader
+        assert hasattr(train_iter, "save_state")
