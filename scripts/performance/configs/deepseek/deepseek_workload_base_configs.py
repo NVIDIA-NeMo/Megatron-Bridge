@@ -101,6 +101,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
     cuda_graph_scope=[],
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
     recompute_modules=["mla_up_proj"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
