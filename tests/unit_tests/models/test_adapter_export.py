@@ -444,6 +444,66 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
         assert cfg["base_model_name_or_path"] == "test/model"
 
+    def test_save_respects_output_dtype(self, tmp_path):
+        """save_hf_adapter should write adapter tensors using the requested dtype."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / "adapter_out_dtype"
+        fake_weights = [
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(8, 64)),
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+                output_dtype=torch.bfloat16,
+            )
+
+        state = load_file(str(output_dir / "adapter_model.safetensors"))
+        assert state
+        assert {tensor.dtype for tensor in state.values()} == {torch.bfloat16}
+
+    def test_save_passes_exclude_adapter_base_prefixes(self, tmp_path):
+        """save_hf_adapter should pass adapter-base exclusions to adapter streaming."""
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / "adapter_out_excluded"
+        fake_weights = [
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(8, 64)),
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+                exclude_adapter_base_prefixes=("mtp.layers",),
+            )
+
+        assert mock_bridge.export_adapter_weights.call_args.kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
+
     def test_save_with_nonzero_dropout_keeps_linear_target_modules(self, tmp_path):
         from megatron.bridge.peft.lora import LoRA
 
@@ -745,10 +805,7 @@ class TestExportAdapterCkpt:
         """Mock out dist_checkpointing, distributed context, and checkpoint helpers."""
         fake_sd = {"model": {}}
         with (
-            patch(
-                "megatron.core.dist_checkpointing.load",
-                return_value=fake_sd,
-            ) as self.mock_dist_load,
+            patch("megatron.core.dist_checkpointing.load", return_value=fake_sd) as mock_dist_load,
             patch(
                 "megatron.bridge.training.checkpointing._generate_model_state_dict",
                 return_value={"model": {}},
@@ -762,6 +819,7 @@ class TestExportAdapterCkpt:
                 return_value=nullcontext(),
             ),
         ):
+            self.mock_dist_load = mock_dist_load
             yield
 
     def test_basic_export_calls_save_hf_adapter(self, bridge, ckpt_dir, tmp_path):
@@ -874,14 +932,36 @@ class TestExportAdapterCkpt:
         assert isinstance(peft_config, LoRA)
         assert peft_config.dim == LoRA().dim
 
-    def test_provider_set_to_float32(self, bridge, ckpt_dir, tmp_path):
-        """Provider dtypes must be forced to float32 for full-precision adapter export."""
+    def test_provider_defaults_to_float32(self, bridge, ckpt_dir, tmp_path):
+        """Provider dtypes default to float32 for full-precision adapter export."""
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
         provider = bridge.to_megatron_provider.return_value
         assert provider.pipeline_dtype == torch.float32
         assert provider.params_dtype == torch.float32
         provider.finalize.assert_called_once()
+
+    def test_custom_dtype_sets_provider_and_output_dtype(self, bridge, ckpt_dir, tmp_path):
+        """Requested dtype should control materialization and saved adapter tensors."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out", dtype="bf16")
+
+        provider = bridge.to_megatron_provider.return_value
+        assert provider.pipeline_dtype == torch.bfloat16
+        assert provider.params_dtype == torch.bfloat16
+
+        save_kwargs = bridge.save_hf_adapter.call_args.kwargs
+        assert save_kwargs["output_dtype"] == torch.bfloat16
+
+    def test_exclude_adapter_base_prefixes_passed_to_save(self, bridge, ckpt_dir, tmp_path):
+        """Adapter-base exclusions should be threaded from checkpoint export to save_hf_adapter."""
+        bridge.export_adapter_ckpt(
+            str(ckpt_dir),
+            tmp_path / "out",
+            exclude_adapter_base_prefixes=("mtp.layers",),
+        )
+
+        save_kwargs = bridge.save_hf_adapter.call_args.kwargs
+        assert save_kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
 
     def test_dist_checkpointing_called_with_ckpt_path(self, bridge, ckpt_dir, tmp_path):
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
