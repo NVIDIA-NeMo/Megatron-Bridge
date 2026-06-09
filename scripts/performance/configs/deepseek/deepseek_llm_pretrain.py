@@ -59,8 +59,6 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
-    # if cfg.model.offload_modules is None:
-    #     cfg.model.offload_modules = []
 
 
 def deepseek_v3_pretrain_config_gb300(
@@ -136,13 +134,6 @@ def deepseek_v3_pretrain_config_gb200(
         set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
-
-    # if precision == "fp8_mx":
-    #     cfg.model.fine_grained_activation_offloading = True
-    #     cfg.model.offload_modules = ["core_attn", "attn_proj"]
-    #     cfg.model.fine_grained_offloading_max_inflight_offloads = 2
-    # cfg.model.moe_router_dtype = None
-    # cfg.model.moe_aux_loss_coeff = 0.01
 
     return cfg
 
