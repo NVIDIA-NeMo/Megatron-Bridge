@@ -70,8 +70,23 @@ def create_diffusion_sample(key: str, seq_len: int, video_shape=(16, 8), embeddi
     )
 
 
-def test_select_samples_to_pack():
+def _patch_worker_config(monkeypatch):
+    """Set up a fake WorkerConfig so @stateless(restore_seeds=True) works in tests."""
+    from megatron.energon.task_encoder.base import WorkerConfig
+
+    class _FakeWorkerCfg:
+        def worker_seed(self):
+            return 42
+
+        active_worker_sample_index = 0
+
+    monkeypatch.setattr(WorkerConfig, "active_worker_config", _FakeWorkerCfg(), raising=False)
+
+
+def test_select_samples_to_pack(monkeypatch):
     """Test select_samples_to_pack method."""
+    _patch_worker_config(monkeypatch)
+
     # Create encoder with seq_length=20
     encoder = ConcreteDiffusionTaskEncoder(seq_length=20)
 
@@ -107,6 +122,23 @@ def test_select_samples_to_pack():
 
     print(f"✓ Successfully packed {len(samples)} samples into {len(result)} bins")
     print(f"  Bin sizes: {[sum(s.seq_len_q.item() for s in group) for group in result]}")
+
+
+def test_select_samples_to_pack_deterministic(monkeypatch):
+    """Shuffle in select_samples_to_pack must be deterministic given the same worker seed."""
+    _patch_worker_config(monkeypatch)
+
+    encoder = ConcreteDiffusionTaskEncoder(seq_length=20)
+    samples = [
+        create_diffusion_sample(f"s{i}", seq_len=length) for i, length in enumerate([8, 12, 5, 7, 3])
+    ]
+
+    result1 = encoder.select_samples_to_pack(samples)
+    result2 = encoder.select_samples_to_pack(samples)
+
+    keys1 = [[s.__key__ for s in group] for group in result1]
+    keys2 = [[s.__key__ for s in group] for group in result2]
+    assert keys1 == keys2, "Shuffle must be deterministic with the same worker seed"
 
 
 def test_pack_selected_samples():
