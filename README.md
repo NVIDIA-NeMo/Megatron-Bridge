@@ -139,9 +139,9 @@ if __name__ == "__main__":
     # This is random-init pretraining and does not require a converted Megatron checkpoint.
     cfg = llama32_1b_pretrain_config()
 
-    # Hugging Face model ID as the architecture source.
-    # The recipe uses this pattern internally; override cfg.model to choose a different source.
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+    # The recipe already sets cfg.model internally using this pattern.
+    # Override cfg.model to choose a different Hugging Face model ID as the architecture source.
+    # cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
 
     # Optional: use a local Hugging Face model/config directory instead.
     # cfg.model = AutoBridge.from_hf_pretrained("/path/to/local/hf_model").to_megatron_provider(load_weights=False)
