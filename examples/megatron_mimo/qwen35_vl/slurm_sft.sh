@@ -17,19 +17,19 @@
 # Qwen3.5-VL 27B MegatronMIMO Supervised Fine-Tuning (non-colocated mode)
 #
 # Trains the language module and the image encoder on disjoint GPU sets:
-#   - language: TP=4, PP=4, DP=2, rank offset=0   -> 32 ranks
-#   - images:   TP=1, PP=1, DP=1, rank offset=32  ->  1 rank
-#   - total active MIMO ranks: 33
+#   - language: TP=4, PP=2, DP=2, rank offset=0   -> 16 ranks
+#   - images:   TP=1, PP=1, DP=1, rank offset=16  ->  1 rank
+#   - total active MIMO ranks: 17
 #
-# Because the cluster enforces full-node exclusive allocations, this script
-# requests 5 x 8-GPU nodes (40 allocated GPUs). The packed MPMD srun layout
-# below maps the 33 active ranks onto the first 33 GPUs; the remaining 7 GPUs
-# on the 5th node are idle. This is the non-colocated layout validated for
-# Qwen3.5-VL 27B; see examples/megatron_mimo/qwen35_vl/README.md.
-#
-# Only the 27B model is wired up here. Other Qwen3.5-VL sizes have not been
-# validated with MegatronMIMO parallelism and would need their own component
-# layouts.
+# This layout needs 17 active ranks. The #SBATCH defaults below request 3 nodes
+# of 8 GPUs (24 GPUs) and pack the 17 ranks as 8 + 8 + 1 tasks per node, which
+# suits clusters that allocate whole 8-GPU nodes exclusively. This is an example,
+# not a universal default: the only hard requirement is that the allocation
+# provides at least 17 GPUs (the script validates this below). Adjust --nodes,
+# --gpus-per-node, GPUS_PER_NODE, and --exclusive for your cluster -- e.g. on a
+# cluster that allows partial-node allocation you can request exactly 17 GPUs.
+# This is the non-colocated layout validated for Qwen3.5-VL 27B; see
+# examples/megatron_mimo/qwen35_vl/README.md.
 #
 # Usage:
 #   sbatch slurm_sft.sh
@@ -39,11 +39,14 @@
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# Slurm resource request — edit account / partition / time to match your cluster.
-# Node count is fixed at 5 (required for the validated 33-rank MIMO layout).
+# Slurm resource request. These values are examples, not universal defaults --
+# edit the node count, account, partition, time limit, and GPUs-per-node to match
+# your cluster (--partition and --account in particular are cluster-specific).
+# The defaults assume 8-GPU nodes under whole-node exclusive allocation; the
+# layout only needs at least 17 GPUs total (see the validation block below).
 # ------------------------------------------------------------------------------
 #SBATCH --job-name=qwen35vl-mimo-sft
-#SBATCH --nodes=5
+#SBATCH --nodes=3
 #SBATCH --ntasks-per-node=1
 #SBATCH --gpus-per-node=8
 #SBATCH --time=24:00:00
@@ -100,7 +103,7 @@ WANDB_PROJECT="${WANDB_PROJECT:-megatron-bridge-${DATASET_NAME}-mimo}"
 # Changing these requires verifying convergence. Active ranks must fit in
 # (#SBATCH --nodes) * (GPUS_PER_NODE); see validation block below.
 MIMO_LANGUAGE_TP="${MIMO_LANGUAGE_TP:-4}"
-MIMO_LANGUAGE_PP="${MIMO_LANGUAGE_PP:-4}"
+MIMO_LANGUAGE_PP="${MIMO_LANGUAGE_PP:-2}"
 MIMO_LANGUAGE_CP="${MIMO_LANGUAGE_CP:-1}"
 MIMO_LANGUAGE_DP="${MIMO_LANGUAGE_DP:-2}"
 MIMO_LANGUAGE_OFFSET="${MIMO_LANGUAGE_OFFSET:-0}"
@@ -108,7 +111,7 @@ MIMO_IMAGES_TP="${MIMO_IMAGES_TP:-1}"
 MIMO_IMAGES_PP="${MIMO_IMAGES_PP:-1}"
 MIMO_IMAGES_CP="${MIMO_IMAGES_CP:-1}"
 MIMO_IMAGES_DP="${MIMO_IMAGES_DP:-1}"
-MIMO_IMAGES_OFFSET="${MIMO_IMAGES_OFFSET:-32}"
+MIMO_IMAGES_OFFSET="${MIMO_IMAGES_OFFSET:-16}"
 
 # --- Model, cluster topology, and output directory ----------------------------
 HF_MODEL_NAME="${HF_MODEL_NAME:-Qwen3.5-27B}"
@@ -160,6 +163,8 @@ MASTER_ADDR="$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n 1)"
 MASTER_PORT="${MASTER_PORT:-$((15000 + SLURM_JOB_ID % 40000))}"
 
 # --- Environment exports for the per-task command -----------------------------
+# NCCL_NVLS_ENABLE targets NVLink-Switch (NVLS) hardware; it is a no-op on other
+# interconnects. Drop or retune these NCCL knobs for your cluster if needed.
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=1
 export HTTPX_LOG_LEVEL=WARNING
@@ -232,9 +237,10 @@ EOF
 )
 
 # --- MPMD packed srun ---------------------------------------------------------
-# Spread MIMO_WORLD_SIZE active ranks across the allocated nodes, 8 tasks/node
-# until exhausted. With 33 active ranks on 5 nodes, this yields 8+8+8+8+1; the
-# remaining 7 GPUs on the 5th node are idle.
+# Spread MIMO_WORLD_SIZE active ranks across the allocated nodes,
+# GPUS_PER_NODE tasks/node until exhausted. With the defaults (17 ranks, 3 nodes
+# of 8 GPUs) this yields 8+8+1, leaving the last 7 GPUs unused; the packing
+# adapts to whatever node count and GPUS_PER_NODE you allocate.
 mapfile -t PACKED_NODES < <(scontrol show hostnames "${SLURM_JOB_NODELIST}")
 
 srun_base=(

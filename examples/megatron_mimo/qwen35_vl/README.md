@@ -12,13 +12,17 @@ MegatronMIMO conversion plus non-colocated full-parameter SFT on HF
 conversation data. See [Current Support](#current-support) before adapting the
 scripts to a new layout or dataset.
 
+For a step-by-step tutorial with the validated 27B non-colocated SFT workflow
+and reported performance/loss-parity results, see
+[`tutorials/megatron_mimo/qwen35-vl-non-colocated-sft.md`](../../../tutorials/megatron_mimo/qwen35-vl-non-colocated-sft.md).
+
 ## Files
 
 | File | Purpose |
 |---|---|
 | `conversion.sh` | Converts HF Qwen3.5-VL checkpoints to MegatronMIMO format and exports back to HF for a round-trip check. |
 | `finetune_qwen35_vl.py` | Standalone MegatronMIMO HF-data SFT runner. |
-| `slurm_sft.sh` | Multi-node Slurm launcher for the validated 27B non-colocated SFT layout (33 active ranks on 5 x 8-GPU nodes). |
+| `slurm_sft.sh` | Multi-node Slurm launcher for the validated 27B non-colocated SFT layout. |
 
 ## Workspace
 
@@ -89,11 +93,8 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=2 \
 
 ## Multi-Node Slurm
 
-`slurm_sft.sh` launches the validated 27B non-colocated SFT layout: 32 language
-ranks (TP=4, PP=4, DP=2) + 1 image rank (TP=1, PP=1, DP=1) = 33 active ranks,
-packed across 5 x 8-GPU nodes via an MPMD srun chain (8 + 8 + 8 + 8 + 1 tasks
-per node; 7 GPUs idle on the 5th node).
-
+`slurm_sft.sh` launches the validated 27B non-colocated SFT layout: 16 language
+ranks (TP=4, PP=2, DP=2) + 1 image rank (TP=1, PP=1, DP=1) = 17 active ranks.
 Submit with the validated 27B defaults after pointing `WORKSPACE` at your
 converted checkpoint root:
 
@@ -117,10 +118,11 @@ sbatch --export=ALL,SEQ_LENGTH=2048,TRAIN_ITERS=100 \
 by the 27B `conversion.sh` invocation above. Run outputs are written under
 `${EXPERIMENT_ROOT}/results/mimo/${RUN_NAME}`.
 
-Edit the `#SBATCH` directives near the top of the script to match your
-cluster's account, partition, and time limit. Node count is fixed at 5 — that
-is the minimum required for the validated 33-rank MIMO layout under full-node
-exclusive allocations.
+Edit the `#SBATCH` directives near the top of the script to match your cluster's
+account, partition, time limit, and node count. The defaults assume 8-GPU nodes
+under whole-node exclusive allocation; on a cluster that allows partial-node
+allocation you can request exactly 17 GPUs instead. Set the container image and
+mounts in the `USER CONFIGURATION` block before submitting.
 
 ## Current Support
 
