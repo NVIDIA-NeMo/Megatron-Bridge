@@ -237,6 +237,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
 
         images_pil = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
 
+        # Video is currently only supported with use_temporal_video_embedder=True.
+        if video_frames and not self.use_temporal_video_embedder:
+            raise ValueError("Nemotron Omni video samples are currently only supported with use_temporal_video_embedder=True.")
+
         # 2. Process audio → mel spectrogram + compute token count
         n_sound_tokens = 0
         sound_clips_t: Optional[torch.Tensor] = None
@@ -312,12 +316,14 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         prompt_text = self._tokenizer.apply_chat_template(text_conv, tokenize=False, add_generation_prompt=False)
 
         # This encoder always assumes a dynamic-resolution processor (Nemotron-3
-        # Omni Reasoning).  Such a processor resizes each image to its own
-        # aspect-ratio-preserving (H_i, W_i) and returns pixel_values as a list of
-        # [3, H_i, W_i] tensors of different shapes.  We must call with
-        # return_tensors=None so that BatchFeature does not try to torch.stack that
-        # list (which crashes for multi-image samples).  Both images and video
-        # frames are patchified into a packed [1, Σpatches, 3·P·P] sequence in step 9.
+        # Omni Reasoning), which resizes each image to its own aspect-ratio-preserving
+        # (H_i, W_i).  When a sample's images do NOT all share a size, the processor
+        # returns pixel_values as a list of differently-shaped [3, H_i, W_i] tensors
+        # (it only stacks into [N, 3, H, W] when sizes match).  With return_tensors="pt"
+        # the outer BatchFeature would then try to torch.stack that list and crash, so
+        # we call with return_tensors=None and tensorize what we need ourselves.
+        # pixel_values is normalised (list-or-stacked) and patchified into a packed
+        # [1, Σpatches, 3·P·P] sequence in step 9 (same for video frames).
         if all_proc_images:
             proc_output = self.processor(text=prompt_text, images=all_proc_images, return_tensors=None)
             # return_tensors=None → input_ids is a list-of-one-list [[id, ...]].
