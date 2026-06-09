@@ -17,6 +17,22 @@ from typing import Any, Optional
 from transformers.configuration_utils import PretrainedConfig
 
 
+def _split_mtp_layer_types(
+    layer_types: list[str] | None,
+    num_hidden_layers: int,
+    num_nextn_predict_layers: int,
+) -> tuple[list[str] | None, list[str] | None]:
+    """Split published main-decoder + MTP layer types before parent validation."""
+    if layer_types is None:
+        return None, None
+
+    total_layer_count = num_hidden_layers + num_nextn_predict_layers
+    if num_nextn_predict_layers > 0 and len(layer_types) == total_layer_count:
+        return layer_types[:num_hidden_layers], layer_types[num_hidden_layers:]
+
+    return layer_types, None
+
+
 class Step35Config(PretrainedConfig):
     """Configuration for the Step-3.5-Flash (``Step35``) Mixture-of-Experts model.
 
@@ -52,6 +68,9 @@ class Step35Config(PretrainedConfig):
             weights so they sum to 1.
         layer_types: Optional per-layer type override (e.g. attention
             variant); ``None`` uses the default for every layer.
+        mtp_layer_types: Optional per-MTP-layer type override split from
+            ``layer_types`` when the published config includes both main
+            decoder and MTP entries.
         attention_other_setting: Sliding-attention shape override from the HF
             config.
         use_head_wise_attn_gate: Whether Step-3.5 uses per-head ``g_proj``
@@ -96,6 +115,7 @@ class Step35Config(PretrainedConfig):
         head_dim: int = 128,
         norm_expert_weight: bool = True,
         layer_types: list[str] | None = None,
+        mtp_layer_types: list[str] | None = None,
         attention_other_setting: dict[str, Any] | None = None,
         use_head_wise_attn_gate: bool = True,
         sliding_window: Optional[int] = None,
@@ -146,6 +166,14 @@ class Step35Config(PretrainedConfig):
         ),
         **kwargs,
     ) -> None:
+        layer_types, inferred_mtp_layer_types = _split_mtp_layer_types(
+            layer_types,
+            num_hidden_layers,
+            num_nextn_predict_layers,
+        )
+        if mtp_layer_types is None:
+            mtp_layer_types = inferred_mtp_layer_types
+
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size
         self.num_attention_heads = num_attention_heads
@@ -166,6 +194,7 @@ class Step35Config(PretrainedConfig):
         self.norm_expert_weight = norm_expert_weight
         self.moe_layers_enum = moe_layers_enum
         self.layer_types = layer_types
+        self.mtp_layer_types = mtp_layer_types
         self.attention_other_setting = attention_other_setting
         self.use_head_wise_attn_gate = use_head_wise_attn_gate
         self.sliding_window = sliding_window
