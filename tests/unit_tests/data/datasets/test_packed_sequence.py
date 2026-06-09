@@ -43,7 +43,10 @@ def test_pre_pad_data_point_chat_tensors_do_not_raise():
 def test_pre_pad_data_point_equalizes_loss_mask_lengths():
     """Two samples that round to the same padded input length must get equal-length loss_masks."""
     a = {"input_ids": torch.LongTensor([1, 2, 3]), "loss_mask": torch.BoolTensor([False, True, True])}
-    b = {"input_ids": torch.LongTensor([1, 2, 3, 4, 5]), "loss_mask": torch.BoolTensor([False, False, True, True, True])}
+    b = {
+        "input_ids": torch.LongTensor([1, 2, 3, 4, 5]),
+        "loss_mask": torch.BoolTensor([False, False, True, True, True]),
+    }
     # both round up to the same multiple-of-8 target
     _pre_pad_data_point(a, max_seq_length=16, max_length_to_pad=8, pad_id=PAD_ID)
     _pre_pad_data_point(b, max_seq_length=16, max_length_to_pad=8, pad_id=PAD_ID)
