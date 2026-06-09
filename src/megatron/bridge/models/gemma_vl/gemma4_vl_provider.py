@@ -22,7 +22,7 @@ Text-only providers (Gemma4DenseProvider, Gemma4ModelProvider) live in:
 """
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 

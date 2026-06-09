@@ -51,11 +51,11 @@ from megatron.bridge.models.gemma.gemma4_bridge import (
     _Gemma4QKVMapping,
     _infer_attn_pattern,
 )
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
     Gemma4VLModelProvider,
 )
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
@@ -80,7 +80,9 @@ class Gemma4VLBridge(Gemma4Bridge):
     - ``GEMMA4_CONVERSION_MODE`` dispatch (text / auto / vl)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
+    def provider_bridge(
+        self, hf_pretrained: PreTrainedVLM
+    ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
@@ -158,6 +160,7 @@ class Gemma4VLBridge(Gemma4Bridge):
     def _build_dense_vl_provider(self, hf_config, text_config, vision_config) -> Gemma4DenseVLProvider:
         """Build a Dense VL provider by copying all Dense provider fields."""
         from dataclasses import fields
+
         text_provider = self._build_dense_provider(text_config)
         provider = Gemma4DenseVLProvider()
         for f in fields(Gemma4DenseProvider):
@@ -270,24 +273,26 @@ class Gemma4VLBridge(Gemma4Bridge):
         """Dense E4B VL: language mappings + vision tower + audio tower."""
         registry = self._dense_mapping_registry(megatron_prefix="language_model.")
         mapping_list = list(registry.mappings)
-        mapping_list.extend([
-            ReplicatedMapping(
-                megatron_param="vision_tower.**",
-                hf_param="model.vision_tower.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="embed_vision.**",
-                hf_param="model.embed_vision.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="audio_tower.**",
-                hf_param="model.audio_tower.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="embed_audio.**",
-                hf_param="model.embed_audio.**",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="model.vision_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_vision.**",
+                    hf_param="model.embed_vision.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="audio_tower.**",
+                    hf_param="model.audio_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_audio.**",
+                    hf_param="model.embed_audio.**",
+                ),
+            ]
+        )
         return MegatronMappingRegistry(*mapping_list)
 
     def _moe_vl_mapping_registry(self) -> MegatronMappingRegistry:
@@ -334,55 +339,57 @@ class Gemma4VLBridge(Gemma4Bridge):
                 v="model.language_model.layers.*.self_attn.v_proj.weight",
             )
         )
-        mapping_list.extend([
-            GatedMLPMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.language_model.layers.*.mlp.gate_proj.weight",
-                up="model.language_model.layers.*.mlp.up_proj.weight",
-            ),
-            FusedGatedExpertMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                hf_param="model.language_model.layers.*.experts.gate_up_proj",
-            ),
-            FusedExpertMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                hf_param="model.language_model.layers.*.experts.down_proj",
-            ),
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.router.per_expert_scale",
-                hf_param="model.language_model.layers.*.router.per_expert_scale",
-            ),
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.router.scale",
-                hf_param="model.language_model.layers.*.router.scale",
-            ),
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.pffl_weight",
-                hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.mlp.post_moe_layernorm.weight",
-                hf_param="model.language_model.layers.*.post_feedforward_layernorm_2.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param="vision_tower.**",
-                hf_param="model.vision_tower.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="embed_vision.**",
-                hf_param="model.embed_vision.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="audio_tower.**",
-                hf_param="model.audio_tower.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="embed_audio.**",
-                hf_param="model.embed_audio.**",
-            ),
-            ReplicatedMapping(
-                megatron_param="language_model.decoder.layers.*.layer_scalar",
-                hf_param="model.language_model.layers.*.layer_scalar",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                FusedGatedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.language_model.layers.*.experts.gate_up_proj",
+                ),
+                FusedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.language_model.layers.*.experts.down_proj",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param="model.language_model.layers.*.router.per_expert_scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.scale",
+                    hf_param="model.language_model.layers.*.router.scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.pffl_weight",
+                    hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param="model.language_model.layers.*.post_feedforward_layernorm_2.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="model.vision_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_vision.**",
+                    hf_param="model.embed_vision.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="audio_tower.**",
+                    hf_param="model.audio_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_audio.**",
+                    hf_param="model.embed_audio.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.layer_scalar",
+                    hf_param="model.language_model.layers.*.layer_scalar",
+                ),
+            ]
+        )
         return MegatronMappingRegistry(*mapping_list)

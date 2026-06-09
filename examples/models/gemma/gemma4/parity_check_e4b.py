@@ -53,6 +53,7 @@ import argparse
 import os
 import sys
 
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BRIDGE_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "../../../.."))
 MEGATRON_LM_ROOT = os.environ.get("MEGATRON_LM_ROOT", os.getcwd())
@@ -63,18 +64,19 @@ sys.path.insert(0, MEGATRON_LM_ROOT)
 import torch
 import torch.distributed as dist
 
+
 SEQ = 16
 BATCH = 1
 FULL_VOCAB = 262144
 LOGIT_SOFTCAP = 30.0
 
 # Audio-mode constants (based on audio_tower checkpoint analysis)
-AUDIO_MEL_BINS = 128        # mel-spectrogram frequency bins
-AUDIO_SUBSAMPLING = 4       # two stride-2 Conv2D stages → 4× time reduction
-AUDIO_TOKEN_ID = 258_881    # audio_token_id from HF config
-AUDIO_NUM_TOKENS = 12       # desired audio tokens in test sequence
+AUDIO_MEL_BINS = 128  # mel-spectrogram frequency bins
+AUDIO_SUBSAMPLING = 4  # two stride-2 Conv2D stages → 4× time reduction
+AUDIO_TOKEN_ID = 258_881  # audio_token_id from HF config
+AUDIO_NUM_TOKENS = 12  # desired audio tokens in test sequence
 AUDIO_INPUT_FRAMES = AUDIO_NUM_TOKENS * AUDIO_SUBSAMPLING  # 48 input time frames
-AUDIO_SEQ = AUDIO_NUM_TOKENS + (SEQ - AUDIO_NUM_TOKENS)    # same total seq length
+AUDIO_SEQ = AUDIO_NUM_TOKENS + (SEQ - AUDIO_NUM_TOKENS)  # same total seq length
 
 # VL-mode constants. Gemma4 image processor defaults to 280 soft tokens.
 IMAGE_TOKEN_ID = 258_880
@@ -84,7 +86,7 @@ IMAGE_POOLING_KERNEL_SIZE = 3
 IMAGE_PATCH_GRID_H = 42
 IMAGE_PATCH_GRID_W = 60
 IMAGE_NUM_PATCHES = IMAGE_PATCH_GRID_H * IMAGE_PATCH_GRID_W  # 2520 = 280 * 3^2
-IMAGE_PATCH_DIM = 3 * IMAGE_PATCH_SIZE * IMAGE_PATCH_SIZE    # flattened RGB patch
+IMAGE_PATCH_DIM = 3 * IMAGE_PATCH_SIZE * IMAGE_PATCH_SIZE  # flattened RGB patch
 VL_TEXT_TOKENS = 4
 VL_SEQ = IMAGE_NUM_TOKENS + VL_TEXT_TOKENS
 
@@ -93,12 +95,9 @@ def _parse():
     p = argparse.ArgumentParser()
     p.add_argument("--hf-dir", required=True)
     p.add_argument("--megatron-ckpt", required=True)
-    p.add_argument("--atol", type=float, default=1.0,
-                   help="Max absolute logit difference. ~1.0 fp32, ~3.0 bf16.")
-    p.add_argument("--tp", type=int, default=2, choices=[1, 2],
-                   help="Tensor parallel size.")
-    p.add_argument("--bf16", action="store_true",
-                   help="Use bf16 (default: float32).")
+    p.add_argument("--atol", type=float, default=1.0, help="Max absolute logit difference. ~1.0 fp32, ~3.0 bf16.")
+    p.add_argument("--tp", type=int, default=2, choices=[1, 2], help="Tensor parallel size.")
+    p.add_argument("--bf16", action="store_true", help="Use bf16 (default: float32).")
     _default_mode = os.environ.get("GEMMA4_CONVERSION_MODE", "text").lower()
     if _default_mode not in ("text", "vl", "auto", "audio"):
         _default_mode = "text"
@@ -106,11 +105,15 @@ def _parse():
         _default_mode = "vl"
     # "audio" stays as "audio" — triggers full audio forward test
     p.add_argument(
-        "--mode", choices=["text", "vl", "audio"], default=_default_mode,
+        "--mode",
+        choices=["text", "vl", "audio"],
+        default=_default_mode,
         help="Parity mode. Default: $GEMMA4_CONVERSION_MODE or 'text'.",
     )
     p.add_argument(
-        "--vl-image-tokens", type=int, default=IMAGE_NUM_TOKENS,
+        "--vl-image-tokens",
+        type=int,
+        default=IMAGE_NUM_TOKENS,
         help=(
             "Number of soft image tokens for VL parity. "
             "Reduced counts (e.g. 14, 70) let you verify that max |diff| "
@@ -124,32 +127,90 @@ def _build_megatron_argv(ckpt, tp=2, bf16=False, seq=SEQ):
     return [
         "parity",
         "--use-mcore-models",
-        "--num-layers", "42", "--hidden-size", "2560",
-        "--ffn-hidden-size", "10240", "--num-attention-heads", "8",
-        "--group-query-attention", "--num-query-groups", "2",
-        "--kv-channels", "256",
-        "--seq-length", str(seq), "--max-position-embeddings", "131072",
-        "--position-embedding-type", "rope", "--rotary-percent", "1.0",
-        "--window-size", "511,0", "--window-attn-skip-freq", "6",
-        "--normalization", "RMSNorm", "--norm-epsilon", "1e-6",
-        "--attention-dropout", "0.0", "--hidden-dropout", "0.0",
+        "--num-layers",
+        "42",
+        "--hidden-size",
+        "2560",
+        "--ffn-hidden-size",
+        "10240",
+        "--num-attention-heads",
+        "8",
+        "--group-query-attention",
+        "--num-query-groups",
+        "2",
+        "--kv-channels",
+        "256",
+        "--seq-length",
+        str(seq),
+        "--max-position-embeddings",
+        "131072",
+        "--position-embedding-type",
+        "rope",
+        "--rotary-percent",
+        "1.0",
+        "--window-size",
+        "511,0",
+        "--window-attn-skip-freq",
+        "6",
+        "--normalization",
+        "RMSNorm",
+        "--norm-epsilon",
+        "1e-6",
+        "--attention-dropout",
+        "0.0",
+        "--hidden-dropout",
+        "0.0",
         "--disable-bias-linear",
-        "--vocab-size", "262143", "--make-vocab-size-divisible-by", "128",
-        "--transformer-impl", "local", "--attention-backend", "unfused",
-        "--tensor-model-parallel-size", str(tp), "--pipeline-model-parallel-size", "1",
-        "--context-parallel-size", "1",
-        "--no-rope-fusion", "--no-persist-layer-norm", "--no-masked-softmax-fusion",
+        "--vocab-size",
+        "262143",
+        "--make-vocab-size-divisible-by",
+        "128",
+        "--transformer-impl",
+        "local",
+        "--attention-backend",
+        "unfused",
+        "--tensor-model-parallel-size",
+        str(tp),
+        "--pipeline-model-parallel-size",
+        "1",
+        "--context-parallel-size",
+        "1",
+        "--no-rope-fusion",
+        "--no-persist-layer-norm",
+        "--no-masked-softmax-fusion",
         "--no-gradient-accumulation-fusion",
-        "--load", ckpt, "--finetune", "--no-load-optim", "--no-load-rng",
-        "--init-method-std", "0.02",
-        "--micro-batch-size", str(BATCH), "--global-batch-size", str(BATCH),
-        "--train-iters", "1",
-        "--tokenizer-type", "NullTokenizer", "--mock-data",
-        "--no-create-attention-mask-in-dataloader", "--no-mmap-bin-files",
-        "--num-workers", "0", "--lr", "1e-4",
-        "--distributed-timeout-minutes", "10",
-        "--log-interval", "1", "--eval-iters", "0", "--eval-interval", "1000",
-        "--no-save-optim", "--no-save-rng",
+        "--load",
+        ckpt,
+        "--finetune",
+        "--no-load-optim",
+        "--no-load-rng",
+        "--init-method-std",
+        "0.02",
+        "--micro-batch-size",
+        str(BATCH),
+        "--global-batch-size",
+        str(BATCH),
+        "--train-iters",
+        "1",
+        "--tokenizer-type",
+        "NullTokenizer",
+        "--mock-data",
+        "--no-create-attention-mask-in-dataloader",
+        "--no-mmap-bin-files",
+        "--num-workers",
+        "0",
+        "--lr",
+        "1e-4",
+        "--distributed-timeout-minutes",
+        "10",
+        "--log-interval",
+        "1",
+        "--eval-iters",
+        "0",
+        "--eval-interval",
+        "1000",
+        "--no-save-optim",
+        "--no-save-rng",
     ] + (["--bf16"] if bf16 else [])
 
 
@@ -211,6 +272,7 @@ def _build_text_models(args):
     """Text mode: GPTModel via Gemma4DenseProvider."""
     from megatron.core.enums import ModelType
     from megatron.training import get_model
+
     from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
 
     model_dtype = torch.bfloat16 if args.bf16 else torch.float32
@@ -220,8 +282,9 @@ def _build_text_models(args):
         autocast_dtype=model_dtype,
     )
     return get_model(
-        lambda pre_process=True, post_process=True, config=None, pg_collection=None:
-            provider.build(pre_process=pre_process, post_process=post_process),
+        lambda pre_process=True, post_process=True, config=None, pg_collection=None: provider.build(
+            pre_process=pre_process, post_process=post_process
+        ),
         ModelType.encoder_or_decoder,
     )
 
@@ -235,8 +298,9 @@ def _build_vl_models(args, seq_len: int = AUDIO_SEQ, include_audio: bool = False
     hf_cfg = AutoConfig.from_pretrained(args.hf_dir)
     provider = _make_vl_provider(args, hf_cfg, seq_len=seq_len, include_audio=include_audio)
     return get_model(
-        lambda pre_process=True, post_process=True, config=None, pg_collection=None:
-            provider.provide(pre_process=pre_process, post_process=post_process),
+        lambda pre_process=True, post_process=True, config=None, pg_collection=None: provider.provide(
+            pre_process=pre_process, post_process=post_process
+        ),
         ModelType.encoder_or_decoder,
     )
 
@@ -296,7 +360,7 @@ def _forward_audio(model, input_ids_audio, audio_features):
             position_ids=None,
             input_features=audio_features,
             pixel_values=None,
-    )
+        )
     logits = out[0] if isinstance(out, tuple) else out
     return _batch_first_logits(logits, AUDIO_SEQ)
 
@@ -311,8 +375,7 @@ def _gather_and_cap(logits, mpu):
     tp = mpu.get_tensor_model_parallel_world_size()
     if tp > 1:
         parts = [torch.zeros_like(logits) for _ in range(tp)]
-        dist.all_gather(parts, logits.contiguous(),
-                        group=mpu.get_tensor_model_parallel_group())
+        dist.all_gather(parts, logits.contiguous(), group=mpu.get_tensor_model_parallel_group())
         logits = torch.cat(parts, dim=-1)
     raw = logits[..., :FULL_VOCAB].cpu().float()
     return torch.tanh(raw / LOGIT_SOFTCAP) * LOGIT_SOFTCAP
@@ -325,11 +388,10 @@ def _gather_and_cap(logits, mpu):
 
 def _hf_logits_text(args, tokens):
     from transformers import AutoModelForCausalLM
+
     hf_dtype = torch.bfloat16 if args.bf16 else torch.float32
     print(f"\nLoading HF model (CausalLM) from {args.hf_dir} ...")
-    hf = AutoModelForCausalLM.from_pretrained(
-        args.hf_dir, torch_dtype=hf_dtype, device_map="cuda:0"
-    )
+    hf = AutoModelForCausalLM.from_pretrained(args.hf_dir, torch_dtype=hf_dtype, device_map="cuda:0")
     hf.eval()
     with torch.no_grad():
         logits = hf(input_ids=tokens, output_hidden_states=False).logits
@@ -346,16 +408,14 @@ def _load_hf_conditional_generation(hf_dir, dtype):
     """
     try:
         from transformers import AutoModelForVision2Seq
-        return AutoModelForVision2Seq.from_pretrained(
-            hf_dir, torch_dtype=dtype, device_map="cuda:0"
-        )
+
+        return AutoModelForVision2Seq.from_pretrained(hf_dir, torch_dtype=dtype, device_map="cuda:0")
     except ImportError:
         pass
     # Fallback: import the class from the models submodule directly
     from transformers.models.gemma4.modeling_gemma4 import Gemma4ForConditionalGeneration
-    return Gemma4ForConditionalGeneration.from_pretrained(
-        hf_dir, torch_dtype=dtype, device_map="cuda:0"
-    )
+
+    return Gemma4ForConditionalGeneration.from_pretrained(hf_dir, torch_dtype=dtype, device_map="cuda:0")
 
 
 def _hf_logits_vl(args, input_ids_vl, pixel_values, image_position_ids):
@@ -483,8 +543,8 @@ def _report(mode, megatron_logits, hf_logits, atol, seq_len=None):
     if seq_len is None:
         seq_len = SEQ
     mode_labels = {
-        "text":  "Megatron GPTModel (text)              vs  HF Gemma4ForCausalLM",
-        "vl":    "Megatron Gemma4VLModel (image forward)  vs  HF Gemma4ForConditionalGeneration",
+        "text": "Megatron GPTModel (text)              vs  HF Gemma4ForCausalLM",
+        "vl": "Megatron Gemma4VLModel (image forward)  vs  HF Gemma4ForConditionalGeneration",
         "audio": "Megatron Gemma4VLModel (audio forward)  vs  HF Gemma4ForConditionalGeneration",
     }
     diff = (megatron_logits - hf_logits).abs()
@@ -493,17 +553,16 @@ def _report(mode, megatron_logits, hf_logits, atol, seq_len=None):
     per_token_max = diff[0].max(dim=-1).values
     top3 = per_token_max.topk(min(3, seq_len))
 
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print(f"  Parity [{mode.upper()}]: {mode_labels[mode]}")
     print(f"  (Megatron logits softcapped at {LOGIT_SOFTCAP} before comparison)")
     print(f"  seq={seq_len}  batch={BATCH}  vocab={FULL_VOCAB}")
     print(f"  max |diff|  : {max_diff:.6f}  (atol={atol})")
     print(f"  mean |diff| : {mean_diff:.6f}")
-    print(f"  worst token positions: {top3.indices.tolist()} "
-          f"(diffs: {[f'{v:.4f}' for v in top3.values.tolist()]})")
+    print(f"  worst token positions: {top3.indices.tolist()} (diffs: {[f'{v:.4f}' for v in top3.values.tolist()]})")
     status = "PASSED" if max_diff <= atol else "FAILED"
     print(f"  --> {status}")
-    print(f"{'='*70}\n")
+    print(f"{'=' * 70}\n")
     return status == "PASSED"
 
 
@@ -513,6 +572,7 @@ def _report(mode, megatron_logits, hf_logits, atol, seq_len=None):
 
 
 def main():
+    """Run the requested Gemma4 parity check."""
     args = _parse()
 
     pretrain_gpt = os.path.join(MEGATRON_LM_ROOT, "pretrain_gpt.py")

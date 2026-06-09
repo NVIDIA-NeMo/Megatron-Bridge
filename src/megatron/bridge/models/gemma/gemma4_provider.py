@@ -22,7 +22,7 @@ Gemma4ModelProvider: MoE (26B-A4B and similar) — extends GPTModelProvider
 
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from megatron.core.activations import fast_gelu

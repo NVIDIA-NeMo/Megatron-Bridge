@@ -347,7 +347,10 @@ class TestGemma4ModelProviderDefaults:
 class TestInstallTiedKV:
     def test_skips_when_attention_k_eq_v_false(self):
         provider = Gemma4ModelProvider(
-            num_layers=6, hidden_size=64, num_attention_heads=4, attention_k_eq_v=False,
+            num_layers=6,
+            hidden_size=64,
+            num_attention_heads=4,
+            attention_k_eq_v=False,
         )
         provider.num_moe_experts = None
 
@@ -400,6 +403,4 @@ class TestInstallTiedKV:
         for layer in model.decoder.layers:
             is_global = layer.layer_number == 6
             has_flag = getattr(layer.self_attention, "_tied_kv", False)
-            assert has_flag == is_global, (
-                f"Layer {layer.layer_number}: expected _tied_kv={is_global}, got {has_flag}"
-            )
+            assert has_flag == is_global, f"Layer {layer.layer_number}: expected _tied_kv={is_global}, got {has_flag}"

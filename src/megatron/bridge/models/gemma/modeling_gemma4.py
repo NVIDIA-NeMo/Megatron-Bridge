@@ -30,9 +30,9 @@ MoE layer specification:
 import copy
 import types
 import weakref
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
-from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -70,7 +70,7 @@ from megatron.bridge.utils.import_utils import safe_import_from
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+    from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
 
 
 HAVE_TE = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")[1]
@@ -138,12 +138,12 @@ class Gemma4MoERouter(nn.Module):
     def __init__(self, config: TransformerConfig):
         super().__init__()
         hidden_size = config.hidden_size
-        num_experts = getattr(config, 'num_experts', 1)
-        eps = getattr(config, 'layernorm_epsilon', 1e-6)
-        top_k = getattr(config, 'top_k_experts', 1)
+        num_experts = getattr(config, "num_experts", 1)
+        eps = getattr(config, "layernorm_epsilon", 1e-6)
+        top_k = getattr(config, "top_k_experts", 1)
 
         self.hidden_size = hidden_size
-        self.scalar_root_size = hidden_size ** -0.5
+        self.scalar_root_size = hidden_size**-0.5
         self.top_k = top_k
 
         self.norm = Gemma4RMSNorm(config, hidden_size, eps=eps, with_scale=False)
@@ -170,17 +170,13 @@ class Gemma4MoEExperts(nn.Module):
 
     def __init__(self, config: TransformerConfig):
         super().__init__()
-        num_experts = getattr(config, 'num_experts', 1)
+        num_experts = getattr(config, "num_experts", 1)
         hidden_size = config.hidden_size
-        moe_intermediate_size = getattr(config, 'moe_intermediate_size', hidden_size)
+        moe_intermediate_size = getattr(config, "moe_intermediate_size", hidden_size)
 
         self.num_experts = num_experts
-        self.gate_up_proj = nn.Parameter(
-            torch.empty(num_experts, 2 * moe_intermediate_size, hidden_size)
-        )
-        self.down_proj = nn.Parameter(
-            torch.empty(num_experts, hidden_size, moe_intermediate_size)
-        )
+        self.gate_up_proj = nn.Parameter(torch.empty(num_experts, 2 * moe_intermediate_size, hidden_size))
+        self.down_proj = nn.Parameter(torch.empty(num_experts, hidden_size, moe_intermediate_size))
         nn.init.normal_(self.gate_up_proj, std=0.02)
         nn.init.normal_(self.down_proj, std=0.02)
 
@@ -203,7 +199,7 @@ class Gemma4MoEExperts(nn.Module):
             top_k_pos, token_idx = torch.where(expert_mask[e])
             cur = hidden_states[token_idx]
             gate, up = F.linear(cur, self.gate_up_proj[e]).chunk(2, dim=-1)
-            cur_out = F.gelu(gate, approximate='tanh') * up
+            cur_out = F.gelu(gate, approximate="tanh") * up
             cur_out = F.linear(cur_out, self.down_proj[e])
             cur_out = cur_out * top_k_weights[token_idx, top_k_pos, None]
             final.index_add_(0, token_idx, cur_out.to(final.dtype))
@@ -260,22 +256,20 @@ class Gemma4DenseSelfAttention(SelfAttention):
 
         is_sliding = _is_gemma4_sliding_layer(config, layer_number)
         if not is_sliding:
-            if getattr(config, 'global_kv_channels', None) is not None:
+            if getattr(config, "global_kv_channels", None) is not None:
                 attention_config.kv_channels = config.global_kv_channels
-            if getattr(config, 'num_global_query_groups', None) is not None:
+            if getattr(config, "num_global_query_groups", None) is not None:
                 attention_config.num_query_groups = config.num_global_query_groups
 
         super().__init__(attention_config, submodules, layer_number, *args, **kwargs)
         self.original_config = config
         self.is_gemma4_sliding_layer = is_sliding
 
-        self.attention_k_eq_v = (
-            getattr(config, 'attention_k_eq_v', False) and not is_sliding
-        )
+        self.attention_k_eq_v = getattr(config, "attention_k_eq_v", False) and not is_sliding
 
         layer_idx = layer_number - 1
-        num_layers = getattr(config, 'num_layers', 0)
-        num_kv_shared = getattr(config, 'num_kv_shared_layers', 0)
+        num_layers = getattr(config, "num_layers", 0)
+        num_kv_shared = getattr(config, "num_kv_shared_layers", 0)
         first_kv_shared_idx = num_layers - num_kv_shared
 
         self.is_kv_shared_layer = (num_kv_shared > 0) and (layer_idx >= first_kv_shared_idx)
@@ -283,11 +277,10 @@ class Gemma4DenseSelfAttention(SelfAttention):
         self.kv_shared_layer_index: Optional[int] = None
 
         if num_kv_shared > 0:
-            skip_freq = getattr(config, 'window_attn_skip_freq', None)
+            skip_freq = getattr(config, "window_attn_skip_freq", None)
             if isinstance(skip_freq, list):
                 layer_is_sliding = [
-                    x == "sliding_attention" if isinstance(x, str) else bool(x)
-                    for x in skip_freq[:num_layers]
+                    x == "sliding_attention" if isinstance(x, str) else bool(x) for x in skip_freq[:num_layers]
                 ]
             elif isinstance(skip_freq, int) and skip_freq > 0:
                 layer_is_sliding = [(i + 1) % skip_freq != 0 for i in range(num_layers)]
@@ -330,11 +323,13 @@ class Gemma4DenseSelfAttention(SelfAttention):
 
         total_layers = self.config.num_layers
         type_total = sum(
-            1 for layer_idx in range(1, total_layers + 1)
+            1
+            for layer_idx in range(1, total_layers + 1)
             if _is_gemma4_sliding_layer(self.original_config, layer_idx) == is_sliding
         )
         type_rank = sum(
-            1 for layer_idx in range(1, self.layer_number)
+            1
+            for layer_idx in range(1, self.layer_number)
             if _is_gemma4_sliding_layer(self.original_config, layer_idx) == is_sliding
         )
 
@@ -343,9 +338,7 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 if obj.prepend_axis_num <= 0 or obj.global_shape[0] != total_layers:
                     return obj
                 new_axis_fragmentations = (
-                    (type_total,) + obj.axis_fragmentations[1:]
-                    if obj.axis_fragmentations is not None
-                    else None
+                    (type_total,) + obj.axis_fragmentations[1:] if obj.axis_fragmentations is not None else None
                 )
                 return _dataclasses.replace(
                     obj,
@@ -396,12 +389,8 @@ class Gemma4DenseSelfAttention(SelfAttention):
         )
 
         if self.config.num_query_groups < self.world_size:
-            idx = get_pg_rank(self.pg_collection.tp) % (
-                self.world_size // self.config.num_query_groups
-            )
-            size = self.num_attention_heads_per_partition // (
-                self.world_size // self.config.num_query_groups
-            )
+            idx = get_pg_rank(self.pg_collection.tp) % (self.world_size // self.config.num_query_groups)
+            size = self.num_attention_heads_per_partition // (self.world_size // self.config.num_query_groups)
             query = query[:, :, idx * size : (idx + 1) * size, :]
 
         if self.q_layernorm is not None:
@@ -423,12 +412,8 @@ class Gemma4DenseSelfAttention(SelfAttention):
     ):
         if self.is_kv_shared_layer:
             if not split_qkv or output_gate:
-                return super().get_query_key_value_tensors(
-                    hidden_states, key_value_states, output_gate, split_qkv
-                )
-            query, _k, _v = super().get_query_key_value_tensors(
-                hidden_states, key_value_states, False, True
-            )
+                return super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
+            query, _k, _v = super().get_query_key_value_tensors(hidden_states, key_value_states, False, True)
             kv_source = self._kv_source_ref() if self._kv_source_ref is not None else None
             if kv_source is not None and kv_source._stored_kv is not None:
                 key, value = kv_source._stored_kv
@@ -445,9 +430,7 @@ class Gemma4DenseSelfAttention(SelfAttention):
                 key_value_states,
             )
         else:
-            result = super().get_query_key_value_tensors(
-                hidden_states, key_value_states, output_gate, split_qkv
-            )
+            result = super().get_query_key_value_tensors(hidden_states, key_value_states, output_gate, split_qkv)
             if not split_qkv:
                 return result
             if output_gate:
@@ -514,8 +497,8 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
             eps=self.config.layernorm_epsilon,
         )
 
-        _ple_dim = getattr(config, 'per_layer_embed_dim', 0)
-        self.register_buffer('layer_scalar', torch.ones(1), persistent=True)
+        _ple_dim = getattr(config, "per_layer_embed_dim", 0)
+        self.register_buffer("layer_scalar", torch.ones(1), persistent=True)
         if _ple_dim > 0:
             self.per_layer_input_gate = nn.Linear(config.hidden_size, _ple_dim, bias=False)
             self.per_layer_projection = nn.Linear(_ple_dim, config.hidden_size, bias=False)
@@ -529,19 +512,13 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
             self.per_layer_projection = None
             self.post_per_layer_input_norm = None
 
-        _enable_moe = getattr(config, 'enable_moe_block', False)
+        _enable_moe = getattr(config, "enable_moe_block", False)
         if _enable_moe:
             self.moe_router = Gemma4MoERouter(config)
             self.moe_experts = Gemma4MoEExperts(config)
-            self.post_feedforward_layernorm_1 = Gemma4RMSNorm(
-                config, config.hidden_size, eps=config.layernorm_epsilon
-            )
-            self.post_feedforward_layernorm_2 = Gemma4RMSNorm(
-                config, config.hidden_size, eps=config.layernorm_epsilon
-            )
-            self.pre_feedforward_layernorm_2 = Gemma4RMSNorm(
-                config, config.hidden_size, eps=config.layernorm_epsilon
-            )
+            self.post_feedforward_layernorm_1 = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
+            self.post_feedforward_layernorm_2 = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
+            self.pre_feedforward_layernorm_2 = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
         else:
             self.moe_router = None
             self.moe_experts = None
@@ -550,7 +527,7 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
             self.pre_feedforward_layernorm_2 = None
 
     def forward(self, *args, **kwargs):
-        per_layer_input = kwargs.pop('per_layer_input', None)
+        per_layer_input = kwargs.pop("per_layer_input", None)
 
         hidden_states, context = self._forward_attention(*args, **kwargs)
         hidden_states = self._forward_mlp(
@@ -561,7 +538,7 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
 
         if per_layer_input is not None and self.per_layer_input_gate is not None:
             residual = hidden_states
-            h = F.gelu(self.per_layer_input_gate(hidden_states), approximate='tanh')
+            h = F.gelu(self.per_layer_input_gate(hidden_states), approximate="tanh")
             h = h * per_layer_input
             h = self.per_layer_projection(h)
             h = self.post_per_layer_input_norm(h)
@@ -647,11 +624,7 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output, padding_mask=padding_mask)
 
         if self.moe_router is not None:
-            mlp_out = (
-                mlp_output_with_bias[0]
-                if isinstance(mlp_output_with_bias, tuple)
-                else mlp_output_with_bias
-            )
+            mlp_out = mlp_output_with_bias[0] if isinstance(mlp_output_with_bias, tuple) else mlp_output_with_bias
             dense_out = self.post_feedforward_layernorm_1(mlp_out)
 
             orig_shape = residual.shape
@@ -771,21 +744,18 @@ class _Gemma4ProportionalRotaryEmbedding(RotaryEmbedding):
 
         self.rotary_interleaved = rotary_interleaved
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
-        device = 'cpu' if use_cpu_initialization else torch.cuda.current_device()
+        device = "cpu" if use_cpu_initialization else torch.cuda.current_device()
 
         head_dim = kv_channels
         rope_angles = int(partial_rotary_factor * head_dim // 2)
         nope_angles = head_dim // 2 - rope_angles
         rotated = 1.0 / (
-            rotary_base
-            ** (torch.arange(0, 2 * rope_angles, 2, dtype=torch.float32, device=device) / head_dim)
+            rotary_base ** (torch.arange(0, 2 * rope_angles, 2, dtype=torch.float32, device=device) / head_dim)
         )
         non_rotated = torch.zeros(nope_angles, dtype=torch.float32, device=device)
         self.inv_freq = torch.cat([rotated, non_rotated], dim=0)
         self.cp_group = (
-            cp_group
-            if cp_group is not None
-            else parallel_state.get_context_parallel_group(check_initialized=False)
+            cp_group if cp_group is not None else parallel_state.get_context_parallel_group(check_initialized=False)
         )
 
 
@@ -802,11 +772,11 @@ class Gemma4DenseRotaryEmbedding(nn.Module):
     ) -> None:
         super().__init__()
 
-        sliding_base = getattr(config, 'sliding_window_rope_base', 10000.0) or 10000.0
-        full_base = getattr(config, 'full_attention_rope_base', 1000000.0) or 1000000.0
-        partial_factor = getattr(config, 'full_attention_rope_partial_factor', 1.0)
+        sliding_base = getattr(config, "sliding_window_rope_base", 10000.0) or 10000.0
+        full_base = getattr(config, "full_attention_rope_base", 1000000.0) or 1000000.0
+        partial_factor = getattr(config, "full_attention_rope_partial_factor", 1.0)
         sliding_kv_channels = config.kv_channels
-        full_kv_channels = getattr(config, 'global_kv_channels', None) or config.kv_channels
+        full_kv_channels = getattr(config, "global_kv_channels", None) or config.kv_channels
 
         shared = dict(
             rotary_interleaved=config.rotary_interleaved,
@@ -835,12 +805,8 @@ class Gemma4DenseRotaryEmbedding(nn.Module):
         cp_group: Optional[torch.distributed.ProcessGroup] = None,
     ):
         """Return ``(emb_sliding, emb_full)``."""
-        emb_sliding = self.rope_sliding(
-            max_seq_len, offset=offset, packed_seq=packed_seq, cp_group=cp_group
-        )
-        emb_full = self.rope_full(
-            max_seq_len, offset=offset, packed_seq=packed_seq, cp_group=cp_group
-        )
+        emb_sliding = self.rope_sliding(max_seq_len, offset=offset, packed_seq=packed_seq, cp_group=cp_group)
+        emb_full = self.rope_full(max_seq_len, offset=offset, packed_seq=packed_seq, cp_group=cp_group)
         return (emb_sliding, emb_full)
 
     def get_rotary_seq_len(self, *args, **kwargs) -> int:
@@ -886,9 +852,7 @@ def _attach_ple_modules(
         bias=False,
         gather_output=True,
     )
-    model.per_layer_proj_norm = Gemma4RMSNorm(
-        config, ple_dim, eps=provider.layernorm_epsilon
-    )
+    model.per_layer_proj_norm = Gemma4RMSNorm(config, ple_dim, eps=provider.layernorm_epsilon)
 
 
 def _compute_per_layer_inputs(
@@ -906,21 +870,22 @@ def _compute_per_layer_inputs(
     n_layers: int = model.config.num_layers
     b: int = input_ids.shape[0]
 
-    tok_emb = model.per_layer_embedding(input_ids) * (ple_dim ** 0.5)
+    tok_emb = model.per_layer_embedding(input_ids) * (ple_dim**0.5)
 
     if getattr(model.config, "sequence_parallel", False):
         from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region as _scatter
+
         tok_emb = _scatter(tok_emb.transpose(0, 1)).transpose(0, 1)
 
     s_local: int = tok_emb.shape[1]
     tok_emb = tok_emb.view(b, s_local, n_layers, ple_dim)
 
     mdl_proj, _ = model.per_layer_model_proj(decoder_input.transpose(0, 1))
-    mdl_proj = mdl_proj * (model.config.hidden_size ** -0.5)
+    mdl_proj = mdl_proj * (model.config.hidden_size**-0.5)
     mdl_proj = mdl_proj.view(b, s_local, n_layers, ple_dim)
     mdl_proj = model.per_layer_proj_norm(mdl_proj)
 
-    return (mdl_proj + tok_emb) * (2.0 ** -0.5)
+    return (mdl_proj + tok_emb) * (2.0**-0.5)
 
 
 def _gemma4_layer_input(
@@ -1097,9 +1062,7 @@ def _patch_ple_block_threading(decoder: "torch.nn.Module") -> None:
                 and "per_layer_input" not in kwargs
                 and getattr(decoder_obj, "_gemma4_current_per_layer_inputs", None) is not None
             ):
-                kwargs["per_layer_input"] = _gemma4_layer_input(
-                    decoder_obj._gemma4_current_per_layer_inputs, self
-                )
+                kwargs["per_layer_input"] = _gemma4_layer_input(decoder_obj._gemma4_current_per_layer_inputs, self)
             return _orig_forward(*args, **kwargs)
 
         layer.forward = types.MethodType(_layer_forward, layer)
@@ -1161,11 +1124,9 @@ def _install_ple_forward(model: "torch.nn.Module") -> None:
         **kwargs,
     ):
         if decoder_input is None and getattr(self, "pre_process", True):
-            decoder_input = self.embedding(
-                input_ids=input_ids, position_ids=position_ids
-            )
+            decoder_input = self.embedding(input_ids=input_ids, position_ids=position_ids)
             if getattr(self.config, "scale_embeddings_by_hidden_size", False):
-                decoder_input = decoder_input * (self.config.hidden_size ** 0.5)
+                decoder_input = decoder_input * (self.config.hidden_size**0.5)
 
         per_layer_inputs = _compute_per_layer_inputs(self, input_ids, decoder_input)
         if per_layer_inputs is not None:

@@ -166,9 +166,7 @@ class Gemma4Bridge(MegatronModelBridge):
             full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
             full_attention_rope_partial_factor=full_rope.get("partial_rotary_factor", 0.25),
             num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
-            per_layer_embed_vocab_size=getattr(
-                hf_config, "vocab_size_per_layer_input", hf_config.vocab_size
-            ),
+            per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
             bf16=True,
         )
@@ -372,35 +370,37 @@ class Gemma4Bridge(MegatronModelBridge):
                 hf_param=f"{hp}per_layer_projection_norm.weight",
             )
         )
-        mapping_list.extend([
-            ReplicatedMapping(
-                megatron_param=f"{mp}decoder.layers.*.per_layer_input_gate.weight",
-                hf_param=f"{hp}layers.*.per_layer_input_gate.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param=f"{mp}decoder.layers.*.per_layer_projection.weight",
-                hf_param=f"{hp}layers.*.per_layer_projection.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param=f"{mp}decoder.layers.*.post_per_layer_input_norm.weight",
-                hf_param=f"{hp}layers.*.post_per_layer_input_norm.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param=f"{mp}decoder.layers.*.layer_scalar",
-                hf_param=f"{hp}layers.*.layer_scalar",
-            ),
-            _Gemma4DenseQKVMapping(
-                megatron_param=f"{mp}decoder.layers.*.self_attention.linear_qkv.weight",
-                q=f"{hp}layers.*.self_attn.q_proj.weight",
-                k=f"{hp}layers.*.self_attn.k_proj.weight",
-                v=f"{hp}layers.*.self_attn.v_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param=f"{mp}decoder.layers.*.mlp.linear_fc1.weight",
-                gate=f"{hp}layers.*.mlp.gate_proj.weight",
-                up=f"{hp}layers.*.mlp.up_proj.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                ReplicatedMapping(
+                    megatron_param=f"{mp}decoder.layers.*.per_layer_input_gate.weight",
+                    hf_param=f"{hp}layers.*.per_layer_input_gate.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param=f"{mp}decoder.layers.*.per_layer_projection.weight",
+                    hf_param=f"{hp}layers.*.per_layer_projection.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param=f"{mp}decoder.layers.*.post_per_layer_input_norm.weight",
+                    hf_param=f"{hp}layers.*.post_per_layer_input_norm.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param=f"{mp}decoder.layers.*.layer_scalar",
+                    hf_param=f"{hp}layers.*.layer_scalar",
+                ),
+                _Gemma4DenseQKVMapping(
+                    megatron_param=f"{mp}decoder.layers.*.self_attention.linear_qkv.weight",
+                    q=f"{hp}layers.*.self_attn.q_proj.weight",
+                    k=f"{hp}layers.*.self_attn.k_proj.weight",
+                    v=f"{hp}layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param=f"{mp}decoder.layers.*.mlp.linear_fc1.weight",
+                    gate=f"{hp}layers.*.mlp.gate_proj.weight",
+                    up=f"{hp}layers.*.mlp.up_proj.weight",
+                ),
+            ]
+        )
         return MegatronMappingRegistry(*mapping_list)
 
     def _hf_layer_prefix(self) -> str:
@@ -428,51 +428,53 @@ class Gemma4Bridge(MegatronModelBridge):
         }
 
         mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
-        mapping_list.extend([
-            _Gemma4QKVMapping(
-                megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                q="model.layers.*.self_attn.q_proj.weight",
-                k="model.layers.*.self_attn.k_proj.weight",
-                v="model.layers.*.self_attn.v_proj.weight",
-            ),
-            GatedMLPMapping(
-                megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate="model.layers.*.mlp.gate_proj.weight",
-                up="model.layers.*.mlp.up_proj.weight",
-            ),
-            FusedGatedExpertMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                hf_param="model.layers.*.experts.gate_up_proj",
-            ),
-            FusedExpertMapping(
-                megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                hf_param="model.layers.*.experts.down_proj",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.layer_scalar",
-                hf_param="model.layers.*.layer_scalar",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
-                hf_param="model.layers.*.router.per_expert_scale",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.router.scale",
-                hf_param="model.layers.*.router.scale",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.pffl_weight",
-                hf_param="model.layers.*.pre_feedforward_layernorm.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
-                hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
-            ),
-            ReplicatedMapping(
-                megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
-                hf_param="model.layers.*.post_feedforward_layernorm.weight",
-            ),
-        ])
+        mapping_list.extend(
+            [
+                _Gemma4QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="model.layers.*.self_attn.k_proj.weight",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+                FusedGatedExpertMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.layers.*.experts.gate_up_proj",
+                ),
+                FusedExpertMapping(
+                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.layers.*.experts.down_proj",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.layer_scalar",
+                    hf_param="model.layers.*.layer_scalar",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param="model.layers.*.router.per_expert_scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.router.scale",
+                    hf_param="model.layers.*.router.scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.pffl_weight",
+                    hf_param="model.layers.*.pre_feedforward_layernorm.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param="model.layers.*.post_feedforward_layernorm_2.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="decoder.layers.*.post_ffn_layernorm.weight",
+                    hf_param="model.layers.*.post_feedforward_layernorm.weight",
+                ),
+            ]
+        )
         return MegatronMappingRegistry(*mapping_list)
 
     def _split_qkv_linear_out_weight(self, megatron_model, linear_out_weight):

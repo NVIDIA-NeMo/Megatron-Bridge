@@ -69,23 +69,31 @@ class TestGemma4VLModelProviderDefaults:
 
     def test_custom_token_ids(self):
         p = Gemma4VLModelProvider(
-            num_layers=62, hidden_size=2816, num_attention_heads=8,
-            image_token_id=99999, video_token_id=99998,
+            num_layers=62,
+            hidden_size=2816,
+            num_attention_heads=8,
+            image_token_id=99999,
+            video_token_id=99998,
         )
         assert p.image_token_id == 99999
         assert p.video_token_id == 99998
 
     def test_custom_vision_tokens_per_image(self):
         p = Gemma4VLModelProvider(
-            num_layers=62, hidden_size=2816, num_attention_heads=8,
+            num_layers=62,
+            hidden_size=2816,
+            num_attention_heads=8,
             vision_soft_tokens_per_image=560,
         )
         assert p.vision_soft_tokens_per_image == 560
 
     def test_freeze_options_configurable(self):
         p = Gemma4VLModelProvider(
-            num_layers=62, hidden_size=2816, num_attention_heads=8,
-            freeze_language_model=True, freeze_vision_model=True,
+            num_layers=62,
+            hidden_size=2816,
+            num_attention_heads=8,
+            freeze_language_model=True,
+            freeze_vision_model=True,
         )
         assert p.freeze_language_model is True
         assert p.freeze_vision_model is True

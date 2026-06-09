@@ -62,9 +62,7 @@ def mock_hf_config_moe():
     cfg.enable_moe_block = True
     cfg.num_experts = 128
     cfg.top_k_experts = 8
-    cfg.layer_types = (
-        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
-    )
+    cfg.layer_types = ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
     cfg.final_logit_softcapping = 30.0
     return cfg
 
@@ -96,9 +94,7 @@ def mock_hf_config_dense():
     cfg.enable_moe_block = False
     cfg.num_experts = 256
     cfg.top_k_experts = 16
-    cfg.layer_types = (
-        ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
-    )
+    cfg.layer_types = ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
     cfg.final_logit_softcapping = 30.0
     return cfg
 
@@ -398,13 +394,12 @@ class TestMaybeModifyConvertedHFWeight:
         fused = (ref_sd["model.layers.0.router.proj.weight"].float() * factor).to(
             ref_sd["model.layers.0.router.proj.weight"].dtype
         )
-        result = bridge.maybe_modify_converted_hf_weight(
-            None, {"model.layers.0.router.proj.weight": fused}, ref_sd
-        )
+        result = bridge.maybe_modify_converted_hf_weight(None, {"model.layers.0.router.proj.weight": fused}, ref_sd)
         torch.testing.assert_close(
             result["model.layers.0.router.proj.weight"],
             ref_sd["model.layers.0.router.proj.weight"],
-            atol=1e-5, rtol=1e-5,
+            atol=1e-5,
+            rtol=1e-5,
         )
 
     def test_shared_expert_gate_unfusion(self, bridge):
@@ -414,13 +409,12 @@ class TestMaybeModifyConvertedHFWeight:
         fused = (ref_sd["model.layers.0.mlp.gate_proj.weight"].float() * correction).to(
             ref_sd["model.layers.0.mlp.gate_proj.weight"].dtype
         )
-        result = bridge.maybe_modify_converted_hf_weight(
-            None, {"model.layers.0.mlp.gate_proj.weight": fused}, ref_sd
-        )
+        result = bridge.maybe_modify_converted_hf_weight(None, {"model.layers.0.mlp.gate_proj.weight": fused}, ref_sd)
         torch.testing.assert_close(
             result["model.layers.0.mlp.gate_proj.weight"],
             ref_sd["model.layers.0.mlp.gate_proj.weight"],
-            atol=1e-5, rtol=1e-5,
+            atol=1e-5,
+            rtol=1e-5,
         )
 
     def test_empty_hf_state_dict_passthrough(self, bridge):
@@ -505,9 +499,7 @@ class TestGemma4BridgeMappingRegistry:
     def test_moe_registry_has_no_duplicate_non_layernorm_hf_targets(self, bridge):
         targets = self._collect_hf_targets(bridge.mapping_registry())
         duplicates = {
-            name: count
-            for name, count in Counter(targets).items()
-            if count > 1 and "input_layernorm" not in name
+            name: count for name, count in Counter(targets).items() if count > 1 and "input_layernorm" not in name
         }
         assert duplicates == {}
 

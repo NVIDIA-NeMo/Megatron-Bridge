@@ -25,7 +25,7 @@ Text-only (Dense/MoE) layer specs and providers live in:
 """
 
 import math
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,6 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers import AutoModel
 
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import (
     hook_hf_module_setattr_for_tp_grad_sync,
@@ -280,27 +279,31 @@ class Gemma4VLModel(MegatronModule):
                     lm_input_ids[multimodal_mask] = self.config.text_config.pad_token_id
 
             if inputs_embeds is None:
-                inputs_embeds = self.language_model.embedding(
-                    input_ids=lm_input_ids, position_ids=None
-                )
+                inputs_embeds = self.language_model.embedding(input_ids=lm_input_ids, position_ids=None)
                 inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [B, S, H]
                 if getattr(self.language_model.config, "scale_embeddings_by_hidden_size", False):
-                    inputs_embeds = inputs_embeds * (self.language_model.config.hidden_size ** 0.5)
+                    inputs_embeds = inputs_embeds * (self.language_model.config.hidden_size**0.5)
 
             # Vision: scatter image features at image_token_id positions
             if pixel_values is not None:
                 image_features = self.get_image_features(pixel_values, image_position_ids=image_position_ids)
                 inputs_embeds = self._scatter_modality_features(
-                    inputs_embeds, input_ids, image_features,
-                    self.config.image_token_id, "image",
+                    inputs_embeds,
+                    input_ids,
+                    image_features,
+                    self.config.image_token_id,
+                    "image",
                 )
 
             # Audio: scatter audio features at audio_token_id positions
             if input_features is not None and hasattr(self, "audio_tower"):
                 audio_features = self.get_audio_features(input_features)
                 inputs_embeds = self._scatter_modality_features(
-                    inputs_embeds, input_ids, audio_features,
-                    self.config.audio_token_id, "audio",
+                    inputs_embeds,
+                    input_ids,
+                    audio_features,
+                    self.config.audio_token_id,
+                    "audio",
                 )
 
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # [S, B, H]
