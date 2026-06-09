@@ -55,60 +55,6 @@ data parallelism when moving between hardware. For MoE sizing, the minimum GPU
 count is `PP * max(TP * CP, EP * ETP)`, then additional GPUs increase dense
 DP and expert DP.
 
-## Day-0 Code
-
-Start from the NeMo 26.04.01 container:
-
-```bash
-docker run --rm -it --gpus all --shm-size=24g \
-    -w /workspace \
-    nvcr.io/nvidia/nemo:26.04.01 \
-    bash
-```
-
-Inside the container, clone the Day-0 Megatron Bridge branch and initialize the
-bundled Megatron-Core submodule:
-
-```bash
-export WORKSPACE=/workspace
-export MEGATRON_BRIDGE_REPO=https://github.com/NVIDIA-NeMo/Megatron-Bridge.git
-export MEGATRON_BRIDGE_BRANCH=nemotron_3_ultra
-
-cd "$WORKSPACE"
-git clone --branch "$MEGATRON_BRIDGE_BRANCH" "$MEGATRON_BRIDGE_REPO"
-cd Megatron-Bridge
-
-git submodule update --init --recursive --depth 1 3rdparty/Megatron-LM
-
-uv lock
-uv sync --extra ssm
-```
-
-Run dependency sync during setup. The Slurm job scripts use `uv run --no-sync`
-so they do not download dependencies or mutate the Python environment during
-allocated jobs.
-
-Verify that `megatron.core` and `megatron.bridge` resolve to this checkout:
-
-```bash
-uv run python - <<'PY'
-import megatron.bridge
-import megatron.core
-from megatron.bridge.recipes.nemotronh import nemotron_3_ultra_pretrain_config
-
-print("core:", list(megatron.core.__path__))
-print("bridge:", list(megatron.bridge.__path__))
-print("recipe:", nemotron_3_ultra_pretrain_config.__name__)
-PY
-```
-
-Expected paths should include:
-
-```text
-/workspace/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core
-/workspace/Megatron-Bridge/src/megatron/bridge
-```
-
 ## Checkpoint Conversion
 
 Use [conversion.sh](conversion.sh) for CPU checkpoint import when the node has
