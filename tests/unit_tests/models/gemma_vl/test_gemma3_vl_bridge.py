@@ -274,12 +274,7 @@ class TestGemma3VLBridgeMappingRegistry:
         assert len(vision_mappings) == 1, "Should have exactly one ReplicatedMapping for vision_tower"
 
         vt_mapping = vision_mappings[0]
-        assert str(vt_mapping.megatron_param) == "vision_tower.**", (
-            "Megatron vision_tower param should use wildcard"
-        )
-        # Critical: HF param must include the vision_model.* wrapper present in the
-        # google/gemma-3-4b-it checkpoint (old format keys from SiglipVisionModel).
-        # Without this, all ~11,800 vision_tower keys fail to load.
+        assert str(vt_mapping.megatron_param) == "vision_tower.**", "Megatron vision_tower param should use wildcard"
         assert str(vt_mapping.hf_param) == "vision_tower.vision_model.**", (
             "HF param must map through vision_model.** to match SiglipVisionModel checkpoint keys"
         )
