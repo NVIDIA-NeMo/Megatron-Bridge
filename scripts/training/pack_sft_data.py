@@ -74,10 +74,16 @@ def main() -> None:
     params = sig.parameters
     has_var_keyword = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
     recipe_kwargs = {}
-    if args.seq_length is not None and ("seq_length" in params or has_var_keyword):
-        recipe_kwargs["seq_length"] = args.seq_length
-    if args.hf_path is not None and ("hf_path" in params or has_var_keyword):
-        recipe_kwargs["hf_path"] = args.hf_path
+    if args.seq_length is not None:
+        if "seq_length" in params or has_var_keyword:
+            recipe_kwargs["seq_length"] = args.seq_length
+        else:
+            sys.exit(f"Error: recipe '{args.recipe}' does not accept a 'seq_length' parameter.")
+    if args.hf_path is not None:
+        if "hf_path" in params or has_var_keyword:
+            recipe_kwargs["hf_path"] = args.hf_path
+        else:
+            sys.exit(f"Error: recipe '{args.recipe}' does not accept an 'hf_path' parameter.")
 
     cfg = recipe_fn(**recipe_kwargs)
 
