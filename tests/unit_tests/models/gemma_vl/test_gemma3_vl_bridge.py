@@ -166,6 +166,7 @@ class TestGemma3VLBridgeProviderBridge:
 
         # Check vision config
         assert isinstance(provider.vision_config, SiglipVisionConfig)
+        assert provider.vision_config.vision_use_head is False
         assert provider.mm_tokens_per_image == 256
 
     def test_provider_bridge_vision_projector_config(self, gemma3_vl_bridge, mock_hf_pretrained):
