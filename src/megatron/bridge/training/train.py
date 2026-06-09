@@ -321,7 +321,7 @@ def train(
     # `_update_megatron_mimo_model_config_funcs` binds it to a multimodule
     # variant for MIMO — calling the bare module-level `finalize_model_grads`
     # here would drop those bindings.
-    if config.optimizer.offload_optimizer_states:
+    if getattr(config.optimizer, "offload_optimizer_states", False):
         _orig_finalize = model_config.finalize_model_grads_func
 
         def finalize_model_grads_with_state_reload(*fmg_args, **fmg_kwargs):
@@ -872,7 +872,7 @@ def train_step(
         # FGO offload site at the top of mcore's train_step forward-backward
         # loop body. Reload is wired into finalize_model_grads_func in train()
         # pre-loop setup; release is below after the param buffer copy.
-        if optim_config.offload_optimizer_states:
+        if getattr(optim_config, "offload_optimizer_states", False):
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
                     optim_instance.offload_states()
@@ -892,7 +892,7 @@ def train_step(
         # FGO: release GPU memory for offloaded states once D2H completes.
         # Mirrors mcore's post-`_copy_main_params_to_param_buffer` release
         # site in its train_step.
-        if optim_config.offload_optimizer_states:
+        if getattr(optim_config, "offload_optimizer_states", False):
             for optim_instance in optimizer.chained_optimizers:
                 if isinstance(optim_instance, DistributedOptimizer):
                     optim_instance.release_offloaded_gpu_states()
