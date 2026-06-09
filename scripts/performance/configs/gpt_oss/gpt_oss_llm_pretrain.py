@@ -422,6 +422,9 @@ def gpt_oss_120b_pretrain_config_gb300(
     if is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     return cfg
 
 
@@ -450,6 +453,9 @@ def gpt_oss_120b_pretrain_config_gb200(
 
     if is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
+
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
 
     return cfg
 
