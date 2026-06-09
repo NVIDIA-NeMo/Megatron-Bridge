@@ -129,13 +129,26 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
 Training quickstart using pre-configured recipes:
 
 ```python
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
+    # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
+    # This is random-init pretraining and does not require a converted Megatron checkpoint.
     cfg = llama32_1b_pretrain_config()
+
+    # Hugging Face model ID as the architecture source.
+    # The recipe uses this pattern internally; override cfg.model to choose a different source.
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+
+    # Optional: use a local Hugging Face model/config directory instead.
+    # cfg.model = AutoBridge.from_hf_pretrained("/path/to/local/hf_model").to_megatron_provider(load_weights=False)
+
+    # Optional: initialize weights from a converted Megatron checkpoint for SFT/PEFT
+    # or other pretrained-weight workflows.
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/megatron/checkpoint"
 
     # Override training parameters
     cfg.train.train_iters = 10
@@ -151,6 +164,14 @@ You can launch the above script with:
 ```sh
 uv run python -m torch.distributed.run --nproc-per-node=<num devices> /path/to/script.py
 ```
+
+HF → Megatron conversion is workflow-specific. Use it when you need pretrained HF weights as a Megatron checkpoint,
+such as for finetuning from converted weights or for checkpoint round-trip workflows. It is not required for
+random-init pretraining from an HF architecture, where `AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)`
+only reads the architecture configuration.
+
+For runnable recipe, data preparation, and training examples, see the repository
+[`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
 
 More examples:
 

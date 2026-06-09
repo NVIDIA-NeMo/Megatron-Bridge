@@ -11,8 +11,11 @@ uv run python -m torch.distributed.run --nproc_per_node=1 00_quickstart_pretrain
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
+It uses the Hugging Face architecture configuration for random initialization, so it does not require converting a
+Hugging Face checkpoint to Megatron format first.
 
-For finetuning, you first need a checkpoint in Megatron format. Convert from HuggingFace using the `AutoBridge`:
+For finetuning from pretrained weights, you need a checkpoint in Megatron format. Convert from Hugging Face using
+the `AutoBridge`:
 
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
