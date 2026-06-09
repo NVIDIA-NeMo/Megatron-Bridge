@@ -256,6 +256,8 @@ except ImportError:
         from megatron.core.utils import local_multi_tensor_l2_norm as multi_tensor_l2norm
 
 
+DEVICE_MEMORY_USED_KEY = "device_memory_used"
+
 MEMORY_KEYS: dict[str, str] = {
     "allocated_bytes.all.current": "mem-allocated-bytes",
     "active_bytes.all.current": "mem-active-bytes",
@@ -267,7 +269,17 @@ MEMORY_KEYS: dict[str, str] = {
     "reserved_bytes.all.peak": "mem-max-reserved-bytes",
     "num_alloc_retries": "mem-alloc-retires",
     "allocation.all.current": "mem-allocated-count",
+    DEVICE_MEMORY_USED_KEY: DEVICE_MEMORY_USED_KEY,
 }
+
+
+def _bytes_to_gigabytes(num_bytes: Union[int, float]) -> float:
+    """Convert bytes to gigabytes while preserving five significant digits."""
+    gigabytes = num_bytes / 1.0e9
+    if gigabytes != 0:
+        order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
+        gigabytes = round(gigabytes, -order_of_magnitude + 4)
+    return gigabytes
 
 
 def param_is_not_shared(param: nn.Parameter) -> bool:
@@ -1267,11 +1279,14 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
     +------------------------+----------------------------------------------------------------------------------------+
     | alloc_retries          | Number of failed cudaMalloc calls that result in a cache flush and retry.              |
     +------------------------+----------------------------------------------------------------------------------------+
+    | device_memory_used     | Current device memory used in gigabytes, as reported by nvidia-smi.                   |
+    +------------------------+----------------------------------------------------------------------------------------+
     Args:
         memory_keys (dict[str, str], optional): A dict specifying memory statistics to log. Keys
-            are the names of memory statistics to log from `torch.cuda.memory_stats()`, and values
-            are the names they will be logged under. If not provided, the above statistics are
-            logged. Defaults to None.
+            are the names of memory statistics to log from `torch.cuda.memory_stats()` or
+            ``device_memory_used`` for `torch.cuda.device_memory_used()`, and values are the names
+            they will be logged under. If not provided, the above statistics are logged.
+            Defaults to None.
     Returns:
         Memory metrics dictionary.
     """
@@ -1282,15 +1297,12 @@ def report_memory(memory_keys: Optional[dict[str, str]]) -> dict:
     # simplify and reformat the memory_stats
     memory_report = {}
     for torch_name, name in memory_keys.items():
-        if torch_name in memory_stats:
+        if torch_name == DEVICE_MEMORY_USED_KEY:
+            memory_report[name] = _bytes_to_gigabytes(torch.cuda.device_memory_used())
+        elif torch_name in memory_stats:
             # Convert to gigabytes
             if "bytes" in torch_name:
-                gigabytes = memory_stats[torch_name] / 1.0e9
-                # Round to preserve 5 significant digits
-                if gigabytes != 0:
-                    order_of_magnitude = int(math.floor(math.log10(abs(gigabytes))))
-                    gigabytes = round(gigabytes, -order_of_magnitude + 4)
-                memory_report[name.replace("bytes", "gigabytes")] = gigabytes
+                memory_report[name.replace("bytes", "gigabytes")] = _bytes_to_gigabytes(memory_stats[torch_name])
             else:
                 memory_report[name] = memory_stats[torch_name]
 

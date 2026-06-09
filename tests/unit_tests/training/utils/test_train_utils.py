@@ -1606,10 +1606,27 @@ class TestTrainingLog:
         writer.add_scalar.assert_any_call("memory/mem-max-allocated-gigabytes", 1.792, 10)
         writer.add_scalar.assert_any_call("memory/mem-allocated-count", 5000, 10)
 
-    def test_report_memory(self):
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.device_memory_used")
+    @mock.patch("megatron.bridge.training.utils.train_utils.torch.cuda.memory_stats")
+    def test_report_memory(self, mock_memory_stats, mock_device_memory_used):
         """Test memory metrics."""
+        mock_memory_stats.return_value = {
+            "allocated_bytes.all.current": 1_536_000_000,
+            "active_bytes.all.current": 1_536_000_000,
+            "inactive_split_bytes.all.current": 256_000_000,
+            "reserved_bytes.all.current": 2_048_000_000,
+            "allocated_bytes.all.peak": 1_792_000_000,
+            "active_bytes.all.peak": 1_792_000_000,
+            "inactive_split_bytes.all.peak": 512_000_000,
+            "reserved_bytes.all.peak": 2_304_000_000,
+            "num_alloc_retries": 0,
+            "allocation.all.current": 5000,
+        }
+        mock_device_memory_used.return_value = 2_560_000_000
+
         memory_report = report_memory(memory_keys=None)
-        assert len(memory_report) == 10
+        assert len(memory_report) == 11
+        assert memory_report["device_memory_used"] == 2.56
 
         memory_keys = {
             "reserved_bytes.all.current": "mem-reserved-bytes",
