@@ -63,6 +63,59 @@ def create_rp2_dataset_config(
     )
 
 
+def create_c4_dataset_config(
+    seq_length,
+    c4_root,
+    train_shards=(6,),
+    num_workers=1,
+    pin_memory=False,
+    persistent_workers=True,
+    index_mapping_dir=None,
+):
+    """Create C4 dataset configuration for Megatron-Bridge.
+
+    Uses Megatron-mmap C4 files at:
+      <c4_root>/c4-train.en_<shard>_text_document.{bin,idx}
+      <c4_root>/c4-validation-91205-samples.en_text_document.{bin,idx}
+
+    Produces a blend_per_split with (train, val, test) tuples where val and
+    test point to the same validation file (matches NVIDIA's MLPerf DSV3
+    reference layout).
+    """
+    from megatron.bridge.training.config import GPTDatasetConfig
+
+    val_prefix = f"{c4_root}/c4-validation-91205-samples.en_text_document"
+    train_prefixes = [f"{c4_root}/c4-train.en_{i}_text_document" for i in train_shards]
+    train_weights = [50.0] * len(train_prefixes)
+
+    # GPTDatasetConfig.blend_per_split format: list of 3 (prefixes, weights) tuples
+    # for (train, val, test). Mirrors NVIDIA's MLPerf DSV3 reference setup with
+    # val and test pointing to the same validation file.
+    blend_per_split = [
+        (train_prefixes, train_weights),
+        ([val_prefix], None),
+        ([val_prefix], None),
+    ]
+
+    return GPTDatasetConfig(
+        random_seed=1234,
+        reset_attention_mask=False,
+        reset_position_ids=False,
+        eod_mask_loss=False,
+        seq_length=seq_length,
+        num_dataset_builder_threads=1,
+        blend=None,
+        blend_per_split=blend_per_split,
+        split=None,  # blend_per_split takes precedence; split must be None.
+        path_to_cache=index_mapping_dir,
+        data_sharding=True,
+        dataloader_type="single",
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+    )
+
+
 def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):
@@ -77,7 +130,7 @@ def create_squad_dataset_config(
         packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return HFDatasetConfig(
-        dataset_name="squad",  # Hugging Face dataset name
+        dataset_name="rajpurkar/squad",  # Hugging Face dataset name (canonical namespaced id)
         process_example_fn=process_squad_example,  # Processing function
         dataset_root=dataset_root,  # Local cache/processed files location
         seq_length=seq_length,

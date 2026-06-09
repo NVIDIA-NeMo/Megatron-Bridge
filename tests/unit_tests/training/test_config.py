@@ -2756,6 +2756,63 @@ class TestDistributedOptimizerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    @pytest.mark.parametrize(
+        "ddp_overlap, optimizer_overlap, expected_final_state, should_print_message, expected_message_parts",
+        [
+            (True, False, True, True, ["ddp.overlap_param_gather=True", "optimizer.overlap_param_gather=False"]),
+            (False, True, True, True, ["ddp.overlap_param_gather=False", "optimizer.overlap_param_gather=True"]),
+            (True, True, True, False, []),
+            (False, False, False, False, []),
+        ],
+    )
+    @patch("megatron.bridge.training.config.warn_rank_0")
+    def test_overlap_param_gather_sync_scenarios(
+        self,
+        mock_warn_rank_0,
+        ddp_overlap,
+        optimizer_overlap,
+        expected_final_state,
+        should_print_message,
+        expected_message_parts,
+    ):
+        """Test overlap_param_gather sync between DDP and optimizer configs."""
+        gpt_model_cfg = create_test_gpt_config()
+        ddp_cfg = create_test_ddp_config(overlap_param_gather=ddp_overlap)
+        optimizer_cfg = create_test_optimizer_config(overlap_param_gather=optimizer_overlap)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            ddp_config=ddp_cfg,
+            optimizer_config=optimizer_cfg,
+        )
+
+        try:
+            assert container.ddp.overlap_param_gather is ddp_overlap
+            assert container.optimizer.overlap_param_gather is optimizer_overlap
+
+            _validate_and_sync_distributed_optimizer_settings(container)
+
+            assert container.ddp.overlap_param_gather is expected_final_state
+            assert container.optimizer.overlap_param_gather is expected_final_state
+
+            overlap_warnings = [
+                call
+                for call in mock_warn_rank_0.call_args_list
+                if call[0] and "overlap_param_gather settings were not in sync" in call[0][0]
+            ]
+            if should_print_message:
+                assert len(overlap_warnings) == 1
+                call_args = overlap_warnings[0][0][0]
+                assert "Automatically enabling overlap_param_gather for both settings" in call_args
+                for expected_part in expected_message_parts:
+                    assert expected_part in call_args
+            else:
+                assert len(overlap_warnings) == 0
+
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
 
 class TestSampleBasedTraining:
     """Tests for sample-based training configuration and validation."""

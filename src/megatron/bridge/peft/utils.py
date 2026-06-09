@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import packaging
 import torch
 import torch.nn as nn
-from megatron.core import ModelParallelConfig
+from megatron.core import ModelParallelConfig, dist_checkpointing
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 ModelList = list[MegatronModule]
 ModelHook = Callable[[ModelList], ModelList | None]
 CheckpointPath = str | Path
+
+_LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR = "use_legacy_shared_expert_adapter_checkpoint"
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -110,6 +112,100 @@ def _get_pg_collection(
         # pass it into adapter constructors explicitly and remove this default-MPU fallback.
         pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=required_pgs)
     return pg_collection
+
+
+def _iter_sharded_tensor_factories(state_dict: object) -> list[ShardedTensorFactory]:
+    """Return all sharded tensor factories in a nested state dict."""
+
+    if isinstance(state_dict, ShardedTensorFactory):
+        return [state_dict]
+    if isinstance(state_dict, Mapping):
+        factories = []
+        for value in state_dict.values():
+            factories.extend(_iter_sharded_tensor_factories(value))
+        return factories
+    if isinstance(state_dict, list | tuple):
+        factories = []
+        for value in state_dict:
+            factories.extend(_iter_sharded_tensor_factories(value))
+        return factories
+    return []
+
+
+def _checkpoint_tensor_shape(checkpoint_metadata: Mapping[str, ShardedTensor], key: str) -> tuple[int, ...] | None:
+    """Return checkpoint global tensor shape for a key, tolerating model-section prefixes."""
+
+    for candidate in (key, f"model.{key}"):
+        metadata = checkpoint_metadata.get(candidate)
+        if metadata is not None:
+            return tuple(metadata.global_shape)
+    return None
+
+
+def _legacy_shared_expert_adapter_key(factory: ShardedTensorFactory) -> str | None:
+    """Return the adapter module key if a factory represents a shared expert LoRA tensor."""
+
+    for suffix in (".linear_in.weight", ".linear_out.weight"):
+        if not factory.key.endswith(suffix):
+            continue
+        built = factory.build()
+        shards = built if isinstance(built, list) else [built]
+        if not shards or not isinstance(shards[0], ShardedTensor):
+            continue
+        expected_shape = tuple(shards[0].global_shape)
+        local_shape = tuple(factory.data.shape)
+        if len(expected_shape) == len(local_shape) + 1:
+            return factory.key[: -len(suffix)]
+    return None
+
+
+def enable_legacy_shared_expert_adapter_loading(
+    megatron_model: list[nn.Module] | nn.Module,
+    sharded_state_dict: ShardedStateDict,
+    checkpoint_path: str | Path,
+) -> bool:
+    """Enable legacy 2D checkpoint loading for old shared grouped-expert adapters.
+
+    New shared grouped-expert LoRA checkpoints expose a leading global expert axis
+    so they can be resharded across EP changes. Older checkpoints saved the same
+    shared adapter as a plain 2D tensor. This helper detects that old metadata
+    shape and marks only the matching shared adapter modules to emit the legacy
+    2D sharded state dict for loading.
+
+    Args:
+        megatron_model: Model module or model chunks containing PEFT adapters.
+        sharded_state_dict: Current adapter-only sharded state dict.
+        checkpoint_path: Distributed checkpoint directory to inspect.
+
+    Returns:
+        True if at least one shared expert adapter was marked for legacy loading.
+    """
+
+    checkpoint_metadata = dist_checkpointing.load_tensors_metadata(str(checkpoint_path))
+    models = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+    adapters_by_name: dict[str, ParallelLinearAdapter] = {}
+    for model in models:
+        for name, module in model.named_modules():
+            if isinstance(module, ParallelLinearAdapter) and module._uses_grouped_expert_sharding():
+                adapters_by_name[name.removeprefix("module.")] = module
+
+    enabled = False
+    for factory in _iter_sharded_tensor_factories(sharded_state_dict):
+        adapter_key = _legacy_shared_expert_adapter_key(factory)
+        if adapter_key is None:
+            continue
+        adapter = adapters_by_name.get(adapter_key)
+        if adapter is None:
+            continue
+        built = factory.build()
+        shards = built if isinstance(built, list) else [built]
+        expected_shape = tuple(shards[0].global_shape)
+        legacy_shape = expected_shape[1:]
+        if _checkpoint_tensor_shape(checkpoint_metadata, factory.key) == legacy_shape:
+            setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
+            enabled = True
+
+    return enabled
 
 
 def _get_process_group(pg_collection: ProcessGroupCollection | None, *names: str) -> object | None:
@@ -815,6 +911,7 @@ class ParallelLinearAdapter(nn.Module):
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
         self.base_linear_is_parallel = base_linear_is_parallel
+        self.use_legacy_shared_expert_adapter_checkpoint = False
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
         # in case this arg is not provided, use the dummy default config.
@@ -1247,7 +1344,7 @@ class ParallelLinearAdapter(nn.Module):
         # checkpoint must expose the global expert axis so EP changes can reshard it.
         # Non-grouped expert adapters already sit under .local_experts.* and keep
         # their existing expert-DP replica metadata instead.
-        use_expert_axis = self._uses_grouped_expert_sharding()
+        use_expert_axis = self._uses_grouped_expert_sharding() and not self.use_legacy_shared_expert_adapter_checkpoint
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
