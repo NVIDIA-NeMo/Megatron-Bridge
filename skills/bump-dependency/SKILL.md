@@ -84,7 +84,7 @@ Sign-off + signed-commit + PR title format per @CONTRIBUTING.md and
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -S -s -m "[build] chore: bump <package> to <ref>"
+git commit -S -s -m "build: bump <package> to <ref>"
 git push -u origin <branch-name>
 ```
 
@@ -276,7 +276,7 @@ When a `JOB <name> -> failure` event fires:
 4. **Commit, push, retrigger**:
 
    ```bash
-   git commit -S -s -m "[ci] chore: quarantine flaky <test> for <package> bump"
+   git commit -S -s -m "ci: quarantine flaky <test> for <package> bump"
    git push
    gh pr comment <N> --repo NVIDIA-NeMo/Megatron-Bridge \
      --body "/ok to test $(git rev-parse HEAD)"

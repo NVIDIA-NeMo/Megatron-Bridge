@@ -160,6 +160,77 @@ _ITERATION_DIR_MARKERS = (
     ".metadata",  # PyTorch DCP checkpoint (fsdp_dtensor)
 )
 
+# Known well-formed HuggingFace weight filenames.  ``model.safetensors`` is the
+# consolidated single-file layout, and ``model.safetensors.index.json`` is the
+# manifest produced for sharded models (``model-00001-of-00016.safetensors``
+# style).  The shard files themselves are detected via globbing in
+# :func:`is_hf_checkpoint_dir` so detection works even when the index manifest
+# is missing (mid-download, custom export, etc.).
+_HF_KNOWN_WEIGHT_FILES = (
+    "model.safetensors",
+    "model.safetensors.index.json",
+    # Legacy / PyTorch-formatted single & sharded weight layouts
+    "pytorch_model.bin",
+    "pytorch_model.bin.index.json",
+)
+
+_HF_WEIGHT_GLOB_PATTERNS = (
+    "model-*-of-*.safetensors",
+    "pytorch_model-*-of-*.bin",
+)
+
+
+def _has_hf_weight_files(path: str) -> bool:
+    """Check whether ``path`` contains any HuggingFace-style weight file."""
+    for filename in _HF_KNOWN_WEIGHT_FILES:
+        if file_exists(join_paths(path, filename)):
+            return True
+
+    # Fall back to globbing for sharded weight files
+    # (e.g. ``model-00001-of-00016.safetensors``).
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        try:
+            base = msc.Path(path)
+            for pattern in _HF_WEIGHT_GLOB_PATTERNS:
+                for _ in base.glob(pattern):
+                    return True
+        except Exception:
+            # MSC backends may not implement glob; be defensive.
+            pass
+    else:
+        base = Path(path)
+        if base.is_dir():
+            for pattern in _HF_WEIGHT_GLOB_PATTERNS:
+                for _ in base.glob(pattern):
+                    return True
+    return False
+
+
+def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
+    """Lightweight check for a local HuggingFace full-model directory.
+
+    This is a local directory-shape check used before entering the explicit HF
+    pretrained initialization path. It is not a full compatibility validator.
+    A path qualifies as HF when ``config.json`` is present and the directory
+    contains at least one HuggingFace full-model weight file. Both consolidated
+    (``model.safetensors``, ``pytorch_model.bin``) and sharded
+    (``model-XXXXX-of-XXXXX.safetensors``, ``pytorch_model-XXXXX-of-XXXXX.bin``)
+    layouts are recognised, with or without the matching ``*.index.json``
+    manifest.
+
+    Args:
+        path: Filesystem path to check (may be ``None``).
+
+    Returns:
+        True when ``path`` looks like a HuggingFace full-model directory.
+    """
+    if path is None:
+        return False
+    if not file_exists(join_paths(path, "config.json")):
+        return False
+    return _has_hf_weight_files(path)
+
 
 def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
     """Check if ``path`` is a specific checkpoint iteration directory.

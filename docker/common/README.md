@@ -97,3 +97,30 @@ To change them, rebuild the container.
 **general note:**
 
 Running uv pip install outside any of the two directories above might lead to a re-install of torch, thus breaking all dependencies that have been compiled against the original torch version. By running uv pip install inside any of the two directories, we can avoid this unwanted side-effect.
+
+### Reinstalling video / image decoding packages (`av`, `decord`, `opencv-python-headless`) at runtime
+
+Starting with the 26.04 (r0.4.0) release, the following Python packages are **not installed** in the container:
+
+| Package | Why it was removed |
+|---------|---------------------|
+| [`av`](https://pypi.org/project/av/) (PyAV) | Vendored FFmpeg binaries carried an unfixed CVE. |
+| [`decord`](https://pypi.org/project/decord/) | Unmaintained; vendored FFmpeg binaries carried an unfixed CVE. |
+| [`opencv-python-headless`](https://pypi.org/project/opencv-python-headless/) | Bundled native libs carried an unfixed CVE. The Dockerfile also explicitly runs `pip uninstall -y opencv-python-headless` after the base-container install to scrub any pre-existing copy. |
+
+These packages are suppressed via `sys_platform == 'never'` overrides in `/opt/Megatron-Bridge/pyproject.toml` (for `av`) and `/opt/NeMo-FW/pyproject.toml` (for all three). The override propagates to transitive consumers such as `qwen-vl-utils` and `decord[av-decode]`, so `uv sync` and `uv pip install <pkg>` will silently skip them.
+
+If your workflow needs any of these at runtime (for example, video decoding in multimodal data pipelines), install them directly with `pip`, which does not consult uv's override list:
+
+```bash
+# install any combination you need
+pip install --no-deps av
+pip install --no-deps decord
+pip install --no-deps opencv-python-headless
+```
+
+Notes:
+
+- `--no-deps` keeps the install from re-resolving torch or other framework packages, preserving the container's pinned versions.
+- You accept the CVE risk in each package's vendored native libraries by reinstalling it. Restrict this to workloads where you control the input media.
+- The install is not persistent — rebuild it into your own image (or your job's startup script) if you need it across container restarts.

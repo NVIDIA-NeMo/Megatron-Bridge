@@ -105,6 +105,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups; \
     fi && \
+    # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
+    # Otherwise, the stub will be called in some cases and fail
+    ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY --chmod=644 . /opt/Megatron-Bridge

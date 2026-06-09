@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``process_multi_image_inputs`` and ``process_video_inputs``
+"""Unit tests for VLM generation helpers
 in ``examples.conversion.vlm_generate_utils``.
 
 Covers the ``ImportError`` fallback when ``qwen_vl_utils`` is unavailable
@@ -126,6 +126,39 @@ class TestProcessMultiImageInputs:
         assert px is None
         assert grid is None
         torch.testing.assert_close(ids, torch.tensor([[5]]))
+
+
+@pytest.mark.unit
+class TestProcessImageInputs:
+    """Tests for ``process_image_inputs``."""
+
+    def test_kimi_image_path_returns_full_six_field_contract(self):
+        """Kimi image preprocessing must match the VLM generation unpack contract."""
+        inputs = mock.MagicMock()
+        inputs.input_ids = torch.tensor([[10, 99, 20]])
+        inputs.pixel_values = "PIXELS"
+        inputs.grid_thws = torch.tensor([[1, 4, 4]])
+
+        proc = mock.MagicMock(return_value=inputs)
+
+        with mock.patch.object(vlm_generate_utils, "load_image", return_value=mock.MagicMock(name="image")):
+            result = vlm_generate_utils.process_image_inputs(
+                proc,
+                "/image.png",
+                "describe",
+                is_kimi=True,
+                image_token_id=99,
+            )
+
+        assert len(result) == 6
+        input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, image_position_ids = result
+        expected_input_ids = torch.tensor([[10, 99, 99, 99, 99, 20]])
+        torch.testing.assert_close(input_ids, expected_input_ids)
+        assert pixel_values == "PIXELS"
+        torch.testing.assert_close(image_grid_thw, inputs.grid_thws)
+        assert image_sizes is None
+        assert mm_token_type_ids is None
+        assert image_position_ids is None
 
 
 @pytest.mark.unit
