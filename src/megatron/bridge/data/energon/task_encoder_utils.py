@@ -15,7 +15,7 @@
 """Shared utilities for Energon-based VLM task encoders.
 
 Contains helpers extracted from the Qwen-VL task encoder so they can be
-reused by the generic ``HFEncoderVLMTaskEncoder`` and any future
+reused by the generic ``HFTaskEncoder`` and any future
 model-specific encoders.
 """
 

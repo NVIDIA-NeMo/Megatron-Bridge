@@ -12,20 +12,21 @@ This guide helps you migrate from NeMo 2.0 training and recipes to Megatron Brid
 
 ## Model Configuration Mapping
 
-Megatron Bridge offers model providers that directly map to NeMo 2.0 model configs.
+Megatron Bridge derives model provider settings from Hugging Face configs through
+`AutoBridge`, or from recipe functions that configure a base provider directly.
 
 ### Examples
 
 | NeMo 2.0 | Megatron Bridge |
 |----------|-----------------|
-| `llm.Llama3Config8B` | {py:class}`bridge.models.Llama3ModelProvider8B` |
-| `llm.Llama31Config70B` | {py:class}`bridge.models.Llama31ModelProvider70B` |
-| `llm.Qwen2Config7B` | {py:class}`bridge.models.Qwen2ModelProvider7B` |
+| `llm.Llama3Config8B` | `AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider()` |
+| `llm.Llama31Config70B` | `AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-70B").to_megatron_provider()` |
+| `llm.Qwen2Config7B` | `AutoBridge.from_hf_pretrained("Qwen/Qwen2-7B").to_megatron_provider()` |
 | `llm.DeepseekV2Config` | {py:class}`bridge.models.DeepseekV2ModelProvider` |
 
 ### Supported Model Families
 
-Megatron Bridge supports the following model families with preset providers:
+Megatron Bridge supports the following model families through bridge mappings and provider classes:
 - **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
@@ -33,7 +34,7 @@ Megatron Bridge supports the following model families with preset providers:
 - **Nemotron**: Nemotron3, Nemotron4, NemotronH, NemotronNano
 - **NVIDIA Mamba**: Mamba variants and hybrid models
 
-For a complete list of all model providers and their parameters, see {py:mod}`bridge.models`.
+For a complete list of bridge mappings, providers, and their parameters, see {py:mod}`bridge.models`.
 
 <!-- TODO: Create a dedicated model support table with tested HF checkpoint mappings -->
 
@@ -114,7 +115,7 @@ from megatron.bridge.training.config import (
     LoggerConfig,
     TrainingConfig,
 )
-from megatron.bridge.models import Llama3ModelProvider8B  # Direct equivalent to Llama3Config8B
+from megatron.bridge.models import GPTModelProvider  # Configure directly or derive with AutoBridge
 from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.training.config import SchedulerConfig
 from megatron.bridge.training.pretrain import pretrain
@@ -123,8 +124,8 @@ from megatron.bridge.training.gpt_step import forward_step
 
 def create_config():
     return ConfigContainer(
-        # Model with parallelism built-in - using preset 8B config
-        model=Llama3ModelProvider8B(
+        # Model with parallelism built in
+        model=GPTModelProvider(
             # Parallelism settings (moved from MegatronStrategy)
             tensor_model_parallel_size=2,
             pipeline_model_parallel_size=2,
@@ -224,13 +225,13 @@ llm.finetune(
 #### Now: Megatron Bridge
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
-from megatron.bridge.models import Llama3ModelProvider8B
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
     return ConfigContainer(
-        model=Llama3ModelProvider8B(
-            # Preset config matching Llama3Config8B
+        model=GPTModelProvider(
+            # Configure architecture fields directly or derive with AutoBridge
         ),
         train=TrainingConfig(
             micro_batch_size=1,
@@ -382,7 +383,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
 )
 from megatron.core.optimizer import OptimizerConfig
-from megatron.bridge.models import Llama3ModelProvider8B
+from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.training import pretrain
 
 def llama3_8b_config(
@@ -404,9 +405,9 @@ def llama3_8b_config(
 ) -> ConfigContainer:
     """Create a Llama3 8B pretraining configuration."""
     return ConfigContainer(
-        model=Llama3ModelProvider8B(
-            # Preset architecture from Llama3Config8B (num_layers=32, hidden_size=4096, etc.)
-            # Only need to specify parallelism and overrides
+        model=GPTModelProvider(
+            # Configure architecture fields directly or derive this provider with AutoBridge
+            # Then specify parallelism and overrides
             tensor_model_parallel_size=tensor_parallelism,
             pipeline_model_parallel_size=pipeline_parallelism,
         ),
@@ -697,7 +698,7 @@ In Megatron Bridge, vocabulary size can be specified in either the model provide
 ```python
 # Option 1: Let tokenizer determine vocab size
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
         # vocab_size not set - will use tokenizer's vocab size
         vocab_size=None,
     ),
@@ -709,7 +710,7 @@ config = ConfigContainer(
 
 # Option 2: Explicitly set vocab size in model
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
         vocab_size=128256,  # Explicitly set (must be >= tokenizer vocab size)
     ),
     tokenizer=TokenizerConfig(...),
@@ -1154,7 +1155,7 @@ from megatron.bridge.training.config import ConfigContainer, CheckpointConfig
 
 # Include PEFT in ConfigContainer
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     # ... other configs
     checkpoint=CheckpointConfig(
         pretrained_checkpoint="/path/to/megatron/checkpoint",  # Required for PEFT
@@ -1288,7 +1289,7 @@ from megatron.bridge.training import pretrain
 from megatron.bridge.training.gpt_step import forward_step
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(
+    model=GPTModelProvider(
         tensor_model_parallel_size=2,
         pipeline_model_parallel_size=2,
     ),
@@ -1324,7 +1325,7 @@ from megatron.bridge.training import finetune
 from megatron.bridge.training.gpt_step import forward_step
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     train=TrainingConfig(
         train_iters=1000,
         eval_interval=100,
@@ -1355,7 +1356,7 @@ Add a `peft` configuration to enable parameter-efficient training:
 from megatron.bridge.peft import LoRA
 
 config = ConfigContainer(
-    model=Llama3ModelProvider8B(),
+    model=GPTModelProvider(),
     train=TrainingConfig(
         train_iters=1000,
         eval_interval=100,

@@ -470,8 +470,12 @@ class TestGetBatch:
                 return_value=batch_dict,
             ),
             patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_group",
+                return_value=None,
+            ),
+            patch(
                 "megatron.bridge.diffusion.models.common.dgpt_step.get_batch_on_this_cp_rank",
-                side_effect=lambda x: x,
+                side_effect=lambda x, **kwargs: x,
             ),
         ):
             cfg = MagicMock()

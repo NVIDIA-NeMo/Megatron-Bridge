@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import signal
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -643,7 +645,8 @@ class TestGlobalState:
             state._set_signal_handler()
 
             mock_dsh.assert_called_once_with(15)
-            assert state._signal_handler == mock_signal_handler
+            mock_signal_handler.__enter__.assert_called_once()
+            assert state._signal_handler == mock_signal_handler.__enter__.return_value
 
     def test_set_signal_handler_no_train_config(self):
         """Test _set_signal_handler without train config."""
@@ -657,6 +660,68 @@ class TestGlobalState:
 
             mock_dsh.assert_not_called()
             assert state._signal_handler is None
+
+    @pytest.fixture
+    def restore_sigterm_handler(self):
+        """Snapshot SIGTERM handler and restore it after the test.
+
+        The tests below exercise the real ``DistributedSignalHandler``, which
+        calls ``signal.signal(SIGTERM, ...)`` on the live process. Without
+        this fixture the installed trap would leak across tests.
+        """
+        original = signal.getsignal(signal.SIGTERM)
+        try:
+            yield
+        finally:
+            signal.signal(signal.SIGTERM, original)
+
+    def test_set_signal_handler_installs_os_trap(self, restore_sigterm_handler):
+        """Regression: _set_signal_handler must install an OS-level SIGTERM trap.
+
+        Constructs the real DistributedSignalHandler (no patch) and asserts
+        that ``signal.getsignal(SIGTERM)`` changes. With the prior bug the
+        handler object was constructed but ``__enter__()`` was never called,
+        so ``signal.signal`` was never invoked and ``getsignal`` returned the
+        pre-test value.
+        """
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.train.exit_signal = signal.SIGTERM
+        state._cfg = mock_config
+
+        before = signal.getsignal(signal.SIGTERM)
+        state._set_signal_handler()
+        after = signal.getsignal(signal.SIGTERM)
+
+        assert after is not before, "SIGTERM handler was not replaced; __enter__() likely missing"
+        assert callable(after)
+        assert state._signal_handler is not None
+        assert state._signal_handler.released is False
+
+    def test_sigterm_flips_signal_received_flag(self, restore_sigterm_handler):
+        """End-to-end: real SIGTERM after cfg setter flips ``_signal_received``.
+
+        Drives the path through ``state.cfg = mock_config`` (which triggers
+        ``_set_signal_handler`` via the setter) so the test exercises the
+        public surface a real training run uses. Reads ``_signal_received``
+        directly to avoid the ``all_gather`` in ``signals_received()``.
+        """
+        # Safety net: install a no-op SIGTERM handler first. If a future
+        # regression drops the OS trap install, this keeps SIGTERM from
+        # killing the pytest worker so the assertion fails cleanly.
+        signal.signal(signal.SIGTERM, lambda signum, frame: None)
+
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.train.exit_signal = signal.SIGTERM
+        state.cfg = mock_config
+
+        assert state._signal_handler is not None
+        assert state._signal_handler._signal_received is False
+
+        os.kill(os.getpid(), signal.SIGTERM)
+
+        assert state._signal_handler._signal_received is True
 
     def test_mlflow_logger_property_disabled(self):
         """Test mlflow logger when disabled."""
@@ -692,6 +757,7 @@ class TestGlobalState:
         mock_config.logger.mlflow_run_name = "test_run"
         mock_config.logger.mlflow_tracking_uri = "http://localhost:5000"
         mock_config.logger.mlflow_tags = {"env": "test"}
+        mock_config.logger.mlflow_description = None
         mock_config.to_dict.return_value = {"config": "data"}
         state._cfg = mock_config
 
@@ -722,10 +788,51 @@ class TestGlobalState:
 
                 mock_mlflow.set_tracking_uri.assert_called_once_with("http://localhost:5000")
                 mock_mlflow.set_experiment.assert_called_once_with("test_experiment")
-                mock_mlflow.start_run.assert_called_once_with(run_name="test_run", tags={"env": "test"})
+                mock_mlflow.start_run.assert_called_once_with(
+                    run_name="test_run", tags={"env": "test"}, description=None
+                )
                 mock_mlflow.log_params.assert_called_once()
                 assert logger == mock_mlflow
                 assert state._mlflow_logger == mock_mlflow
+
+    def test_mlflow_logger_passes_description_to_start_run(self):
+        """Test mlflow logger forwards mlflow_description as the run description."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.mlflow_experiment = "test_experiment"
+        mock_config.logger.mlflow_run_name = "test_run"
+        mock_config.logger.mlflow_tracking_uri = None
+        mock_config.logger.mlflow_tags = None
+        mock_config.logger.mlflow_description = "Pretraining sweep on H100, seed 42"
+        mock_config.to_dict.return_value = {"config": "data"}
+        state._cfg = mock_config
+
+        mock_mlflow = MagicMock()
+        mock_mlflow.active_run.return_value = None
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            patch.dict("sys.modules", {"mlflow": mock_mlflow}),
+        ):
+            import importlib
+
+            import megatron.bridge.training.state as state_module
+
+            importlib.reload(state_module)
+
+            state = state_module.GlobalState()
+            state._cfg = mock_config
+
+            with (
+                patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+                patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            ):
+                _ = state.mlflow_logger
+
+                mock_mlflow.start_run.assert_called_once_with(
+                    run_name="test_run", tags=None, description="Pretraining sweep on H100, seed 42"
+                )
 
     def test_mlflow_logger_property_missing_run_name(self):
         """Test mlflow logger raises error when run name is empty."""
@@ -831,7 +938,8 @@ class TestGlobalState:
         state._comet_logger = MagicMock()
         state._energy_monitor = MagicMock()
         state._energy_monitor_created = True
-        state._signal_handler = MagicMock()
+        mock_signal_handler = MagicMock()
+        state._signal_handler = mock_signal_handler
         state._straggler_timer = MagicMock()
         state._nvrx_straggler_manager = MagicMock()
         state._nvrx_straggler_created = True
@@ -848,6 +956,7 @@ class TestGlobalState:
         assert state._comet_logger is None
         assert state._energy_monitor is None
         assert state._energy_monitor_created is False
+        mock_signal_handler.release.assert_called_once()
         assert state._signal_handler is None
         assert state._straggler_timer is None
         assert state._nvrx_straggler_manager is None

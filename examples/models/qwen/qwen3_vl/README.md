@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen 3 vision-language models.
 
-For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/vlm/qwen3-vl.md).
+For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.md).
 
 ## Workspace Configuration
 
@@ -124,7 +124,7 @@ Three independent CLI-overridable controls bound a sample's GPU cost. They compo
 Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
 
 ```yaml
-__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+__module__: megatron.bridge.models.qwen_vl.data.energon
 __class__: ChatMLWebdataset
 field_map:
   imgs: jpg
@@ -153,7 +153,7 @@ Below is an example for finetuning on a dataset containing multiple images in a 
 2. Run the following script to convert the data to webdataset format:
 
     ```
-    python examples/models/vlm/qwen3_vl/prepare_mantis_energon.py \
+    python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \
         --source-dir/path/to/Mantis-Instruct-LLaVA \
         --output-dir /path/to/Mantis-Instruct-LLaVA/wds \
         --max-samples-per-tar 10000
@@ -182,7 +182,7 @@ Below is an example for finetuning on a dataset containing multiple images in a 
 4. Change the file `.nv-meta/dataset.yaml` to the following:
 
     ```yaml
-    __module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+    __module__: megatron.bridge.models.qwen_vl.data.energon
     __class__: ChatMLWebdataset
     field_map:
       imgs: jpgs

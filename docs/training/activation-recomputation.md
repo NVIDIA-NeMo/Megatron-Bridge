@@ -193,5 +193,5 @@ up-projection modules than to enable blanket full recomputation immediately.
 
 - [docs/training/cuda-graphs.md](cuda-graphs.md)
 - [docs/training/moe-optimization.md](moe-optimization.md)
-- [skills/perf-activation-recompute/SKILL.md](../skills/perf-activation-recompute/SKILL.md) — per-module cost/savings data, measured results
-- [skills/perf-memory-tuning/SKILL.md](../skills/perf-memory-tuning/SKILL.md) — expandable segments, parallelism resizing, and other memory reduction strategies
+- [skills/nemo-mbridge-perf-activation-recompute/SKILL.md](../skills/nemo-mbridge-perf-activation-recompute/SKILL.md) — per-module cost/savings data, measured results
+- [skills/nemo-mbridge-perf-memory-tuning/SKILL.md](../skills/nemo-mbridge-perf-memory-tuning/SKILL.md) — expandable segments, parallelism resizing, and other memory reduction strategies

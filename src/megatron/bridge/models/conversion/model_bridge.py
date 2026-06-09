@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
+    ClassVar,
     Dict,
     Generic,
     Iterable,
@@ -57,6 +58,7 @@ from megatron.bridge.models.conversion.peft_bridge import (
     AdapterWeightConversionTask,
     MegatronPeftBridge,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
@@ -280,8 +282,8 @@ def _megatron_local_name_to_global(
     # EP — fetched lazily because dense models may not have an EP group at all
     # (and for the decentralized PG path, ``pg_collection.ep`` may be ``None``).
     # For now adapters are not sharded across EP ranks.
-    is_grouped_expert_param = ".mlp.experts.linear_fc" in param_name
-    is_local_expert_param = ".mlp.experts.local_experts." in param_name
+    is_grouped_expert_param = ".experts.linear_fc" in param_name
+    is_local_expert_param = ".experts.local_experts." in param_name
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
@@ -307,14 +309,20 @@ def _megatron_local_name_to_global(
                     f".local_experts.{global_expert_number}.",
                     1,
                 )
+        # Grouped MoE uses numeric suffixes for per-expert weight and bias
+        # parameters, e.g. .weight0 and .bias1. Shared quantizer buffers such
+        # as .weight_quantizer._amax must not go through EP renumbering.
         elif re.search(r"\.weight\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "weight")
         elif re.search(r"\.bias\d+(?=$|\.)", param_name):
             param_name = _update_grouped_expert_number(param_name, "bias")
+
     return param_name
 
 
-class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]):
+class MegatronModelBridge(
+    MegatronPeftBridge, MegatronQuantizationBridge, Generic[HFPreTrained, ModelProviderTarget, MegatronModel]
+):
     """
     High-level orchestrator for HuggingFace ↔ Megatron model conversions.
 
@@ -394,6 +402,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
     # HuggingFace PretrainedConfig, set by register_bridge_implementation dispatch.
     # Available in mapping_registry(), stream_weights_*(), and build_conversion_tasks().
     hf_config = None
+
+    # Optional MIMO conversion metadata. Subclasses set this when the standard
+    # bridge registry can be split into MIMO component routes.
+    mimo_source_prefixes: ClassVar[Mapping[str, str] | None] = None
 
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     # Some mappings may not be used by all models - that's fine, unused fields are skipped
@@ -485,6 +497,10 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             f"Unsupported activation function: {activation_func}. Supported: {list(ACTIVATION_FUNC_MAP.values())}"
         )
 
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Return whether an HF config field should be mapped to provider kwargs."""
+        return True
+
     def hf_config_to_provider_kwargs(self, hf_config) -> dict:
         """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
 
@@ -512,7 +528,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
             else:
                 value = getattr(hf_config, hf_name, None)
                 has_value = hasattr(hf_config, hf_name)
-            if has_value and megatron_name not in provider_kwargs:
+            if (
+                has_value
+                and megatron_name not in provider_kwargs
+                and self._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+            ):
                 provider_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
@@ -895,10 +915,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         """
         from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
-        group_key = task.mapping.group_key
-        if group_key not in grouped_buffers:
-            grouped_buffers[group_key] = {}
-
         ep_size = parallel_state.get_expert_model_parallel_world_size()
         num_experts = model_config.num_moe_experts
         experts_per_rank = num_experts // ep_size
@@ -908,7 +924,11 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
         except ValueError:
             return None
 
-        for _, value in converted_weights_dict.items():
+        merged_result: Dict[str, torch.Tensor] = {}
+        for group_key, value in converted_weights_dict.items():
+            if group_key not in grouped_buffers:
+                grouped_buffers[group_key] = {}
+
             if ep_size == 1:
                 grouped_buffers[group_key][local_expert_number] = value
             else:
@@ -919,7 +939,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                 else:
                     grouped_buffers[group_key][local_expert_number] = value
 
-        if len(grouped_buffers[group_key]) == num_experts:
+            if len(grouped_buffers[group_key]) != num_experts:
+                continue
+
             merged = torch.stack([grouped_buffers[group_key][i] for i in range(num_experts)], dim=0)
 
             if getattr(task.mapping, "transpose_on_export", False):
@@ -936,9 +958,9 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
                     merged = merged.transpose(-1, -2).contiguous()
 
             del grouped_buffers[group_key]
-            return {group_key: merged}
+            merged_result[group_key] = merged
 
-        return None
+        return merged_result or None
 
     def load_weights_hf_to_megatron(
         self,
@@ -1243,12 +1265,6 @@ class MegatronModelBridge(MegatronPeftBridge, Generic[HFPreTrained, ModelProvide
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
-        # Pre-compute expected expert counts for grouped export mappings
-        _grouped_task_counts: Dict[str, int] = {}
-        for task in megatron_to_hf_tasks:
-            if task is not None and getattr(task.mapping, "is_grouped_export", False):
-                gk = task.mapping.group_key
-                _grouped_task_counts[gk] = _grouped_task_counts.get(gk, 0) + 1
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
@@ -1980,6 +1996,23 @@ def stream_weights_megatron_to_hf(
 
 
 @dispatch
+def stream_weights_megatron_to_hf_quant(
+    dispatch_instance: MegatronModel,
+    megatron_model: Union[MegatronModel, List[MegatronModel]],
+    hf_pretrained: HFPreTrained,
+    quantization_checker: Callable[[str], bool],
+    quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+    quant_block_size: Optional[Tuple[int, int]] = None,
+    cpu: bool = True,
+    show_progress: bool = True,
+    conversion_tasks: Optional[List[WeightConversionTask]] = None,
+    merge_adapter_weights: bool = False,
+) -> Iterable[HFWeightTuple]:
+    """Bridge Megatron model state to HuggingFace format with quantization."""
+    ...
+
+
+@dispatch
 def stream_adapter_weights_megatron_to_hf(
     dispatch_instance: MegatronModel,
     megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -2035,6 +2068,35 @@ def register_bridge_implementation(
         return bridge.stream_weights_megatron_to_hf(
             megatron_model,
             hf_pretrained,
+            cpu=cpu,
+            show_progress=show_progress,
+            conversion_tasks=conversion_tasks,
+            merge_adapter_weights=merge_adapter_weights,
+        )
+
+    @stream_weights_megatron_to_hf_quant.impl((source, target))
+    def _megatron_to_hf_quant_registered_impl(
+        _,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        hf_pretrained: HFPreTrained,
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+        cpu: bool = True,
+        show_progress: bool = True,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
+        merge_adapter_weights: bool = False,
+    ) -> Iterable[HFWeightTuple]:
+        bridge = bridge_class()
+
+        bridge.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
+        return bridge.stream_weights_megatron_to_hf_quant(
+            megatron_model,
+            hf_pretrained,
+            quantization_checker,
+            quant_fn,
+            quant_block_size=quant_block_size,
             cpu=cpu,
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,

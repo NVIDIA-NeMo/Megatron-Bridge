@@ -21,9 +21,13 @@ import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.transformer.enums import LayerType
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
     get_batch_on_this_cp_rank,
     get_model_config,
+    get_pg_rank,
+    get_pg_size,
     is_te_min_version,
     unwrap_model,
 )
@@ -37,6 +41,68 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
+    """Return whether the dataset is expected to provide packed sequence metadata."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    packed_sequence_specs = getattr(dataset_cfg, "packed_sequence_specs", None)
+    if packed_sequence_specs is not None:
+        packed_sequence_size = getattr(packed_sequence_specs, "packed_sequence_size", None)
+        return packed_sequence_size is None or packed_sequence_size > 0
+
+    return getattr(dataset_cfg, "pack_sequences_in_batch", False)
+
+
+def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
+    """Return whether middle PP stages need batch metadata for attention."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    uses_custom_attention_mask = not getattr(dataset_cfg, "skip_getting_attention_mask_from_dataset", True)
+    return uses_custom_attention_mask or _uses_packed_sequence_metadata(cfg)
+
+
+def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) -> bool:
+    """Return whether a parsed or raw pipeline layout stage owns MTP layers."""
+    if isinstance(layout, str):
+        layout = PipelineParallelLayerLayout.from_str(layout, pp_size)
+
+    if isinstance(layout, PipelineParallelLayerLayout):
+        stage_layout = layout.layout[pp_rank][vp_stage]
+    elif isinstance(layout, list):
+        stage_layout = layout[vp_stage * pp_size + pp_rank]
+    else:
+        return False
+
+    return any(
+        layer == "mtp" or layer == LayerType.mtp or getattr(layer, "name", None) == "mtp" for layer in stage_layout
+    )
+
+
+def _current_pp_stage_has_mtp(cfg: ConfigContainer, *, pg_collection) -> bool:
+    """Return whether the current PP/VPP stage owns the configured MTP block."""
+    model_cfg = getattr(cfg, "model", None)
+    layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
+    if layout is None:
+        return False
+
+    pp_group = getattr(pg_collection, "pp", None)
+    pp_rank = get_pg_rank(pp_group)
+    pp_size = get_pg_size(pp_group)
+    vp_stage = parallel_state.get_virtual_pipeline_model_parallel_rank()
+    if vp_stage is None:
+        vp_stage = 0
+
+    return _layout_stage_has_mtp(layout, pp_rank=pp_rank, pp_size=pp_size, vp_stage=vp_stage)
+
+
+def _current_pp_stage_needs_mtp_inputs(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
+    """Return whether this stage needs token ids for MTP embedding lookup."""
+    model_cfg = getattr(cfg, "model", None)
+    layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
+    if layout is None:
+        return is_last
+
+    return _current_pp_stage_has_mtp(cfg, pg_collection=pg_collection)
 
 
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
@@ -87,18 +153,20 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
 
 def get_batch_from_iterator(
     data_iterator: Iterable,
-    use_mtp: bool = False,
+    include_mtp_inputs: bool = False,
     skip_getting_attention_mask_from_dataset: bool = True,
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
+    include_full_batch_fields: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Get a batch of data from the iterator.
 
     Args:
         data_iterator: The data iterator to get the batch from.
-        use_mtp: Whether Multi-Token Prediction layers are enabled.
+        include_mtp_inputs: Whether this PP stage needs Multi-Token Prediction input tensors.
         skip_getting_attention_mask_from_dataset: If set, the dataset will pass a None attention mask.
+        include_full_batch_fields: Whether to include all standard training tensors regardless of PP stage.
 
     Returns:
         dict[str, torch.Tensor]: A dictionary containing the batch data.
@@ -108,7 +176,9 @@ def get_batch_from_iterator(
     required_device_keys = set()
     required_host_keys = set()
 
-    if not skip_getting_attention_mask_from_dataset:
+    if include_full_batch_fields:
+        required_device_keys.update(("tokens", "labels", "loss_mask", "attention_mask", "position_ids"))
+    elif not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
     if "cu_seqlens" in batch:
@@ -120,10 +190,11 @@ def get_batch_from_iterator(
         if "cu_seqlens_unpadded_argmin" in batch:
             required_host_keys.add("cu_seqlens_unpadded_argmin")
 
-    if is_first_pp_stage or use_mtp:
-        required_device_keys.update(("tokens", "position_ids"))
-    if is_last_pp_stage:
-        required_device_keys.update(("labels", "loss_mask"))
+    if not include_full_batch_fields:
+        if is_first_pp_stage or include_mtp_inputs:
+            required_device_keys.update(("tokens", "position_ids"))
+        if is_last_pp_stage:
+            required_device_keys.update(("labels", "loss_mask"))
 
     _batch_required_keys = {}
     for key, val in batch.items():
@@ -166,15 +237,23 @@ def get_batch(
     # Determine pipeline stage role via process group collection
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
+    is_middle = (not is_first) and (not is_last)
+    include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
+    include_mtp_inputs = use_mtp and _current_pp_stage_needs_mtp_inputs(
+        cfg, pg_collection=pg_collection, is_last=is_last
+    )
+    if is_middle and not include_full_batch_fields and not include_mtp_inputs:
         return None, None, None, None, None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
-        use_mtp,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+        include_mtp_inputs=include_mtp_inputs,
+        skip_getting_attention_mask_from_dataset=getattr(
+            cfg.dataset, "skip_getting_attention_mask_from_dataset", True
+        ),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
+        include_full_batch_fields=include_full_batch_fields,
     )
 
     cp_size = pg_collection.cp.size()
@@ -183,7 +262,7 @@ def get_batch(
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
+        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],
@@ -258,7 +337,12 @@ def _forward_step_common(
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
+            if tokens is not None:
+                packed_seq_params["total_tokens"] = tokens.size(1)
+            elif labels is not None:
+                packed_seq_params["total_tokens"] = labels.size(1)
+            else:
+                packed_seq_params["total_tokens"] = getattr(config, "seq_length", None)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     with straggler_timer:

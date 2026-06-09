@@ -26,13 +26,13 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_VL_V2",
     target=NemotronVLModel,
-    provider=NemotronNano12Bv2VLModelProvider,
+    provider=NemotronVLModelProvider,
     model_type="nemotron_vl",
 )
 class NemotronVLBridge(MegatronModelBridge):
@@ -48,7 +48,7 @@ class NemotronVLBridge(MegatronModelBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronNano12Bv2VLModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronVLModelProvider:  # type: ignore[override]
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
 
@@ -61,10 +61,10 @@ class NemotronVLBridge(MegatronModelBridge):
         # Handle vocab size divisibility
         provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(llm_config.vocab_size)
 
-        provider = NemotronNano12Bv2VLModelProvider(**provider_kwargs)
+        provider = NemotronVLModelProvider(**provider_kwargs)
 
         # Nemotron VL-specific settings
-        # Note: Most defaults come from the provider class hierarchy (NemotronNano12Bv2VLModelProvider)
+        # Note: Most defaults come from the provider class hierarchy (NemotronVLModelProvider)
         provider.scatter_embedding_sequence_parallel = False
         provider.attention_softmax_in_fp32 = True
 
@@ -145,12 +145,17 @@ class NemotronVLBridge(MegatronModelBridge):
                 ),
             ]
         )
-        for conv1d_sub_module in ["weight", "bias"]:
+        for megatron_conv1d_param, hf_conv1d_param in [
+            ("conv1d_weight", "conv1d.weight"),
+            ("conv1d_bias", "conv1d.bias"),
+            ("conv1d.weight", "conv1d.weight"),
+            ("conv1d.bias", "conv1d.bias"),
+        ]:
             mapping_list.extend(
                 [
                     MambaConv1dMapping(
-                        megatron_param=rf"llava_model.language_model.decoder.layers.*.mixer.conv1d.{conv1d_sub_module}",
-                        hf_param=rf"language_model.backbone.layers.*.mixer.conv1d.{conv1d_sub_module}",
+                        megatron_param=rf"llava_model.language_model.decoder.layers.*.mixer.{megatron_conv1d_param}",
+                        hf_param=rf"language_model.backbone.layers.*.mixer.{hf_conv1d_param}",
                     ),
                 ]
             )

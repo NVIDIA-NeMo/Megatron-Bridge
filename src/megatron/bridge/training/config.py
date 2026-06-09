@@ -653,6 +653,49 @@ class CheckpointConfig(MTrainCheckpointConfig):
     dist_ckpt_workers: int = 1
     """Specifies the number of distributed checkpoint workers for asynchronous saving."""
 
+    also_save_hf_checkpoint: bool = False
+    """Whether to export an additional HuggingFace artifact alongside each Megatron checkpoint.
+
+    When enabled, the native Megatron checkpoint under each ``iter_*/`` directory keeps the same
+    behavior as normal checkpoint saves.  In addition, model weights are exported as HuggingFace
+    ``*.safetensors`` under ``iter_*/hf/`` together with HF ``config.json`` / tokenizer /
+    (optional) custom modeling files.
+
+    When ``cfg.peft`` is configured, the extra HF export writes a HuggingFace
+    PEFT-compatible ``adapter_model.safetensors`` + ``adapter_config.json`` instead of the
+    full base weights.
+
+    Warning:
+        Full-model HF export is synchronous and runs on the checkpoint save critical path.  It can
+        considerably slow down checkpoint saving and is intended for small models or debugging.
+        For larger models, prefer a separate background conversion job that scans for new native
+        Megatron checkpoints and exports HF weights outside the training step.
+    """
+
+    hf_source_path: Optional[str] = None
+    """Override for the HuggingFace model identifier (or local path) used as a template when
+    saving/loading checkpoints with ``also_save_hf_checkpoint=True`` (or when ``pretrained_checkpoint``
+    points to a HuggingFace directory).
+
+    When unset, Bridge resolves a source in this order (see training checkpointing helpers):
+      1. ``cfg.model.hf_model_id`` (preferred when populated by recipes / AutoBridge);
+      2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
+
+    Explicit ``hf_source_path`` always overrides both when set.
+    """
+
+    hf_trust_remote_code: bool = False
+    """Whether to trust remote code when constructing the ``AutoBridge`` for HF save/load.
+    Required for models with custom modeling files."""
+
+    hf_distributed_save: bool = False
+    """When ``also_save_hf_checkpoint=True``, enable distributed weights saving where multiple ranks
+    share the safetensors write workload. See ``SafeTensorsStateSource.save_generator``."""
+
+    hf_save_every_n_ranks: int = 1
+    """Interval for saving HF safetensors shards across ranks in distributed mode.
+    Only effective when ``hf_distributed_save=True``."""
+
     def finalize(self) -> None:
         """Post-initialization checks for checkpoint config."""
         if self.pretrained_checkpoint is not None:
@@ -668,6 +711,18 @@ class CheckpointConfig(MTrainCheckpointConfig):
         if self.async_save:
             assert self.save is not None, "async_save is enabled, but save is not set. Set save to a valid path."
             assert self.use_persistent_ckpt_worker, "async_save requires use_persistent_ckpt_worker=True."
+
+        if self.also_save_hf_checkpoint:
+            if self.ckpt_format == "fsdp_dtensor":
+                raise ValueError(
+                    "also_save_hf_checkpoint=True is not supported together with ckpt_format='fsdp_dtensor'. "
+                    "Use ckpt_format='torch_dist' when exporting additional HF weights during training."
+                )
+            if self.non_persistent_ckpt_type == "local":
+                raise ValueError(
+                    "also_save_hf_checkpoint=True is not compatible with local non-persistent checkpoints. "
+                    "Use non_persistent_ckpt_type='global' or disable non-persistent saving."
+                )
 
         # Validate ckpt_step if specified
         if self.ckpt_step is not None:
@@ -712,6 +767,9 @@ class LoggerConfig(MTrainLoggerConfig):
     mlflow_tags: Optional[dict[str, str]] = None
     """Optional tags to apply to the MLFlow run."""
 
+    mlflow_description: Optional[str] = None
+    """Optional description for the MLFlow run, rendered in the UI Description panel."""
+
     mlflow_log_artifacts: bool = True
     """Whether to upload checkpoint artifacts to MLFlow via HTTP after each save."""
 
@@ -744,6 +802,7 @@ class LoggerConfig(MTrainLoggerConfig):
                 self.mlflow_run_name,
                 self.mlflow_tracking_uri,
                 self.mlflow_tags,
+                self.mlflow_description,
             ]
         )
 
@@ -1145,6 +1204,24 @@ class ConfigContainer(Container):
             )
         assert not self.dist.use_tp_pp_dp_mapping, "use_tp_pp_dp_mapping is not supported with Megatron FSDP"
 
+    def _validate_hf_checkpoint_export_source(self) -> None:
+        """Validate that HF sidecar export has a source for HF config/tokenizer assets."""
+        if not self.checkpoint.also_save_hf_checkpoint:
+            return
+        if self.checkpoint.hf_source_path:
+            return
+        if getattr(self.model, "hf_model_id", None):
+            return
+        if getattr(self.tokenizer, "tokenizer_model", None):
+            return
+
+        raise ValueError(
+            "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
+            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
+            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
+            "an HF model id."
+        )
+
     def validate(self) -> None:
         """Performs validation checks on the combined configuration.
 
@@ -1260,6 +1337,7 @@ class ConfigContainer(Container):
             )
 
         # Checkpoint
+        self._validate_hf_checkpoint_export_source()
         if self.checkpoint.save is not None or self.checkpoint.load is not None:
             # only check if saving or loading
             if self.checkpoint.ckpt_format == "fsdp_dtensor":
@@ -1732,6 +1810,12 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.train.finalize()
     cfg.scheduler.finalize()
     cfg.checkpoint.finalize()
+    if cfg.profiling is not None:
+        cfg.profiling.finalize()
+        if cfg.profiling.nvtx_ranges:
+            from megatron.core.utils import configure_nvtx_profiling
+
+            configure_nvtx_profiling(enabled=True)
 
     # Safe validations
     _validate_and_sync_distributed_optimizer_settings(cfg)
@@ -1761,6 +1845,20 @@ def _validate_and_sync_distributed_optimizer_settings(config: ConfigContainer) -
             )
         config.ddp.use_distributed_optimizer = True
         config.optimizer.use_distributed_optimizer = True
+
+    ddp_overlap = config.ddp.overlap_param_gather
+    optimizer_overlap = config.optimizer.overlap_param_gather
+
+    if ddp_overlap or optimizer_overlap:
+        if ddp_overlap != optimizer_overlap:
+            warn_rank_0(
+                f"overlap_param_gather settings were not in sync: "
+                f"ddp.overlap_param_gather={ddp_overlap}, "
+                f"optimizer.overlap_param_gather={optimizer_overlap}. "
+                f"Automatically enabling overlap_param_gather for both settings."
+            )
+        config.ddp.overlap_param_gather = True
+        config.optimizer.overlap_param_gather = True
 
 
 def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:

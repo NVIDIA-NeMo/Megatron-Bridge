@@ -17,9 +17,6 @@ import torch
 
 from megatron.bridge.models.ministral3.ministral3_provider import (
     Ministral3ModelProvider,
-    Ministral3ModelProvider3B,
-    Ministral3ModelProvider8B,
-    Ministral3ModelProvider14B,
     MinistralTEDotProductAttention,
 )
 
@@ -139,45 +136,47 @@ class TestMinistral3ModelProvider:
         assert callable(provider.provide_language_model)
 
 
-class TestMinistral3ModelProvider3B:
-    """Test cases for Ministral3ModelProvider3B."""
+class TestMinistral3ExplicitArchitectureValues:
+    """Test cases for explicit Ministral3 architecture configuration."""
 
-    def test_ministral3_3b_initialization(self):
-        """Test Ministral3ModelProvider3B can be initialized with correct defaults."""
-        provider = Ministral3ModelProvider3B()
+    @pytest.mark.parametrize(
+        ("kwargs", "expected_rotary_base"),
+        [
+            (
+                {
+                    "hidden_size": 3072,
+                    "ffn_hidden_size": 9216,
+                    "num_layers": 26,
+                    "share_embeddings_and_output_weights": True,
+                },
+                1000000,
+            ),
+            (
+                {
+                    "hidden_size": 4096,
+                    "ffn_hidden_size": 14336,
+                    "num_layers": 34,
+                },
+                1000000,
+            ),
+            (
+                {
+                    "hidden_size": 5120,
+                    "ffn_hidden_size": 16384,
+                    "num_layers": 40,
+                    "rotary_base": 1000000000.0,
+                },
+                1000000000.0,
+            ),
+        ],
+    )
+    def test_provider_accepts_explicit_architecture_values(self, kwargs, expected_rotary_base):
+        provider = Ministral3ModelProvider(num_attention_heads=32, **kwargs)
 
-        # Check 3B specific configuration
-        assert provider.hidden_size == 3072
-        assert provider.ffn_hidden_size == 9216
-        assert provider.num_layers == 26
-        assert provider.share_embeddings_and_output_weights is True
-
-
-class TestMinistral3ModelProvider8B:
-    """Test cases for Ministral3ModelProvider8B."""
-
-    def test_ministral3_8b_initialization(self):
-        """Test Ministral3ModelProvider8B can be initialized with correct defaults."""
-        provider = Ministral3ModelProvider8B()
-
-        # Check 8B specific configuration
-        assert provider.hidden_size == 4096
-        assert provider.ffn_hidden_size == 14336
-        assert provider.num_layers == 34
-
-
-class TestMinistral3ModelProvider14B:
-    """Test cases for Ministral3ModelProvider14B."""
-
-    def test_ministral3_14b_initialization(self):
-        """Test Ministral3ModelProvider14B can be initialized with correct defaults."""
-        provider = Ministral3ModelProvider14B()
-
-        # Check 14B specific configuration
-        assert provider.hidden_size == 5120
-        assert provider.ffn_hidden_size == 16384
-        assert provider.num_layers == 40
-        assert provider.rotary_base == 1000000000.0
+        assert provider.hidden_size == kwargs["hidden_size"]
+        assert provider.ffn_hidden_size == kwargs["ffn_hidden_size"]
+        assert provider.num_layers == kwargs["num_layers"]
+        assert provider.rotary_base == expected_rotary_base
 
 
 class TestGetLlama4AttnScale:

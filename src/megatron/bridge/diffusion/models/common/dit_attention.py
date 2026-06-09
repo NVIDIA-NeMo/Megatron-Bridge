@@ -54,6 +54,7 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
+        name: str | None = None,
     ):
         super().__init__(
             config,
@@ -62,6 +63,7 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
+            name=name,
         )
 
         self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)
@@ -192,6 +194,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
         attn_mask_type: AttnMaskType,
         cp_comm_type: str = None,
         pg_collection=None,
+        name: str | None = None,
     ):
         super().__init__(
             config,
@@ -200,6 +203,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             attn_mask_type,
             cp_comm_type,
             pg_collection,
+            name=name,
         )
 
         self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)
@@ -249,6 +253,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             bias=self.config.add_bias_linear,
             skip_bias_add=False,
             is_expert=False,
+            name=(name + ".linear_kv") if name is not None else None,
         )
 
     def get_query_key_value_tensors(self, hidden_states, key_value_states, output_gate=None, split_qkv=True):

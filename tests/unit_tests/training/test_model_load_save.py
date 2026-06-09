@@ -1109,11 +1109,23 @@ class TestLoadTokenizer:
 
             assert mock_tokenizer_cfg.tokenizer_model == new_asset_path
 
+            # test setting tokenizer config fields used by MCore's padded vocab calculation
+            _ = load_tokenizer(
+                ckpt_path,
+                tensor_model_parallel_size=2,
+                make_vocab_size_divisible_by=256,
+                rank=3,
+            )
+
+            assert mock_tokenizer_cfg.tensor_model_parallel_size == 2
+            assert mock_tokenizer_cfg.make_vocab_size_divisible_by == 256
+            assert mock_tokenizer_cfg.rank == 3
+
             # test setting attribute that doesn't exist
             with pytest.raises(
-                AttributeError, match="Attempting to set a non-existent attribute 'tensor_model_parallel_size'"
+                AttributeError, match="Attempting to set a non-existent attribute 'invalid_tokenizer_kwarg'"
             ):
-                load_tokenizer(ckpt_path, tensor_model_parallel_size=1)
+                load_tokenizer(ckpt_path, invalid_tokenizer_kwarg=True)
 
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")

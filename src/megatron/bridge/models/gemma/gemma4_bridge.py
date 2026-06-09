@@ -37,7 +37,7 @@ Key architecture-specific handling:
 """
 
 import re
-from typing import Mapping
+from typing import Any, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -110,6 +110,14 @@ class Gemma4Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
+
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Gate Gemma4 conditional MoE fields on the HF MoE block flag."""
+        if megatron_name in self._CONDITIONAL_MOE_FIELDS:
+            return getattr(hf_config, "enable_moe_block", True)
+        return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma4ModelProvider:
         """Convert HuggingFace config to Gemma4ModelProvider."""
         hf_config = hf_pretrained.config
@@ -149,15 +157,16 @@ class Gemma4Bridge(MegatronModelBridge):
             provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
 
         # MoE configuration
-        provider.num_moe_experts = getattr(hf_config, "num_experts", 128)
-        provider.moe_router_topk = getattr(hf_config, "top_k_experts", 8)
-        provider.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", 704)
+        if getattr(hf_config, "enable_moe_block", False):
+            provider.num_moe_experts = getattr(hf_config, "num_experts", 128)
+            provider.moe_router_topk = getattr(hf_config, "top_k_experts", 8)
+            provider.moe_ffn_hidden_size = getattr(hf_config, "moe_intermediate_size", 704)
 
-        # Dense MLP intermediate → shared expert
-        provider.moe_shared_expert_intermediate_size = getattr(hf_config, "intermediate_size", 2112)
-        provider.moe_shared_expert_overlap = False  # Must be False: Gemma4 needs separate pre/post norms
-        provider.moe_shared_expert_gate = False
-        provider.moe_layer_freq = 1  # all layers are MoE
+            # Dense MLP intermediate → shared expert
+            provider.moe_shared_expert_intermediate_size = getattr(hf_config, "intermediate_size", 2112)
+            provider.moe_shared_expert_overlap = False  # Must be False: Gemma4 needs separate pre/post norms
+            provider.moe_shared_expert_gate = False
+            provider.moe_layer_freq = 1  # all layers are MoE
 
         # Logit softcapping
         provider.final_logit_softcapping = getattr(hf_config, "final_logit_softcapping", 30.0)
@@ -377,7 +386,7 @@ class Gemma4Bridge(MegatronModelBridge):
             # MCore's router also receives the normed input.
             "decoder.layers.*.pre_mlp_layernorm.weight": ("model.layers.*.pre_feedforward_layernorm_2.weight"),
             # === Dense MLP → Shared Expert ===
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
+            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
             # Post-dense-MLP RMSNorm (Gemma 4: post_feedforward_layernorm_1)
             "decoder.layers.*.mlp.shared_experts.linear_fc2.post_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm_1.weight"
@@ -388,6 +397,8 @@ class Gemma4Bridge(MegatronModelBridge):
             # router.scale is fused into router.weight on import; stored as an inert buffer
             # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
             # reference HF checkpoint.  Mapped via ReplicatedMapping below.
+            "decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
         }
 
         mapping_list = []
@@ -409,6 +420,12 @@ class Gemma4Bridge(MegatronModelBridge):
                 # === Dense MLP → Shared Expert gated FC1 ===
                 GatedMLPMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.layers.*.mlp.gate_proj.weight",
+                    up="model.layers.*.mlp.up_proj.weight",
+                ),
+                # === Dense MLP ===
+                GatedMLPMapping(
+                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
                     gate="model.layers.*.mlp.gate_proj.weight",
                     up="model.layers.*.mlp.up_proj.weight",
                 ),
