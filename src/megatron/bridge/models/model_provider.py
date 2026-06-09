@@ -678,6 +678,7 @@ def _create_model(
                 vp_stage=i,
             )
             this_model.model_type = model_type
+            this_model.vp_stage = i
             model.append(this_model)
     else:
         pre_process = is_pp_first_stage(pp_group)

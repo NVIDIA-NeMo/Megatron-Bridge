@@ -20,10 +20,16 @@ import modelopt.torch.distill as mtd
 import torch
 from megatron.core import parallel_state
 from megatron.core.models.gpt import GPTModel
-from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
+    get_attr_wrapped_model,
     get_batch_on_this_cp_rank,
     get_model_config,
     get_pg_rank,
@@ -78,7 +84,7 @@ def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) 
     )
 
 
-def _current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection) -> bool:
+def _current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection, vp_stage: int | None = None) -> bool:
     """Return whether the current PP/VPP stage owns the configured MTP block, derived from layout."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
@@ -88,26 +94,33 @@ def _current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection) -
     pp_group = getattr(pg_collection, "pp", None)
     pp_rank = get_pg_rank(pp_group)
     pp_size = get_pg_size(pp_group)
-    vp_stage = parallel_state.get_virtual_pipeline_model_parallel_rank()
+    if vp_stage is None:
+        vp_stage = parallel_state.get_virtual_pipeline_model_parallel_rank()
     if vp_stage is None:
         vp_stage = 0
 
     return _layout_stage_has_mtp(layout, pp_rank=pp_rank, pp_size=pp_size, vp_stage=vp_stage)
 
 
-def _current_stage_needs_mtp_inputs_from_layout(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
+def _current_stage_needs_mtp_inputs_from_layout(
+    cfg: ConfigContainer, *, pg_collection, is_last: bool, vp_stage: int | None = None
+) -> bool:
     """Return whether this stage needs token ids for MTP embedding lookup, derived from layout."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
     if layout is None:
         return is_last
 
-    return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection)
+    return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
 
 
-def _model_chunk_needs_mtp_inputs(model: GPTModel) -> bool:
-    """Return whether the current model chunk owns an MTP block."""
-    return bool(getattr(unwrap_model(model), "mtp_process", False))
+def _model_chunk_vp_stage(model: GPTModel) -> int | None:
+    """Return the virtual pipeline stage owned by the current model chunk."""
+    try:
+        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
+    except RuntimeError:
+        return None
+    return vp_stage if isinstance(vp_stage, int) else None
 
 
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
@@ -219,7 +232,7 @@ def get_batch(
     use_mtp: bool = False,
     *,
     pg_collection,
-    include_mtp_inputs: bool | None = None,
+    vp_stage: int | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -238,8 +251,7 @@ def get_batch(
         data_iterator: Input data iterator
         cfg: Configuration container
         use_mtp: Whether Multi-Token Prediction layers are enabled
-        include_mtp_inputs: Whether this specific model chunk needs MTP input tensors. If unset,
-            the value is inferred from the pipeline layout.
+        vp_stage: Virtual pipeline stage for the current model chunk.
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
@@ -247,16 +259,19 @@ def get_batch(
         cu_seqlens_unpadded_argmin
     """
     # Determine pipeline stage role via process group collection
-    is_first = is_pp_first_stage(pg_collection.pp)
-    is_last = is_pp_last_stage(pg_collection.pp)
+    model_cfg = getattr(cfg, "model", None)
+    vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
+    is_first = is_pp_first_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
+    is_last = is_pp_last_stage(pg_collection.pp) and (
+        vp_stage is None or is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size)
+    )
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
-    if include_mtp_inputs is None:
-        include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
-            cfg, pg_collection=pg_collection, is_last=is_last
-        )
-    else:
-        include_mtp_inputs = use_mtp and include_mtp_inputs
+    include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
+        cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
+    )
     if is_middle and not include_full_batch_fields and not include_mtp_inputs:
         return None, None, None, None, None, None, None, None, None, None
 
@@ -334,7 +349,7 @@ def _forward_step_common(
             state.cfg,
             use_mtp,
             pg_collection=pg_collection,
-            include_mtp_inputs=_model_chunk_needs_mtp_inputs(model) if use_mtp else False,
+            vp_stage=_model_chunk_vp_stage(model),
         )
     timers("batch-generator").stop()
 
