@@ -19,6 +19,7 @@ import pytest
 from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_TOKENIZER_NAME,
     nemotron_3_ultra_peft_openmathinstruct2_packed_config,
+    nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
 
@@ -49,6 +50,31 @@ def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch AutoBridge in the recipe module to avoid Hugging Face access."""
     mod = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
     monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+
+
+@pytest.mark.unit
+def test_pretrain_uses_initial_parallelism_values() -> None:
+    cfg = nemotron_3_ultra_pretrain_config()
+
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 3
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.virtual_pipeline_model_parallel_size is None
+    assert cfg.model.mtp_num_layers == 2
+    assert cfg.model.mtp_loss_scaling_factor == 0.3
+    assert cfg.model.mtp_use_repeated_layer is True
+
+    assert cfg.optimizer.lr == 2.5e-4
+    assert cfg.optimizer.min_lr == 2.5e-4
+    assert cfg.optimizer.weight_decay == 0.1
+    assert cfg.scheduler.lr_decay_style == "constant"
+    assert cfg.scheduler.lr_warmup_iters == 0
+
+    assert cfg.train.global_batch_size == 3072
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.blend is None
 
 
 @pytest.mark.unit
