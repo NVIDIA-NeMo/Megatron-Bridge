@@ -1091,6 +1091,87 @@ class TestExportAdapterScript:
         mock_set_device.assert_called_once_with(2)
         assert device == torch.device("cuda", 2)
 
+    def test_export_adapter_distributed_missing_checkpoint_raises_clear_error(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path / "missing"),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained") as mock_from_pretrained,
+            pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        mock_from_pretrained.assert_not_called()
+
+    def test_export_adapter_distributed_rejects_multiple_model_chunks(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(ckpt),
+            output=tmp_path / "out",
+            tp=2,
+            pp=2,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunks = [MagicMock(), MagicMock()]
+        for chunk in model_chunks:
+            chunk.to.return_value = chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = model_chunks
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter._generate_model_state_dict") as mock_state_dict,
+            patch("examples.conversion.adapter.export_adapter.dist_checkpointing.load") as mock_load,
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch(
+                "examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"
+            ) as mock_destroy_mp,
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group") as mock_destroy_pg,
+            pytest.raises(RuntimeError, match="exactly one local model chunk"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        mock_state_dict.assert_not_called()
+        mock_load.assert_not_called()
+        bridge.save_hf_adapter.assert_not_called()
+        for chunk in model_chunks:
+            chunk.load_state_dict.assert_not_called()
+        mock_destroy_mp.assert_called_once()
+        mock_destroy_pg.assert_called_once()
+
     def test_export_adapter_distributed_raises_clear_error_for_missing_model_key(self, tmp_path):
         from examples.conversion.adapter import export_adapter
 

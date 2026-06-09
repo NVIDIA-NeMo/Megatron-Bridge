@@ -181,6 +181,8 @@ def _configure_cuda_device() -> torch.device:
 def _export_adapter_distributed(args: argparse.Namespace) -> None:
     device = _configure_cuda_device()
     ckpt_path = Path(args.lora_checkpoint).expanduser().resolve()
+    if not ckpt_path.exists():
+        raise FileNotFoundError(f"PEFT checkpoint not found: {ckpt_path}")
     config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
     bridge = AutoBridge.from_hf_config(config)
     lora = _load_lora_config(ckpt_path)
@@ -204,6 +206,11 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
             init_model_with_meta_device=False,
         )
         model = [chunk.to(device) for chunk in model]
+        if len(model) != 1:
+            raise RuntimeError(
+                "Distributed adapter export currently supports exactly one local model chunk; "
+                f"got {len(model)}. Use pipeline parallel size 1 without virtual pipeline parallelism."
+            )
 
         sharded_state_dict = _generate_model_state_dict(model, {})
         sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora)
