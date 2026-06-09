@@ -154,15 +154,19 @@ def forward_step(
     # Get the model's role to determine if we're at first pipeline stage
     megatron_mimo_model = unwrap_megatron_mimo_model(model)
 
-    # Determine if this rank needs data.
-    # - LLM ranks: first stage needs input_ids; last stage needs labels/loss_mask.
+    # Determine if this rank needs a data iterator.
+    # - LLM ranks: all stages need metadata such as position_ids for models
+    #   with position-dependent decoder blocks. First stage consumes input_ids;
+    #   last stage consumes labels/loss_mask.
     # - Modality ranks: only first stage needs raw modality inputs.
     needs_data = True
+    is_language_first_stage = False
+    is_language_last_stage = False
     if megatron_mimo_model.role is not None:
         if megatron_mimo_model.role.has_language_module:
-            is_first_stage = megatron_mimo_model.role.is_first_stage(MIMO_LANGUAGE_MODULE_KEY)
-            is_last_stage = megatron_mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
-            needs_data = is_first_stage or is_last_stage
+            is_language_first_stage = megatron_mimo_model.role.is_first_stage(MIMO_LANGUAGE_MODULE_KEY)
+            is_language_last_stage = megatron_mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
+            needs_data = True
         elif megatron_mimo_model.role.has_modality_modules:
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
@@ -178,8 +182,25 @@ def forward_step(
         # All data-loading ranks receive identical batches (sampler dp_size=1).
         # slice_batch_for_megatron_mimo contiguously sub-shards to match the
         # BridgeCommunicator's fan-in/fan-out batch-dimension routing.
+        if (
+            megatron_mimo_model.role is not None
+            and megatron_mimo_model.role.has_language_module
+            and not megatron_mimo_model.role.has_modality_modules
+        ):
+            # Non-colocated language ranks consume encoder outputs from the bridge,
+            # not raw modality inputs. Dropping raw encoder inputs here avoids
+            # slicing modality tensors whose leading dimension is not the language
+            # sample batch.
+            data_batch["modality_inputs"] = None
         dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
         data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
+            if not is_language_first_stage:
+                data_batch["input_ids"] = None
+                data_batch["modality_inputs"] = None
+            if not is_language_last_stage:
+                data_batch["labels"] = None
+                data_batch["loss_mask"] = None
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {
@@ -212,7 +233,7 @@ def forward_step(
     if megatron_mimo_model.role is None:
         is_last_stage = True
     elif megatron_mimo_model.role.has_language_module:
-        is_last_stage = megatron_mimo_model.role.is_last_stage(MIMO_LANGUAGE_MODULE_KEY)
+        is_last_stage = is_language_last_stage
     else:
         is_last_stage = False
 

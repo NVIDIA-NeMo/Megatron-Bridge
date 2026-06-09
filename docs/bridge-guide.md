@@ -239,10 +239,23 @@ huggingface-cli login --token <your token>
 uv run python -c "from megatron.bridge import AutoBridge; AutoBridge.import_ckpt('meta-llama/Llama-3.2-1B','./megatron_checkpoints/llama32_1b')"
 ```
 
+Or with a helper script:
+
+```bash
+huggingface-cli login --token <your token>
+uv run python examples/conversion/convert_checkpoints.py import --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b
+```
+
 ### Megatron → HF export (one call)
 
 ```bash
 uv run python -c "from megatron.bridge import AutoBridge; b=AutoBridge.from_hf_pretrained('meta-llama/Llama-3.2-1B'); b.export_ckpt('./megatron_checkpoints/llama32_1b','./hf_exports/llama32_1b')"
+```
+
+Or with a helper script:
+
+```bash
+uv run python examples/conversion/convert_checkpoints.py export --hf-model meta-llama/Llama-3.2-1B --megatron-path ./megatron_checkpoints/llama32_1b --hf-path ./hf_exports/llama32_1b
 ```
 
 ### Create Megatron models and run locally
