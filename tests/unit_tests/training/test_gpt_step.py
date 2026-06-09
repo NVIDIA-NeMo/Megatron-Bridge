@@ -136,6 +136,17 @@ class _NoopTimer:
         return False
 
 
+class _RecordingModel:
+    def __init__(self, *, mtp_process=False, output=None):
+        self.mtp_process = mtp_process
+        self.output = output if output is not None else torch.tensor(1.0)
+        self.forward_kwargs = None
+
+    def __call__(self, **kwargs):
+        self.forward_kwargs = kwargs
+        return self.output
+
+
 class TestGetBatch:
     """Tests for the get_batch helper."""
 
@@ -341,6 +352,124 @@ class TestGetBatch:
         assert out_attention_mask is None
         assert out_position_ids is None
 
+    def test_forward_common_uses_model_chunk_mtp_process_for_vpp_stage(self, monkeypatch):
+        """Interleaved MTP chunks load tokens even when global VPP rank is unset."""
+        _set_last_pp_stage(monkeypatch)
+        _set_distributed_initialized(monkeypatch)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
+            lambda: None,
+        )
+
+        tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4]]))
+        labels = _as_nocuda(torch.tensor([[2, 3, 4, 5]]))
+        loss_mask = _as_nocuda(torch.ones(1, 4))
+        position_ids = _as_nocuda(torch.arange(4).unsqueeze(0))
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": None,
+            "position_ids": position_ids,
+        }
+        model = _RecordingModel(mtp_process=True)
+        state = Mock()
+        state.cfg = _make_cfg(
+            pipeline_model_parallel_layout="Et*4|(t*4|)*14tmL",
+            pipeline_model_parallel_size=8,
+            mtp_num_layers=1,
+        )
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 1,
+                "overlap_moe_expert_parallel_comm": False,
+            },
+        )()
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection",
+            lambda model: _MockPGCollection(pp_rank=7, pp_size=8),
+        )
+
+        output, returned_loss_mask = _forward_step_common(state, _Iterator(batch), model)
+
+        assert torch.equal(output, torch.tensor(1.0))
+        assert torch.equal(returned_loss_mask, loss_mask)
+        assert model.forward_kwargs is not None
+        assert torch.equal(model.forward_kwargs["input_ids"], tokens)
+        assert torch.equal(model.forward_kwargs["position_ids"], position_ids)
+        assert torch.equal(model.forward_kwargs["labels"], labels)
+
+    def test_forward_common_uses_model_chunk_mtp_process_instead_of_layout_fallback(self, monkeypatch):
+        """A non-MTP model chunk must not load tokens just because layout inference would."""
+        _set_last_pp_stage(monkeypatch)
+        _set_distributed_initialized(monkeypatch)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank",
+            lambda batch, is_hybrid_cp=False, cp_group=None, hybrid_cp_group_func=None: batch,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_virtual_pipeline_model_parallel_rank",
+            lambda: 1,
+        )
+
+        tokens = _as_nocuda(torch.tensor([[1, 2, 3, 4]]))
+        labels = _as_nocuda(torch.tensor([[2, 3, 4, 5]]))
+        loss_mask = _as_nocuda(torch.ones(1, 4))
+        position_ids = _as_nocuda(torch.arange(4).unsqueeze(0))
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": None,
+            "position_ids": position_ids,
+        }
+        layout = [[] for _ in range(16)]
+        layout[15] = ["mtp"]
+        model = _RecordingModel(mtp_process=False)
+        state = Mock()
+        state.cfg = _make_cfg(
+            pipeline_model_parallel_layout=layout,
+            pipeline_model_parallel_size=8,
+            mtp_num_layers=1,
+        )
+        state.timers = _NoopTimer()
+        state.straggler_timer = _NoopTimer()
+        config = type(
+            "Config",
+            (),
+            {
+                "is_hybrid_model": False,
+                "mtp_num_layers": 1,
+                "overlap_moe_expert_parallel_comm": False,
+            },
+        )()
+
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.get_model_config", lambda model: config)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.get_pg_collection",
+            lambda model: _MockPGCollection(pp_rank=7, pp_size=8),
+        )
+
+        output, returned_loss_mask = _forward_step_common(state, _Iterator(batch), model)
+
+        assert torch.equal(output, torch.tensor(1.0))
+        assert torch.equal(returned_loss_mask, loss_mask)
+        assert model.forward_kwargs is not None
+        assert model.forward_kwargs["input_ids"] is None
+        assert model.forward_kwargs["position_ids"] is None
+        assert torch.equal(model.forward_kwargs["labels"], labels)
+
     def test_forward_common_passes_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
         """Forward path must pass packed metadata on middle PP stages."""
         sentinel_packed_seq_params = object()
@@ -370,7 +499,7 @@ class TestGetBatch:
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch",
-            lambda data_iterator, cfg, use_mtp, pg_collection: (
+            lambda data_iterator, cfg, use_mtp, *, pg_collection, include_mtp_inputs=None: (
                 tokens,
                 labels,
                 loss_mask,

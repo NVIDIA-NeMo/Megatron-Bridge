@@ -78,8 +78,8 @@ def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) 
     )
 
 
-def _current_pp_stage_has_mtp(cfg: ConfigContainer, *, pg_collection) -> bool:
-    """Return whether the current PP/VPP stage owns the configured MTP block."""
+def _infer_current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection) -> bool:
+    """Infer whether the current PP/VPP stage owns the configured MTP block from layout."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
     if layout is None:
@@ -95,14 +95,19 @@ def _current_pp_stage_has_mtp(cfg: ConfigContainer, *, pg_collection) -> bool:
     return _layout_stage_has_mtp(layout, pp_rank=pp_rank, pp_size=pp_size, vp_stage=vp_stage)
 
 
-def _current_pp_stage_needs_mtp_inputs(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
-    """Return whether this stage needs token ids for MTP embedding lookup."""
+def _infer_current_stage_needs_mtp_inputs(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
+    """Infer whether this stage needs token ids for MTP embedding lookup."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
     if layout is None:
         return is_last
 
-    return _current_pp_stage_has_mtp(cfg, pg_collection=pg_collection)
+    return _infer_current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection)
+
+
+def _model_chunk_needs_mtp_inputs(model: GPTModel) -> bool:
+    """Return whether the current model chunk owns an MTP block."""
+    return bool(getattr(unwrap_model(model), "mtp_process", False))
 
 
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
@@ -209,7 +214,12 @@ def get_batch_from_iterator(
 
 
 def get_batch(
-    data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = False, *, pg_collection
+    data_iterator: Iterable,
+    cfg: ConfigContainer,
+    use_mtp: bool = False,
+    *,
+    pg_collection,
+    include_mtp_inputs: bool | None = None,
 ) -> tuple[
     torch.Tensor,
     torch.Tensor,
@@ -228,6 +238,8 @@ def get_batch(
         data_iterator: Input data iterator
         cfg: Configuration container
         use_mtp: Whether Multi-Token Prediction layers are enabled
+        include_mtp_inputs: Whether this specific model chunk needs MTP input tensors. If unset,
+            the value is inferred from the pipeline layout.
 
     Returns:
         tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
@@ -239,9 +251,12 @@ def get_batch(
     is_last = is_pp_last_stage(pg_collection.pp)
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
-    include_mtp_inputs = use_mtp and _current_pp_stage_needs_mtp_inputs(
-        cfg, pg_collection=pg_collection, is_last=is_last
-    )
+    if include_mtp_inputs is None:
+        include_mtp_inputs = use_mtp and _infer_current_stage_needs_mtp_inputs(
+            cfg, pg_collection=pg_collection, is_last=is_last
+        )
+    else:
+        include_mtp_inputs = use_mtp and include_mtp_inputs
     if is_middle and not include_full_batch_fields and not include_mtp_inputs:
         return None, None, None, None, None, None, None, None, None, None
 
@@ -314,7 +329,13 @@ def _forward_step_common(
             max_seqlen,
             cu_seqlens_unpadded,
             cu_seqlens_unpadded_argmin,
-        ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
+        ) = get_batch(
+            data_iterator,
+            state.cfg,
+            use_mtp,
+            pg_collection=pg_collection,
+            include_mtp_inputs=_model_chunk_needs_mtp_inputs(model) if use_mtp else False,
+        )
     timers("batch-generator").stop()
 
     forward_args = {
