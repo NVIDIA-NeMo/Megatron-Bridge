@@ -314,8 +314,22 @@ def parse_cli_args():
         "--data",
         type=str,
         default="mock",
-        choices=["mock", "rp2", "squad", "squad_packed"],
+        choices=["mock", "rp2", "squad", "squad_packed", "c4"],
         help="Dataset type to use",
+    )
+    data_args.add_argument(
+        "--c4_root",
+        type=str,
+        help="C4 preproc root dir (containing c4-train.en_<shard>_text_document.{bin,idx} and "
+        "c4-validation-91205-samples.en_text_document.{bin,idx}). Used when --data c4. "
+        "Mirrors the layout used by NVIDIA's MLPerf DSV3 671B reference.",
+    )
+    data_args.add_argument(
+        "--c4_train_shards",
+        nargs="+",
+        type=int,
+        default=[6],
+        help="C4 train shard indices to blend (e.g. 6 for the 8b dataset; 6 7 for the full dataset). Default: [6].",
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
