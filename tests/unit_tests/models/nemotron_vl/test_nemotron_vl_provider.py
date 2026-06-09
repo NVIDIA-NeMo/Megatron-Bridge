@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
     NemotronVLModelProvider,
-    _get_language_mlp_submodules,
+    get_language_mlp_submodules,
 )
 
 
@@ -74,7 +74,7 @@ class TestNemotronVLModelProvider:
             )
         )
 
-        assert _get_language_mlp_submodules(language_spec) is mlp_submodules
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules
 
     def test_language_mlp_submodules_from_partial_specs(self):
         mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
@@ -88,4 +88,4 @@ class TestNemotronVLModelProvider:
             ),
         )
 
-        assert _get_language_mlp_submodules(language_spec) is mlp_submodules
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules
