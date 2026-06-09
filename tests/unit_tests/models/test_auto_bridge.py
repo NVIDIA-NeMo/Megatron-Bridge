@@ -229,9 +229,7 @@ class TestAutoBridge:
         assert _mtp_source_key_prefixes(glm_src, {"num_hidden_layers": 47}) == ("model.layers.47.",)
 
         # Nested text_config carries num_hidden_layers.
-        assert _mtp_source_key_prefixes(glm_src, {"text_config": {"num_hidden_layers": 47}}) == (
-            "model.layers.47.",
-        )
+        assert _mtp_source_key_prefixes(glm_src, {"text_config": {"num_hidden_layers": 47}}) == ("model.layers.47.",)
 
         # No matching source keys -> nothing to strip.
         assert _mtp_source_key_prefixes(src(), {"num_hidden_layers": 47}) == ()
