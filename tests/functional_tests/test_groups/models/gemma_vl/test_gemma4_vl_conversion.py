@@ -101,6 +101,59 @@ HF_GEMMA4_VL_TOY_MODEL_CONFIG = {
 }
 
 
+# Tiny model loosely based on google/gemma-4-31B-it
+HF_GEMMA4_VL_TOY_DENSE_MODEL_CONFIG = {
+    "architectures": ["Gemma4ForConditionalGeneration"],
+    "model_type": "gemma4",
+    "torch_dtype": "bfloat16",
+    "bos_token_id": 2,
+    "eos_token_id": 1,
+    "pad_token_id": 0,
+    "image_token_id": 200,
+    "video_token_id": 201,
+    "vision_soft_tokens_per_image": 16,
+    "text_config": {
+        "model_type": "gemma4_text",
+        "hidden_size": 256,
+        "intermediate_size": 256,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 8,
+        "num_key_value_heads": 4,
+        "hidden_size_per_layer_input": 0,
+        "head_dim": 64,
+        "global_head_dim": 128,
+        "num_global_key_value_heads": 2,
+        "attention_k_eq_v": True,
+        "vocab_size": 2048,
+        "max_position_embeddings": 4096,
+        "rms_norm_eps": 1e-6,
+        "sliding_window": 1024,
+        "rope_theta": 1000000.0,
+        "rope_local_base_freq": 10000.0,
+        "rope_parameters": {
+            "full_attention": {"rope_theta": 1000000.0, "partial_rotary_factor": 0.25},
+            "sliding_attention": {"rope_theta": 10000.0},
+        },
+        "enable_moe_block": False,
+        "layer_types": ["sliding_attention", "full_attention"],
+        "final_logit_softcapping": 30.0,
+        "hidden_act": "gelu_pytorch_tanh",
+        "torch_dtype": "bfloat16",
+    },
+    "vision_config": {
+        "model_type": "siglip_vision_model",
+        "hidden_size": 256,
+        "intermediate_size": 1024,
+        "num_hidden_layers": 2,
+        "num_attention_heads": 4,
+        "patch_size": 14,
+        "image_size": 224,
+        "rms_norm_eps": 1e-6,
+        "vision_use_head": False,
+    },
+}
+
+
 class TestGemma4VLConversion:
     """Round-trip conversion test for the Gemma 4 VL MoE bridge."""
 
@@ -241,3 +294,139 @@ class TestGemma4VLConversion:
         assert "vision_config" in saved_config, "VL model should have vision_config"
         assert saved_config["text_config"]["num_experts"] == 4, "Number of experts should match toy config"
         assert saved_config["text_config"]["enable_moe_block"] is True, "MoE block should be enabled"
+
+
+class TestGemma4DenseVLConversion:
+    """Round-trip conversion test for the Gemma 4 VL Dense  bridge."""
+
+    @pytest.fixture(scope="class")
+    def gemma4_vl_toy_dense_model_path(self, tmp_path_factory):
+        """Build and save a tiny Gemma 4 VL Dense checkpoint."""
+        temp_dir = tmp_path_factory.mktemp("gemma4_vl_toy_model")
+        model_dir = temp_dir / "gemma4_vl_toy"
+
+        config_dict = json.loads(json.dumps(HF_GEMMA4_VL_TOY_DENSE_MODEL_CONFIG))
+        config = Gemma4Config(**config_dict)
+        config.torch_dtype = torch.bfloat16
+
+        # Force eager attention on every sub-config: HF defaults to
+        # flash_attention_2 in transformers >=5.5 when flash-attn is
+        # installed, but the toy vision tower may not declare support.
+        for sub in (config, getattr(config, "text_config", None), getattr(config, "vision_config", None)):
+            if sub is not None:
+                sub._attn_implementation = "eager"
+
+        model = Gemma4ForConditionalGeneration(config)
+        model = model.to(dtype=torch.bfloat16)
+
+        model.save_pretrained(model_dir, safe_serialization=True)
+
+        # Persist the dict form of config.json so the round-trip script
+        # sees the toy values exactly as written (HF may re-emit defaults).
+        with open(model_dir / "config.json", "w") as f:
+            json.dump(config_dict, f, indent=2)
+
+        # Best-effort tokenizer download; fall back to a minimal stub.
+        try:
+            tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
+            tokenizer.save_pretrained(model_dir)
+        except Exception:
+            tokenizer_config = {
+                "tokenizer_class": "GemmaTokenizer",
+                "vocab_size": 2048,
+                "bos_token": "<bos>",
+                "eos_token": "<eos>",
+                "pad_token": "<pad>",
+                "unk_token": "<unk>",
+            }
+            with open(model_dir / "tokenizer_config.json", "w") as f:
+                json.dump(tokenizer_config, f, indent=2)
+
+        return str(model_dir)
+
+    def test_toy_model_creation(self, gemma4_vl_toy_dense_model_path):
+        """Sanity-check the toy checkpoint shape and config."""
+        model_path = Path(gemma4_vl_toy_dense_model_path)
+        assert model_path.exists(), f"Model directory not found at {model_path}"
+
+        config_file = model_path / "config.json"
+        assert config_file.exists(), f"config.json not found at {config_file}"
+
+        weights_file = model_path / "model.safetensors"
+        if not weights_file.exists():
+            weights_file = model_path / "model.safetensors.index.json"
+        if not weights_file.exists():
+            weights_file = model_path / "pytorch_model.bin"
+        assert weights_file.exists(), f"Model weights file not found in {model_path}"
+
+        with open(config_file) as f:
+            config_data = json.load(f)
+
+        assert config_data["model_type"] == "gemma4"
+        text_cfg = config_data["text_config"]
+        assert text_cfg["num_hidden_layers"] == 2
+        assert text_cfg["enable_moe_block"] is False
+        assert text_cfg["layer_types"] == ["sliding_attention", "full_attention"]
+        assert "vision_config" in config_data
+
+    @pytest.mark.run_only_on("GPU")
+    @pytest.mark.parametrize(
+        "tp,pp,test_name",
+        [
+            (2, 1, "TP"),
+        ],
+    )
+    def test_gemma4_vl_conversion_parallelism(self, gemma4_vl_toy_dense_model_path, tmp_path, tp, pp, test_name):
+        """Run HF → Megatron → HF round-trip across TP / ETP configs."""
+        test_output_dir = tmp_path / f"gemma4_vl_{test_name}"
+        test_output_dir.mkdir(exist_ok=True)
+
+        cmd = [
+            "python",
+            "-m",
+            "torch.distributed.run",
+            "--nproc_per_node=2",
+            "--nnodes=1",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
+            "--parallel-mode",
+            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "--hf-model-id",
+            gemma4_vl_toy_dense_model_path,
+            "--output-dir",
+            str(test_output_dir),
+            "--tp",
+            str(tp),
+            "--pp",
+            str(pp),
+        ]
+
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+        )
+
+        if result.returncode != 0:
+            print(f"STDOUT: {result.stdout}")
+            print(f"STDERR: {result.stderr}")
+            assert False, f"Gemma4 VL {test_name} conversion failed with return code {result.returncode}"
+
+        model_name = Path(gemma4_vl_toy_dense_model_path).name
+        converted_model_dir = test_output_dir / model_name
+        assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
+
+        config_file = converted_model_dir / "config.json"
+        assert config_file.exists(), f"config.json not found in converted model at {config_file}"
+
+        with open(config_file) as f:
+            saved_config = json.load(f)
+
+        assert saved_config["model_type"] == "gemma4", "Model type should be gemma4"
+        assert "text_config" in saved_config, "VL model should have text_config"
+        assert "vision_config" in saved_config, "VL model should have vision_config"
+        assert saved_config["text_config"]["enable_moe_block"] is False, "MoE block should be disabled"

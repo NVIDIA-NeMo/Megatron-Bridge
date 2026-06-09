@@ -21,10 +21,12 @@ from megatron.energon import DefaultTaskEncoder
 from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
 from megatron.bridge.diffusion.data.common.sequence_packing_utils import first_fit_decreasing
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.
@@ -100,10 +102,11 @@ class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa:
                 return None
 
         return DiffusionSample(
-            __key__=",".join([s.__key__ for s in samples]),
-            __restore_key__=(),  # Will be set by energon based on `samples`
-            __subflavor__=None,
-            __subflavors__=samples[0].__subflavors__,
+            **sample_metadata_kwargs(
+                key=",".join([s.__key__ for s in samples]),
+                restore_key=(),  # Will be set by Energon based on `samples`.
+                subflavors=samples[0].__subflavors__,
+            ),
             video=cat("video"),
             context_embeddings=cat("context_embeddings"),
             context_mask=cat("context_mask"),

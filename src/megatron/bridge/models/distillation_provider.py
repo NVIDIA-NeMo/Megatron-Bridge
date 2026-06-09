@@ -14,10 +14,11 @@
 
 import logging
 from dataclasses import dataclass, fields
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, Optional
 
 import modelopt.torch.distill as mtd
 import modelopt.torch.distill.plugins.megatron as mtd_mcore
+from megatron.core.models.common.language_module.language_module import LanguageModule
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -41,6 +42,12 @@ class DistillationProvider(TransformerConfig):
 
     teacher: Optional[GPTModelProvider | MambaModelProvider] = None
     kd_config: Optional["ModelOptDistillConfig"] = None
+    # Optional callable run on the freshly built student model, *before* it is converted to a
+    # distillation model. It receives the student model and returns the (possibly replaced) student
+    # model. Useful to restore ModelOpt state from a checkpoint -- e.g. quantizers for Quantization
+    # Aware Distillation (QAD) -- which must happen before the distillation conversion since some
+    # ModelOpt restores are no-ops once a model is already converted.
+    student_pre_conversion_hook: Optional[Callable[[LanguageModule], LanguageModule]] = None
 
     def __init__(self, *args, **kwargs):
         raise NotImplementedError("Use `convert_to_distillation_provider()` to create an instance of this class.")
@@ -80,6 +87,10 @@ class DistillationProvider(TransformerConfig):
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
 
         student_model = self._super_class.provide(self, pre_process, post_process, vp_stage)
+        # Optionally transform the student before the distillation conversion (e.g. restore ModelOpt
+        # quantizers from a checkpoint for QAD). Must run before mtd.convert below.
+        if self.student_pre_conversion_hook is not None:
+            student_model = self.student_pre_conversion_hook(student_model)
         # Hack to get teacher's pre-wrap hooks called to potentially load HF weights
         teacher_model = self.teacher.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)[0]
 
@@ -128,8 +139,18 @@ def convert_to_distillation_provider(
     student_provider: GPTModelProvider | MambaModelProvider,
     teacher_provider: GPTModelProvider | MambaModelProvider,
     kd_config: Optional["ModelOptDistillConfig"] = None,
+    student_pre_conversion_hook: Optional[Callable[[LanguageModule], LanguageModule]] = None,
 ) -> "DistillationProvider":
-    """Convert a given model provider to a DistillationProvider."""
+    """Convert a given model provider to a DistillationProvider.
+
+    Args:
+        student_provider: The student model provider.
+        teacher_provider: The teacher model provider.
+        kd_config: The knowledge-distillation config.
+        student_pre_conversion_hook: Optional callable run on the freshly built student model before
+            the distillation conversion (see ``DistillationProvider.student_pre_conversion_hook``).
+            Useful to restore ModelOpt state -- e.g. quantizers for Quantization Aware Distillation.
+    """
 
     assert isinstance(student_provider, (GPTModelProvider, MambaModelProvider)), (
         "Student provider must be a subclass of GPTModelProvider or MambaModelProvider."
@@ -143,6 +164,7 @@ def convert_to_distillation_provider(
 
     student_provider.teacher = teacher_provider
     student_provider.kd_config = kd_config
+    student_provider.student_pre_conversion_hook = student_pre_conversion_hook
     student_provider.__post_init__()
 
     return student_provider

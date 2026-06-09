@@ -22,9 +22,8 @@ import torch
 CONVERTER_PATH = (
     Path(__file__).resolve().parents[4]
     / "examples"
-    / "models"
     / "megatron_mimo"
-    / "megatron_mimo"
+    / "llava"
     / "whisper"
     / "convert_hf_whisper_to_megatron.py"
 )

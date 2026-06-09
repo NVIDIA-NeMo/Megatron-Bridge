@@ -21,7 +21,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
-    NemotronNano12Bv2VLModelProvider,
+    NemotronVLModelProvider,
 )
 
 
@@ -81,7 +81,7 @@ class TestNemotronVLBridgeProviderBridge:
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)
         provider.finalize()
 
-        assert isinstance(provider, NemotronNano12Bv2VLModelProvider)
+        assert isinstance(provider, NemotronVLModelProvider)
 
         assert provider.num_layers == 28
         assert provider.hidden_size == 5120
@@ -145,3 +145,13 @@ class TestNemotronVLBridgeMappingRegistry:
         assert any("language_model" in n for n in names)
         # QKV mappings should be present for both language and vision
         assert any("linear_qkv" in n for n in names)
+
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d_weight" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d_bias" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d.weight" in names
+        assert "llava_model.language_model.decoder.layers.*.mixer.conv1d.bias" in names
+
+        reverse_weight = registry.hf_to_megatron_lookup("language_model.backbone.layers.0.mixer.conv1d.weight")
+        reverse_bias = registry.hf_to_megatron_lookup("language_model.backbone.layers.0.mixer.conv1d.bias")
+        assert reverse_weight.megatron_param == "llava_model.language_model.decoder.layers.0.mixer.conv1d_weight"
+        assert reverse_bias.megatron_param == "llava_model.language_model.decoder.layers.0.mixer.conv1d_bias"

@@ -19,6 +19,9 @@
 # GLM-4.7 (MoE: 160 experts, top-8, ~358B params)
 # Requires at least 4 nodes (32 GPUs) with EP=32.
 #
+# Megatron inference engine support is not yet available for this architecture.
+# This launcher defaults to the older slow sanity-check generation path for now.
+#
 # Usage:
 #   1. Set CONTAINER_IMAGE and token exports; set CONTAINER_MOUNTS if needed
 #   2. Create logs/ if your Slurm setup requires the output directory to exist

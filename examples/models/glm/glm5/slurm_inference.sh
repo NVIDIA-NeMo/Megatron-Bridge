@@ -24,6 +24,9 @@
 # TP does NOT reduce expert memory — increase EP instead.
 # Recommended: TP=2, EP=32, PP=1 (64 GPUs, 8 nodes).
 #
+# Megatron inference engine support is not yet available for this architecture.
+# This launcher defaults to the older slow sanity-check generation path for now.
+#
 # Loads the HF checkpoint, converts to Megatron in-memory, and runs greedy
 # text generation via examples/conversion/hf_to_megatron_generate_text.py.
 #
@@ -61,12 +64,12 @@ MODEL_NAME="${MODEL_NAME:-GLM-5}"
 # Use the direct local snapshot path to avoid 64 processes calling
 # snapshot_download simultaneously (causes Lustre race conditions).
 HF_MODEL_PATH="${HF_HOME}/hub/models--zai-org--${MODEL_NAME}/snapshots/$(ls ${HF_HOME}/hub/models--zai-org--${MODEL_NAME}/snapshots/ | head -1)"
-TP=2
-EP=32
-PP=1
+TP="${TP:-2}"
+EP="${EP:-32}"
+PP="${PP:-1}"
 
-PROMPT="What is artificial intelligence?"
-MAX_NEW_TOKENS=100
+PROMPT="${PROMPT:-What is artificial intelligence?}"
+MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
 
 # ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1

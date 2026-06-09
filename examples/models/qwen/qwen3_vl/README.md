@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen 3 vision-language models.
 
-For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/vlm/qwen3-vl.md).
+For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.md).
 
 ## Workspace Configuration
 
@@ -113,12 +113,18 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
+## Controlling visual tokens computation budget
+Three independent CLI-overridable controls bound a sample's GPU cost. They compose:
+- **`dataset.min_pixels` / `dataset.max_pixels`** — image/frame resolutions lower and upper bound (defaults `200704` / `1003520`). 
+- **`dataset.max_num_images` / `dataset.max_num_frames`** - limit count of images/frames (defaults `10` / `60`). Too many images → sample is dropped. Too many frames → frame list truncated.
+- **`dataset.max_visual_tokens`** — limit total visual tokens across all images and frames in a sample, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `16384`; set to `None` to disable). Catches cases the other two miss (few images at high resolution, or many at low resolution). Exceeding samples are dropped.
+
 ## Finetuning with Energon Dataset
 
 Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
 
 ```yaml
-__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+__module__: megatron.bridge.models.qwen_vl.data.energon
 __class__: ChatMLWebdataset
 field_map:
   imgs: jpg
@@ -127,9 +133,64 @@ field_map:
 
 Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
 
-
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
+
+## Dataset with Multiple Images
+
+Below is an example for finetuning on a dataset containing multiple images in a sample, using a subset of [TIGER-Lab/Mantis-Instruct](https://huggingface.co/datasets/TIGER-Lab/Mantis-Instruct) dataset.
+
+1. Download the `llava_665k_multi` subset of TIGER-Lab/Mantis-Instruct dataset from Hugging Face and unzip the images folder (NOTE: 44GB of disk space required):
+
+    ```
+    pip install -U "huggingface_hub[cli]"
+    huggingface-cli download TIGER-Lab/Mantis-Instruct \
+        --include "llava_665k_multi/*" \
+        --repo-type dataset \
+        --local-dir /path/to/Mantis-Instruct-LLaVA    
+    ```
+
+2. Run the following script to convert the data to webdataset format:
+
+    ```
+    python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \
+        --source-dir/path/to/Mantis-Instruct-LLaVA \
+        --output-dir /path/to/Mantis-Instruct-LLaVA/wds \
+        --max-samples-per-tar 10000
+    ```
+
+3. Run the following command to convert to megatron-energon format:
+
+    ```
+    cd /path/to/Mantis-Instruct-LLaVA/wds
+    energon prepare ./
+    ```
+
+    select the following values for the presented options:
+
+    ```
+    > Please enter a desired train/val/test split like "0.5, 0.2, 0.3" or "8,1,1": 9,1,0
+    > Do you want to create a dataset.yaml interactively? [Y/n]: Y
+    > Please enter a number to choose a class: 9 (VQASample)
+    > Do you want to set a simple field_map[Y] (or write your own sample_loader [n])? [Y/n]: Y
+    > Please enter a webdataset field name for 'image' (<class 'torch.Tensor'>): jpg
+    > Please enter a webdataset field name for 'context' (<class 'str'>): json[0][value]
+    > Please enter a webdataset field name for 'answers' (typing.Optional[typing.List[str]], default: None): json[1][value]
+    > Please enter a webdataset field name for 'answer_weights' (typing.Optional[torch.Tensor], default: None):
+    ```
+
+4. Change the file `.nv-meta/dataset.yaml` to the following:
+
+    ```yaml
+    __module__: megatron.bridge.models.qwen_vl.data.energon
+    __class__: ChatMLWebdataset
+    field_map:
+      imgs: jpgs
+      conversation: json
+    ```
+
+Follow previous instruction to run the finetuning with the prepared dataset.
+
 
 ## Evaluation
 

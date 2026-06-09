@@ -93,6 +93,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    # Reinstall nvidia-cutlass-dsl in system site packages
+    # uv install can run into non-deterministic install issues
+    pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
+    pip install nvidia-cutlass-dsl[cu13]==4.4.1 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
@@ -101,6 +105,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups; \
     fi && \
+    # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
+    # Otherwise, the stub will be called in some cases and fail
+    ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
 COPY --chmod=644 . /opt/Megatron-Bridge
+
+##############################################################################
+##
+## Verify the environment imports
+##
+##############################################################################
+
+# Fail the build if any installed package in /opt/venv cannot be imported. A
+# version/ABI skew can leave a package installed yet unimportable, which
+# `pip check` does not catch. The build has no GPU, so modules that need a
+# driver or host library at import are exempted in import_check_skip.txt.
+RUN --mount=type=bind,source=docker/common/import_check.py,target=/opt/import_check.py \
+    --mount=type=bind,source=docker/common/import_check_skip.txt,target=/opt/import_check_skip.txt \
+    python /opt/import_check.py --jobs 16 --skip-file /opt/import_check_skip.txt

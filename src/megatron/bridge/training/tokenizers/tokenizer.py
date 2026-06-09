@@ -1,15 +1,11 @@
-# Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
 """Megatron tokenizers."""
 
 from megatron.core.tokenizers import MegatronTokenizer
+from megatron.core.tokenizers.utils.build_tokenizer import build_tokenizer as build_mcore_tokenizer
 
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-
-
-MEGATRON_TOKENIZERS = ["BertWordPieceLowerCase", "BertWordPieceCase", "GPT2BPETokenizer"]
-
-SP_TOKENIZERS = ["SentencePieceTokenizer", "GPTSentencePieceTokenizer", "Llama2Tokenizer"]
 
 
 def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
@@ -23,98 +19,11 @@ def build_tokenizer(config: TokenizerConfig, **kwargs) -> MegatronTokenizer:
     Returns:
         MegatronTokenizer: An instance of the initialized tokenizer.
     """
-    kwargs = {}
-    tokenizer_library = None
-    tokenizer_path = None
-    if config.tokenizer_type in MEGATRON_TOKENIZERS:
-        tokenizer_library = "megatron"
-        tokenizer_path = config.tokenizer_type
-        kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
-        if tokenizer_path == "BertWordPieceCase":
-            special_tokens = {}
-            special_tokens["additional_special_tokens"] = [f"<extra_id_{i}>" for i in range(100)]
-            kwargs = special_tokens
-        kwargs["vocab_file"] = config.vocab_file
-        kwargs["merges_file"] = config.merge_file
-        if config.hf_tokenizer_kwargs:
-            kwargs.update(config.hf_tokenizer_kwargs)
-    elif config.tokenizer_type in SP_TOKENIZERS:
-        tokenizer_library = "sentencepiece"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs.update(config.sp_tokenizer_kwargs)
-    elif config.tokenizer_type == "TikTokenizer":
-        tokenizer_library = "tiktoken"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        if config.tiktoken_pattern:
-            kwargs["pattern"] = config.tiktoken_pattern
-        if config.vocab_size:
-            kwargs["vocab_size"] = config.vocab_size
-        kwargs["num_special_tokens"] = config.tiktoken_num_special_tokens
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs["vocab_size"] = config.vocab_size
-    elif config.tokenizer_type == "HuggingFaceTokenizer":
-        tokenizer_library = "huggingface"
-        tokenizer_path = config.tokenizer_model
-        kwargs["chat_template"] = config.chat_template
-        kwargs["vocab_file"] = config.vocab_file
-        kwargs["merges_file"] = config.merge_file
-        kwargs["additional_special_tokens"] = config.special_tokens if config.special_tokens else []
-        if config.hf_tokenizer_kwargs:
-            kwargs.update(config.hf_tokenizer_kwargs)
-    elif config.tokenizer_type == "MultimodalTokenizer":
-        tokenizer_library = "multimodal"
-        kwargs["prompt_format"] = config.tokenizer_prompt_format
-        kwargs["special_tokens"] = config.special_tokens
-        kwargs["image_tag_type"] = config.image_tag_type
-        kwargs["force_system_message"] = config.force_system_message
-    elif config.tokenizer_type == "SFTTokenizer":
-        tokenizer_library = "sft"
-        tokenizer_path = config.tokenizer_model
-        kwargs["prompt_format"] = config.tokenizer_prompt_format
-    elif config.tokenizer_type == "NullTokenizer":
-        tokenizer_library = "null-text"
-        if config.vocab_size:
-            kwargs["vocab_size"] = config.vocab_size
-        # TODO(mcore-guard): Remove try/except once mcore main and dev both support
-        # "null-text"/"null-multimodal" tokenizer library names (dev renamed "null" → split names).
-        try:
-            metadata = {"library": tokenizer_library}
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
-        except AssertionError:
-            # Legacy mcore exposed NullTokenizer under library "null" and internally reserved the
-            # top id for the pad token, requiring callers to pass vocab_size - 1 to obtain the
-            # requested effective vocab size.
-            metadata = {"library": "null"}
-            if "vocab_size" in kwargs:
-                kwargs["vocab_size"] = kwargs["vocab_size"] - 1
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+    from megatron.bridge.utils.common_utils import warn_rank_0
 
-        return tokenizer
-    elif config.tokenizer_type == "NullMultimodalTokenizer":
-        # NullMultimodalTokenizer still reserves the top id for the pad token, so the effective
-        # vocab size is passed as vocab_size - 1 under both the new "null-multimodal" and the
-        # legacy "null" library names.
-        tokenizer_library = "null-multimodal"
-        if config.vocab_size:
-            kwargs["vocab_size"] = config.vocab_size - 1
-        # TODO(mcore-guard): Remove try/except once mcore main and dev both support
-        # "null-text"/"null-multimodal" tokenizer library names (dev renamed "null" → split names).
-        try:
-            metadata = {"library": tokenizer_library}
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
-        except AssertionError:
-            metadata = {"library": "null"}
-            tokenizer = MegatronTokenizer.from_pretrained(metadata_path=metadata, **kwargs)
+    warn_rank_0(
+        "`build_tokenizer` is deprecated and will be removed soon. "
+        "Please, use `megatron.core.tokenizers.utils.build_tokenizer` instead."
+    )
 
-        return tokenizer
-
-    if config.metadata_path:
-        metadata = config.metadata_path
-    else:
-        metadata = {"library": tokenizer_library}
-    tokenizer = MegatronTokenizer.from_pretrained(tokenizer_path=tokenizer_path, metadata_path=metadata, **kwargs)
-
-    return tokenizer
+    return build_mcore_tokenizer(config, **kwargs)

@@ -14,6 +14,7 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional
 
 from omegaconf import OmegaConf
@@ -30,7 +31,9 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from utils.datasets import (
+    create_c4_dataset_config,
     create_mock_dataset_config,
     create_rp2_dataset_config,
     create_squad_dataset_config,
@@ -61,8 +64,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
     if hasattr(recipe.model, "apply_rope_fusion"):
         recipe.model.apply_rope_fusion = True
     if hasattr(recipe.model, "cross_entropy_fusion_impl"):
@@ -113,8 +114,6 @@ def _set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:  # this condition ensures we unset in case of user override to "none" from default
-            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
 
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
@@ -127,6 +126,12 @@ def _set_cuda_graph_overrides(
         assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
+    elif recipe.model.cuda_graph_impl == "none":
+        recipe.model.cuda_graph_scope = []
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+
+    if is_full_iteration_cuda_graph(recipe.model):
+        recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
 
@@ -160,6 +165,9 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
+        if recipe.comm_overlap is None:
+            tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
+            recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
@@ -200,6 +208,9 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
 
     if args.save_config_filepath is not None:
         recipe.logger.save_config_filepath = args.save_config_filepath
+        # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+        # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+        os.makedirs(os.path.dirname(os.path.abspath(args.save_config_filepath)), exist_ok=True)
 
     return recipe
 
@@ -224,6 +235,14 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
+    if settings.cutedsl_fused_grouped_mlp:
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        if settings.moe_a2a_overlap:
+            cfg.model.high_priority_a2a_comm_stream = True
+            cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    if settings.fp8_dot_product_attention is not None:
+        cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
@@ -310,6 +329,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
 
     recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+    # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+    # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+    os.makedirs(os.path.dirname(os.path.abspath(recipe.logger.save_config_filepath)), exist_ok=True)
 
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -368,6 +390,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
+            index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
+        )
+    elif args.data == "c4":
+        if not args.c4_root:
+            raise ValueError("--c4_root is required for c4 dataset")
+        recipe.dataset = create_c4_dataset_config(
+            seq_length=recipe.dataset.sequence_length,
+            c4_root=args.c4_root,
+            train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,

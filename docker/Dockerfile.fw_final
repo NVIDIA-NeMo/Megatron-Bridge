@@ -71,9 +71,8 @@ RUN \
 ##
 ##############################################################################
 
-RUN pip install nvidia-cudnn-frontend==1.17.0 \
-    starlette==0.49.1 \
-    "urllib3>=2.6.0" \
+RUN pip install "starlette==0.49.1" \
+    "urllib3>=2.7.0" \
     "aiohttp>=3.13.3" \
     "jaraco-context>=6.1.0" \
     "wheel>=0.46.2" \
@@ -87,6 +86,7 @@ RUN pip install nvidia-cudnn-frontend==1.17.0 \
     "onnx==1.21.0" \
     "notebook>=7.5.6" \
     "jupyterlab>=4.5.7" \
+    "jupyter-server>=2.18.0" \
     "mistune>=3.2.1" && \
     # Address CVE from transitive dependency
     pip uninstall -y opencv-python-headless
@@ -138,6 +138,20 @@ RUN GRPC_VERSION=1.79.3 && \
     CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -trimpath -ldflags="-s -w" \
         -o "${WANDB_CORE_BIN}" ./cmd/wandb-core/ && \
     rm -rf /tmp/wandb-src /tmp/go /tmp/gopath
+
+##############################################################################
+##
+## Verify the environment imports
+##
+##############################################################################
+
+# Fail the build if any installed package in /opt/venv cannot be imported. A
+# version/ABI skew can leave a package installed yet unimportable, which
+# `pip check` does not catch. The build has no GPU, so modules that need a
+# driver or host library at import are exempted in import_check_skip.txt.
+RUN --mount=type=bind,source=docker/common/import_check.py,target=/opt/import_check.py \
+    --mount=type=bind,source=docker/common/import_check_skip.txt,target=/opt/import_check_skip.txt \
+    python /opt/import_check.py --jobs 16 --skip-file /opt/import_check_skip.txt
 
 ##############################################################################
 ##

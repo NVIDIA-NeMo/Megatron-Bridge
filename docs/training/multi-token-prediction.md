@@ -94,16 +94,29 @@ Follow the [DCLM Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/m
 
 ## MTP with Pipeline Parallelism
 
-When using Pipeline Parallelism (PP), **MTP layers must be placed in the last pipeline stage** alongside the loss computation layer. Configure this using custom pipeline layout settings (`pipeline_model_parallel_split_rank`).
+By default, Bridge recipes place MTP layers in the last pipeline stage alongside the loss computation layer. Recent Megatron Core versions also support placing all MTP layers in a standalone stage before the final loss stage by setting `pipeline_model_parallel_layout` with `m` entries.
 
 ### Pipeline Layout Guidelines
 
 MTP layers take approximately the same training time as a regular transformer layer. When configuring your pipeline layout:
 
-- **Place MTP in the last PP stage** (required for correct loss computation)
-- **Reduce layers in other PP ranks** to balance computation time across stages
-- Example: For a 21-layer model with PP=4 and `mtp_num_layers=1`, you might use splits like `[5, 6, 6, 4]` instead of `[5, 5, 5, 6]` to account for MTP overhead in the last stage
+- Use `m` in `pipeline_model_parallel_layout` for MTP layers.
+- Keep all MTP layers in the same PP/VPP stage.
+- Place MTP after decoder layers and before the final loss stage.
+- For standalone MTP, place an `m` stage on a non-final pipeline rank and put `L` in the final stage, for example `"E|t*3|(t|)*3tt|m|L"`.
+- For colocated MTP, keep `m` with `L` in the last stage, for example `"E|t*3|(t|)*5mL"`.
 
+DeepSeek-V3 recipes include a helper for the common layouts:
+
+```python
+from megatron.bridge.recipes.deepseek import (
+    deepseek_v3_pretrain_config,
+    set_deepseek_v3_pipeline_model_parallel_layout,
+)
+
+cfg = deepseek_v3_pretrain_config()
+set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, mtp_standalone=True)
+```
 
 ## Parallelism Support
 
@@ -112,7 +125,7 @@ MTP is compatible with all major parallelism strategies in Megatron-Bridge:
 | Parallelism Type | Support Status | Notes |
 |------------------|----------------|-------|
 | **Tensor Parallelism (TP)** | ✅ Fully Supported | MTP layers are automatically sharded across TP ranks |
-| **Pipeline Parallelism (PP)** | ✅ Supported with Constraint | MTP must be in last pipeline stage (see above) |
+| **Pipeline Parallelism (PP)** | ✅ Supported with Layout Constraint | MTP is colocated with loss by default, or can use a standalone `m` stage through `pipeline_model_parallel_layout` |
 | **Expert Parallelism (EP)** | ✅ Fully Supported | Works with MoE models (DeepSeek-V3, Mixtral, etc.) |
 | **Context Parallelism (CP)** | ✅ Fully Supported | MTP supports long-context training via CP |
 | **Data Parallelism (DP)** | ✅ Fully Supported | Standard data parallelism works transparently |
@@ -217,7 +230,7 @@ Training instability. Try:
 
 ### Expected Log: `MTP layers not found on this PP rank`
 
-This is normal. Only the last pipeline stage builds MTP layers.
+This is normal. Only the rank selected by the pipeline layout builds MTP layers. With the default layout this is the last pipeline stage; with standalone MTP it is the stage containing `m`.
 
 ## Additional Resources
 

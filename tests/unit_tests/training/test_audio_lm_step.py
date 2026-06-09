@@ -129,7 +129,7 @@ def test_get_batch_padding_paths(monkeypatch):
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
         "megatron.core.utils.get_batch_on_this_cp_rank",
-        lambda x: x,
+        lambda x, **kwargs: x,
         raising=True,
     )
 
@@ -180,7 +180,7 @@ def test_get_batch_enable_packing_path(monkeypatch):
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
         "megatron.core.utils.get_batch_on_this_cp_rank",
-        lambda x: x,
+        lambda x, **kwargs: x,
         raising=True,
     )
 
@@ -279,7 +279,7 @@ def test_forward_step(monkeypatch):
     """Test forward_step returns (output_tensor, loss_function) tuple."""
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
-    monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x: x, raising=True)
+    monkeypatch.setattr("megatron.core.utils.get_batch_on_this_cp_rank", lambda x, **kwargs: x, raising=True)
     monkeypatch.setattr("megatron.core.utils.get_model_config", lambda m: m.config, raising=True)
 
     class _Model:
