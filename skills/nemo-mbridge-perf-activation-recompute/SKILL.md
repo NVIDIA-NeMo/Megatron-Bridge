@@ -92,9 +92,14 @@ cfg.model.recompute_num_layers = 4
 ### Performance harness CLI
 
 ```bash
-python scripts/performance/run_performance_workload.py \
-  --recompute_granularity selective \
-  --recompute_modules core_attn layernorm \
+uv run python scripts/performance/run_script.py \
+  -m llama \
+  -mr llama3_8b \
+  --task pretrain \
+  -g h100 \
+  -c bf16 \
+  -ng 8 \
+  --recompute_modules core_attn,layernorm \
   ...
 ```
 
