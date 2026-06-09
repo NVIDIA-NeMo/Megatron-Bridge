@@ -349,8 +349,6 @@ def qwen3_30b_a3b_pretrain_config_b200(
 
     set_qwen3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     return cfg
 
