@@ -55,9 +55,7 @@ class EnergonProvider(DatasetProvider):
             num_workers=self.num_workers,
             pg_collection=context.pg_collection,
         )
-        # Return the EnergonDataloader wrapper (not iter(...)) for the train split so the
-        # downstream RerunDataIterator's `.iterable` retains save_state/restore_state — required
-        # for checkpoint save and resume of the dataloader stream position.
+        # Train split is returned un-wrapped so RerunDataIterator.iterable retains save_state/restore_state.
         return (
             dataset.train_dataloader(),
             iter(dataset.val_dataloader()),
