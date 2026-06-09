@@ -391,12 +391,12 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.train.micro_batch_size == 1
 
 
-def test_deepseek_v4_flash_sft_recipe_is_hardware_agnostic_unfused(monkeypatch: pytest.MonkeyPatch):
+def test_deepseek_v4_flash_sft_recipe_uses_fused_mhc(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
 
-    # use_fused_mhc=False is the validated path and runs on both Hopper and Blackwell
-    # (the fused mHC kernel NaNs in SFT). There is intentionally no separate blackwell recipe.
-    assert cfg.model.use_fused_mhc is False
+    # Fused mHC is enabled (verified clean on Blackwell); the earlier "fused mHC NaN" was a
+    # confound with fused rope. apply_rope_fusion stays False (the real SFT blocker).
+    assert cfg.model.use_fused_mhc is True
     assert cfg.model.apply_rope_fusion is False
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 4
@@ -408,6 +408,6 @@ def test_deepseek_v4_flash_sft_recipe_is_hardware_agnostic_unfused(monkeypatch: 
 def test_deepseek_v4_flash_no_mtp_sft_recipe_disables_mtp(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_no_mtp_sft_config", monkeypatch)
 
-    assert cfg.model.use_fused_mhc is False
+    assert cfg.model.use_fused_mhc is True
     assert cfg.model.mtp_num_layers is None
     assert cfg.model.mtp_loss_scaling_factor == 0.0

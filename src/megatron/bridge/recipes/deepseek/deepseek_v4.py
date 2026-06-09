@@ -305,12 +305,12 @@ def deepseek_v4_flash_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> Co
     cfg.model.params_dtype = torch.bfloat16
     cfg.model.seq_length = 4096
 
-    # --- attention / kernels (Hopper-safe; unfused sparse path) ---
+    # --- attention / kernels: fused mHC (Blackwell-verified), unfused DSA + rope ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.apply_rope_fusion = False
-    cfg.model.use_fused_mhc = False
+    cfg.model.use_fused_mhc = True
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -369,12 +369,12 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     cfg.model.params_dtype = torch.bfloat16
     cfg.model.seq_length = 4096
 
-    # --- attention / kernels (Hopper-safe; unfused sparse path) ---
+    # --- attention / kernels: fused mHC (Blackwell-verified), unfused DSA + rope ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.apply_rope_fusion = False
-    cfg.model.use_fused_mhc = False
+    cfg.model.use_fused_mhc = True
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -419,9 +419,11 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     return cfg
 
 
-# NOTE: there is intentionally NO fused-mHC ("blackwell") SFT recipe. use_fused_mhc=False
-# is the validated path and runs on BOTH Hopper and Blackwell; the fused mHC kernel currently
-# produces NaN in SFT (upstream, see README Blockers), so the recipes above are hardware-agnostic.
+# NOTE: the SFT recipes enable fused mHC (use_fused_mhc=True), verified clean on Blackwell
+# (GB200/GB300). The earlier "fused mHC NaNs in SFT" report was a confound — that run also had
+# apply_rope_fusion=True and the NaN came from fused yarn-rope; an isolated re-run (only
+# use_fused_mhc flipped, rope off) trains clean. apply_rope_fusion stays False (the real SFT
+# blocker). The fused mHC cuTile kernel is sm_100 (Blackwell); on Hopper set use_fused_mhc=False.
 #
 # NOTE: there are intentionally no MXFP8 or Muon *SFT* variants either. Both were prototyped
 # (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — MXFP8 NaNs at iter-2

@@ -57,14 +57,14 @@ Full-parameter SFT of DeepSeek-V4-Flash. See [`slurm_sft.sh`](slurm_sft.sh) for 
 
 | Recipe | MTP | mHC kernel | Hardware |
 |--------|-----|------------|----------|
-| `deepseek_v4_flash_sft_config` | on | unfused (bf16) | Hopper **and** Blackwell |
-| `deepseek_v4_flash_no_mtp_sft_config` | off | unfused (bf16) | Hopper **and** Blackwell |
+| `deepseek_v4_flash_sft_config` | on | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
+| `deepseek_v4_flash_no_mtp_sft_config` | off | fused (cuTile, sm_100) | Blackwell (Hopper: set `use_fused_mhc=False`) |
 
-Both recipes use `use_fused_mhc=False` — the unfused/reference mHC path, which is what we validated on GB300 and runs unchanged on Hopper and Blackwell. The fused mHC kernel (cuTile/sm_100) currently **NaNs in SFT** (upstream — see Blockers), so it is intentionally left off; there is **no separate "blackwell" SFT recipe**. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
+Both recipes enable fused mHC (`use_fused_mhc=True`), verified clean on Blackwell (GB200/GB300). An earlier report that the fused mHC kernel **NaNs in SFT** was a confound — that run also had `apply_rope_fusion=True`, and the NaN came from fused yarn-rope; an isolated re-run (only `use_fused_mhc` flipped, rope off) trains clean (0 NaN incl. iter-2, matching the unfused control). `apply_rope_fusion` stays **False** — fused yarn-rope is the real SFT blocker (see Blockers). The fused mHC cuTile kernel is **sm_100 (Blackwell)**; on Hopper set `use_fused_mhc=False`. The `no_mtp` variant drops the MTP layer and trims `csa_compress_ratios` back to `num_layers` (the bridge appends an MTP-layer ratio that `transformer_config` would otherwise reject).
 
 > There are intentionally **no MXFP8 or Muon SFT recipes**: both were prototyped (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — see Blockers. SFT ships **Adam/bf16**; the pretrain MXFP8/Muon recipes are unaffected.
 
-`slurm_sft.sh` selects the recipe from `MTP` (`on`|`off`) — the recipe is hardware-agnostic; `HARDWARE` (`blackwell`|`hopper`) only sets the node topology. It runs the model at `TP=1, PP=4, EP=8` (32 GPUs), and:
+`slurm_sft.sh` selects the recipe from `MTP` (`on`|`off`); `HARDWARE` (`blackwell`|`hopper`) sets the node topology (on Hopper, also set `use_fused_mhc=False` — the fused mHC kernel is Blackwell-only). It runs the model at `TP=1, PP=4, EP=8` (32 GPUs), and:
 
 1. Imports `deepseek-ai/DeepSeek-V4-Flash` into a Megatron checkpoint (skipped if already present).
 2. Runs full SFT from that checkpoint via `scripts/training/run_recipe.py`.
@@ -82,7 +82,7 @@ GPUs per node differ by hardware, so 32 GPUs means a different node count:
 
 ## SFT Status, TODO & Blockers
 
-Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V4-Flash weights: HF→Megatron import (FP8/MXFP4→bf16) + full SFT, **MTP on and off**, `lm loss` decreasing with no NaN — at SBHD / bf16 / Adam / 4K. The items below are **not** implemented and are gated on upstream Megatron-Core (verified against the code and PRs as of 2026-06-02; tracking: [NVIDIA/Megatron-LM#4468](https://github.com/NVIDIA/Megatron-LM/issues/4468)):
+Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V4-Flash weights: HF→Megatron import (FP8/MXFP4→bf16) + full SFT, **MTP on and off**, `lm loss` decreasing with no NaN — at SBHD / bf16 / Adam / 4K. (Those end-to-end runs used `use_fused_mhc=False`; the recipes now default `use_fused_mhc=True`, verified clean by an isolated GB300 re-run and confirmed by a reviewer on GB200.) The items below are **not** implemented and are gated on upstream Megatron-Core (verified against the code and PRs as of 2026-06-02; tracking: [NVIDIA/Megatron-LM#4468](https://github.com/NVIDIA/Megatron-LM/issues/4468)):
 
 | Capability | Status | Gating | Notes |
 |------------|--------|--------|-------|
@@ -90,14 +90,14 @@ Validated end to end on **8× GB300 (32 GPU, TP1/PP4/EP8)** with real DeepSeek-V
 | CUDA Graphs for DSv4 THD | TODO | (no PR) | Follows THD. |
 | Context parallel / long-context (≥64K) | TODO | draft PR #5087 (depends on #5011) | SFT runs CP=1; this is the Phase-3 long-context target. |
 | MXFP8 / Muon **SFT** | **Fails (upstream); no SFT recipe shipped** | fp8 numerics; Muon + expert-parallel | Both prototyped (mirroring the pretrain recipes) and tested at full scale on 8×GB300 with `use_fused_mhc=False`: **MXFP8 NaNs at iter-2** (fp8 × hash-MoE/ClampedSwiGLU numerics) and **Muon hits an iter-2 `AssertionError`** (Muon + EP-MoE grad bookkeeping not yet supported upstream). Removed from the shipped recipe set; the **pretrain** MXFP8/Muon recipes remain. SFT ships **Adam/bf16**. |
-| Full SFT on **H100-80GB** at 32 GPU | **Does not fit (OOM)** | hardware | TP1/PP4/EP8 ⇒ **DP=1** (optimizer state can't shard across DP); the binding ~33 GiB allocation is the **fp32 master-param buffer**, so plain Adam *and* precision-aware-bf16-moments both OOM (recompute doesn't help — optimizer-, not activation-bound). Use **H200-140 GB** / **Blackwell** (validated / ample headroom), ≥**64 GPU** (PP8 ⇒ DP≥2), or **PEFT/LoRA**. *(A precision-aware optimizer with a bf16+int16-remainder master can shrink the binding buffer — an experimental memory technique under test, not a shipped recipe.)* |
-| Fused mHC kernel in **SFT** | **NaNs (upstream)** | mcore `fused_mhc_kernels.py` + coupled fused yarn-rope | All SFT recipes use the **unfused/reference mHC path** (`use_fused_mhc=False`, validated on GB300). The fused cuTile kernel (sm_100) NaNs at iter-2 (MTP rank) in SFT — **isolated** (the validated Adam/SBHD config with *only* `use_fused_mhc=True` flipped → iter-2 NaN). The failing code is the **upstream** fused mHC / fused-rope kernel (not our verl/MB scope). Note it works in *pretrain* on GB200 but NaNs in *SFT* (loaded-weights regime) — a data point for the kernel owner. (Fine for import/inference.) |
+| Full SFT on **H100-80GB** | needs **≥64 GPU** | hardware | At 32 GPU (TP1/PP4/EP8 ⇒ DP=1) the fp32 master-param buffer can't shard and OOMs. Use **≥64 H100** (PP8 ⇒ DP≥2), or H200-140GB / Blackwell, or PEFT/LoRA. |
+| Fused yarn-rope (`apply_rope_fusion`) in **SFT** | **NaNs (upstream)** | upstream fused MLA yarn-rope kernel | SFT ships `apply_rope_fusion=False`. The fused yarn-rope kernel NaNs at iter-2 in SFT (reproduced standalone). **Fused mHC is fine** — a clean isolation (`use_fused_mhc=True`, rope off) on GB300 trains clean (0 NaN incl. iter-2, matching the unfused control), and a reviewer confirms fused mHC works on GB200 (mcore `954ab1c`). The earlier "fused mHC NaN" was a confound (that run had both fused mHC **and** fused rope on). mHC is now **enabled** in the SFT recipes (Blackwell). |
 
 Already incorporated in the pinned mcore (no action): dense-loss + per-layer rope-type fix (#5018), CSA/HCA (#4458), Hash MoE/ClampedSwiGLU (#4481), MTP+mHC (#4518), fusion kernels (#4894).
 
 ## Container Image
 
-Run inside a container that has the DSv4 prerequisites: Megatron-Bridge on a **`main2dev`** Megatron-LM commit (has both `safe_get_world_size` and the DSv4 `csa.py`/`dsa.py`), the DSA dependency `fast_hadamard_transform`, and a pre-built `helpers_cpp`. The [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo) — or an image built from `docker/Dockerfile.ci` with the submodule checked out to a `main2dev` commit — provides this. Set `slurm_sft.sh`'s `CONTAINER_IMAGE` to the resulting `.sqsh`.
+Run inside a container that has the DSv4 prerequisites: Megatron-Bridge on a **`main2dev`** Megatron-LM commit (validated on `ed6b1f65502aec7f2fe27e14a1245c29e435c2a6`; has both `safe_get_world_size` and the DSv4 `csa.py`/`dsa.py`), the DSA dependency `fast_hadamard_transform`, and a pre-built `helpers_cpp`. The [NeMo Framework container](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo) — or an image built from `docker/Dockerfile.ci` with the submodule checked out to a `main2dev` commit — provides this. Set `slurm_sft.sh`'s `CONTAINER_IMAGE` to the resulting `.sqsh`.
 
 The first import downloads ~285B of HF weights, so point `HF_HOME` at shared scratch (e.g. `/home/scratch.<user>/HF_HOME`) before submitting so the download persists across jobs, and set `HF_TOKEN` if the repo is gated.
 
