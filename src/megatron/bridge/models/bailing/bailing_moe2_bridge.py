@@ -97,6 +97,7 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
+        provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
 
         provider.hidden_dropout = 0.0
