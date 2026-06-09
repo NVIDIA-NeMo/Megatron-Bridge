@@ -17,7 +17,6 @@ import binascii
 import os
 import os.path as osp
 
-import imageio
 import torch
 import torchvision
 
@@ -35,6 +34,10 @@ def rand_name(length=8, suffix=""):
 
 
 def cache_video(tensor, save_file=None, fps=30, suffix=".mp4", nrow=8, normalize=True, value_range=(-1, 1), retry=5):  # noqa: D103
+    # imageio lives in the opt-in 'diffusion' dependency group, excluded from the default
+    # container build; import lazily so the module is importable without it installed.
+    import imageio
+
     # cache file
     cache_file = osp.join("/tmp", rand_name(suffix=suffix)) if save_file is None else save_file
 
