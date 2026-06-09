@@ -468,6 +468,35 @@ jobs:
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
 
+  cicd-import-check:
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    name: Launch_Import_Check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run venv import check
+        shell: bash -e -u -o pipefail {0}
+        env:
+          IMAGE: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/docker/common:/opt/import-check:ro" \
+            "$IMAGE" \
+            python /opt/import-check/import_check.py \
+              --jobs 16 \
+              --skip-file /opt/import-check/import_check_skip.txt
+
   cicd-unit-tests-core:
     if: |
       (
@@ -983,6 +1012,7 @@ jobs:
     needs:
       - pre-flight
       - configure
+      - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
       - cicd-functional-tests-l0

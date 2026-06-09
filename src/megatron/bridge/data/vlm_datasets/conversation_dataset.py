@@ -57,7 +57,15 @@ class VLMConversationDataset(torch.utils.data.Dataset):
         self._processor = processor
         # Choose collate implementation by processor type name when not provided
         collate_key = type(processor).__name__ if processor is not None else "default"
-        selected_impl = collate_impl or COLLATE_FNS.get(collate_key, COLLATE_FNS["default"])  # type: ignore[index]
+        if collate_impl is not None:
+            selected_impl = collate_impl
+        else:
+            if collate_key not in COLLATE_FNS:
+                raise ValueError(
+                    f"No VLM collate function registered for processor type '{collate_key}'. "
+                    "Add it to COLLATE_FNS or pass collate_impl explicitly."
+                )
+            selected_impl = COLLATE_FNS[collate_key]
 
         # If packing requested, only collates that advertise `pack_sequences` support it;
         # bind via functools.partial so the DataLoader just calls f(batch, processor).

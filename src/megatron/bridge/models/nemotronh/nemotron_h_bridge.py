@@ -324,17 +324,33 @@ class NemotronHBridge(MegatronModelBridge):
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
         hf_cfg = super().megatron_to_hf_config(provider)
-        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters and validate
+        # Clean hybrid_override_pattern: strip pipeline-parallel delimiters, split out
+        # unified MTP patterns, and validate the HF-facing layer symbols.
         pattern = hf_cfg.pop("hybrid_override_pattern", None)
         if pattern:
-            clean_pattern = pattern.replace("|", "")
+            pattern_parts = pattern.split("/")
+            clean_pattern = pattern_parts[0].replace("|", "")
+            mtp_patterns = [part for part in pattern_parts[1:] if part]
             valid_chars = {"M", "E", "*", "-"}
-            unknown = set(clean_pattern) - valid_chars
-            if unknown:
-                raise ValueError(
-                    f"Unknown layer type characters in hybrid_override_pattern: {unknown}. "
-                    f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
-                )
+
+            for pattern_name, layer_pattern in [("hybrid_override_pattern", clean_pattern)] + [
+                ("mtp_hybrid_override_pattern", mtp_pattern) for mtp_pattern in mtp_patterns
+            ]:
+                unknown = set(layer_pattern) - valid_chars
+                if unknown:
+                    raise ValueError(
+                        f"Unknown layer type characters in {pattern_name}: {unknown}. "
+                        f"Expected: M (mamba), * (attention), E (moe), - (mlp)."
+                    )
+
+            if mtp_patterns:
+                mtp_pattern = mtp_patterns[0]
+                if any(pattern_part != mtp_pattern for pattern_part in mtp_patterns[1:]):
+                    raise ValueError(
+                        f"All MTP patterns in hybrid_override_pattern must be identical. Got: {mtp_patterns}."
+                    )
+                hf_cfg["mtp_hybrid_override_pattern"] = mtp_pattern
+
             hf_cfg["hybrid_override_pattern"] = clean_pattern
 
         # Add auto_map for custom config/modeling classes
@@ -367,6 +383,7 @@ class NemotronHBridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "backbone.layers.*.mixer.down_proj.weight",
             "decoder.layers.*.self_attention.linear_proj.weight": "backbone.layers.*.mixer.o_proj.weight",
             "decoder.final_norm.weight": "backbone.norm_f.weight",
+            "decoder.final_layernorm.weight": "backbone.norm_f.weight",
             # Fused TE layer norm weights (when using TELayerNormColumnParallelLinear)
             # if the megatron key does not exist for a given layer it will be ignored,
             # so only one of these will be used per layer

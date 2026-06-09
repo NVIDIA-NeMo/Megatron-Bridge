@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 def test_normalized_for_model_shapes():
@@ -23,7 +23,7 @@ def test_normalized_for_model_shapes():
     # image_grid_thw: [B, N, 3] -> [B*N, 3]
     image_grid_thw = torch.randint(0, 10, (2, 3, 3))
 
-    vi = Qwen2_5_VLVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
+    vi = GenericVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
     kwargs = vi.normalized_for_model()
 
     assert "pixel_values" in kwargs
@@ -33,7 +33,7 @@ def test_normalized_for_model_shapes():
 
 
 def test_as_model_kwargs_filters_none():
-    vi = Qwen2_5_VLVisualInputs(pixel_values=None, image_grid_thw=None)
+    vi = GenericVisualInputs(pixel_values=None, image_grid_thw=None)
     kwargs = vi.as_model_kwargs()
     assert kwargs == {}
 
@@ -44,7 +44,7 @@ def test_normalized_for_model_video_shapes():
     # video_grid_thw: [B, N, 3] -> [B*N, 3]
     video_grid_thw = torch.randint(0, 10, (2, 4, 3))
 
-    vi = Qwen2_5_VLVisualInputs(
+    vi = GenericVisualInputs(
         pixel_values_videos=pixel_values_videos,
         video_grid_thw=video_grid_thw,
     )
@@ -63,7 +63,7 @@ def test_normalized_for_model_mixed_image_and_video():
     image_grid_thw = torch.randint(0, 10, (2, 1, 3))
     video_grid_thw = torch.randint(0, 10, (2, 2, 3))
 
-    vi = Qwen2_5_VLVisualInputs(
+    vi = GenericVisualInputs(
         pixel_values=pixel_values,
         pixel_values_videos=pixel_values_videos,
         image_grid_thw=image_grid_thw,
@@ -85,7 +85,7 @@ def test_normalized_for_model_already_flat_passthrough():
     pixel_values_videos = torch.randn(8, 3, 4, 4)
     video_grid_thw = torch.randint(0, 10, (8, 3))
 
-    vi = Qwen2_5_VLVisualInputs(
+    vi = GenericVisualInputs(
         pixel_values=pixel_values,
         pixel_values_videos=pixel_values_videos,
         image_grid_thw=image_grid_thw,
@@ -102,7 +102,7 @@ def test_normalized_for_model_already_flat_passthrough():
 def test_as_model_kwargs_includes_video_fields():
     pixel_values_videos = torch.randn(1, 1, 3, 2, 2)
     video_grid_thw = torch.randint(0, 4, (1, 1, 3))
-    vi = Qwen2_5_VLVisualInputs(
+    vi = GenericVisualInputs(
         pixel_values_videos=pixel_values_videos,
         video_grid_thw=video_grid_thw,
     )

@@ -72,13 +72,53 @@ class Llama3TinyModelProvider(GPTModelProvider):
     vocab_size: int | None = None
 
 
+def create_tiny_llama_hf_source(path: str, seq_length: int) -> None:
+    from tokenizers import Tokenizer
+    from tokenizers.models import WordLevel
+    from tokenizers.pre_tokenizers import Whitespace
+    from transformers import LlamaConfig, LlamaForCausalLM, PreTrainedTokenizerFast
+
+    config = LlamaConfig(
+        vocab_size=10000,
+        hidden_size=Llama3TinyModelProvider.hidden_size,
+        intermediate_size=Llama3TinyModelProvider.ffn_hidden_size,
+        num_hidden_layers=Llama3TinyModelProvider.num_layers,
+        num_attention_heads=Llama3TinyModelProvider.num_attention_heads,
+        num_key_value_heads=Llama3TinyModelProvider.num_query_groups,
+        max_position_embeddings=seq_length,
+        rms_norm_eps=1e-5,
+        rope_theta=500000,
+        attention_bias=False,
+        tie_word_embeddings=False,
+        bos_token_id=2,
+        eos_token_id=3,
+        pad_token_id=1,
+    )
+    model = LlamaForCausalLM(config)
+    model.save_pretrained(path, safe_serialization=True)
+
+    vocab = {"<unk>": 0, "<pad>": 1, "<s>": 2, "</s>": 3}
+    vocab.update({f"token_{idx}": idx for idx in range(4, 10000)})
+    tokenizer_model = Tokenizer(WordLevel(vocab=vocab, unk_token="<unk>"))
+    tokenizer_model.pre_tokenizer = Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=tokenizer_model,
+        unk_token="<unk>",
+        pad_token="<pad>",
+        bos_token="<s>",
+        eos_token="</s>",
+    )
+    tokenizer.save_pretrained(path)
+
+
 class TestPretrainResume:
     """
     Test end to end training with checkpoint functionality.
     """
 
     @pytest.mark.run_only_on("GPU")
-    def test_pretrain_save_load(self, tmp_path):
+    @pytest.mark.parametrize("also_save_hf_checkpoint", [False, True])
+    def test_pretrain_save_load(self, tmp_path, also_save_hf_checkpoint):
         """
         Test end to end training with checkpoint saving and resuming functionality.
         """
@@ -88,21 +128,32 @@ class TestPretrainResume:
 
         checkpoint_dir = os.path.join(shared_base_dir, "checkpoints")
         tensorboard_dir = os.path.join(shared_base_dir, "tensorboard")
+        hf_source_dir = os.path.join(shared_base_dir, "tiny_llama_hf_source")
+
+        global_batch_size = 8
+        micro_batch_size = 1
+        seq_length = 512
+        total_iters = 10
+        checkpoint_iters = 5
 
         if torch.distributed.get_rank() == 0:
             os.makedirs(checkpoint_dir, exist_ok=True)
             os.makedirs(tensorboard_dir, exist_ok=True)
 
+            if also_save_hf_checkpoint:
+                create_tiny_llama_hf_source(hf_source_dir, seq_length)
+
         torch.distributed.barrier()
 
         try:
-            global_batch_size = 8
-            micro_batch_size = 1
-            seq_length = 512
-            total_iters = 10
-            checkpoint_iters = 10
 
-            # First training run - train for 10 iterations and save checkpoint
+            def verify_hf_sidecar(iteration: int) -> None:
+                if also_save_hf_checkpoint and torch.distributed.get_rank() == 0:
+                    hf_dir = os.path.join(checkpoint_dir, f"iter_{iteration:07d}", "hf")
+                    assert os.path.exists(os.path.join(hf_dir, "config.json"))
+                    assert any(name.endswith(".safetensors") for name in os.listdir(hf_dir))
+
+            # First training run - train to checkpoint_iters and save checkpoint
             cfg_first = ConfigContainer(
                 model=Llama3TinyModelProvider(seq_length=seq_length),
                 train=TrainingConfig(
@@ -172,6 +223,8 @@ class TestPretrainResume:
                     fully_parallel_save=True,
                     async_save=True,
                     dist_ckpt_optim_fully_reshardable=True,
+                    also_save_hf_checkpoint=also_save_hf_checkpoint,
+                    hf_source_path=hf_source_dir if also_save_hf_checkpoint else None,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -189,9 +242,11 @@ class TestPretrainResume:
                 storage_writers_per_rank=cfg_first.checkpoint.storage_writers_per_rank,
             )
 
+            verify_hf_sidecar(checkpoint_iters)
+
             torch.distributed.barrier()
 
-            # Second training run - resume from checkpoint and train for remaining 10 iterations
+            # Second training run - resume from checkpoint and train to total_iters
             cfg_second = ConfigContainer(
                 model=Llama3TinyModelProvider(seq_length=seq_length),
                 train=TrainingConfig(
@@ -262,6 +317,8 @@ class TestPretrainResume:
                     fully_parallel_save=True,
                     async_save=True,
                     dist_ckpt_optim_fully_reshardable=True,
+                    also_save_hf_checkpoint=also_save_hf_checkpoint,
+                    hf_source_path=hf_source_dir if also_save_hf_checkpoint else None,
                 ),
                 rng=RNGConfig(seed=1234),
             )
@@ -278,6 +335,7 @@ class TestPretrainResume:
                 ckpt_format=cfg_second.checkpoint.ckpt_format,
                 storage_writers_per_rank=cfg_second.checkpoint.storage_writers_per_rank,
             )
+            verify_hf_sidecar(total_iters)
 
         finally:
             clear_directories(shared_base_dir)

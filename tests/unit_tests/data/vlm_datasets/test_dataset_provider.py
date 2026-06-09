@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 
 from megatron.bridge.training.config import DatasetBuildContext
@@ -32,13 +33,13 @@ class _DummyTokenizer:
         return {"input_ids": ids}
 
 
-class _DummyProcessor:
+class Gemma3Processor:
     def __init__(self):
         self.tokenizer = _DummyTokenizer()
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
         if tokenize:
-            # Return minimal dict used by default_collate_fn
+            # Return minimal dict used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
             pixel_values = torch.randn(1, 1, 3, 4, 4)
             return {
@@ -61,15 +62,10 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
-def test_vlm_conversation_dataset_basic(monkeypatch):
-    # Import locally to ensure monkeypatches apply to module under test
-    import megatron.bridge.data.vlm_datasets.collate as collate
+def test_vlm_conversation_dataset_basic():
     from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 
-    # Enable collate dependencies
-    monkeypatch.setattr(collate, "HAVE_QWEN_VL_UTILS", True)
-
-    proc = _DummyProcessor()
+    proc = Gemma3Processor()
     ds = VLMConversationDataset(base_examples=[_example()], target_length=3, processor=proc, collate_impl=None)
     assert len(ds) == 3
     # Wraps over base list
@@ -79,6 +75,21 @@ def test_vlm_conversation_dataset_basic(monkeypatch):
     assert set(["input_ids", "labels", "loss_mask", "position_ids", "visual_inputs"]).issubset(batch.keys())
 
 
+def test_vlm_conversation_dataset_rejects_unknown_processor_without_collate_impl():
+    from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+
+    class UnknownProcessor:
+        pass
+
+    with pytest.raises(ValueError, match="No VLM collate function registered"):
+        VLMConversationDataset(
+            base_examples=[_example()],
+            target_length=1,
+            processor=UnknownProcessor(),
+            collate_impl=None,
+        )
+
+
 def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     # Arrange monkeypatches: stub AutoProcessor and maker
     # Stub AutoProcessor.from_pretrained to avoid network
@@ -86,7 +97,7 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
 
     from megatron.bridge.data.vlm_datasets import hf_provider as dp_mod
 
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: _DummyProcessor()))
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
 
     # Provide a tiny maker registry by monkeypatching _get_maker to return our lambda
     def _fake_get_maker(self):
