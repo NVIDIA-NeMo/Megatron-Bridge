@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Omni Energon task encoder -- extends HFEncoderVLMTaskEncoder with audio.
+"""Nemotron Omni Energon task encoder -- extends HFTaskEncoder with audio.
 
 Adds mel spectrogram extraction and ``<so_embedding>`` token insertion so that
 the training step receives ``sound_clips`` / ``sound_length`` alongside the

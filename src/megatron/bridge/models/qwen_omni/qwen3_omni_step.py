@@ -16,13 +16,14 @@
 
 from __future__ import annotations
 
+import math
 from functools import partial
 from typing import TYPE_CHECKING, Any, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -157,6 +158,59 @@ def get_batch(data_iterator: Iterable, cfg: "ConfigContainer", use_mtp: bool = F
     )
 
 
+def pad_batch_sequences_for_context_parallel(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    position_ids: torch.Tensor | None,
+    pg_collection,
+    *,
+    force_to_seq_length: bool = False,
+    seq_length: int | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None, torch.Tensor | None]:
+    """Pad dense sequence tensors before Megatron's CP zigzag split.
+
+    Dense CP partitions each sequence into ``2 * cp_size`` chunks.  Padding here
+    keeps the step-level tensors compatible with Megatron's CP slicing while the
+    full ``input_ids`` tensor remains available for model-internal mRoPE.
+    """
+
+    tp_size = pg_collection.tp.size()
+    cp_size = pg_collection.cp.size()
+    divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+    target_len = math.ceil(tokens.size(1) / divisible_by) * divisible_by
+    if force_to_seq_length:
+        if seq_length is None:
+            raise ValueError("seq_length must be set when force_to_seq_length=True")
+        if seq_length % divisible_by != 0:
+            raise ValueError(
+                f"seq_length={seq_length} must be divisible by TP*CP*2={divisible_by} for dense context parallelism"
+            )
+        target_len = seq_length
+
+    tokens = pad_or_truncate_2d_to_len(tokens, target_len, target_len, pad_value=0)
+    labels = pad_or_truncate_2d_to_len(labels, target_len, target_len, pad_value=-100)
+    loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len, target_len, pad_value=0)
+    attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len, target_len)
+    position_ids = pad_or_truncate_pos_to_len(position_ids, target_len, target_len)
+    return tokens, labels, loss_mask, attention_mask, position_ids
+
+
+def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[str, Any]:
+    """Slice dense CP tensors, including 2D attention masks from VLM datasets."""
+
+    attention_mask = batch.get("attention_mask")
+    if attention_mask is not None and attention_mask.dim() == 2:
+        batch = dict(batch)
+        batch["_attention_mask_2d"] = batch.pop("attention_mask")
+        batch = get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+        batch["attention_mask"] = batch.pop("_attention_mask_2d")
+        return batch
+
+    return get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+
+
 def forward_step(
     state: "GlobalState",
     data_iterator: Iterable,
@@ -179,8 +233,21 @@ def forward_step(
         )
     timers("batch-generator").stop()
 
+    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    if pack_sequences_in_batch:
+        raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
+
     if pg_collection.cp.size() > 1:
-        raise NotImplementedError("Qwen3-Omni training supports SP/EP, but CP is not supported yet.")
+        tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequences_for_context_parallel(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            pg_collection,
+            force_to_seq_length=pg_collection.pp.size() > 1 or pg_collection.ep.size() > 1,
+            seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
+        )
 
     # Accumulate FLOPS metadata across micro-batches. Qwen3-Omni does not pack
     # within a batch, so cu_seqlens is absent and the helper falls back to
@@ -202,10 +269,17 @@ def forward_step(
         "labels": labels,
         "loss_mask": loss_mask,
     }
+
+    if pg_collection.cp.size() > 1:
+        original_tokens = tokens.clone()
+        forward_args = _get_dense_batch_on_this_cp_rank(forward_args, cp_group=pg_collection.cp)
+        forward_args["input_ids"] = original_tokens
+
     forward_args.update(multimodal_inputs)
 
     # The Omni thinker computes multimodal mRoPE internally from full input_ids.
     forward_args["position_ids"] = None
+    loss_mask = forward_args["loss_mask"]
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
@@ -215,7 +289,11 @@ def forward_step(
                 "overlap_moe_expert_parallel_comm must be enabled to return the schedule plan"
             )
             schedule_plan = model.build_schedule_plan(
-                tokens, position_ids, attention_mask, labels=labels, loss_mask=loss_mask
+                forward_args["input_ids"],
+                forward_args["position_ids"],
+                forward_args["attention_mask"],
+                labels=forward_args["labels"],
+                loss_mask=loss_mask,
             )
             loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function

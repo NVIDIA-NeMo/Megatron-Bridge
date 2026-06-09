@@ -79,8 +79,6 @@ dependencies = [
     "diffusers>=0.36.0",
     "peft>=0.18.0",
     "einops",
-    "imageio",
-    "imageio-ffmpeg",
     "omegaconf>=2.3.0",
     "tensorboard>=2.19.0",
     "typing-extensions",
@@ -109,6 +107,7 @@ dependencies = [
 version = { attr = "megatron.bridge.package_info.__version__" }
 
 [tool.uv]
+managed = true
 # Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
 # mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
 # but kept here so they build correctly when installed.
@@ -124,7 +123,9 @@ no-build-isolation-package = [
 ]
 prerelease = "allow"
 override-dependencies = [
-    "av; sys_platform == 'never'",                          # Optional and addresses CVE from transitive dependency
+    "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
+    "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
+    "imageio-ffmpeg; sys_platform == 'never'",              # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
@@ -197,6 +198,14 @@ dev = [
     "mypy>=1.8.0",
 ]
 build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
+# CVE-carrying WAN diffusion codecs, needed only by WAN video caching
+# (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
+# in the default build by the [tool.uv] override-dependencies above (each marked
+# `sys_platform == 'never'`), so they are never installed and appear only as `never`-marked
+# edges in uv.lock — keeping them out of both the image and SBOM/manifest scans. Install
+# them at test time with scripts/install_diffusion_deps.sh. This group is kept for
+# documentation only; `uv sync --group diffusion` will NOT install them on Linux.
+diffusion = ["imageio", "imageio-ffmpeg", "av"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"

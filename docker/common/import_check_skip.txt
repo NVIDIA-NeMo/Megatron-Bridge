@@ -1,0 +1,35 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Modules exempt from docker/common/import_check.py. A Dockerfile RUN executes
+# without a GPU, driver, or optional host libraries, so these modules raise at
+# import even though the package is installed correctly. Every entry MUST carry
+# a justification; the check fails on any import error that is not listed here.
+
+# Require an NVIDIA driver / libcuda.so.1, present only at runtime on a GPU host:
+deep_ep
+deep_ep_cpp
+hybrid_ep_cpp
+torch_tensorrt
+quack  # imports nvidia-cutlass-dsl MLIR libs, which dlopen libcuda at import
+
+# Requires the libfuse system library (multi-storage-client FUSE backend; optional):
+mfusepy
+
+# Legacy DALI/MXNet helper script that imports mxnet, which is not installed:
+rec2idx
+
+# Pytest plugin shipped by `hypothesis`; eagerly imports `pytest`, which is not
+# installed in the fw_base/fw_final runtime venvs (test-time-only dependency):
+_hypothesis_pytestplugin

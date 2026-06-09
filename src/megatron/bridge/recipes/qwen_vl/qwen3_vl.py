@@ -31,9 +31,9 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.utils import DatasetBuildContext
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
+from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE

@@ -185,9 +185,9 @@ class Step35ModelProvider(GPTModelProvider):
     Adds Step3.5-specific fields on top of ``GPTModelProvider``:
 
     * ``layer_types``: 0-indexed list of attention types (e.g.
-      ``"full_attention"`` / ``"sliding_attention"``), one entry per main
-      decoder layer. Read by ``Step35DecoderLayer`` to decide whether the
-      current layer is a sliding-attention layer.
+      ``"full_attention"`` / ``"sliding_attention"``). The provider may carry
+      main decoder entries plus MTP entries because ``Step35DecoderLayer``
+      indexes MTP layers after ``config.num_layers``.
     * ``attention_other_setting``: HF dict that enables and describes the
       sliding-attention override.
     * ``sliding_attention_setting``: normalized Megatron-facing shape overrides
