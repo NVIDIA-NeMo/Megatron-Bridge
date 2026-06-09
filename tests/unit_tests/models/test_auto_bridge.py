@@ -875,6 +875,7 @@ class TestAutoBridge:
                         mock_megatron_model,
                         cpu=False,
                         show_progress=False,
+                        exclude_adapter_base_prefixes=None,
                     )
 
     def test_get_causal_lm_architecture(self):
