@@ -230,7 +230,7 @@ The plot below overlays the `lm loss` curves from the Standard and MIMO runs.
 The curves track each other over the 400-iteration window, with no systematic
 drift between the two paths.
 
-![Qwen3.5-VL 27B loss parity between Standard and MegatronMIMO](figures/qwen35_vl_loss_parity_400iter.svg)
+![Qwen3.5-VL 27B loss parity between Standard and MegatronMIMO](figures/qwen35_vl_loss_parity_400iter.png)
 
 This is the expected loss-parity result for the validated 27B setup: MIMO uses a
 different rank layout, but it trains from the same checkpoint and follows the
