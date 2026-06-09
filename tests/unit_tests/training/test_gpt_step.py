@@ -82,6 +82,7 @@ def _make_cfg(
     skip_getting_attention_mask_from_dataset=True,
     pipeline_model_parallel_layout=None,
     pipeline_model_parallel_size=1,
+    virtual_pipeline_model_parallel_size=None,
     mtp_num_layers=0,
 ):
     cfg = type("Cfg", (), {})()
@@ -99,6 +100,7 @@ def _make_cfg(
         {
             "pipeline_model_parallel_layout": pipeline_model_parallel_layout,
             "pipeline_model_parallel_size": pipeline_model_parallel_size,
+            "virtual_pipeline_model_parallel_size": virtual_pipeline_model_parallel_size,
             "mtp_num_layers": mtp_num_layers,
         },
     )()
@@ -137,14 +139,23 @@ class _NoopTimer:
 
 
 class _RecordingModel:
-    def __init__(self, *, mtp_process=False, output=None):
-        self.mtp_process = mtp_process
+    def __init__(self, *, vp_stage=None, output=None):
+        self.vp_stage = vp_stage
         self.output = output if output is not None else torch.tensor(1.0)
         self.forward_kwargs = None
 
     def __call__(self, **kwargs):
         self.forward_kwargs = kwargs
         return self.output
+
+
+class _VpStageWrapper:
+    def __init__(self, module):
+        self.vp_stage = None
+        self.module = module
+
+    def __call__(self, **kwargs):
+        return self.module(**kwargs)
 
 
 class TestGetBatch:
@@ -352,8 +363,8 @@ class TestGetBatch:
         assert out_attention_mask is None
         assert out_position_ids is None
 
-    def test_forward_common_uses_model_chunk_mtp_process_for_vpp_stage(self, monkeypatch):
-        """Interleaved MTP chunks load tokens even when global VPP rank is unset."""
+    def test_forward_common_uses_model_chunk_vp_stage_for_vpp_stage(self, monkeypatch):
+        """Interleaved MTP chunks load tokens using the model chunk VP stage."""
         _set_last_pp_stage(monkeypatch)
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
@@ -376,11 +387,15 @@ class TestGetBatch:
             "attention_mask": None,
             "position_ids": position_ids,
         }
-        model = _RecordingModel(mtp_process=True)
+        layout = [[] for _ in range(16)]
+        layout[15] = ["mtp"]
+        inner_model = _RecordingModel(vp_stage=1)
+        model = _VpStageWrapper(inner_model)
         state = Mock()
         state.cfg = _make_cfg(
-            pipeline_model_parallel_layout="Et*4|(t*4|)*14tmL",
+            pipeline_model_parallel_layout=layout,
             pipeline_model_parallel_size=8,
+            virtual_pipeline_model_parallel_size=2,
             mtp_num_layers=1,
         )
         state.timers = _NoopTimer()
@@ -405,13 +420,13 @@ class TestGetBatch:
 
         assert torch.equal(output, torch.tensor(1.0))
         assert torch.equal(returned_loss_mask, loss_mask)
-        assert model.forward_kwargs is not None
-        assert torch.equal(model.forward_kwargs["input_ids"], tokens)
-        assert torch.equal(model.forward_kwargs["position_ids"], position_ids)
-        assert torch.equal(model.forward_kwargs["labels"], labels)
+        assert inner_model.forward_kwargs is not None
+        assert torch.equal(inner_model.forward_kwargs["input_ids"], tokens)
+        assert torch.equal(inner_model.forward_kwargs["position_ids"], position_ids)
+        assert torch.equal(inner_model.forward_kwargs["labels"], labels)
 
-    def test_forward_common_uses_model_chunk_mtp_process_instead_of_layout_fallback(self, monkeypatch):
-        """A non-MTP model chunk must not load tokens just because layout inference would."""
+    def test_forward_common_uses_model_chunk_vp_stage_instead_of_global_vpp_rank(self, monkeypatch):
+        """The model chunk VP stage must override stale global VPP rank state."""
         _set_last_pp_stage(monkeypatch)
         _set_distributed_initialized(monkeypatch)
         monkeypatch.setattr(
@@ -436,11 +451,12 @@ class TestGetBatch:
         }
         layout = [[] for _ in range(16)]
         layout[15] = ["mtp"]
-        model = _RecordingModel(mtp_process=False)
+        model = _RecordingModel(vp_stage=0)
         state = Mock()
         state.cfg = _make_cfg(
             pipeline_model_parallel_layout=layout,
             pipeline_model_parallel_size=8,
+            virtual_pipeline_model_parallel_size=2,
             mtp_num_layers=1,
         )
         state.timers = _NoopTimer()
@@ -464,11 +480,11 @@ class TestGetBatch:
         output, returned_loss_mask = _forward_step_common(state, _Iterator(batch), model)
 
         assert torch.equal(output, torch.tensor(1.0))
-        assert torch.equal(returned_loss_mask, loss_mask)
+        assert returned_loss_mask is None
         assert model.forward_kwargs is not None
         assert model.forward_kwargs["input_ids"] is None
         assert model.forward_kwargs["position_ids"] is None
-        assert torch.equal(model.forward_kwargs["labels"], labels)
+        assert model.forward_kwargs["labels"] is None
 
     def test_forward_common_passes_packed_seq_params_on_middle_pp_stage(self, monkeypatch):
         """Forward path must pass packed metadata on middle PP stages."""
@@ -499,7 +515,7 @@ class TestGetBatch:
         monkeypatch.setattr("megatron.bridge.training.gpt_step.get_pg_collection", lambda model: _MockPGCollection())
         monkeypatch.setattr(
             "megatron.bridge.training.gpt_step.get_batch",
-            lambda data_iterator, cfg, use_mtp, *, pg_collection, include_mtp_inputs=None: (
+            lambda data_iterator, cfg, use_mtp, *, pg_collection, vp_stage=None: (
                 tokens,
                 labels,
                 loss_mask,
