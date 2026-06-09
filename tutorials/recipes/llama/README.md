@@ -122,10 +122,10 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 ```yaml
 # Each section maps to a ConfigContainer field
 dataset:                           # FinetuningDatasetConfig
-  data_path: /path/to/finetuning_dataset.jsonl
+  dataset_root: /path/to/finetuning_dataset_dir
   seq_length: 4096
 
-train:                             # TrainingConfig  
+train:                             # TrainingConfig
   train_iters: 100
   global_batch_size: 128
 
