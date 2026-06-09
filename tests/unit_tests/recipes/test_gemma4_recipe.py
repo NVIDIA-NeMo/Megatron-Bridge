@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the Gemma 4 E4B pre-training recipe.
-
-Asserts that the critical provider fields in ``gemma4_e4b_pretrain_config``
-stay in sync with what ``Gemma4Bridge._build_dense_provider`` would derive
-from the real HF config, so silent drift is caught at unit-test time.
-"""
+"""Unit tests for the Gemma 4 E4B pre-training recipe."""
 
 import importlib.util
+import os
 import sys
 import types
 from pathlib import Path
@@ -43,7 +39,24 @@ def _minimal_pretrain_common():
     return cfg
 
 
-def _load_gemma4_recipe_config():
+class _FakeAutoBridge:
+    def __init__(self, provider):
+        self.provider = provider
+        self.hf_paths = []
+        self.load_weights = []
+        self.conversion_modes = []
+
+    def from_hf_pretrained(self, hf_path):
+        self.hf_paths.append(hf_path)
+        self.conversion_modes.append(os.environ.get("GEMMA4_CONVERSION_MODE"))
+        return self
+
+    def to_megatron_provider(self, load_weights=True):
+        self.load_weights.append(load_weights)
+        return self.provider
+
+
+def _load_gemma4_recipe_module():
     """Load the Gemma4 recipe without importing the umbrella recipes package."""
     bridge_root = Path(__file__).resolve().parents[3]
     recipes_root = bridge_root / "src" / "megatron" / "bridge" / "recipes"
@@ -69,12 +82,13 @@ def _load_gemma4_recipe_config():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    return module.gemma4_e4b_pretrain_config
+    return module
 
 
 # ---------------------------------------------------------------------------
 # Minimal HF config that mirrors google/gemma-4-E4B-it
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def hf_config_e4b():
@@ -109,13 +123,52 @@ def bridge_provider(hf_config_e4b):
 
 
 @pytest.fixture
-def recipe_provider():
-    return _load_gemma4_recipe_config()().model
+def recipe_module():
+    return _load_gemma4_recipe_module()
+
+
+@pytest.fixture
+def fake_autobridge(recipe_module, hf_config_e4b, monkeypatch):
+    provider = Gemma4Bridge()._build_dense_provider(hf_config_e4b)
+    fake = _FakeAutoBridge(provider)
+    monkeypatch.setattr(recipe_module, "AutoBridge", fake)
+    return fake
+
+
+@pytest.fixture
+def recipe_config(recipe_module, fake_autobridge):
+    return recipe_module.gemma4_e4b_pretrain_config()
+
+
+@pytest.fixture
+def recipe_provider(recipe_config):
+    return recipe_config.model
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
+
+class TestGemma4RecipeAutoBridge:
+    def test_recipe_uses_autobridge_for_text_provider(self, recipe_module, fake_autobridge, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "vl")
+
+        cfg = recipe_module.gemma4_e4b_pretrain_config()
+
+        assert isinstance(cfg.model, Gemma4DenseProvider)
+        assert fake_autobridge.hf_paths == [recipe_module._GEMMA4_E4B_HF_PATH]
+        assert fake_autobridge.load_weights == [False]
+        assert fake_autobridge.conversion_modes == ["text"]
+        assert os.environ["GEMMA4_CONVERSION_MODE"] == "vl"
+
+    def test_recipe_clears_scoped_text_mode_when_unset(self, recipe_module, fake_autobridge, monkeypatch):
+        monkeypatch.delenv("GEMMA4_CONVERSION_MODE", raising=False)
+
+        recipe_module.gemma4_e4b_pretrain_config()
+
+        assert fake_autobridge.conversion_modes == ["text"]
+        assert "GEMMA4_CONVERSION_MODE" not in os.environ
 
 
 class TestGemma4RecipeProviderType:
@@ -124,6 +177,21 @@ class TestGemma4RecipeProviderType:
 
     def test_bridge_returns_dense_provider(self, bridge_provider):
         assert isinstance(bridge_provider, Gemma4DenseProvider)
+
+
+class TestGemma4RecipeOverrides:
+    def test_recipe_runtime_overrides(self, recipe_config):
+        assert recipe_config.tokenizer.tokenizer_type == "NullTokenizer"
+        assert recipe_config.tokenizer.tokenizer_model is None
+        assert recipe_config.tokenizer.vocab_size == 32000
+        assert recipe_config.dataset.blend is None
+        assert recipe_config.dataset.seq_length == 4096
+        assert recipe_config.model.seq_length == 4096
+        assert recipe_config.model.tensor_model_parallel_size == 2
+        assert recipe_config.model.pipeline_model_parallel_size == 1
+        assert recipe_config.model.transformer_impl == "local"
+        assert recipe_config.model.masked_softmax_fusion is False
+        assert recipe_config.model.gradient_accumulation_fusion is False
 
 
 class TestGemma4RecipeProviderDrift:

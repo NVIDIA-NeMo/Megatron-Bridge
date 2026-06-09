@@ -14,12 +14,31 @@
 
 """Gemma 4 Dense (E4B) pre-training recipe."""
 
+import os
+from contextlib import contextmanager
+
 import torch
 
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
+
+
+_GEMMA4_E4B_HF_PATH = "google/gemma-4-E4B-it"
+
+
+@contextmanager
+def _gemma4_text_conversion_mode():
+    previous_mode = os.environ.get("GEMMA4_CONVERSION_MODE")
+    os.environ["GEMMA4_CONVERSION_MODE"] = "text"
+    try:
+        yield
+    finally:
+        if previous_mode is None:
+            os.environ.pop("GEMMA4_CONVERSION_MODE", None)
+        else:
+            os.environ["GEMMA4_CONVERSION_MODE"] = previous_mode
 
 
 def gemma4_e4b_pretrain_config() -> ConfigContainer:
@@ -44,37 +63,10 @@ def gemma4_e4b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = Gemma4DenseProvider(
-        num_layers=42,
-        hidden_size=2560,
-        ffn_hidden_size=10240,
-        num_attention_heads=8,
-        num_query_groups=2,
-        kv_channels=256,
-        global_kv_channels=512,
-        num_global_query_groups=2,
-        seq_length=4096,
-        vocab_size=262143,
-        make_vocab_size_divisible_by=128,
-        normalization="RMSNorm",
-        layernorm_epsilon=1e-6,
-        gated_linear_unit=True,
-        add_bias_linear=False,
-        attention_dropout=0.0,
-        hidden_dropout=0.0,
-        # Dual RoPE: sliding θ=10 000, full θ=1 000 000 (partial rotation)
-        sliding_window_rope_base=10000.0,
-        full_attention_rope_base=1000000.0,
-        full_attention_rope_partial_factor=0.25,
-        window_size=(511, 0),
-        window_attn_skip_freq=6,
-        num_kv_shared_layers=18,
-        per_layer_embed_vocab_size=262144,
-        per_layer_embed_dim=256,
-        bf16=True,
-        params_dtype=torch.bfloat16,
-        autocast_dtype=torch.bfloat16,
-    )
+    # gemma-4-E4B-it is a ConditionalGeneration HF model; force the text-only
+    # Gemma4 bridge path so this pre-training recipe uses Gemma4DenseProvider.
+    with _gemma4_text_conversion_mode():
+        cfg.model = AutoBridge.from_hf_pretrained(_GEMMA4_E4B_HF_PATH).to_megatron_provider(load_weights=False)
 
     # Tokenizer — NullTokenizer for mock pre-training; override for real data
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -93,6 +85,7 @@ def gemma4_e4b_pretrain_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = False
+    cfg.model.seq_length = 4096
 
     # Training
     cfg.train.train_iters = 1000
