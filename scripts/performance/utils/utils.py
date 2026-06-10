@@ -61,8 +61,8 @@ class WorkloadBaseConfig:
     fine_grained_activation_offloading: Optional[bool] = None
     offload_modules: Optional[List[str]] = None
 
-    outer_dp_sharding_strategy: str = "no_shard"
-    num_distributed_optimizer_instances: int = 1
+    outer_dp_sharding_strategy: Optional[str] = None
+    num_distributed_optimizer_instances: Optional[int] = None
 
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
