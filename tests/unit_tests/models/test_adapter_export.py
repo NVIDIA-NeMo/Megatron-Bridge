@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 from contextlib import nullcontext
@@ -942,16 +943,12 @@ class TestExportAdapterCkpt:
         assert provider.params_dtype == torch.float32
         provider.finalize.assert_called_once()
 
-    def test_custom_dtype_sets_provider_and_output_dtype(self, bridge, ckpt_dir, tmp_path):
-        """Requested dtype should control materialization and saved adapter tensors."""
-        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out", dtype="bf16")
-
-        provider = bridge.to_megatron_provider.return_value
-        assert provider.pipeline_dtype == torch.bfloat16
-        assert provider.params_dtype == torch.bfloat16
+    def test_export_adapter_ckpt_does_not_pass_output_dtype(self, bridge, ckpt_dir, tmp_path):
+        """CPU checkpoint export should keep full precision and not override saved dtype."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
         save_kwargs = bridge.save_hf_adapter.call_args.kwargs
-        assert save_kwargs["output_dtype"] == torch.bfloat16
+        assert "output_dtype" not in save_kwargs
 
     def test_exclude_adapter_base_prefixes_passed_to_save(self, bridge, ckpt_dir, tmp_path):
         """Adapter-base exclusions should be threaded from checkpoint export to save_hf_adapter."""
@@ -1004,6 +1001,24 @@ class TestExportAdapterCkpt:
 
 
 class TestExportAdapterScript:
+    def test_parse_dtype_uses_shared_dtype_map(self):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._parse_dtype("bf16") == torch.bfloat16
+        assert export_adapter._parse_dtype("torch.float32") == torch.float32
+
+    def test_parse_dtype_rejects_invalid_dtype(self):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(argparse.ArgumentTypeError, match="Unknown dtype"):
+            export_adapter._parse_dtype("float8-ish")
+
+    def test_parse_dtype_rejects_unsupported_export_dtype(self):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(argparse.ArgumentTypeError, match="Unsupported adapter export dtype"):
+            export_adapter._parse_dtype("fp8")
+
     def test_load_lora_config_falls_back_to_defaults_on_parse_error(self, tmp_path, caplog):
         from examples.conversion.adapter import export_adapter
 
@@ -1068,6 +1083,66 @@ class TestExportAdapterScript:
         args = SimpleNamespace(tp=tp, pp=pp, ep=ep, etp=etp)
 
         assert export_adapter._uses_distributed_export(args) is expected
+
+    def test_main_rejects_non_fp32_dtype_for_cpu_export(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.bfloat16,
+            exclude_adapter_base_prefix=[],
+        )
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.parse_args", return_value=args),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_pretrained") as mock_from_hf,
+            pytest.raises(ValueError, match="only supported by distributed GPU export"),
+        ):
+            export_adapter.main()
+
+        mock_from_hf.assert_not_called()
+
+    def test_main_cpu_export_does_not_pass_dtype_to_autobridge(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=["mtp.layers"],
+        )
+        bridge = MagicMock()
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.parse_args", return_value=args),
+            patch(
+                "examples.conversion.adapter.export_adapter.AutoBridge.from_hf_pretrained",
+                return_value=bridge,
+            ) as mock_from_hf,
+        ):
+            export_adapter.main()
+
+        mock_from_hf.assert_called_once_with("test/model", trust_remote_code=False)
+        bridge.export_adapter_ckpt.assert_called_once_with(
+            peft_checkpoint=str(tmp_path),
+            output_path=tmp_path / "out",
+            exclude_adapter_base_prefixes=("mtp.layers",),
+        )
 
     def test_configure_cuda_device_requires_cuda(self):
         from examples.conversion.adapter import export_adapter

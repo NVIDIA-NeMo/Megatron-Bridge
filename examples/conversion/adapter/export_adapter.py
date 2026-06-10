@@ -35,7 +35,6 @@ Usage::
         --hf-model-path meta-llama/Llama-3.2-1B \\
         --lora-checkpoint /path/to/finetune_ckpt \\
         --output ./my_adapter \\
-        --dtype bfloat16 \\
         --exclude-adapter-base-prefix mtp.layers
 """
 
@@ -58,29 +57,26 @@ from megatron.bridge.training.checkpointing import (
     apply_peft_adapter_filter_to_state_dict,
 )
 from megatron.bridge.training.utils.checkpoint_utils import read_run_config
+from megatron.bridge.utils.activation_map import str_to_dtype
 from megatron.bridge.utils.common_utils import get_local_rank_preinit
 
 
 logger = logging.getLogger(__name__)
 
-_DTYPE_ALIASES: dict[str, torch.dtype] = {
-    "bf16": torch.bfloat16,
-    "bfloat16": torch.bfloat16,
-    "fp16": torch.float16,
-    "float16": torch.float16,
-    "half": torch.float16,
-    "fp32": torch.float32,
-    "float": torch.float32,
-    "float32": torch.float32,
-}
+_SUPPORTED_EXPORT_DTYPES = {torch.float32, torch.float16, torch.bfloat16}
 
 
 def _parse_dtype(dtype: str) -> torch.dtype:
-    normalized_dtype = dtype.lower()
-    if normalized_dtype not in _DTYPE_ALIASES:
-        supported = ", ".join(sorted(_DTYPE_ALIASES))
-        raise argparse.ArgumentTypeError(f"unsupported dtype '{dtype}'. Supported values: {supported}")
-    return _DTYPE_ALIASES[normalized_dtype]
+    try:
+        parsed_dtype = str_to_dtype(dtype.lower())
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(str(err)) from err
+    if parsed_dtype not in _SUPPORTED_EXPORT_DTYPES:
+        supported = ", ".join(sorted(str(dtype).replace("torch.", "") for dtype in _SUPPORTED_EXPORT_DTYPES))
+        raise argparse.ArgumentTypeError(
+            f"Unsupported adapter export dtype: {parsed_dtype}. Supported values: {supported}"
+        )
+    return parsed_dtype
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,7 +101,7 @@ def parse_args() -> argparse.Namespace:
         "--dtype",
         type=_parse_dtype,
         default=torch.float32,
-        help="Dtype used for model materialization and saved adapter tensors.",
+        help="Dtype used for distributed GPU export materialization and saved adapter tensors.",
     )
     parser.add_argument(
         "--exclude-adapter-base-prefix",
@@ -240,11 +236,12 @@ def main() -> None:
     if _uses_distributed_export(args):
         _export_adapter_distributed(args)
     else:
+        if args.dtype != torch.float32:
+            raise ValueError("--dtype is only supported by distributed GPU export; CPU export uses float32.")
         bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=args.trust_remote_code)
         bridge.export_adapter_ckpt(
             peft_checkpoint=args.lora_checkpoint,
             output_path=args.output,
-            dtype=args.dtype,
             exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
         )
 

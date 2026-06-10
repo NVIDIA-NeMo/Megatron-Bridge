@@ -50,6 +50,7 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.utils.activation_map import str_to_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -133,30 +134,21 @@ def _drop_readonly_config_properties(
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
 
 
-_ADAPTER_EXPORT_DTYPE_ALIASES: dict[str, torch.dtype] = {
-    "bf16": torch.bfloat16,
-    "bfloat16": torch.bfloat16,
-    "fp16": torch.float16,
-    "float16": torch.float16,
-    "half": torch.float16,
-    "fp32": torch.float32,
-    "float": torch.float32,
-    "float32": torch.float32,
-}
+_ADAPTER_EXPORT_DTYPES = {torch.float32, torch.float16, torch.bfloat16}
 
 
 def _normalize_adapter_export_dtype(dtype: str | torch.dtype) -> torch.dtype:
     """Resolve adapter export dtype aliases to ``torch.dtype`` values."""
-    if isinstance(dtype, torch.dtype):
-        if dtype in _ADAPTER_EXPORT_DTYPE_ALIASES.values():
-            return dtype
-        raise ValueError(f"Unsupported adapter export dtype: {dtype}")
+    try:
+        normalized_dtype = dtype if isinstance(dtype, torch.dtype) else str_to_dtype(dtype.lower())
+    except ValueError as err:
+        supported = ", ".join(sorted(str(dtype).replace("torch.", "") for dtype in _ADAPTER_EXPORT_DTYPES))
+        raise ValueError(f"Unsupported adapter export dtype '{dtype}'. Supported values: {supported}") from err
 
-    normalized_dtype = dtype.lower()
-    if normalized_dtype not in _ADAPTER_EXPORT_DTYPE_ALIASES:
-        supported = ", ".join(sorted(_ADAPTER_EXPORT_DTYPE_ALIASES))
-        raise ValueError(f"Unsupported adapter export dtype '{dtype}'. Supported values: {supported}")
-    return _ADAPTER_EXPORT_DTYPE_ALIASES[normalized_dtype]
+    if normalized_dtype not in _ADAPTER_EXPORT_DTYPES:
+        supported = ", ".join(sorted(str(dtype).replace("torch.", "") for dtype in _ADAPTER_EXPORT_DTYPES))
+        raise ValueError(f"Unsupported adapter export dtype: {normalized_dtype}. Supported values: {supported}")
+    return normalized_dtype
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -1378,7 +1370,6 @@ class AutoBridge(Generic[MegatronModelT]):
         peft_checkpoint: str | Path,
         output_path: str | Path,
         show_progress: bool = True,
-        dtype: str | torch.dtype = torch.float32,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> None:
         """Export LoRA adapter weights from a Megatron PEFT checkpoint to HuggingFace PEFT format.
@@ -1399,7 +1390,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 directory.
             output_path: Directory where the adapter files will be saved.
             show_progress: Display progress bar during export.
-            dtype: Dtype used for model materialization and adapter output tensors.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
 
@@ -1466,14 +1456,13 @@ class AutoBridge(Generic[MegatronModelT]):
 
         lora = peft_class(**peft_cfg)
 
-        dtype = _normalize_adapter_export_dtype(dtype)
-
-        # Materialise model with base weights + LoRA structure. Float32 remains
-        # the default because bf16 downstream PEFT merges can introduce ~1e-3
-        # weight errors that compound into large logit diffs.
+        # Materialise model with base weights + LoRA structure. Use float32 so
+        # adapter weights are exported at full precision; bfloat16 downstream
+        # PEFT merges can introduce ~1e-3 weight errors that compound into
+        # large logit diffs.
         provider = self.to_megatron_provider(load_weights=True)
-        provider.pipeline_dtype = dtype
-        provider.params_dtype = dtype
+        provider.pipeline_dtype = torch.float32
+        provider.params_dtype = torch.float32
         provider.finalize()
         provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
 
@@ -1498,7 +1487,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 peft_config=lora,
                 base_model_name_or_path=base_model_name,
                 show_progress=show_progress,
-                output_dtype=dtype,
                 exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
             )
 

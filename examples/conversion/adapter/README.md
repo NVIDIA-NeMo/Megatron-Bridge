@@ -39,7 +39,6 @@ uv run python examples/conversion/adapter/export_adapter.py \
     --hf-model-path meta-llama/Llama-3.2-1B \
     --lora-checkpoint /path/to/finetune_ckpt \
     --output ./my_adapter \
-    --dtype float32 \
     --exclude-adapter-base-prefix mtp.layers
 ```
 
@@ -62,7 +61,7 @@ uv run python -m torch.distributed.run --nproc_per_node=16 \
 | `--lora-checkpoint` | Path to the Megatron-Bridge distributed checkpoint containing LoRA adapter weights |
 | `--output` | Output directory (default: `./my_adapter`) |
 | `--trust-remote-code` | Allow custom code from the HuggingFace repository |
-| `--dtype` | Dtype for materialization and saved adapter tensors (default: `float32`) |
+| `--dtype` | Dtype for distributed GPU export materialization and saved adapter tensors (default: `float32`) |
 | `--exclude-adapter-base-prefix` | Megatron adapter base prefix to skip during export; can be repeated |
 | `--tp`, `--pp`, `--ep`, `--etp` | Distributed GPU export parallelism; use values matching the checkpoint |
 | `--sequence-parallel` | Enable sequence parallelism for distributed GPU export |
