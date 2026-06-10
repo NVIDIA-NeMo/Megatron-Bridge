@@ -117,6 +117,21 @@ def _saved_config_disables_mtp(path: str | Path) -> bool:
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
 
+def _drop_readonly_config_properties(
+    config_dict: dict[str, object], config_type: Type[PretrainedConfig]
+) -> dict[str, object]:
+    """Remove read-only property names before constructing a HuggingFace config."""
+    readonly_properties = {
+        name
+        for cls in config_type.mro()
+        for name, attr in vars(cls).items()
+        if isinstance(attr, property) and attr.fset is None
+    }
+    if not readonly_properties:
+        return config_dict
+    return {key: value for key, value in config_dict.items() if key not in readonly_properties}
+
+
 class AutoBridge(Generic[MegatronModelT]):
     """
     Automatically select and instantiate the appropriate bridge for a model.
@@ -272,6 +287,7 @@ class AutoBridge(Generic[MegatronModelT]):
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
         megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
         # 3. Build final bridge from the synthesized config
         synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
         bridge = cls.from_hf_config(synthesized_config)

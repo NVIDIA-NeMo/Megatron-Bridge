@@ -268,6 +268,7 @@ def autoconfig_roundtrip(
     """
     import json
     import shutil
+    import sys
 
     import megatron.core.parallel_state as parallel_state
     import torch.distributed as dist
@@ -302,7 +303,7 @@ def autoconfig_roundtrip(
         dist.destroy_process_group()
 
     # Megatron → HF via auto-config export
-    bridge = AutoBridge.from_auto_config(megatron_root, local_model_path)
+    bridge = AutoBridge.from_auto_config(megatron_root, local_model_path, trust_remote_code=trust_remote_code)
     bridge.export_ckpt(
         megatron_path=megatron_root,
         hf_path=str(export_path),
@@ -339,7 +340,12 @@ def autoconfig_roundtrip(
     print(f"DEBUG: exported config architectures = {exported_config.get('architectures')}")
 
     # ── Weight & forward-pass comparison ─────────────────────────
-    load_kwargs = dict(torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=trust_remote_code)
+    if trust_remote_code:
+        for module_name in list(sys.modules):
+            if module_name == "transformers_modules" or module_name.startswith("transformers_modules."):
+                sys.modules.pop(module_name, None)
+
+    load_kwargs = dict(torch_dtype=torch.bfloat16, trust_remote_code=trust_remote_code)
 
     loader_candidates = (
         AutoModelForCausalLM,
@@ -363,6 +369,10 @@ def autoconfig_roundtrip(
     if original is None or exported is None:
         joined_errors = "\n".join(errors)
         raise RuntimeError(f"Unable to load roundtrip models with available auto loaders.\nTried:\n{joined_errors}")
+
+    if torch.cuda.is_available():
+        original = original.to("cuda:0")
+        exported = exported.to("cuda:0")
 
     assert_weights_equal(original, exported)
     assert_forward_pass_equal(original, exported, atol=atol)
