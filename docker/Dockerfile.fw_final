@@ -31,7 +31,7 @@ RUN git clone --depth 1 https://github.com/NVIDIA-NeMo/NeMo.git && \
 
 ARG NEMO_COMMIT
 ARG NEMO_EXPORT_DEPLOY_COMMIT
-ARG NEMO_EVAL_COMMIT
+ARG NEMO_EVALUATOR_COMMIT
 ARG NEMO_RUN_COMMIT
 
 # Update FW repository commit
@@ -43,9 +43,9 @@ RUN    pushd /opt/Export-Deploy && \
     popd && \
     pushd /opt/Evaluator && \
         git pull && \
-        git fetch origin $NEMO_EVAL_COMMIT && \
+        git fetch origin $NEMO_EVALUATOR_COMMIT && \
         git checkout FETCH_HEAD && \
-        echo "Container built with NeMo-Eval commit hash: $NEMO_EVAL_COMMIT" && \
+        echo "Container built with NeMo-Eval commit hash: $NEMO_EVALUATOR_COMMIT" && \
     popd && \
     pushd /opt/Run && \
         git pull && \
