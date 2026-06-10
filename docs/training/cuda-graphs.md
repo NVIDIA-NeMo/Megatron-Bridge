@@ -113,7 +113,7 @@ For exact config snippets and runnable commands, see
 
 For a minimal Bridge-facing example, start from the functional smoke test:
 
-- `tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
+- `tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
 
 For a lightweight CLI-driven path, use the performance harness with scoped
 capture and a small model recipe.
