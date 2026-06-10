@@ -14,7 +14,6 @@
 
 # pylint: disable=C0115,C0116,C0301
 
-import inspect
 import math
 from typing import Dict, Optional, Tuple
 
@@ -32,22 +31,11 @@ from megatron.core.utils import make_sharded_tensor_for_checkpoint
 from torch import Tensor
 
 from megatron.bridge.diffusion.models.common.dit_embeddings import ParallelTimestepEmbedding
-from megatron.bridge.diffusion.models.wan.utils import sequence_parallel_partition_indices
 from megatron.bridge.diffusion.models.wan.wan_layer_spec import (
     get_wan_block_with_transformer_engine_spec as WanLayerWithAdaLNspec,
 )
 
 from .rope_utils import Wan3DRopeEmbeddings
-
-
-def _callable_accepts_kwarg(fn, kwarg_name: str) -> bool:
-    try:
-        signature = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return False
-    return kwarg_name in signature.parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
-    )
 
 
 def sinusoidal_embedding_1d(dim, position):  # noqa: D103
@@ -197,6 +185,7 @@ class WanModel(VisionModule):
         context: Tensor,
         packed_seq_params: PackedSeqParams = None,
         self_attention_mask: Tensor | None = None,
+        grid_frame_offsets: Tensor | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass.
@@ -207,6 +196,7 @@ class WanModel(VisionModule):
             t Tensor: timesteps
             context List[Tensor]: list of context (text_len, hidden_size)
             packed_seq_params PackedSeqParams: packed sequence parameters
+            grid_frame_offsets Tensor: Optional temporal frame offsets for packed grid segments.
 
         Returns:
             Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
@@ -215,15 +205,6 @@ class WanModel(VisionModule):
         ########## Wan forward ##########
 
         # ============= embedders =============
-        if self_attention_mask is not None and not _callable_accepts_kwarg(
-            self.decoder.forward, "self_attention_mask"
-        ):
-            raise RuntimeError(
-                "WanModel received an explicit self_attention_mask, but the pinned Megatron-Core "
-                "TransformerBlock does not accept that keyword. Configure model.window_size for "
-                "LongLiveWan windowed attention, or use a Megatron-Core version that supports this kwarg."
-            )
-
         # run input embedding
         if self.pre_process:
             # x.shape [s, b, c * pF * pH * pW]
@@ -242,16 +223,6 @@ class WanModel(VisionModule):
                 x = tensor_parallel.scatter_to_sequence_parallel_region(
                     x
                 )  # output: x.shape [s * b // tp_size, hidden_size]
-                if self_attention_mask is not None and parallel_state.get_tensor_model_parallel_world_size() > 1:
-                    row_indices = sequence_parallel_partition_indices(
-                        self_attention_mask.size(-2),
-                        tp_group=parallel_state.get_tensor_model_parallel_group(),
-                        device=self_attention_mask.device,
-                    )
-                    self_attention_mask = self_attention_mask.index_select(
-                        dim=-2,
-                        index=row_indices,
-                    ).contiguous()
 
         else:
             # intermediate stage of pipeline
@@ -269,22 +240,21 @@ class WanModel(VisionModule):
         n_head, dim_head = self.num_heads, self.config.hidden_size // self.num_heads
         cu_seqlens_q_padded = packed_seq_params["self_attention"].cu_seqlens_q_padded
         rotary_pos_emb = self.rope_embeddings(
-            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device
+            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device, grid_frame_offsets=grid_frame_offsets
         )  # output: rotary_pos_emb.shape [s, b, 1, dim_head]
 
         # run decoder
         decoder_kwargs = dict(
             hidden_states=x,
-            attention_mask=e0,
+            attention_mask=self_attention_mask,
             context=context,
             context_mask=None,
             rotary_pos_emb=rotary_pos_emb,
             rotary_pos_cos=None,
             rotary_pos_sin=None,
+            attention_bias=e0,
             packed_seq_params=packed_seq_params,
         )
-        if self_attention_mask is not None:
-            decoder_kwargs["self_attention_mask"] = self_attention_mask
         x = self.decoder(**decoder_kwargs)
 
         # return if not post_process

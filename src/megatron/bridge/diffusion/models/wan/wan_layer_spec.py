@@ -189,9 +189,14 @@ class WanLayerWithAdaLN(TransformerLayer):
         rotary_pos_cos_sin=None,
         **kwargs,
     ):
-        # the timestep embedding is stored in attention_mask argument
-        timestep_emb = attention_mask
+        # WAN historically used `attention_mask` for the AdaLN timestep embedding.
+        # Prefer `attention_bias` for the timestep so `attention_mask` can carry
+        # a real self-attention mask through Megatron-Core's existing signature.
+        timestep_emb = attention_bias if attention_bias is not None else attention_mask
         rope_emb = rotary_pos_emb
+        full_self_attention_mask = self_attention_mask
+        if full_self_attention_mask is None and attention_bias is not None:
+            full_self_attention_mask = attention_mask
 
         shift_full, scale_full, gate_full, shift_mlp, scale_mlp, gate_mlp = self.adaLN(timestep_emb)
 
@@ -217,7 +222,7 @@ class WanLayerWithAdaLN(TransformerLayer):
 
         attention_output, bias = self.full_self_attention(
             pre_full_attn_layernorm_output_ada,
-            attention_mask=self_attention_mask,
+            attention_mask=full_self_attention_mask,
             rotary_pos_emb=rope_emb,
             rotary_pos_cos=rotary_pos_cos,
             rotary_pos_sin=rotary_pos_sin,

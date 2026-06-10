@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 import logging
 from functools import partial
 from typing import Any, Dict, Iterable, Optional, Tuple
@@ -21,6 +20,7 @@ import torch
 import torch.nn as nn
 from megatron.core import parallel_state
 from megatron.core.models.common.vision_module.vision_module import VisionModule
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.diffusion.common.flow_matching.adapters.base import FlowMatchingContext
@@ -30,10 +30,11 @@ from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_w
 )
 from megatron.bridge.diffusion.models.wan.longlive_wan_utils import (
     ChunkSelectionStrategy,
-    apply_longlive_noising,
-    build_longlive_loss_mask,
-    build_teacher_forcing_self_attention_mask,
-    select_longlive_chunks,
+    build_longlive_paired_latents_and_masks,
+    build_longlive_paired_sequence_metadata,
+    build_paired_teacher_forcing_self_attention_mask,
+    duplicate_context_for_longlive_paired_chunks,
+    select_longlive_paired_chunks,
     split_self_attention_mask_rows,
 )
 from megatron.bridge.diffusion.models.wan.utils import thd_partition_indices
@@ -42,23 +43,6 @@ from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
-
-
-def _callable_accepts_kwarg(fn: Any, kwarg_name: str) -> bool:
-    try:
-        signature = inspect.signature(fn)
-    except (TypeError, ValueError):
-        return False
-    return kwarg_name in signature.parameters or any(
-        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()
-    )
-
-
-def _model_accepts_explicit_self_attention_mask(model: nn.Module) -> bool:
-    module = getattr(model, "module", model)
-    decoder = getattr(module, "decoder", None)
-    forward = getattr(decoder, "forward", None)
-    return forward is not None and _callable_accepts_kwarg(forward, "self_attention_mask")
 
 
 class LongLiveWanAdapter(WanAdapter):
@@ -77,6 +61,7 @@ class LongLiveWanAdapter(WanAdapter):
             )
             self_attention_mask = split_self_attention_mask_rows(self_attention_mask, row_indices)
         inputs["self_attention_mask"] = self_attention_mask
+        inputs["grid_frame_offsets"] = context.batch.get("grid_frame_offsets")
         return inputs
 
     def forward(self, model: nn.Module, inputs: Dict[str, Any]) -> torch.Tensor:
@@ -87,12 +72,43 @@ class LongLiveWanAdapter(WanAdapter):
             context=inputs["context_embeddings"],
             packed_seq_params=inputs["packed_seq_params"],
             self_attention_mask=inputs.get("self_attention_mask"),
+            grid_frame_offsets=inputs.get("grid_frame_offsets"),
         )
         return self.post_process_prediction(model_pred)
 
 
+def _build_packed_seq_params(
+    qkv_format: str,
+    seq_len_q: torch.Tensor,
+    seq_len_q_padded: torch.Tensor,
+    seq_len_kv: torch.Tensor,
+    seq_len_kv_padded: torch.Tensor,
+) -> dict[str, PackedSeqParams]:
+    zero = torch.zeros(1, dtype=torch.int32, device=seq_len_q.device)
+    cu_seqlens_q = torch.cat((zero, seq_len_q.cumsum(dim=0).to(torch.int32)))
+    cu_seqlens_q_padded = torch.cat((zero, seq_len_q_padded.cumsum(dim=0).to(torch.int32)))
+    cu_seqlens_kv = torch.cat((zero, seq_len_kv.cumsum(dim=0).to(torch.int32)))
+    cu_seqlens_kv_padded = torch.cat((zero, seq_len_kv_padded.cumsum(dim=0).to(torch.int32)))
+    return {
+        "self_attention": PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_q_padded=cu_seqlens_q_padded,
+            cu_seqlens_kv=cu_seqlens_q,
+            cu_seqlens_kv_padded=cu_seqlens_q_padded,
+            qkv_format=qkv_format,
+        ),
+        "cross_attention": PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_q_padded=cu_seqlens_q_padded,
+            cu_seqlens_kv=cu_seqlens_kv,
+            cu_seqlens_kv_padded=cu_seqlens_kv_padded,
+            qkv_format=qkv_format,
+        ),
+    }
+
+
 class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
-    """WAN flow-matching pipeline with clean history and a noisy target temporal chunk."""
+    """WAN flow-matching pipeline with LongLive paired clean/noisy teacher forcing."""
 
     def __init__(
         self,
@@ -100,7 +116,7 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
         target_chunk_frames: int = 1,
         chunk_selection_strategy: ChunkSelectionStrategy = "random",
         fallback_to_standard_wan: bool = True,
-        teacher_forcing_mask_max_tokens: int | None = 0,
+        teacher_forcing_mask_max_tokens: int | None = 8192,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -110,27 +126,27 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
         self.teacher_forcing_mask_max_tokens = teacher_forcing_mask_max_tokens
 
     def should_build_explicit_self_attention_mask(self, seq_len: int, model: nn.Module) -> bool:
-        """Use dense teacher-forcing masks only when explicitly requested and supported."""
-        model_config = get_model_config(model)
-        has_window = getattr(model_config, "window_size", None) is not None
+        """Use dense teacher-forcing masks when the paired sequence is small enough."""
         max_tokens = self.teacher_forcing_mask_max_tokens
         dense_mask_requested = max_tokens is None or (max_tokens > 0 and seq_len <= max_tokens)
         if dense_mask_requested:
-            if _model_accepts_explicit_self_attention_mask(model):
-                return True
-            if has_window:
-                return False
+            return True
+        raise ValueError(
+            "LongLiveWan paired clean/noisy teacher forcing requires an explicit AR self-attention mask. "
+            f"The paired sequence has {seq_len} tokens, exceeding teacher_forcing_mask_max_tokens={max_tokens}. "
+            "A TE sliding window is not equivalent because it cannot prevent noisy chunks from attending to "
+            "previous noisy chunks. Lower the validation resolution/sequence length or add block-sparse mask support."
+        )
+
+    def validate_qkv_format(self, qkv_format: str) -> None:
+        """Require SBHD until LongLive self-attention boundaries are sample-level."""
+        if qkv_format != "sbhd":
             raise ValueError(
-                "LongLiveWan explicit dense teacher-forcing masks require the model decoder to accept "
-                "self_attention_mask. Configure model.window_size to use windowed attention instead."
+                "LongLiveWan paired clean/noisy teacher forcing currently requires qkv_format='sbhd'. "
+                f"Got qkv_format={qkv_format!r}. THD treats each clean/noisy chunk as a hard packed-sequence boundary, "
+                "which prevents noisy chunks from attending to previous clean chunks. Context parallelism "
+                "requires THD and is not supported by this dense-mask LongLive path yet."
             )
-        if not has_window:
-            raise ValueError(
-                "LongLiveWan training requires model.window_size when explicit dense teacher-forcing masks "
-                f"are disabled for seq_len={seq_len}. Increase teacher_forcing_mask_max_tokens only with "
-                "Megatron-Core support for self_attention_mask."
-            )
-        return False
 
     def step(
         self,
@@ -148,20 +164,16 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
         data_type = batch.get("data_type", "video")
         task_type = self.determine_task_type(data_type)
 
-        chunks_or_none = select_longlive_chunks(
+        chunks = select_longlive_paired_chunks(
             grid_sizes=batch["grid_sizes"],
             seq_len_q=batch["seq_len_q"],
             seq_len_q_padded=batch["seq_len_q_padded"],
             target_chunk_frames=self.target_chunk_frames,
-            strategy=self.chunk_selection_strategy,
         )
-        if any(chunk is None for chunk in chunks_or_none):
+        if not chunks:
             if not self.fallback_to_standard_wan:
-                raise ValueError("At least one WAN sample is too short for LongLive clean history + target chunk")
-            logger.info(
-                "LongLiveWan fallback to standard WAN flow matching: at least one sample is too short "
-                "for clean history plus target chunk"
-            )
+                raise ValueError("At least one WAN sample is required for LongLive paired teacher forcing")
+            logger.info("LongLiveWan fallback to standard WAN flow matching: no valid temporal chunks found")
             weighted_loss, average_weighted_loss, loss_mask, metrics = super().step(
                 model=model,
                 batch=batch,
@@ -173,18 +185,51 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
             metrics["longlive_target_tokens"] = 0
             return weighted_loss, average_weighted_loss, loss_mask, metrics
 
-        chunks = [chunk for chunk in chunks_or_none if chunk is not None]
         sigma, timesteps, sampling_method = self.sample_timesteps(batch_size, device)
         noise = torch.randn_like(latents, dtype=torch.float32)
-        mixed_latents = apply_longlive_noising(latents, noise, sigma, chunks, self.noise_schedule).to(dtype)
+        paired_latents, paired_target, paired_loss_mask = build_longlive_paired_latents_and_masks(
+            clean_latents=latents,
+            noise=noise,
+            sigma=sigma,
+            base_loss_mask=batch["loss_mask"],
+            chunks=chunks,
+            noise_schedule=self.noise_schedule,
+        )
+        paired_latents = paired_latents.to(dtype)
 
-        base_loss_mask = batch["loss_mask"]
-        batch["loss_mask"] = build_longlive_loss_mask(base_loss_mask, chunks)
+        grid_sizes, grid_frame_offsets, seq_len_q, seq_len_q_padded = build_longlive_paired_sequence_metadata(
+            chunks=chunks,
+            device=latents.device,
+        )
+        context_embeddings, seq_len_kv, seq_len_kv_padded = duplicate_context_for_longlive_paired_chunks(
+            context_embeddings=batch["context_embeddings"],
+            seq_len_kv=batch["seq_len_kv"],
+            seq_len_kv_padded=batch["seq_len_kv_padded"],
+            chunks=chunks,
+        )
+        qkv_format = batch["packed_seq_params"]["self_attention"].qkv_format
+        self.validate_qkv_format(qkv_format)
+        batch["video_latents"] = paired_latents
+        batch["grid_sizes"] = grid_sizes
+        batch["grid_frame_offsets"] = grid_frame_offsets
+        batch["seq_len_q"] = seq_len_q
+        batch["seq_len_q_padded"] = seq_len_q_padded
+        batch["seq_len_kv"] = seq_len_kv
+        batch["seq_len_kv_padded"] = seq_len_kv_padded
+        batch["context_embeddings"] = context_embeddings
+        batch["loss_mask"] = paired_loss_mask.to(device=latents.device)
+        batch["packed_seq_params"] = _build_packed_seq_params(
+            qkv_format=qkv_format,
+            seq_len_q=seq_len_q,
+            seq_len_q_padded=seq_len_q_padded,
+            seq_len_kv=seq_len_kv,
+            seq_len_kv_padded=seq_len_kv_padded,
+        )
         global_target_tokens = int(batch["loss_mask"].float().sum().item())
-        use_explicit_mask = self.should_build_explicit_self_attention_mask(latents.size(1), model)
+        use_explicit_mask = self.should_build_explicit_self_attention_mask(paired_latents.size(1), model)
         if use_explicit_mask:
-            batch["self_attention_mask"] = build_teacher_forcing_self_attention_mask(
-                total_seq_len=latents.size(1),
+            batch["self_attention_mask"] = build_paired_teacher_forcing_self_attention_mask(
+                total_seq_len=paired_latents.size(1),
                 chunks=chunks,
                 device=latents.device,
             )
@@ -192,8 +237,8 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
             batch.pop("self_attention_mask", None)
 
         context = FlowMatchingContext(
-            noisy_latents=mixed_latents,
-            latents=latents,
+            noisy_latents=paired_latents,
+            latents=paired_latents,
             timesteps=timesteps,
             sigma=sigma,
             task_type=task_type,
@@ -205,7 +250,7 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
         )
         inputs = self.model_adapter.prepare_inputs(context)
         model_pred = self.model_adapter.forward(model, inputs)
-        target = noise - latents.float()
+        target = paired_target
 
         weighted_loss, average_weighted_loss, _unweighted_loss, average_unweighted_loss, loss_weight, loss_mask = (
             self.compute_loss(model_pred, target, sigma, batch)
@@ -231,6 +276,7 @@ class LongLiveWanFlowMatchingPipeline(WanFlowMatchingPipeline):
             "longlive_fallback": 0,
             "longlive_target_tokens": global_target_tokens,
             "longlive_target_chunk_frames": self.target_chunk_frames,
+            "longlive_paired_chunks": len(chunks),
             "longlive_explicit_self_attention_mask": int(use_explicit_mask),
         }
         return weighted_loss, average_weighted_loss, loss_mask, metrics
@@ -252,7 +298,7 @@ class LongLiveWanForwardStep(WanForwardStep):
         sigma_max: float = 1.0,
         target_chunk_frames: int = 1,
         chunk_selection_strategy: ChunkSelectionStrategy = "random",
-        teacher_forcing_mask_max_tokens: int | None = 0,
+        teacher_forcing_mask_max_tokens: int | None = 8192,
     ):
         if mode is not None:
             if mode not in _WAN_MODE_DEFAULTS:
