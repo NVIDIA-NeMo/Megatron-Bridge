@@ -73,7 +73,7 @@ Example YAML (`conf/llama32_1b_pretrain.yaml`):
 # Each section maps to a ConfigContainer field
 dataset:                           # GPTDatasetConfig
   data_path: /path/to/training/data
-  sequence_length: 4096
+  seq_length: 4096
 
 train:                             # TrainingConfig
   train_iters: 100
@@ -84,7 +84,7 @@ checkpoint:                        # CheckpointConfig
   save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match data.sequence_length
+  seq_length: 4096                 # Must match dataset.seq_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
@@ -139,7 +139,7 @@ peft:                             # PEFT (LoRA config)
   alpha: 16   # LoRA alpha
 
 model:                            # Model Provider
-  seq_length: 4096                # Must match data.seq_length
+  seq_length: 4096                # Must match dataset.seq_length
   
 optimizer:                        # OptimizerConfig
   lr: 0.0001
