@@ -873,6 +873,32 @@ class TestExportAdapterCkpt:
         )
         assert isinstance(peft_config, VLMLoRA)
 
+    def test_plain_lora_filters_vlm_only_keys(self, bridge, tmp_path):
+        """VLM-only keys should not be passed into plain LoRA configs."""
+        ckpt = tmp_path / "plain_lora_ckpt"
+        ckpt.mkdir()
+        run_cfg = {
+            "peft": {
+                "_target_": "megatron.bridge.peft.lora.LoRA",
+                "dim": 8,
+                "alpha": 16,
+                "freeze_language_model": False,
+                "freeze_vision_model": False,
+                "freeze_vision_projection": False,
+            }
+        }
+        (ckpt / "run_config.yaml").write_text(yaml.dump(run_cfg))
+
+        bridge.export_adapter_ckpt(str(ckpt), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert peft_config.dim == 8
+        assert peft_config.alpha == 16
+        assert not hasattr(peft_config, "freeze_language_model")
+
     def test_missing_checkpoint_raises(self, bridge, tmp_path):
         with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):
             bridge.export_adapter_ckpt(str(tmp_path / "nonexistent"), tmp_path / "out")
@@ -1050,6 +1076,32 @@ class TestExportAdapterScript:
 
         assert lora.dim == 4
         assert lora.alpha == 8
+
+    def test_load_lora_config_filters_vlm_keys_for_plain_lora(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        (ckpt / "run_config.yaml").write_text(
+            yaml.dump(
+                {
+                    "peft": {
+                        "_target_": "megatron.bridge.peft.lora.LoRA",
+                        "dim": 8,
+                        "alpha": 16,
+                        "freeze_language_model": False,
+                        "freeze_vision_model": False,
+                        "freeze_vision_projection": False,
+                    }
+                }
+            )
+        )
+
+        lora = export_adapter._load_lora_config(ckpt)
+
+        assert lora.dim == 8
+        assert lora.alpha == 16
+        assert not hasattr(lora, "freeze_language_model")
 
     def test_get_loaded_model_key_prefers_exact_model_key(self, tmp_path):
         from examples.conversion.adapter import export_adapter

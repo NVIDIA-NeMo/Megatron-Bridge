@@ -1435,6 +1435,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 peft_cfg = run_cfg_dict.get("peft", {}) or {}
                 if "VLMLoRA" in peft_cfg.get("_target_", ""):
                     peft_class = VLMLoRA
+                vlm_only_keys = {"freeze_language_model", "freeze_vision_model", "freeze_vision_projection"}
                 allowed_keys = {
                     "target_modules",
                     "exclude_modules",
@@ -1444,10 +1445,9 @@ class AutoBridge(Generic[MegatronModelT]):
                     "dropout_position",
                     "normalize_moe_lora",
                     "share_expert_adapters",
-                    "freeze_language_model",
-                    "freeze_vision_model",
-                    "freeze_vision_projection",
                 }
+                if peft_class is VLMLoRA:
+                    allowed_keys |= vlm_only_keys
                 peft_cfg = {k: v for k, v in peft_cfg.items() if k in allowed_keys}
             except Exception as err:
                 _logger.warning(f"Failed to read LoRA settings from {cfg_file}: {err}. Using defaults.")

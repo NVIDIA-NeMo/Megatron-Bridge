@@ -135,6 +135,7 @@ def _load_lora_config(ckpt_path: Path) -> LoRA | VLMLoRA:
             peft_cfg = run_cfg_dict.get("peft", {}) or {}
             if "VLMLoRA" in peft_cfg.get("_target_", ""):
                 peft_class = VLMLoRA
+            vlm_only_keys = {"freeze_language_model", "freeze_vision_model", "freeze_vision_projection"}
             allowed_keys = {
                 "target_modules",
                 "exclude_modules",
@@ -144,10 +145,9 @@ def _load_lora_config(ckpt_path: Path) -> LoRA | VLMLoRA:
                 "dropout_position",
                 "normalize_moe_lora",
                 "share_expert_adapters",
-                "freeze_language_model",
-                "freeze_vision_model",
-                "freeze_vision_projection",
             }
+            if peft_class is VLMLoRA:
+                allowed_keys |= vlm_only_keys
             peft_cfg = {key: value for key, value in peft_cfg.items() if key in allowed_keys}
     return peft_class(**peft_cfg)
 
