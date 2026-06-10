@@ -2,6 +2,26 @@
 
 Megatron Bridge provides unified training entry points for pretraining, Supervised Fine-Tuning (SFT), and Parameter-Efficient Fine-Tuning (PEFT). All training modes share the same underlying training loop architecture, differing primarily in their data handling and model configuration.
 
+## Choosing `pretrain()` or `finetune()`
+
+Use `pretrain()` for language-model pretraining jobs that use `GPTDatasetConfig` or `MockGPTDatasetConfig`. This includes training from scratch, continued pretraining on new corpora, and initializing model weights from `checkpoint.pretrained_checkpoint` before starting a new training run.
+
+Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use a finetuning dataset config or provider, and launch through `finetune()`.
+
+The generic recipe launcher, `scripts/training/run_recipe.py`, follows the same split. Dataset types beginning with `llm-pretrain` run `pretrain()`. SFT, PEFT, VLM, and diffusion fine-tuning dataset types run `finetune()`.
+
+## Checkpoint Source by Workflow
+
+| Workflow | Dataset config | How to initialize or resume |
+|----------|----------------|-----------------------------|
+| From-scratch LLM pretraining | `GPTDatasetConfig` | Leave `checkpoint.pretrained_checkpoint` and `checkpoint.load` unset, or clear the recipe default `checkpoint.load` if an old local checkpoint directory exists. |
+| Full native Megatron resume | Any training workflow | Set `checkpoint.load` to the base checkpoint directory and optionally set `checkpoint.ckpt_step` for a specific iteration. `checkpoint.load` should not point to an `iter_N` directory. |
+| Initialize from native Megatron weights | Pretraining, SFT, or PEFT | Set `checkpoint.pretrained_checkpoint` to either the base checkpoint directory or a specific `iter_N` directory. |
+| Initialize from Hugging Face weights | Pretraining, SFT, or PEFT | Set `checkpoint.pretrained_checkpoint` to a local Hugging Face full-model directory containing `config.json` and weight files. A remote Hugging Face model ID is not a checkpoint path; download it locally or convert it first. |
+| Resume PEFT adapter training | PEFT | Keep `checkpoint.pretrained_checkpoint` pointed at the frozen base model and set `checkpoint.load` to the adapter checkpoint directory. `checkpoint.ckpt_step` applies to the adapter `load` path. |
+
+For multi-node jobs and repeatable production runs, converting a Hugging Face model to a native Megatron checkpoint first is usually the most robust option. Use `checkpoint.pretrained_checkpoint` for weight initialization and `checkpoint.load` for training-state resume; using a Hugging Face directory with `checkpoint.load` raises an error because HF format does not contain optimizer, RNG, dataloader, or scheduler state.
+
 ## Main Entry Points
 
 The {py:func}`bridge.training.pretrain.pretrain` and {py:func}`bridge.training.finetune.finetune` functions are the primary entry points for pretraining models—either from scratch or through fine-tuning. Each function accepts a {py:class}`bridge.training.config.ConfigContainer` along with a `forward_step_func` that defines how the training loop should be run.

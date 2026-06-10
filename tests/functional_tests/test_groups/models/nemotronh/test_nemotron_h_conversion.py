@@ -243,7 +243,7 @@ class TestNemotronHConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
+            (1, 2, "PP"),
         ],
     )
     def test_nemotronh_conversion_parallelism(self, nemotronh_toy_model_path, tmp_path, tp, pp, test_name):
@@ -262,20 +262,15 @@ class TestNemotronHConversion:
         test_output_dir = tmp_path / f"nemotronh_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
-        # Modify config.json to add | separator for hybrid_override_pattern to be able to run PP > 1
+        # Keep the saved HF config valid. MCore handles PP partitioning from the
+        # Megatron parallelism settings, while HF custom configs reject pipeline
+        # delimiters in hybrid_override_pattern.
         config_file = Path(nemotronh_toy_model_path) / "config.json"
         assert config_file.exists(), f"config.json not found at {config_file}"
         with open(config_file) as f:
             config_data = json.load(f)
 
-        if pp > 1:
-            config_data["hybrid_override_pattern"] = (
-                HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][:2]
-                + "|"
-                + HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"][2:]
-            )
-        else:
-            config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
+        config_data["hybrid_override_pattern"] = HF_NEMOTRONH_TOY_MODEL_OVERRIDES["hybrid_override_pattern"]
 
         original_hybrid_override_pattern = config_data.get("hybrid_override_pattern")
         with open(config_file, "w") as f:
@@ -365,8 +360,8 @@ class TestNemotronHConversion:
 
 # Overrides for Nemotron-3-Nano MoE model (30B total, 3B active)
 HF_NEMOTRON_3_NANO_TOY_MODEL_OVERRIDES = {
-    "num_hidden_layers": 3,
-    "hybrid_override_pattern": "M*E",
+    "num_hidden_layers": 4,
+    "hybrid_override_pattern": "M*E-",
     "hidden_size": 672,
     "n_routed_experts": 16,
 }
@@ -536,7 +531,7 @@ class TestNemotron3NanoConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
+            (1, 2, "PP"),
         ],
     )
     def test_nemotron_3_nano_conversion_parallelism(
@@ -634,7 +629,6 @@ class TestNemotron3NanoConversion:
             raise
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.pleasefixme
     def test_nemotron_3_nano_autoconfig_roundtrip(self, nemotron_3_nano_toy_model_path, tmp_path):
         from tests.functional_tests.utils import autoconfig_roundtrip
 
@@ -647,7 +641,7 @@ class TestNemotron3NanoConversion:
 
 # Overrides for Nemotron-3-Super MoE model (120B total, 12B active)
 HF_NEMOTRON_3_SUPER_TOY_MODEL_OVERRIDES = {
-    "layers_block_type": ["mamba", "attention", "moe"],
+    "layers_block_type": ["mamba", "attention", "moe", "mamba"],
     "hidden_size": 672,
     "n_routed_experts": 16,
     "num_nextn_predict_layers": 0,
@@ -832,7 +826,7 @@ class TestNemotron3SuperConversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            pytest.param(1, 2, "PP", marks=pytest.mark.pleasefixme),  # PP=2 broken by hybrid_layer_pattern (PR #2628)
+            (1, 2, "PP"),
         ],
     )
     def test_nemotron_3_super_conversion_parallelism(
