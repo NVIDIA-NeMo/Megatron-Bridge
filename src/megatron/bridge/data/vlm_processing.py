@@ -45,7 +45,7 @@ class AssistantMaskBoundaryConfig:
         ``reasoning`` or ``tool_call`` content. ``part_parent_roles`` controls
         which top-level roles may be split into nested parts; it defaults to
         assistant-only so tool-call format examples in system/user text are not
-        treated as actual tool calls. ``masked_roles`` names the top-level roles
+        treated as actual tool calls. ``loss_roles`` names the top-level roles
         or nested part names that should contribute to loss.
         ``include_*_tokens_for_roles`` and ``include_*_tokens_for_parts``
         optionally include boundary tokens in the loss. By default, assistant
@@ -60,7 +60,7 @@ class AssistantMaskBoundaryConfig:
                 part_start_tokens={"reasoning": [13], "tool_call": [14]},
                 part_end_tokens={"reasoning": [15], "tool_call": [16]},
                 part_parent_roles=("assistant",),
-                masked_roles=("assistant", "tool_call"),
+                loss_roles=("assistant", "tool_call"),
                 include_end_tokens_for_roles=("assistant",),
                 trim_leading_token_ids=(198,),
             )
@@ -69,13 +69,13 @@ class AssistantMaskBoundaryConfig:
         When passed to :func:`build_assistant_loss_mask`, the fallback scans
         rendered ``input_ids`` for role and part boundaries and returns an
         unshifted float mask with ``1.0`` only on content spans whose segment
-        name appears in ``masked_roles``. Boundary marker tokens are included
+        name appears in ``loss_roles``. Boundary marker tokens are included
         only when requested by the corresponding ``include_*`` fields.
     """
 
     role_start_tokens: Mapping[str, Sequence[int]]
     role_end_tokens: Mapping[str, Sequence[int]]
-    masked_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,)
+    loss_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,)
     part_start_tokens: Mapping[str, Sequence[int]] | None = None
     part_end_tokens: Mapping[str, Sequence[int]] | None = None
     part_parent_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,)
@@ -586,10 +586,10 @@ def _assistant_mask_from_boundary_config(
 ) -> torch.Tensor | None:
     role_start_tokens = _token_map_from_boundary_config(boundary_config.role_start_tokens)
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
-    masked_roles = set(boundary_config.masked_roles)
-    if not role_start_tokens or not role_end_tokens or not masked_roles:
+    loss_roles = set(boundary_config.loss_roles)
+    if not role_start_tokens or not role_end_tokens or not loss_roles:
         raise ValueError(
-            "AssistantMaskBoundaryConfig must provide non-empty role_start_tokens, role_end_tokens, and masked_roles."
+            "AssistantMaskBoundaryConfig must provide non-empty role_start_tokens, role_end_tokens, and loss_roles."
         )
     missing_role_end_tokens = set(role_start_tokens) - set(role_end_tokens)
     if missing_role_end_tokens:
@@ -634,7 +634,7 @@ def _assistant_mask_from_boundary_config(
     trim_token_ids = _as_token_id_list(boundary_config.trim_leading_token_ids)
 
     mask = torch.zeros(len(ids), dtype=torch.float32)
-    found_masked_segment = False
+    found_loss_segment = False
     for marker_idx, (start_pos, role, marker_len) in enumerate(deduped_markers):
         content_start = start_pos + marker_len
         next_marker_start = deduped_markers[marker_idx + 1][0] if marker_idx + 1 < len(deduped_markers) else len(ids)
@@ -647,7 +647,7 @@ def _assistant_mask_from_boundary_config(
                 content_end = end_start
                 role_end_span = (end_start, after_end)
 
-        found_masked_role_segment = False
+        found_loss_role_segment = False
         for segment_role, segment_start, segment_end in _split_boundary_parts(
             ids,
             role,
@@ -660,19 +660,19 @@ def _assistant_mask_from_boundary_config(
             include_end_tokens_for_parts,
             trim_token_ids,
         ):
-            if segment_role not in masked_roles:
+            if segment_role not in loss_roles:
                 continue
-            found_masked_role_segment = True
-            found_masked_segment = True
+            found_loss_role_segment = True
+            found_loss_segment = True
             if segment_start < segment_end:
                 mask[segment_start:segment_end] = 1.0
 
-        if found_masked_role_segment and role in include_start_tokens_for_roles:
+        if found_loss_role_segment and role in include_start_tokens_for_roles:
             mask[start_pos:content_start] = 1.0
-        if found_masked_role_segment and role in include_end_tokens_for_roles and role_end_span is not None:
+        if found_loss_role_segment and role in include_end_tokens_for_roles and role_end_span is not None:
             mask[role_end_span[0] : role_end_span[1]] = 1.0
 
-    return mask if found_masked_segment else None
+    return mask if found_loss_segment else None
 
 
 def build_assistant_loss_mask(
@@ -707,7 +707,7 @@ def build_assistant_loss_mask(
                 "{% generation %} blocks that returns assistant_masks, or pass AssistantMaskBoundaryConfig "
                 "with explicit role/part token boundaries."
             )
-        raise ValueError("AssistantMaskBoundaryConfig did not match any masked assistant spans in input_ids.")
+        raise ValueError("AssistantMaskBoundaryConfig did not match any loss-contributing spans in input_ids.")
 
     _apply_skipped_tokens(mask, ids, skipped_tokens)
     _warn_if_all_masked(mask, example_or_conversation, warn_on_all_masked=warn_on_all_masked)

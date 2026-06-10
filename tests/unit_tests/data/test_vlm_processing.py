@@ -260,7 +260,7 @@ def test_build_assistant_loss_mask_raises_when_boundary_config_does_not_match():
         role_end_tokens={"assistant": [103]},
     )
 
-    with pytest.raises(ValueError, match="did not match any masked assistant spans"):
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
         build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
 
@@ -275,7 +275,7 @@ def test_build_assistant_loss_mask_boundary_config_splits_nested_parts():
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
         role_end_tokens={"user": [101], "assistant": [101]},
-        masked_roles=("assistant", "tool_call"),
+        loss_roles=("assistant", "tool_call"),
         part_start_tokens={"reasoning": [200], "tool_call": [202]},
         part_end_tokens={"reasoning": [201], "tool_call": [203]},
     )
@@ -296,7 +296,7 @@ def test_build_assistant_loss_mask_boundary_config_splits_parts_only_in_assistan
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"system": [99], "assistant": [102]},
         role_end_tokens={"system": [101], "assistant": [101]},
-        masked_roles=("tool_call",),
+        loss_roles=("tool_call",),
         part_start_tokens={"tool_call": [202]},
         part_end_tokens={"tool_call": [203]},
     )
@@ -317,7 +317,7 @@ def test_build_assistant_loss_mask_boundary_config_can_match_omni_whole_assistan
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
         role_end_tokens={"user": [101], "assistant": [101]},
-        masked_roles=("assistant",),
+        loss_roles=("assistant",),
         include_start_tokens_for_roles=("assistant",),
     )
 
@@ -336,7 +336,7 @@ def test_build_assistant_loss_mask_boundary_config_can_include_part_boundary_tok
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"assistant": [102]},
         role_end_tokens={"assistant": [101]},
-        masked_roles=("tool_call",),
+        loss_roles=("tool_call",),
         part_start_tokens={"tool_call": [202]},
         part_end_tokens={"tool_call": [203]},
         include_start_tokens_for_parts=("tool_call",),
