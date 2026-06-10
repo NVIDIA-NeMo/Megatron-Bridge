@@ -107,8 +107,9 @@ def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
         max_pixels=128,
     )
 
-    assert proc.template_kwargs[-1]["min_pixels"] == 16
-    assert proc.template_kwargs[-1]["max_pixels"] == 128
+    collate_template_kwargs = next(kwargs for kwargs in proc.template_kwargs if kwargs.get("return_tensors") == "pt")
+    assert collate_template_kwargs["min_pixels"] == 16
+    assert collate_template_kwargs["max_pixels"] == 128
     assert batch["visual_inputs"].pixel_values is not None
     assert batch["visual_inputs"].image_sizes is not None
     assert batch["visual_inputs"].image_grid_thw is None
@@ -369,6 +370,7 @@ def test_kimi_k25_vl_collate_fn_pads_to_max_length():
 
     assert batch["input_ids"].shape[1] == max_length
     assert batch["attention_mask"].shape[1] == max_length
+    assert batch["loss_mask"].shape[1] == max_length
 
 
 def test_kimi_k25_vl_collate_fn_multi_sample_batch():

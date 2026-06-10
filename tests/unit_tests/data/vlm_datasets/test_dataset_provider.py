@@ -23,6 +23,7 @@ class _DummyTokenizer:
     pad_token = "<pad>"
     eos_token_id = 2
     added_tokens_decoder = {}
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def __call__(self, text, add_special_tokens=False):
         # Very small deterministic tokenization
@@ -34,11 +35,15 @@ class _DummyTokenizer:
 
 
 class Gemma3Processor:
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
     def __init__(self):
         self.tokenizer = _DummyTokenizer()
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
         if tokenize:
+            if kwargs.get("return_assistant_tokens_mask"):
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 0, 0]}
             # Return minimal dict used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
             pixel_values = torch.randn(1, 1, 3, 4, 4)
