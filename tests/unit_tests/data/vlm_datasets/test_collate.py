@@ -31,10 +31,13 @@ def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
 
 
 class _DummyProcessor:
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
     class _Tok:
         pad_token_id = 0
         pad_token = "<pad>"
         added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def __init__(self):
         self.tokenizer = self._Tok()
@@ -46,13 +49,18 @@ class _DummyProcessor:
             # Return dict mimicking HF processor output when tokenize=True
             # Minimal keys used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
-            pixel_values = torch.randn(1, 1, 3, 4, 4)
-            return {
+            output = {
                 "input_ids": input_ids,
-                "pixel_values": pixel_values,
-                "image_grid_thw": torch.tensor([[[1, 2, 2]]]),
-                "image_sizes": torch.tensor([[4, 4]]),
             }
+            if kwargs.get("return_assistant_tokens_mask"):
+                output["input_ids"] = [1, 2, 3]
+                output["assistant_masks"] = [0, 0, 0]
+                return output
+            pixel_values = torch.randn(1, 1, 3, 4, 4)
+            output["pixel_values"] = pixel_values
+            output["image_grid_thw"] = torch.tensor([[[1, 2, 2]]])
+            output["image_sizes"] = torch.tensor([[4, 4]])
+            return output
         # Non-tokenized: just a string
         return "dummy"
 
@@ -247,6 +255,7 @@ class _KimiDummyTokenizer:
 
     pad_token_id = 0
     added_tokens_decoder = {}
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def convert_tokens_to_ids(self, token):
         return MEDIA_TOKEN_ID
@@ -259,6 +268,7 @@ class _KimiDummyTokenizer:
 class _KimiDummyProcessor:
     """Minimal processor mock that mimics KimiK25Processor behaviour."""
 
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
     media_placeholder_token_id = MEDIA_TOKEN_ID
 
     def __init__(self, *, include_image: bool = False):
@@ -266,6 +276,13 @@ class _KimiDummyProcessor:
         self._include_image = include_image
 
     def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
+        if tokenize and kwargs.get("return_assistant_tokens_mask"):
+            if self._include_image:
+                return {
+                    "input_ids": [1, 2, MEDIA_TOKEN_ID, 10, 11, 12, 3],
+                    "assistant_masks": [0, 0, 0, 1, 1, 1, 0],
+                }
+            return {"input_ids": [1, 10, 11, 12, 3], "assistant_masks": [0, 1, 1, 1, 0]}
         return "dummy text"
 
     def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
@@ -409,19 +426,16 @@ def test_gemma4_registered_fn_matches_alias():
 
 
 class _Gemma4ProcessorBase:
-    """Minimal Gemma4Processor stub for ministral3_collate_fn tests.
+    """Minimal Gemma4Processor stub for ministral3_collate_fn tests."""
 
-    build_assistant_loss_mask calls tokenizer(text, add_special_tokens=False)
-    so _Tok must be callable.
-    """
-
-    chat_template = "dummy"
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     class _Tok:
         pad_token_id = 0
         pad_token = "<pad>"
         added_tokens_decoder = {}
         eos_token = "<eos>"
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
         def __call__(self, text, add_special_tokens=True, **kwargs):
             # Return minimal tokenized output: each word → one token id
@@ -437,6 +451,8 @@ class _Gemma4ProcessorBase:
             return "dummy text"
         seq_len = 8
         batch_size = len(conversations)
+        if kwargs.get("return_assistant_tokens_mask"):
+            return {"input_ids": [1] * seq_len, "assistant_masks": [0, 0, 0, 1, 1, 1, 1, 0]}
         result = {
             "input_ids": torch.ones(batch_size, seq_len, dtype=torch.long),
             "pixel_values": torch.randn(batch_size, 3, 224, 224),

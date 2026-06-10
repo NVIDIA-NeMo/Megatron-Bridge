@@ -169,7 +169,6 @@ def qwen2_5_collate_fn(
                 input_ids,
                 processor,
                 skipped_tokens,
-                require_matches=require_assistant_matches,
                 warn_on_all_masked=not require_assistant_matches,
             )
             for example, input_ids in zip(examples, batch["input_ids"])

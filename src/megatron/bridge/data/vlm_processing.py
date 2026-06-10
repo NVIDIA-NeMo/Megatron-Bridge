@@ -29,10 +29,7 @@ from megatron.bridge.data.datasets.utils import GENERATION_REGEX, IGNORE_INDEX
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
-CHATML_TURN_START = "<|im_start|>"
-CHATML_TURN_END = "<|im_end|>"
 CHATML_ASSISTANT_ROLE = "assistant"
-ASSISTANT_CONTENT_SENTINEL = "__MEGATRON_BRIDGE_ASSISTANT_CONTENT_SENTINEL__"
 
 
 @dataclass(frozen=True)
@@ -414,20 +411,6 @@ def tokenize_text_without_special_tokens(tokenizer: Any, text: str) -> list[int]
     return _as_token_id_list(tokens)
 
 
-def _assistant_text_variants(text: str, *, include_search_variants: bool) -> list[str]:
-    if not text:
-        return []
-    if not include_search_variants:
-        return [text]
-    stripped = text.strip()
-    variants = [text, text + "\n", stripped, stripped + "\n"]
-    deduped: list[str] = []
-    for variant in variants:
-        if variant and variant not in deduped:
-            deduped.append(variant)
-    return deduped
-
-
 def _apply_skipped_tokens(mask: torch.Tensor, ids: Sequence[int], skipped_tokens: torch.Tensor | None) -> None:
     if skipped_tokens is None or skipped_tokens.numel() == 0:
         return
@@ -498,145 +481,6 @@ def _assistant_mask_from_hf_chat_template(
             continue
         return torch.tensor(assistant_mask, dtype=torch.float32)
     return None
-
-
-def _render_chat_template_ids(
-    conversation: Sequence[Mapping[str, Any]],
-    processor: Any,
-    tokenizer: Any,
-) -> list[int] | None:
-    seen: set[int] = set()
-    for template_owner in (processor, tokenizer):
-        if id(template_owner) in seen:
-            continue
-        seen.add(id(template_owner))
-        apply_chat_template = getattr(template_owner, "apply_chat_template", None)
-        if apply_chat_template is None:
-            continue
-        for kwargs in (
-            {"tokenize": True, "add_generation_prompt": False, "return_dict": True},
-            {"tokenize": True, "add_generation_prompt": False},
-        ):
-            try:
-                tokenized_chat = apply_chat_template(conversation, **kwargs)
-            except (AttributeError, KeyError, TypeError, ValueError):
-                continue
-            if isinstance(tokenized_chat, Mapping):
-                return _as_token_id_list(tokenized_chat.get("input_ids"))
-            if isinstance(tokenized_chat, str):
-                return tokenize_text_without_special_tokens(tokenizer, tokenized_chat)
-            token_ids = _as_token_id_list(tokenized_chat)
-            if token_ids:
-                return token_ids
-    return None
-
-
-def _content_with_text(content: Any, text: str) -> Any:
-    if isinstance(content, list):
-        content_copy: list[Any] = []
-        replaced = False
-        for part in content:
-            if isinstance(part, Mapping) and part.get("type") == "text":
-                part_copy = dict(part)
-                if not replaced:
-                    part_copy["text"] = text
-                    replaced = True
-                else:
-                    part_copy["text"] = ""
-                content_copy.append(part_copy)
-            else:
-                content_copy.append(copy.deepcopy(part))
-        if replaced:
-            return content_copy
-    return text
-
-
-def _common_prefix_len(left: Sequence[int], right: Sequence[int]) -> int:
-    limit = min(len(left), len(right))
-    idx = 0
-    while idx < limit and left[idx] == right[idx]:
-        idx += 1
-    return idx
-
-
-def _common_suffix_len(left: Sequence[int], right: Sequence[int], prefix_len: int) -> int:
-    limit = min(len(left), len(right)) - prefix_len
-    idx = 0
-    while idx < limit and left[len(left) - idx - 1] == right[len(right) - idx - 1]:
-        idx += 1
-    return idx
-
-
-def _assistant_mask_from_template_diffs(
-    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
-    ids: Sequence[int],
-    processor: Any,
-    tokenizer: Any,
-) -> torch.Tensor | None:
-    """Infer assistant spans by diffing rendered turns against a sentinel turn."""
-    conversation = _conversation_from_example(example_or_conversation)
-    if not conversation:
-        return None
-
-    mask = torch.zeros(len(ids), dtype=torch.float32)
-    found_template_turn = False
-    for turn_idx, turn in enumerate(conversation):
-        if turn.get("role") != "assistant":
-            continue
-
-        actual_prefix = _render_chat_template_ids(conversation[: turn_idx + 1], processor, tokenizer)
-        if not actual_prefix:
-            continue
-
-        sentinel_turn = copy.deepcopy(dict(turn))
-        sentinel_turn["content"] = _content_with_text(turn.get("content", ""), ASSISTANT_CONTENT_SENTINEL)
-        sentinel_conversation = list(conversation[:turn_idx]) + [sentinel_turn]
-        sentinel_prefix = _render_chat_template_ids(sentinel_conversation, processor, tokenizer)
-        if not sentinel_prefix:
-            continue
-
-        prefix_len = _common_prefix_len(actual_prefix, sentinel_prefix)
-        suffix_len = _common_suffix_len(actual_prefix, sentinel_prefix, prefix_len)
-        span_start = prefix_len
-        span_end = len(actual_prefix) - suffix_len
-        if span_start > span_end:
-            continue
-
-        prefix_start = 0 if list(ids[: len(actual_prefix)]) == actual_prefix else -1
-        if prefix_start < 0:
-            prefix_start, _ = find_token_span(ids, actual_prefix)
-        if prefix_start < 0:
-            continue
-        found_template_turn = True
-        if span_start < span_end:
-            mask[prefix_start + span_start : prefix_start + span_end] = 1.0
-
-    return mask if found_template_turn else None
-
-
-def _decode_single_token(tokenizer: Any, token_id: int) -> str | None:
-    decode = getattr(tokenizer, "decode", None)
-    if decode is not None:
-        try:
-            return str(decode([token_id], skip_special_tokens=False))
-        except TypeError:
-            return str(decode([token_id]))
-
-    convert_ids_to_tokens = getattr(tokenizer, "convert_ids_to_tokens", None)
-    if convert_ids_to_tokens is not None:
-        token = convert_ids_to_tokens(token_id)
-        return str(token)
-    return None
-
-
-def _skip_chatml_role_delimiter(tokenizer: Any, ids: Sequence[int], start: int) -> int:
-    idx = start
-    while idx < len(ids):
-        decoded = _decode_single_token(tokenizer, ids[idx])
-        if decoded is None or not decoded or set(decoded) != {"\n"}:
-            break
-        idx += 1
-    return idx
 
 
 def _token_map_from_boundary_config(token_map: Mapping[str, Sequence[int]] | None) -> dict[str, list[int]]:
@@ -744,7 +588,15 @@ def _assistant_mask_from_boundary_config(
     role_end_tokens = _token_map_from_boundary_config(boundary_config.role_end_tokens)
     masked_roles = set(boundary_config.masked_roles)
     if not role_start_tokens or not role_end_tokens or not masked_roles:
-        return None
+        raise ValueError(
+            "AssistantMaskBoundaryConfig must provide non-empty role_start_tokens, role_end_tokens, and masked_roles."
+        )
+    missing_role_end_tokens = set(role_start_tokens) - set(role_end_tokens)
+    if missing_role_end_tokens:
+        raise ValueError(
+            "AssistantMaskBoundaryConfig role_end_tokens is missing entries for roles: "
+            f"{sorted(missing_role_end_tokens)}."
+        )
 
     markers: list[tuple[int, str, int]] = []
     for role, start_tokens in role_start_tokens.items():
@@ -755,6 +607,15 @@ def _assistant_mask_from_boundary_config(
                 break
             markers.append((start_pos, role, len(start_tokens)))
             search_start = after_start
+    part_start_tokens = _token_map_from_boundary_config(boundary_config.part_start_tokens)
+    part_end_tokens = _token_map_from_boundary_config(boundary_config.part_end_tokens)
+    missing_part_end_tokens = set(part_start_tokens) - set(part_end_tokens)
+    if missing_part_end_tokens:
+        raise ValueError(
+            "AssistantMaskBoundaryConfig part_end_tokens is missing entries for parts: "
+            f"{sorted(missing_part_end_tokens)}."
+        )
+
     if not markers:
         return None
 
@@ -765,8 +626,6 @@ def _assistant_mask_from_boundary_config(
             continue
         deduped_markers.append(marker)
 
-    part_start_tokens = _token_map_from_boundary_config(boundary_config.part_start_tokens)
-    part_end_tokens = _token_map_from_boundary_config(boundary_config.part_end_tokens)
     part_parent_roles = set(boundary_config.part_parent_roles)
     include_start_tokens_for_roles = set(boundary_config.include_start_tokens_for_roles)
     include_end_tokens_for_roles = set(boundary_config.include_end_tokens_for_roles)
@@ -816,77 +675,6 @@ def _assistant_mask_from_boundary_config(
     return mask if found_masked_segment else None
 
 
-def _assistant_mask_from_chatml_boundaries(ids: Sequence[int], tokenizer: Any) -> torch.Tensor | None:
-    """Build a Qwen/ChatML assistant mask from role and turn-boundary tokens."""
-    turn_start_tokens = tokenize_text_without_special_tokens(tokenizer, CHATML_TURN_START)
-    turn_end_tokens = tokenize_text_without_special_tokens(tokenizer, CHATML_TURN_END)
-    assistant_role_tokens = tokenize_text_without_special_tokens(tokenizer, CHATML_ASSISTANT_ROLE)
-    if not turn_start_tokens or not turn_end_tokens or not assistant_role_tokens:
-        return None
-    if len({tuple(turn_start_tokens), tuple(turn_end_tokens), tuple(assistant_role_tokens)}) != 3:
-        return None
-
-    mask = torch.zeros(len(ids), dtype=torch.float32)
-    search_start = 0
-    found = False
-    while search_start < len(ids):
-        turn_start, after_turn_start = find_token_span(ids, turn_start_tokens, search_start)
-        if turn_start < 0:
-            break
-        role_start = after_turn_start
-        role_end = role_start + len(assistant_role_tokens)
-        if list(ids[role_start:role_end]) != assistant_role_tokens:
-            search_start = after_turn_start
-            continue
-
-        content_start = _skip_chatml_role_delimiter(tokenizer, ids, role_end)
-        turn_end, after_turn_end = find_token_span(ids, turn_end_tokens, content_start)
-        next_turn_start, _ = find_token_span(ids, turn_start_tokens, content_start)
-        if turn_end >= 0 and (next_turn_start < 0 or turn_end < next_turn_start):
-            content_end = after_turn_end
-            search_start = after_turn_end
-        else:
-            content_end = next_turn_start if next_turn_start >= 0 else len(ids)
-            search_start = content_end
-
-        if content_start < content_end:
-            mask[content_start:content_end] = 1.0
-            found = True
-
-    return mask if found else None
-
-
-def _assistant_mask_from_text_search(
-    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
-    ids: Sequence[int],
-    tokenizer: Any,
-    *,
-    include_search_variants: bool,
-    require_matches: bool,
-) -> torch.Tensor:
-    mask = torch.zeros(len(ids), dtype=torch.float32)
-    search_start = 0
-    missing_segments: list[str] = []
-    for assistant_text in gather_assistant_text_segments(example_or_conversation):
-        found = False
-        for text in _assistant_text_variants(assistant_text, include_search_variants=include_search_variants):
-            tokens = tokenize_text_without_special_tokens(tokenizer, text)
-            if not tokens:
-                continue
-            span_start, span_end = find_token_span(ids, tokens, search_start)
-            if span_start >= 0:
-                mask[span_start:span_end] = 1.0
-                search_start = span_end
-                found = True
-                break
-        if not found:
-            missing_segments.append(assistant_text)
-
-    if missing_segments and require_matches:
-        raise AssertionError("Not found valid answer in conversation.")
-    return mask
-
-
 def build_assistant_loss_mask(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     input_ids: Sequence[int] | torch.Tensor,
@@ -894,18 +682,17 @@ def build_assistant_loss_mask(
     skipped_tokens: torch.Tensor | None = None,
     *,
     boundary_config: AssistantMaskBoundaryConfig | None = None,
-    include_search_variants: bool = True,
-    require_matches: bool = False,
     warn_on_all_masked: bool = True,
 ) -> torch.Tensor:
     """Build an unshifted assistant-only loss mask.
 
     The preferred path uses HF chat templates with ``{% generation %}`` blocks.
     When those are unavailable, callers may provide ``boundary_config`` to scan
-    explicit role/part token boundaries from rendered ``input_ids``. For
-    Qwen/ChatML templates without an explicit config, this falls back to built-in
-    ChatML boundary scanning and then template diffing. Text search is kept as a
-    final compatibility fallback.
+    explicit role/part token boundaries from rendered ``input_ids``.
+
+    Raises:
+        ValueError: If neither a HF generation mask nor a valid explicit
+            boundary mask can be built.
     """
     tokenizer = get_processor_tokenizer(processor)
     ids = _as_token_id_list(input_ids)
@@ -914,17 +701,13 @@ def build_assistant_loss_mask(
     if mask is None and boundary_config is not None:
         mask = _assistant_mask_from_boundary_config(ids, boundary_config)
     if mask is None:
-        mask = _assistant_mask_from_chatml_boundaries(ids, tokenizer)
-    if mask is None:
-        mask = _assistant_mask_from_template_diffs(example_or_conversation, ids, processor, tokenizer)
-    if mask is None:
-        mask = _assistant_mask_from_text_search(
-            example_or_conversation,
-            ids,
-            tokenizer,
-            include_search_variants=include_search_variants,
-            require_matches=require_matches,
-        )
+        if boundary_config is None:
+            raise ValueError(
+                "Unable to build assistant loss mask. Provide a processor/tokenizer chat_template with "
+                "{% generation %} blocks that returns assistant_masks, or pass AssistantMaskBoundaryConfig "
+                "with explicit role/part token boundaries."
+            )
+        raise ValueError("AssistantMaskBoundaryConfig did not match any masked assistant spans in input_ids.")
 
     _apply_skipped_tokens(mask, ids, skipped_tokens)
     _warn_if_all_masked(mask, example_or_conversation, warn_on_all_masked=warn_on_all_masked)
@@ -964,12 +747,19 @@ def apply_assistant_labels_to_batch(
     processor: Any,
     skipped_tokens: torch.Tensor,
     *,
+    boundary_config: AssistantMaskBoundaryConfig | None = None,
     unmask_last_token: bool = False,
 ) -> None:
     """Attach ``labels`` and ``loss_mask`` to a collated HF VLM batch."""
     normalized_samples = [normalize_hf_vlm_example(example) for example in examples]
     loss_masks = [
-        build_assistant_loss_mask(sample.conversation, input_ids, processor, skipped_tokens)
+        build_assistant_loss_mask(
+            sample.conversation,
+            input_ids,
+            processor,
+            skipped_tokens,
+            boundary_config=boundary_config,
+        )
         for sample, input_ids in zip(normalized_samples, batch["input_ids"])
     ]
     loss_mask_t = torch.stack(loss_masks).to(device=batch["input_ids"].device, dtype=torch.float32)
