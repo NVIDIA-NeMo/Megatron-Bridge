@@ -131,6 +131,17 @@ class TestNemotronOmniConversion:
         with open(model_dir / "config.json", "w") as f:
             json.dump(model.config.to_dict(), f, indent=2)
 
+        # The conversion re-export (save_hf_pretrained) copies the *input* tokenizer to the
+        # output, so the toy dir must carry a loadable tokenizer. Copy the reference repo's
+        # fast tokenizer files verbatim (no instantiation) so AutoTokenizer.from_pretrained()
+        # loads tokenizer.json directly — avoiding any slow→fast conversion backend
+        # (sentencepiece/tiktoken), which is not a dependency. The tokenizer's vocab need not
+        # match the toy model's reduced vocab: the roundtrip only copies the tokenizer through.
+        from huggingface_hub import hf_hub_download
+
+        for fname in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json"):
+            shutil.copy2(hf_hub_download(_DEFAULT_HF_ID, fname), model_dir / fname)
+
         return str(model_dir)
 
     @pytest.mark.run_only_on("GPU")
