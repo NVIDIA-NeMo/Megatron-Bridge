@@ -88,7 +88,12 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
 
-    recipe.model.init_model_with_meta_device = True
+    # Meta-device init is incompatible with loading a legacy torch_dist (ShardedTensor)
+    # base checkpoint: torch DCP's meta-device load path only supports DTensor and
+    # raises "Found unsupported type ShardedTensor for meta device loading." This FSDP
+    # path is LoRA-only (pretrain leaves use_megatron_fsdp unset), and LoRA always loads
+    # a pretrained base checkpoint, so init on real device (70B fits per-rank on GB200/GB300).
+    recipe.model.init_model_with_meta_device = False
     recipe.model.gradient_accumulation_fusion = True
 
     if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
