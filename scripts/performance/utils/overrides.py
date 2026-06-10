@@ -14,6 +14,7 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional
 
 from omegaconf import OmegaConf
@@ -408,6 +409,24 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if recipe.model.cuda_graph_impl != "none":
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
+    elif args.data == "gov_report":
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        lora_root = os.environ.get("LORA_DATA_ROOT", "/lustre/share/coreai_mlperf_training/data/lora")
+        gov_dir = os.environ.get("GOV_REPORT_DIR", f"{lora_root}/gov_report")
+        metadata_path = os.environ.get("GOV_REPORT_METADATA", f"{gov_dir}/gov_report_packed_metadata.json")
+        if recipe.dataset.packed_sequence_specs is None:
+            cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+            pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
+            recipe.dataset.packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=args.seq_length or recipe.model.seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        specs = recipe.dataset.packed_sequence_specs
+        specs.packed_train_data_path = f"{gov_dir}/train.npy"
+        specs.packed_val_data_path = f"{gov_dir}/validation.npy"
+        specs.packed_metadata_path = metadata_path
+        specs.pad_cu_seqlens = True
+        if recipe.dataset.dataset_kwargs is None:
+            recipe.dataset.dataset_kwargs = {}
+        recipe.dataset.dataset_kwargs["pad_to_max_length"] = True
+        logger.info("gov_report dataset: train=%s val=%s metadata=%s", specs.packed_train_data_path, specs.packed_val_data_path, specs.packed_metadata_path)
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
     if args.hidden_size is not None:
