@@ -6,7 +6,7 @@ The bridge supports four published variants out of the same code path. The on-di
 
 ## MCore Checkout
 
-The pretraining recipes were tested with Megatron-LM `dev` commit `35f36c7c9dba` plus PR [#4839](https://github.com/NVIDIA/Megatron-LM/pull/4839) (`f04b762406f0` in the OCI test checkout). The Megatron-LM copy inside the current NeMo FW container is not expected to work for these recipes.
+The DeepSeek V4 pretraining recipes require Megatron-LM `dev` support that is newer than the release-branch main pin. Use the Bridge dev commit switch before running these recipes; it checks out the commit recorded in `.dev.commit` (currently `2f1004963dcb1718804f3b858f5fb2fc73819694`). Run these recipes in the NeMo FW 26.06 container after switching to the dev MCore checkout; the Megatron-LM copy inside the container is not expected to work for these recipes.
 
 ```bash
 ./scripts/switch_mcore.sh dev
