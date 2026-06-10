@@ -78,8 +78,8 @@ def _layout_stage_has_mtp(layout, *, pp_rank: int, pp_size: int, vp_stage: int) 
     )
 
 
-def _infer_current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection) -> bool:
-    """Infer whether the current PP/VPP stage owns the configured MTP block from layout."""
+def _current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collection) -> bool:
+    """Return whether the current PP/VPP stage owns the configured MTP block, derived from layout."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
     if layout is None:
@@ -95,14 +95,14 @@ def _infer_current_stage_has_mtp_from_layout(cfg: ConfigContainer, *, pg_collect
     return _layout_stage_has_mtp(layout, pp_rank=pp_rank, pp_size=pp_size, vp_stage=vp_stage)
 
 
-def _infer_current_stage_needs_mtp_inputs(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
-    """Infer whether this stage needs token ids for MTP embedding lookup."""
+def _current_stage_needs_mtp_inputs_from_layout(cfg: ConfigContainer, *, pg_collection, is_last: bool) -> bool:
+    """Return whether this stage needs token ids for MTP embedding lookup, derived from layout."""
     model_cfg = getattr(cfg, "model", None)
     layout = getattr(model_cfg, "pipeline_model_parallel_layout", None)
     if layout is None:
         return is_last
 
-    return _infer_current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection)
+    return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection)
 
 
 def _model_chunk_needs_mtp_inputs(model: GPTModel) -> bool:
@@ -252,7 +252,7 @@ def get_batch(
     is_middle = (not is_first) and (not is_last)
     include_full_batch_fields = is_middle and _middle_pp_stage_needs_batch(cfg)
     if include_mtp_inputs is None:
-        include_mtp_inputs = use_mtp and _infer_current_stage_needs_mtp_inputs(
+        include_mtp_inputs = use_mtp and _current_stage_needs_mtp_inputs_from_layout(
             cfg, pg_collection=pg_collection, is_last=is_last
         )
     else:
