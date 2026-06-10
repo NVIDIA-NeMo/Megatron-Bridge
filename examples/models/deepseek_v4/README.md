@@ -13,7 +13,7 @@ The DeepSeek V4 pretraining recipes require Megatron-LM `dev` support that is ne
 uv sync
 ```
 
-For release-branch validation, use the NeMo FW 26.06.rc5 container or newer after switching to the dev MCore checkout.
+For release-branch validation, use the NeMo FW 26.06 container after switching to the dev MCore checkout.
 
 Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
