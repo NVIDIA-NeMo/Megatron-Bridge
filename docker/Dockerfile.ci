@@ -15,34 +15,26 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
-ENV PATH="/root/.local/bin:$PATH"
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-ENV UV_LINK_MODE=copy
-ENV UV_VERSION="0.7.2"
-ENV NVTE_BUILD_NUM_PHILOX_ROUNDS=3
-RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
-    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
-    # Address CVE-2025-68973
-    apt-get update && apt install -y --only-upgrade gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
-
-##############################################################################
-##
-## Install DeepEP and nvshmem
-##
-##############################################################################
 
 ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
 
-ENV HYBRID_EP_MULTINODE=1
-ENV RDMA_CORE_HOME=/opt/rdma-core/build
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
+ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_VERSION="0.7.2" \
+    NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
+    HYBRID_EP_MULTINODE=1 \
+    RDMA_CORE_HOME=/opt/rdma-core/build \
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
+    curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    # Address CVE-2025-68973
+    apt-get update && apt install -y --only-upgrade gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
     if [ "$INSTALL_DEEPEP" = "True" ]; then \
     # Upgrade system rdma-core to v60; libibverbs-dev supplies the unversioned
     # libibverbs.so symlink required at link time.
@@ -78,12 +70,7 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
     popd; \
     fi
 
-COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
-COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
-COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
-COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
-COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+COPY --chmod=644 . /opt/Megatron-Bridge
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
@@ -109,5 +96,3 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
-
-COPY --chmod=644 . /opt/Megatron-Bridge
