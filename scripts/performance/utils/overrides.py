@@ -240,10 +240,6 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
     if settings.offload_modules is not None:
         cfg.model.offload_modules = settings.offload_modules
-    if settings.fp8_param_gather is not None:
-        cfg.mixed_precision.fp8_param_gather = settings.fp8_param_gather
-    if settings.fp8_param is not None:
-        cfg.mixed_precision.fp8_param = settings.fp8_param
 
     if settings.outer_dp_sharding_strategy is not None:
         cfg.ddp.outer_dp_sharding_strategy = settings.outer_dp_sharding_strategy

@@ -489,6 +489,9 @@ class PerfEnvPlugin(Plugin):
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
 
+        if getattr(workload_base_config, "fine_grained_activation_offloading", False):
+            executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
+
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
         moe_a2a_overlap = (

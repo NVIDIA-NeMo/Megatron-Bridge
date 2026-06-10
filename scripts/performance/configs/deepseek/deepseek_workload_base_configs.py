@@ -283,8 +283,6 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
-    fp8_param=True,
-    fp8_param_gather=True,
     outer_dp_sharding_strategy="optim",
     num_distributed_optimizer_instances=2,
 )
