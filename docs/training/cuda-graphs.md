@@ -7,7 +7,7 @@ every training step.
 This page is the stable guide for what CUDA graphs are, when they help, and
 what tradeoffs to expect. For exact enablement knobs, code anchors, and
 verification commands, see
-[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## What It Is
 
@@ -107,13 +107,13 @@ If you choose `local` with `full_iteration`, disable the loss and gradient NaN
 checks that conflict with full capture.
 
 For exact config snippets and runnable commands, see
-[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## Minimal Runnable Example
 
 For a minimal Bridge-facing example, start from the functional smoke test:
 
-- `tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
+- `tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
 
 For a lightweight CLI-driven path, use the performance harness with scoped
 capture and a small model recipe.
@@ -196,4 +196,4 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 
 - [Performance Guide](../performance-guide.md)
 - [Communication Overlap](communication-overlap.md)
-- [skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md)
+- [skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md)

@@ -236,7 +236,7 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
     inputs = processor(messages=messages)
     grid_thws = getattr(inputs, "grid_thws", None)
     input_ids = pre_expand_vision_tokens(inputs.input_ids, grid_thws, image_token_id)
-    return input_ids, inputs.pixel_values, grid_thws, None, None
+    return input_ids, inputs.pixel_values, grid_thws, None, None, None
 
 
 def _process_default_inputs(processor, image_path, prompt):

@@ -40,7 +40,7 @@ def import_performance_module():
     nemo_run.LocalTunnel = lambda **kwargs: SimpleNamespace(**kwargs)
     nemo_run.GitArchivePackager = lambda **kwargs: SimpleNamespace(**kwargs)
     nemo_run.SlurmExecutor = lambda **kwargs: SimpleNamespace(**kwargs)
-    nemo_run.DGXCloudExecutor = lambda **kwargs: SimpleNamespace(**kwargs)
+    nemo_run.KubeflowExecutor = lambda **kwargs: SimpleNamespace(**kwargs)
 
     nemo_run_config.get_nemorun_home = lambda: "/tmp/nemorun"
     nemo_run_config.set_nemorun_home = lambda _path: None

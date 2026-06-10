@@ -18,6 +18,9 @@
 #
 # GLM-4.7-Flash (MLA+MoE, ~30B, 64 experts top-4) fits on 8 GPUs with EP=8.
 # GLM-4.7 (MoE, ~358B, 160 experts top-8) requires multi-node.
+#
+# Megatron inference engine support is not yet available for this architecture.
+# This launcher defaults to the older slow sanity-check generation path for now.
 # ==============================================================================
 
 set -xeuo pipefail

@@ -56,6 +56,8 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
             Determines how many placeholder tokens to insert for each modality.
         modality_configs: Per-modality generation config, e.g.,
             {"vision": {"type": "image", "width": 224, "height": 224}}.
+        modality_presence_prob: Per-modality probability that a synthetic sample
+            contains that modality. Unspecified modalities default to 1.0.
         text_prompt: Default text prompt for synthetic examples.
         random_seed: Seed for random generation.
 
@@ -78,6 +80,7 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
     special_token_ids: Dict[str, int] = field(default_factory=dict)
     encoder_seq_lengths: Dict[str, int] = field(default_factory=dict)
     modality_configs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    modality_presence_prob: Dict[str, float] = field(default_factory=dict)
     text_prompt: str = "Describe this input."
     random_seed: int = 0
     trust_remote_code: bool = False
@@ -136,6 +139,19 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
         object.__setattr__(self, "_tokenizer", tokenizer)
         return tokenizer
 
+    def _validate_modality_presence_prob(self) -> None:
+        """Validate optional per-modality sampling probabilities."""
+        for modality_name, probability in self.modality_presence_prob.items():
+            if modality_name not in self.modality_configs:
+                raise ValueError(
+                    f"modality_presence_prob contains unknown modality {modality_name!r}; "
+                    f"expected one of {sorted(self.modality_configs)}"
+                )
+            if not 0.0 <= probability <= 1.0:
+                raise ValueError(
+                    f"modality_presence_prob[{modality_name!r}] must be between 0.0 and 1.0, got {probability}"
+                )
+
     def _generate_synthetic_examples(
         self,
         size: int,
@@ -150,6 +166,7 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
         Returns:
             List of examples with synthetic modality data.
         """
+        self._validate_modality_presence_prob()
         rng = np.random.default_rng(seed=self.random_seed + seed_offset)
         examples = []
 
@@ -157,6 +174,10 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
             example = {"text": f"{self.text_prompt} Sample {i}."}
 
             for modality_name, config in self.modality_configs.items():
+                presence_prob = self.modality_presence_prob.get(modality_name, 1.0)
+                if presence_prob < 1.0 and rng.random() >= presence_prob:
+                    continue
+
                 modality_type = config.get("type", "image")
 
                 if modality_type == "image":

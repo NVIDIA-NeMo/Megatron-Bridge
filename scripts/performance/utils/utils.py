@@ -67,6 +67,8 @@ class WorkloadBaseConfig:
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
     moe_a2a_overlap: Optional[bool] = False
+    cutedsl_fused_grouped_mlp: Optional[bool] = False
+    fp8_dot_product_attention: Optional[bool] = None
     peft: Optional[str] = None
 
     # Pipeline parallelism layout

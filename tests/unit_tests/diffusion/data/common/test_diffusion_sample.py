@@ -14,26 +14,25 @@
 
 import torch
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
+
+
+def _sample_metadata(key: str) -> dict:
+    return sample_metadata_kwargs(key=key, restore_key=(), subflavors=["default"])
 
 
 def test_add():
     """Test __add__ method for DiffusionSample."""
     # Create two DiffusionSample instances with different seq_len_q
     sample1 = DiffusionSample(
-        __key__="sample1",
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **_sample_metadata("sample1"),
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
         seq_len_q=torch.tensor(100),
     )
     sample2 = DiffusionSample(
-        __key__="sample2",
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **_sample_metadata("sample2"),
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
         seq_len_q=torch.tensor(200),
@@ -52,10 +51,7 @@ def test_radd():
     """Test __radd__ method for DiffusionSample."""
     # Create a DiffusionSample instance
     sample = DiffusionSample(
-        __key__="sample",
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **_sample_metadata("sample"),
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
         seq_len_q=torch.tensor(100),
@@ -68,28 +64,19 @@ def test_radd():
     # Test sum() function which uses __radd__ (starting with 0)
     samples = [
         DiffusionSample(
-            __key__="sample1",
-            __restore_key__=(),
-            __subflavor__=None,
-            __subflavors__=["default"],
+            **_sample_metadata("sample1"),
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
             seq_len_q=torch.tensor(10),
         ),
         DiffusionSample(
-            __key__="sample2",
-            __restore_key__=(),
-            __subflavor__=None,
-            __subflavors__=["default"],
+            **_sample_metadata("sample2"),
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
             seq_len_q=torch.tensor(20),
         ),
         DiffusionSample(
-            __key__="sample3",
-            __restore_key__=(),
-            __subflavor__=None,
-            __subflavors__=["default"],
+            **_sample_metadata("sample3"),
             video=torch.randn(3, 8, 16, 16),
             context_embeddings=torch.randn(10, 512),
             seq_len_q=torch.tensor(30),
@@ -103,19 +90,13 @@ def test_lt():
     """Test __lt__ method for DiffusionSample."""
     # Create two DiffusionSample instances with different seq_len_q
     sample1 = DiffusionSample(
-        __key__="sample1",
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **_sample_metadata("sample1"),
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
         seq_len_q=torch.tensor(100),
     )
     sample2 = DiffusionSample(
-        __key__="sample2",
-        __restore_key__=(),
-        __subflavor__=None,
-        __subflavors__=["default"],
+        **_sample_metadata("sample2"),
         video=torch.randn(3, 8, 16, 16),
         context_embeddings=torch.randn(10, 512),
         seq_len_q=torch.tensor(200),
