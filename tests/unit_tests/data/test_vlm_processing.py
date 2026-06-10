@@ -175,6 +175,26 @@ def test_build_assistant_loss_mask_prefers_hf_generation_mask_when_supported():
     assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
 
 
+@pytest.mark.parametrize(
+    ("input_ids", "expected_mask"),
+    [
+        (torch.tensor([1, 2, 3, 4, 0, 0]), [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+        (torch.tensor([0, 0, 1, 2, 3, 4]), [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+    ],
+)
+def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(input_ids, expected_mask):
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+
+    mask = build_assistant_loss_mask(example, input_ids, _GenerationMaskProcessor())
+
+    assert mask.tolist() == expected_mask
+
+
 def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
     example = {
         "conversation": [

@@ -460,15 +460,43 @@ def _assistant_mask_from_hf_chat_template(
 
         if not isinstance(tokenized_chat, Mapping):
             continue
-        candidate_ids = _as_token_id_list(tokenized_chat.get("input_ids"))
-        if candidate_ids != list(ids):
-            continue
         if "assistant_masks" not in tokenized_chat:
             continue
+        candidate_ids = _as_token_id_list(tokenized_chat.get("input_ids"))
         assistant_mask = _as_token_id_list(tokenized_chat["assistant_masks"])
-        if len(assistant_mask) != len(ids):
+        aligned_mask = _align_assistant_mask_to_padded_ids(candidate_ids, assistant_mask, ids, tokenizer)
+        if aligned_mask is None:
             continue
-        return torch.tensor(assistant_mask, dtype=torch.float32)
+        return torch.tensor(aligned_mask, dtype=torch.float32)
+    return None
+
+
+def _align_assistant_mask_to_padded_ids(
+    candidate_ids: Sequence[int],
+    assistant_mask: Sequence[int],
+    ids: Sequence[int],
+    tokenizer: Any,
+) -> list[int] | None:
+    """Align an HF assistant mask to possibly padded processor batch ids."""
+    target_ids = list(ids)
+    source_ids = list(candidate_ids)
+    source_mask = [int(mask_value) for mask_value in assistant_mask]
+    if len(source_ids) != len(source_mask):
+        return None
+    if source_ids == target_ids:
+        return source_mask
+
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_token_id is None or len(source_ids) > len(target_ids):
+        return None
+
+    pad_len = len(target_ids) - len(source_ids)
+    if target_ids[: len(source_ids)] == source_ids and all(
+        token_id == pad_token_id for token_id in target_ids[-pad_len:]
+    ):
+        return source_mask + [0] * pad_len
+    if target_ids[pad_len:] == source_ids and all(token_id == pad_token_id for token_id in target_ids[:pad_len]):
+        return [0] * pad_len + source_mask
     return None
 
 
@@ -577,7 +605,7 @@ def build_assistant_loss_mask(
 
     The preferred path uses HF chat templates with ``{% generation %}`` blocks.
     When those are unavailable, callers may provide ``boundary_config`` to scan
-    explicit role/part token boundaries from rendered ``input_ids``.
+    explicit role token boundaries from rendered ``input_ids``.
 
     Raises:
         ValueError: If neither a HF generation mask nor a valid explicit
@@ -594,7 +622,7 @@ def build_assistant_loss_mask(
             raise ValueError(
                 "Unable to build assistant loss mask. Provide a processor/tokenizer chat_template with "
                 "{% generation %} blocks that returns assistant_masks, or pass AssistantMaskBoundaryConfig "
-                "with explicit role/part token boundaries."
+                "with explicit role token boundaries."
             )
         raise ValueError("AssistantMaskBoundaryConfig did not match any loss-contributing spans in input_ids.")
 
