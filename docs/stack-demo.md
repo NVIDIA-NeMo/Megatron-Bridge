@@ -7,3 +7,8 @@ self-contained diff.
 ## Layer 1 — hello world
 
 This is the bottom of the stack. It targets `main`.
+
+## Layer 2 — how stacking works
+
+This layer is built on top of layer 1. Its PR targets the layer-1 branch, so
+the diff GitHub shows is only this section — reviewers never re-review layer 1.
