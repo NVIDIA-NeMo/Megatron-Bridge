@@ -3201,6 +3201,38 @@ class TestFSDPDTensorFunctionality:
             mock_model.sharded_state_dict.assert_called_once()
             assert "model" in result
 
+    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self):
+        """Load-time optimizer scaffolding should not depend on save_optim."""
+        from unittest.mock import Mock
+
+        from megatron.bridge.training.checkpointing import generate_state_dict
+        from megatron.bridge.training.config import CheckpointConfig
+
+        mock_model = Mock()
+        mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
+        mock_optimizer = Mock()
+        mock_optimizer.is_stub_optimizer = False
+        mock_optimizer.sharded_state_dict.return_value = {"optimizer": {"param_groups": []}}
+        mock_scheduler = Mock()
+        mock_scheduler.state_dict.return_value = {"scheduler": "state"}
+
+        ckpt_cfg = CheckpointConfig(ckpt_format="torch_dist", save_optim=False, save_rng=False)
+        result = generate_state_dict(
+            ckpt_cfg=ckpt_cfg,
+            model=[mock_model],
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            rng_state=None,
+            optim_sd_kwargs={
+                "is_loading": True,
+                "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
+            },
+        )
+
+        assert result["optimizer"] == {"optimizer": {"param_groups": []}}
+        assert result["opt_param_scheduler"] == {"scheduler": "state"}
+        mock_optimizer.sharded_state_dict.assert_called_once()
+
 
 class TestCheckpointPathOverride:
     """Test checkpoint_path_override parameter in loading functions."""
