@@ -241,7 +241,7 @@ def _delete_cuda_graphs(cuda_graph_helper):
 | `tests/unit_tests/training/test_config.py` | `full_iteration` NaN-check constraint |
 | `tests/unit_tests/training/test_comm_overlap.py` | `delay_wgrad` + CUDA graph interaction |
 | `tests/unit_tests/models/test_gpt_full_te_layer_autocast_spec.py` | TE autocast with CUDA graphs |
-| `tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py` | End-to-end local and TE graph smoke tests |
+| `tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py` | End-to-end local and TE graph smoke tests |
 | `tests/unit_tests/recipes/kimi/test_kimi_k2.py` | TE + CUDA graph recipe config |
 | `tests/unit_tests/recipes/gpt/test_gpt3_175b.py` | TE + CUDA graph recipe config |
 | `tests/unit_tests/recipes/qwen_vl/test_qwen25_vl_recipes.py` | VLM CUDA graph settings |
@@ -332,7 +332,7 @@ uv run python -m pytest \
 
 ```bash
 uv run python -m pytest \
-  tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py -q
+  tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py -q
 ```
 
 ### Success criteria

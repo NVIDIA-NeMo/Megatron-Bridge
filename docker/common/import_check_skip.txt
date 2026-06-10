@@ -29,3 +29,7 @@ mfusepy
 
 # Legacy DALI/MXNet helper script that imports mxnet, which is not installed:
 rec2idx
+
+# Pytest plugin shipped by `hypothesis`; eagerly imports `pytest`, which is not
+# installed in the fw_base/fw_final runtime venvs (test-time-only dependency):
+_hypothesis_pytestplugin

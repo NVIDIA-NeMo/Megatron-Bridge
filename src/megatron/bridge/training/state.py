@@ -463,7 +463,7 @@ class GlobalState:
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""
         if self.cfg.train is not None:
-            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
+            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal).__enter__()
 
     def reset_for_restart(self) -> None:
         """Reset GlobalState components for in-process restart.
@@ -479,6 +479,8 @@ class GlobalState:
         self._comet_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
+        if self._signal_handler is not None:
+            self._signal_handler.release()
         self._signal_handler = None
         self._straggler_timer = None
         self._nvrx_straggler_manager = None
