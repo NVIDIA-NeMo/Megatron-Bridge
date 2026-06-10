@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from megatron.bridge.diffusion.recipes.wan.wan import (
+    longlive_wan_1_3b_pretrain_config,
+    longlive_wan_5b_sp_long_video_pretrain_config,
     wan_1_3b_pretrain_config,
     wan_1_3b_sft_config,
     wan_1_3b_text2image_pretrain_config,
@@ -23,6 +25,8 @@ from megatron.bridge.diffusion.recipes.wan.wan import (
 
 
 __all__ = [
+    "longlive_wan_1_3b_pretrain_config",
+    "longlive_wan_5b_sp_long_video_pretrain_config",
     "wan_1_3b_pretrain_config",
     "wan_1_3b_text2image_pretrain_config",
     "wan_1_3b_text2video_pretrain_config",

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from math import prod
 
 import torch
 from megatron.core.distributed import DistributedDataParallelConfig
@@ -28,6 +29,14 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
+
+
+_LONGLIVE_LOCAL_ATTN_SIZE = 24
+
+
+def _longlive_window_size(*, latent_height: int, latent_width: int, patch_spatial: int) -> tuple[int, int]:
+    frame_seq_length = (latent_height // patch_spatial) * (latent_width // patch_spatial)
+    return (_LONGLIVE_LOCAL_ATTN_SIZE * frame_seq_length, 0)
 
 
 def wan_1_3b_pretrain_config() -> ConfigContainer:
@@ -321,4 +330,95 @@ def wan_1_3b_text2video_pretrain_config() -> ConfigContainer:
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-4
     cfg.optimizer.weight_decay = 0.001
+    return cfg
+
+
+def longlive_wan_1_3b_pretrain_config() -> ConfigContainer:
+    """Return a Wan 1.3B pretraining config for the LongLiveWan MVP.
+
+    This MVP reuses the existing offline WAN latent/text-embedding data path
+    and swaps only the forward step to `longlive_wan_step`.
+    """
+    cfg = wan_1_3b_text2video_pretrain_config()
+    cfg.model.window_size = _longlive_window_size(
+        latent_height=cfg.dataset.H_latents,
+        latent_width=cfg.dataset.W_latents,
+        patch_spatial=cfg.dataset.patch_spatial,
+    )
+    cfg.model.window_attn_skip_freq = None
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "longlive_wan")
+    cfg.checkpoint.save = os.path.join(run_output_dir, "checkpoints")
+    cfg.checkpoint.load = cfg.checkpoint.save
+    cfg.logger.tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    return cfg
+
+
+def longlive_wan_5b_sp_long_video_pretrain_config() -> ConfigContainer:
+    """Return a LongLive-style WAN 5B SP config for long-video development.
+
+    This follows the LongLive AR streaming default latent shape
+    `[B, F, C, H, W] = [1, 320, 48, 44, 80]` with random/mock WAN tensors when
+    `dataset.path` is unset. Sequence parallelism is enabled through TP=4 and
+    CP is disabled so long-video sharding is specifically covered by SP.
+    """
+    cfg = wan_14b_pretrain_config()
+    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
+    run_output_dir = os.path.join(base_output_dir, "longlive_wan_5b_sp_long_video")
+
+    frames = 320
+    latent_channels = 48
+    latent_height = 44
+    latent_width = 80
+    patch_temporal = 1
+    patch_spatial = 2
+    seq_length = prod(
+        (
+            frames // patch_temporal,
+            latent_height // patch_spatial,
+            latent_width // patch_spatial,
+        )
+    )
+
+    cfg.model.seq_length = seq_length
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.qkv_format = "sbhd"
+    cfg.model.in_channels = latent_channels
+    cfg.model.out_channels = latent_channels
+    cfg.model.patch_temporal = patch_temporal
+    cfg.model.patch_spatial = patch_spatial
+    cfg.model.window_size = _longlive_window_size(
+        latent_height=latent_height,
+        latent_width=latent_width,
+        patch_spatial=patch_spatial,
+    )
+    cfg.model.window_attn_skip_freq = None
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.F_latents = frames
+    cfg.dataset.H_latents = latent_height
+    cfg.dataset.W_latents = latent_width
+    cfg.dataset.latent_channels = latent_channels
+    cfg.dataset.patch_temporal = patch_temporal
+    cfg.dataset.patch_spatial = patch_spatial
+    cfg.dataset.context_embeddings_dim = cfg.model.text_dim
+    cfg.dataset.global_batch_size = 1
+    cfg.dataset.micro_batch_size = 1
+
+    cfg.train.train_iters = 5000
+    cfg.train.global_batch_size = 1
+    cfg.train.micro_batch_size = 1
+    cfg.optimizer.lr = 1e-5
+    cfg.optimizer.min_lr = 1e-5
+    cfg.optimizer.weight_decay = 0.001
+    cfg.logger.log_interval = 100
+    cfg.logger.tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg.checkpoint.save_interval = 1000
+    cfg.checkpoint.save = os.path.join(run_output_dir, "checkpoints")
+    cfg.checkpoint.load = cfg.checkpoint.save
     return cfg

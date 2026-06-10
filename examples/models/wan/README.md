@@ -180,6 +180,75 @@ uv run python -m torch.distributed.run --nproc_per_node=$NUM_GPUS scripts/traini
 
 For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/wan.py` and `scripts/training/run_recipe.py`.
 
+### LongLiveWan MVP
+
+LongLiveWan adds a WAN training step for clean-history plus noisy-target temporal chunks. It uses the same offline WAN WebDataset format as the standard recipe: `pth` files contain precomputed video latents and `pickle` files contain text embeddings. This MVP does not run raw-video VAE encoding or online T5 text encoding inside training.
+The 1.3B LongLive recipe sets a 24-frame sliding-window self-attention window from the dataset latent shape, so the 43k-token text-to-video default does not allocate a dense `[S, S]` teacher-forcing mask.
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
+  --recipe longlive_wan_1_3b_pretrain_config \
+  --step_func longlive_wan_step \
+  dataset.path=${WORKSPACE}/datasets/wan
+```
+
+For a 2-GPU smoke test with context parallelism:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
+  --recipe longlive_wan_1_3b_pretrain_config \
+  --step_func longlive_wan_step \
+  model.num_layers=2 \
+  model.context_parallel_size=2 \
+  model.tensor_model_parallel_size=1 \
+  model.pipeline_model_parallel_size=1 \
+  model.qkv_format=thd \
+  train.train_iters=5 \
+  train.eval_iters=0 \
+  train.global_batch_size=2 \
+  train.micro_batch_size=1 \
+  dataset.global_batch_size=2 \
+  dataset.micro_batch_size=1 \
+  logger.log_interval=1
+```
+
+For LongLive-style long-video development with sequence parallelism, use the 5B SP recipe. It follows the
+LongLive AR latent shape `[B, F, C, H, W] = [1, 320, 48, 44, 80]` and uses mock random WAN latents when
+`dataset.path` is unset. The recipe maps LongLive's `local_attn_size: 24` to a TE sliding-window self-attention
+window of `24 * 22 * 40` latent tokens, with TP/SP=4, CP disabled, and `qkv_format=sbhd`. At this default sequence length the
+LongLive step relies on the model's sliding-window attention instead of allocating a dense `[S, S]`
+teacher-forcing mask:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
+  --recipe longlive_wan_5b_sp_long_video_pretrain_config \
+  --step_func longlive_wan_step
+```
+
+For a faster 4-GPU smoke that still keeps the default LongLive latent frame count and resolution:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
+  --recipe longlive_wan_5b_sp_long_video_pretrain_config \
+  --step_func longlive_wan_step \
+  model.num_layers=2 \
+  model.hidden_size=512 \
+  model.ffn_hidden_size=1408 \
+  model.num_attention_heads=8 \
+  model.crossattn_emb_size=512 \
+  model.freq_dim=256 \
+  model.recompute_granularity=null \
+  train.train_iters=2 \
+  train.eval_iters=0 \
+  train.global_batch_size=1 \
+  train.micro_batch_size=1 \
+  dataset.global_batch_size=1 \
+  dataset.micro_batch_size=1 \
+  logger.log_interval=1 \
+  checkpoint.save=null \
+  checkpoint.load=null
+```
+
 ---
 
 ## 4. Inference

@@ -36,6 +36,7 @@ class _MockDataset(Dataset):
 
 
 def mock_batch(  # noqa: D103
+    latent_channels: int,
     F_latents: int,
     H_latents: int,
     W_latents: int,
@@ -46,7 +47,7 @@ def mock_batch(  # noqa: D103
     context_embeddings_dim: int,
 ) -> dict:
     # set mock values for one video sample
-    video_latent = torch.randn(16, F_latents, H_latents, W_latents, dtype=torch.float32)
+    video_latent = torch.randn(latent_channels, F_latents, H_latents, W_latents, dtype=torch.float32)
     grid_size = torch.tensor(
         [
             video_latent.shape[1] // patch_temporal,
@@ -122,6 +123,7 @@ class WanMockDataModuleConfig(DatasetProvider):  # noqa: D101
     F_latents: int = 24
     H_latents: int = 104
     W_latents: int = 60
+    latent_channels: int = 16
     patch_spatial: int = 2
     patch_temporal: int = 1
     number_packed_samples: int = 1
@@ -140,6 +142,7 @@ class WanMockDataModuleConfig(DatasetProvider):  # noqa: D101
             batch_size=self.micro_batch_size,
             num_workers=self.num_workers,
             collate_fn=_mock_collate_fn(
+                latent_channels=self.latent_channels,
                 F_latents=self.F_latents,
                 H_latents=self.H_latents,
                 W_latents=self.W_latents,

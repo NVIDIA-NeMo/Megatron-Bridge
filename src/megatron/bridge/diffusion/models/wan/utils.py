@@ -17,7 +17,6 @@ from typing import Tuple
 
 import torch
 import torch.distributed as dist
-import transformer_engine_torch as tex
 
 
 def grid_sizes_calculation(
@@ -112,20 +111,14 @@ def thd_split_inputs_cp(
     Returns:
         x_local: [S_local, B, ...] shard for this CP rank.
     """
-    # Move to [B, S, ...] to use THD partitioning along S
+    # Move to [B, S, ...] to use THD partitioning along S.
     x_bs = x.transpose(0, 1).contiguous()  # [B, S, ...]
-
-    total_S = x_bs.size(1)
-    cp_size = dist.get_world_size(cp_group)
-    cp_rank = dist.get_rank(cp_group)
-
-    # Compute this rank's THD partition indices (same API as during gather)
-    idx = tex.thd_get_partitioned_indices(
-        cu_seqlens_q_padded,  # int32 offsets
-        total_S,
-        cp_size,
-        cp_rank,
-    ).to(device=x_bs.device, dtype=torch.long)  # [S_local]
+    idx = thd_partition_indices(
+        cu_seqlens_q_padded=cu_seqlens_q_padded,
+        total_s=x_bs.size(1),
+        cp_group=cp_group,
+        device=x_bs.device,
+    )
 
     # Take the shard along sequence dim
     x_local_bs = x_bs.index_select(dim=1, index=idx).contiguous()  # [B, S_local, ...]
@@ -133,3 +126,64 @@ def thd_split_inputs_cp(
     # Return to [S, B, ...]
     x_local = x_local_bs.transpose(0, 1).contiguous()  # [S_local, B, ...]
     return x_local
+
+
+def thd_partition_indices(
+    cu_seqlens_q_padded: torch.Tensor,
+    total_s: int,
+    cp_group: dist.ProcessGroup,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Return this CP rank's THD sequence indices."""
+    import transformer_engine_torch as tex
+
+    cp_size = dist.get_world_size(cp_group)
+    cp_rank = dist.get_rank(cp_group)
+    if device is None:
+        device = cu_seqlens_q_padded.device
+    return tex.thd_get_partitioned_indices(
+        cu_seqlens_q_padded,
+        total_s,
+        cp_size,
+        cp_rank,
+    ).to(device=device, dtype=torch.long)
+
+
+def sequence_parallel_partition_indices(
+    total_s: int,
+    tp_group: dist.ProcessGroup | None = None,
+    *,
+    tp_size: int | None = None,
+    tp_rank: int | None = None,
+    device: torch.device | None = None,
+) -> torch.Tensor:
+    """Return this TP rank's contiguous sequence-parallel row indices.
+
+    Megatron-Core's `scatter_to_sequence_parallel_region` splits the first
+    tensor dimension into equal contiguous chunks across the tensor-parallel
+    group. Attention masks that carry a query dimension must be split with the
+    same row ownership.
+    """
+    if tp_size is None:
+        if tp_group is None:
+            raise ValueError("tp_group or tp_size must be provided")
+        tp_size = dist.get_world_size(tp_group)
+    if tp_rank is None:
+        if tp_group is None:
+            raise ValueError("tp_group or tp_rank must be provided")
+        tp_rank = dist.get_rank(tp_group)
+    if tp_size <= 0:
+        raise ValueError(f"tp_size must be positive, got {tp_size}")
+    if not 0 <= tp_rank < tp_size:
+        raise ValueError(f"tp_rank must be in [0, {tp_size}), got {tp_rank}")
+    if total_s % tp_size != 0:
+        raise ValueError(
+            f"Sequence length {total_s} must be divisible by tensor parallel size {tp_size} "
+            "when sequence parallelism is enabled"
+        )
+
+    local_s = total_s // tp_size
+    start = tp_rank * local_s
+    if device is None:
+        device = torch.device("cpu")
+    return torch.arange(start, start + local_s, device=device, dtype=torch.long)

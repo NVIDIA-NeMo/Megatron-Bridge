@@ -183,6 +183,7 @@ class WanLayerWithAdaLN(TransformerLayer):
         attention_bias=None,
         inference_params=None,
         packed_seq_params=None,
+        self_attention_mask=None,
         sequence_len_offset=None,
         inference_context=None,
         rotary_pos_cos_sin=None,
@@ -216,7 +217,7 @@ class WanLayerWithAdaLN(TransformerLayer):
 
         attention_output, bias = self.full_self_attention(
             pre_full_attn_layernorm_output_ada,
-            attention_mask=None,
+            attention_mask=self_attention_mask,
             rotary_pos_emb=rope_emb,
             rotary_pos_cos=rotary_pos_cos,
             rotary_pos_sin=rotary_pos_sin,

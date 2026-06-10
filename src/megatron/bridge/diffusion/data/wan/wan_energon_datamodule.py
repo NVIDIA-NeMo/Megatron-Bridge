@@ -61,6 +61,7 @@ class WanDatasetConfig(DatasetProvider):
     F_latents: int = 24
     H_latents: int = 104
     W_latents: int = 60
+    latent_channels: int = 16
     patch_spatial: int = 2
     patch_temporal: int = 1
     number_packed_samples: int = 1
@@ -89,6 +90,7 @@ class WanDatasetConfig(DatasetProvider):
                 F_latents=self.F_latents,
                 H_latents=self.H_latents,
                 W_latents=self.W_latents,
+                latent_channels=self.latent_channels,
                 patch_spatial=self.patch_spatial,
                 patch_temporal=self.patch_temporal,
                 number_packed_samples=self.number_packed_samples,
