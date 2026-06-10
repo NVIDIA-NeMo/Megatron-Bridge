@@ -315,3 +315,50 @@ class TestMambaModelProvider:
 
         assert provider.num_layers == 9
         mock_finalize.assert_called_once_with(provider)
+
+    def test_finalize_mtp_num_layers_none_with_repeated_layer(self):
+        """finalize must not crash when mtp_num_layers is None and mtp_use_repeated_layer is True.
+
+        With repeated layers the shared MTP block is always materialized at least once,
+        so a None mtp_num_layers must be coerced to 0 before the max(1, ...) clamp.
+        """
+        sep = mamba_provider.Symbols.MTP_SEPARATOR
+        provider = MambaModelProvider(
+            hidden_size=128,
+            num_attention_heads=1,
+            hybrid_layer_pattern="M-M-M-M-",
+            mtp_hybrid_override_pattern="M*",
+            mtp_num_layers=None,
+            mtp_use_repeated_layer=True,
+        )
+
+        with patch.object(mamba_provider.TransformerConfig, "finalize", autospec=True):
+            provider.finalize()
+
+        # The shared MTP block is included exactly once (max(1, None or 0) == 1).
+        assert provider.hybrid_layer_pattern == "M-M-M-M-" + sep + "M*"
+        # mtp_num_layers is inferred from the constructed pattern rather than left as None.
+        assert provider.mtp_num_layers is not None
+
+    def test_finalize_mtp_num_layers_none_without_repeated_layer(self):
+        """finalize must not crash when mtp_num_layers is None and mtp_use_repeated_layer is False.
+
+        Without repeated layers the copy count is mtp_num_layers directly; a None value must be
+        coerced to 0 so the pattern construction (`[pattern] * count`) does not raise TypeError.
+        """
+        sep = mamba_provider.Symbols.MTP_SEPARATOR
+        provider = MambaModelProvider(
+            hidden_size=128,
+            num_attention_heads=1,
+            hybrid_layer_pattern="M-M-M-M-",
+            mtp_hybrid_override_pattern="M*",
+            mtp_num_layers=None,
+            mtp_use_repeated_layer=False,
+        )
+
+        with patch.object(mamba_provider.TransformerConfig, "finalize", autospec=True):
+            provider.finalize()
+
+        # Zero copies of the MTP block are appended (None or 0 == 0).
+        assert provider.hybrid_layer_pattern == "M-M-M-M-" + sep
+        assert provider.mtp_num_layers is None

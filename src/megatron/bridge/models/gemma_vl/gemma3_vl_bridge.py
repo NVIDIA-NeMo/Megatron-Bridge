@@ -80,7 +80,10 @@ class Gemma3VLBridge(MegatronModelBridge):
         provider.autocast_dtype = torch.bfloat16
         provider.make_vocab_size_divisible_by = 128
 
-        # Vision configuration
+        # Vision configuration — always disable the pooling head so the checkpoint
+        # and the reconstructed model are consistent (vision_use_head is absent in
+        # the default SiglipVisionConfig, which would otherwise default to True).
+        vision_config.vision_use_head = False
         provider.vision_config = vision_config
         provider.mm_tokens_per_image = hf_config.mm_tokens_per_image
 
@@ -132,7 +135,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             [
                 ReplicatedMapping(
                     megatron_param="vision_tower.**",
-                    hf_param="vision_tower.**",
+                    hf_param="vision_tower.vision_model.**",
                 ),
                 AutoMapping(
                     megatron_param="multi_modal_projector.proj.weight",
