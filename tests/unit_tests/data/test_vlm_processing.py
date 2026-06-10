@@ -264,7 +264,7 @@ def test_build_assistant_loss_mask_raises_when_boundary_config_does_not_match():
         build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
 
-def test_build_assistant_loss_mask_boundary_config_splits_nested_parts():
+def test_build_assistant_loss_mask_boundary_config_trains_full_loss_role_content():
     example = {
         "conversation": [
             {"role": "user", "content": "question"},
@@ -275,18 +275,14 @@ def test_build_assistant_loss_mask_boundary_config_splits_nested_parts():
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"user": [100], "assistant": [102]},
         role_end_tokens={"user": [101], "assistant": [101]},
-        loss_roles=("assistant",),
-        loss_parts=("tool_call",),
-        part_start_tokens={"reasoning": [200], "tool_call": [202]},
-        part_end_tokens={"reasoning": [201], "tool_call": [203]},
     )
 
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
-    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0]
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 
-def test_build_assistant_loss_mask_boundary_config_splits_parts_only_in_assistant_by_default():
+def test_build_assistant_loss_mask_boundary_config_ignores_tool_like_content_in_non_loss_roles():
     example = {
         "conversation": [
             {"role": "system", "content": "tool schema"},
@@ -297,15 +293,11 @@ def test_build_assistant_loss_mask_boundary_config_splits_parts_only_in_assistan
     boundary_config = AssistantMaskBoundaryConfig(
         role_start_tokens={"system": [99], "assistant": [102]},
         role_end_tokens={"system": [101], "assistant": [101]},
-        loss_roles=(),
-        loss_parts=("tool_call",),
-        part_start_tokens={"tool_call": [202]},
-        part_end_tokens={"tool_call": [203]},
     )
 
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
-    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0]
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
 
 
 def test_build_assistant_loss_mask_boundary_config_can_match_omni_whole_assistant_message():
@@ -326,29 +318,6 @@ def test_build_assistant_loss_mask_boundary_config_can_match_omni_whole_assistan
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
     assert mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]
-
-
-def test_build_assistant_loss_mask_boundary_config_can_include_part_boundary_tokens():
-    example = {
-        "conversation": [
-            {"role": "assistant", "content": "tool call"},
-        ]
-    }
-    input_ids = torch.tensor([102, 202, 60, 203, 101])
-    boundary_config = AssistantMaskBoundaryConfig(
-        role_start_tokens={"assistant": [102]},
-        role_end_tokens={"assistant": [101]},
-        loss_roles=(),
-        loss_parts=("tool_call",),
-        part_start_tokens={"tool_call": [202]},
-        part_end_tokens={"tool_call": [203]},
-        include_start_tokens_for_parts=("tool_call",),
-        include_end_tokens_for_parts=("tool_call",),
-    )
-
-    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
-
-    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0]
 
 
 def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
