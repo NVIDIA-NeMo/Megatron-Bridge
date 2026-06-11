@@ -1171,6 +1171,12 @@ class AutoBridge(Generic[MegatronModelT]):
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
 
+
+        if self.trust_remote_code:
+            from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
+
+            register_allowed_target_prefix("transformers_modules.")
+
         checkpoint_path = Path(path)
 
         # Check for iter_* folders
