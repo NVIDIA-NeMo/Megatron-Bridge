@@ -132,6 +132,9 @@ class Gemma4VLBridge(Gemma4Bridge):
             provider.moe_layer_freq = 1
 
         provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
+        # Keep the MoE VL path in fp32 for HF parity. The text-only MoE path
+        # defaults to bf16, but VL conversion also runs HF vision/audio modules
+        # whose precision-sensitive buffers are kept in fp32 by transformers.
         provider.bf16 = False
         provider.params_dtype = torch.float32
         provider.autocast_dtype = torch.float32

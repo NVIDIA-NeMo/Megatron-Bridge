@@ -63,6 +63,7 @@ sys.path.insert(0, MEGATRON_LM_ROOT)
 
 import torch
 import torch.distributed as dist
+from megatron.training import print_rank_0
 
 
 SEQ = 16
@@ -390,7 +391,7 @@ def _hf_logits_text(args, tokens):
     from transformers import AutoModelForCausalLM
 
     hf_dtype = torch.bfloat16 if args.bf16 else torch.float32
-    print(f"\nLoading HF model (CausalLM) from {args.hf_dir} ...")
+    print_rank_0(f"\nLoading HF model (CausalLM) from {args.hf_dir} ...")
     hf = AutoModelForCausalLM.from_pretrained(args.hf_dir, torch_dtype=hf_dtype, device_map="cuda:0")
     hf.eval()
     with torch.no_grad():
@@ -420,7 +421,7 @@ def _load_hf_conditional_generation(hf_dir, dtype):
 
 def _hf_logits_vl(args, input_ids_vl, pixel_values, image_position_ids):
     hf_dtype = torch.bfloat16 if args.bf16 else torch.float32
-    print(f"\nLoading HF model (VL) from {args.hf_dir} ...")
+    print_rank_0(f"\nLoading HF model (VL) from {args.hf_dir} ...")
     hf = _load_hf_conditional_generation(args.hf_dir, hf_dtype)
     hf.eval()
     hf_input_ids = input_ids_vl.to("cuda:0")
@@ -443,7 +444,7 @@ def _hf_logits_vl(args, input_ids_vl, pixel_values, image_position_ids):
 def _hf_logits_audio(args, input_ids_audio, audio_features):
     """HF audio parity: Gemma4ForConditionalGeneration with input_features."""
     hf_dtype = torch.bfloat16 if args.bf16 else torch.float32
-    print(f"\nLoading HF model (VL+Audio) from {args.hf_dir} ...")
+    print_rank_0(f"\nLoading HF model (VL+Audio) from {args.hf_dir} ...")
     hf = _load_hf_conditional_generation(args.hf_dir, hf_dtype)
     hf.eval()
     hf_audio = audio_features.to("cuda:0", hf_dtype)
@@ -553,16 +554,18 @@ def _report(mode, megatron_logits, hf_logits, atol, seq_len=None):
     per_token_max = diff[0].max(dim=-1).values
     top3 = per_token_max.topk(min(3, seq_len))
 
-    print(f"\n{'=' * 70}")
-    print(f"  Parity [{mode.upper()}]: {mode_labels[mode]}")
-    print(f"  (Megatron logits softcapped at {LOGIT_SOFTCAP} before comparison)")
-    print(f"  seq={seq_len}  batch={BATCH}  vocab={FULL_VOCAB}")
-    print(f"  max |diff|  : {max_diff:.6f}  (atol={atol})")
-    print(f"  mean |diff| : {mean_diff:.6f}")
-    print(f"  worst token positions: {top3.indices.tolist()} (diffs: {[f'{v:.4f}' for v in top3.values.tolist()]})")
+    print_rank_0(f"\n{'=' * 70}")
+    print_rank_0(f"  Parity [{mode.upper()}]: {mode_labels[mode]}")
+    print_rank_0(f"  (Megatron logits softcapped at {LOGIT_SOFTCAP} before comparison)")
+    print_rank_0(f"  seq={seq_len}  batch={BATCH}  vocab={FULL_VOCAB}")
+    print_rank_0(f"  max |diff|  : {max_diff:.6f}  (atol={atol})")
+    print_rank_0(f"  mean |diff| : {mean_diff:.6f}")
+    print_rank_0(
+        f"  worst token positions: {top3.indices.tolist()} (diffs: {[f'{v:.4f}' for v in top3.values.tolist()]})"
+    )
     status = "PASSED" if max_diff <= atol else "FAILED"
-    print(f"  --> {status}")
-    print(f"{'=' * 70}\n")
+    print_rank_0(f"  --> {status}")
+    print_rank_0(f"{'=' * 70}\n")
     return status == "PASSED"
 
 
@@ -596,7 +599,7 @@ def main():
     initialize_megatron()
     rank = dist.get_rank()
 
-    print(f"[rank {rank}] Parity mode: {args.mode.upper()}")
+    print_rank_0(f"Parity mode: {args.mode.upper()}", rank=rank)
 
     # Build model
     if args.mode == "text":

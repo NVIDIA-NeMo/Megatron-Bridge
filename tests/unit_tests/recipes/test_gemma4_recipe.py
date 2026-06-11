@@ -170,6 +170,16 @@ class TestGemma4RecipeAutoBridge:
         assert fake_autobridge.conversion_modes == ["text"]
         assert "GEMMA4_CONVERSION_MODE" not in os.environ
 
+    def test_text_conversion_mode_restores_env_on_exception(self, recipe_module, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "vl")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with recipe_module._gemma4_text_conversion_mode():
+                assert os.environ["GEMMA4_CONVERSION_MODE"] == "text"
+                raise RuntimeError("boom")
+
+        assert os.environ["GEMMA4_CONVERSION_MODE"] == "vl"
+
 
 class TestGemma4RecipeProviderType:
     def test_recipe_returns_dense_provider(self, recipe_provider):

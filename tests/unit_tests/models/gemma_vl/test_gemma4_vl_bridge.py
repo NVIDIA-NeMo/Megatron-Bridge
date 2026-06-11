@@ -652,6 +652,29 @@ class TestGemma4VLBridgeInitialization:
         assert callable(getattr(bridge, "mapping_registry", None))
 
 
+class TestGemma4VLBridgeConversionMode:
+    def test_conversion_mode_returns_text_when_env_set(self, bridge, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
+
+        assert bridge._conversion_mode() == "text"
+
+    def test_conversion_mode_returns_auto_by_default(self, bridge, monkeypatch):
+        monkeypatch.delenv("GEMMA4_CONVERSION_MODE", raising=False)
+
+        assert bridge._conversion_mode() == "auto"
+
+    def test_conversion_mode_audio_dispatch(self, bridge, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "audio")
+
+        assert bridge._conversion_mode() == "audio"
+
+    def test_conversion_mode_rejects_invalid_env(self, bridge, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "bad-mode")
+
+        with pytest.raises(ValueError, match="Invalid GEMMA4_CONVERSION_MODE"):
+            bridge._conversion_mode()
+
+
 class TestGemma4VLBridgeProviderBridgeMoE:
     def test_returns_provider(self, bridge, mock_hf_pretrained_moe):
         assert isinstance(bridge.provider_bridge(mock_hf_pretrained_moe), Gemma4VLModelProvider)
@@ -819,6 +842,17 @@ class TestGemma4VLBridgeMappingRegistry:
         names = self._collect_names(bridge.mapping_registry())
         lm_keys = [n for n in names if "layers" in n and "vision" not in n and "audio" not in n]
         assert any("language_model" in n for n in lm_keys)
+
+    def test_dense_vl_audio_tower_replicated_mappings(self, bridge, mock_hf_config_dense, monkeypatch):
+        monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "vl")
+        bridge.hf_config = mock_hf_config_dense
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "audio_tower.**" in names
+        assert "model.audio_tower.**" in names
+        assert "embed_audio.**" in names
+        assert "model.embed_audio.**" in names
 
 
 class TestGemma4VLBridgeEdgeCases:

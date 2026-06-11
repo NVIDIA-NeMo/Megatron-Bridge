@@ -383,5 +383,6 @@ class Gemma4VLModel(MegatronModule):
         bidir = _bidirectional_block_mask(input_ids == self.config.image_token_id)
 
         # blocked[b, 0, i, j] = True where attention is prevented:
-        # causal blocks j > i; image tokens within the same block override this (bidirectional)
+        # causal blocks j > i; image tokens within the same block override this
+        # (bidirectional). Audio tokens intentionally follow the causal text mask.
         return ~torch.logical_or(causal_mask, bidir.unsqueeze(1))
