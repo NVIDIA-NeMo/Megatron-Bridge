@@ -21,12 +21,32 @@ from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers.utils import is_flash_attn_2_available
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_kimi_vision_attention(vision_tower_config, vision_tower_cls) -> None:
+    """Use flash attention for Kimi vision when available.
+
+    Kimi's remote MoonViT code supports ``flash_attention_2`` through its own
+    attention dispatch table, but older remote metadata only advertises
+    ``_supports_flash_attn_2``. Transformers 5.6 checks ``_supports_flash_attn``
+    before allowing the model to initialize with flash attention.
+    """
+    if is_flash_attn_2_available():
+        vision_tower_config._attn_implementation = "flash_attention_2"
+        if getattr(vision_tower_cls, "_supports_flash_attn_2", False):
+            vision_tower_cls._supports_flash_attn = True
+        return
+
+    if getattr(vision_tower_config, "_attn_implementation", None) == "flash_attention_2":
+        logger.warning("flash-attn is not available; falling back to eager attention for Kimi K2.5 vision tower.")
+        vision_tower_config._attn_implementation = "eager"
 
 
 class KimiK25VLModel(MegatronModule):
@@ -136,11 +156,7 @@ class KimiK25VLModel(MegatronModule):
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
                 MoonViT3dEncoder.use_deterministic_attn = False
 
-            # transformers >=5.5 strictly validates `attn_implementation` at
-            # __init__ and selects `flash_attention_2` by default when flash-attn
-            # is installed. MoonViT3dPretrainedModel doesn't declare flash-attn-2
-            # support, so force eager attention before construction.
-            self.vision_tower_config._attn_implementation = "eager"
+            _configure_kimi_vision_attention(self.vision_tower_config, MoonViT3dPretrainedModel)
             self.vision_tower = MoonViT3dPretrainedModel(self.vision_tower_config)
             self.mm_projector = PatchMergerMLP(self.projector_config)  # TODO: support different types of mm projector
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.

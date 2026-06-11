@@ -5,7 +5,11 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_dp_info, slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.dp_utils import (
+    get_megatron_mimo_dp_info,
+    get_megatron_mimo_sampling_info,
+    slice_batch_for_megatron_mimo,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -118,6 +122,41 @@ def test_get_megatron_mimo_dp_info_llm_last_pp(monkeypatch):
     assert needs_data is True  # Last PP stage
 
 
+def test_get_megatron_mimo_dp_info_llm_intermediate_pp(monkeypatch):
+    """Test heterogeneous mode, rank in LLM module, intermediate PP stage."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    monkeypatch.setattr(dist, "get_rank", lambda: 5)
+
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=3),
+    }
+
+    dp_rank, dp_size, needs_data, loader_module = get_megatron_mimo_dp_info(megatron_mimo_cfg, grids)
+
+    assert loader_module == "language"
+    assert dp_rank == 1
+    assert dp_size == 4
+    assert needs_data is True  # Intermediate LLM PP stages need position_ids.
+
+
+def test_get_megatron_mimo_sampling_info_llm_intermediate_pp(monkeypatch):
+    """Test loader construction remains enabled for intermediate LLM PP stages."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    monkeypatch.setattr(dist, "get_rank", lambda: 5)
+
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=3),
+    }
+
+    sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(megatron_mimo_cfg, grids)
+
+    assert sampler_dp_rank == 0
+    assert sampler_dp_size == 1
+    assert needs_data is True
+
+
 def test_get_megatron_mimo_dp_info_non_participating_rank(monkeypatch):
     """Test heterogeneous mode, rank not in any module."""
     megatron_mimo_cfg = _make_megatron_mimo_cfg()
@@ -167,6 +206,15 @@ class TestSliceBatchForMegatronMIMO:
             sliced = slice_batch_for_megatron_mimo(batch, dp_rank=rank, dp_size=4)
             assert sliced["pixel_values"].shape == (2, 3, 224, 224)
             torch.testing.assert_close(sliced["pixel_values"], pixels[rank * 2 : rank * 2 + 2])
+
+    def test_slices_qwen_mrope_position_ids_along_batch_dim(self):
+        position_ids = torch.arange(3 * 4 * 5).reshape(3, 4, 5)
+        batch = {"position_ids": position_ids}
+
+        sliced = slice_batch_for_megatron_mimo(batch, dp_rank=2, dp_size=4)
+
+        assert sliced["position_ids"].shape == (3, 1, 5)
+        torch.testing.assert_close(sliced["position_ids"], position_ids[:, 2:3, :])
 
     def test_recurses_into_nested_dicts(self):
         batch = {

@@ -24,81 +24,29 @@ _inference_mode / _kv_cache_* attributes. No Megatron InferenceContext is used.
 
 import time
 
-import numpy as np
 import torch
 import torch.nn.functional as F
 
-
-# ---------------------------------------------------------------------------
-# Helpers (ported from the original eval.py)
-# ---------------------------------------------------------------------------
-
-
-def add_gumbel_noise(logits, temperature):
-    """Apply Gumbel noise to logits for stochastic sampling."""
-    if temperature == 0:
-        return logits
-    logits = logits.to(torch.float64)
-    noise = torch.rand_like(logits, dtype=torch.float64)
-    gumbel_noise = (-torch.log(noise)) ** temperature
-    return logits.exp() / gumbel_noise
+# Sampling primitives shared across all block-diffusion models in this repo.
+# Re-exported here so existing importers (and tests) that reference them from
+# this module continue to work unchanged.
+from megatron.bridge.diffusion.common.dllm import (
+    add_gumbel_noise,
+    get_num_transfer_tokens,
+    get_transfer_index,
+)
 
 
-def get_num_transfer_tokens(mask_index, steps):
-    """Compute the number of tokens to unmask at each diffusion step."""
-    mask_num = mask_index.sum(dim=1, keepdim=True)
-    base = mask_num // steps
-    remainder = mask_num % steps
-    num_transfer_tokens = torch.zeros(mask_num.size(0), steps, device=mask_index.device, dtype=torch.int64) + base
-    for i in range(mask_num.size(0)):
-        num_transfer_tokens[i, : remainder[i]] += 1
-    return num_transfer_tokens
-
-
-def get_transfer_index(
-    logits,
-    temperature,
-    remasking,
-    mask_index,
-    x,
-    num_transfer_tokens,
-    threshold=None,
-    neg_entropy=False,
-):
-    """Select token indices to transfer from masked to unmasked at each diffusion step."""
-    logits_with_noise = add_gumbel_noise(logits, temperature=temperature)
-    x0 = torch.argmax(logits_with_noise, dim=-1)
-
-    if remasking == "low_confidence":
-        p = F.softmax(logits, dim=-1)
-        x0_p = torch.squeeze(torch.gather(p, dim=-1, index=torch.unsqueeze(x0, -1)), -1)
-    elif remasking == "random":
-        x0_p = torch.rand((x0.shape[0], x0.shape[1]), device=x0.device)
-    else:
-        raise NotImplementedError(remasking)
-
-    if neg_entropy:
-        p = F.softmax(logits, dim=-1)
-        epsilon = 1e-10
-        log_probs = torch.log(p + epsilon)
-        confidence_scores = torch.sum(p * log_probs, dim=-1)
-    else:
-        confidence_scores = x0_p
-
-    x0 = torch.where(mask_index, x0, x)
-    confidence = torch.where(mask_index, confidence_scores, -np.inf)
-
-    transfer_index = torch.zeros_like(x0, dtype=torch.bool, device=x0.device)
-    if threshold is not None:
-        num_transfer_tokens = mask_index.sum(dim=1, keepdim=True)
-    for j in range(confidence.shape[0]):
-        _, select_index = torch.topk(confidence[j], k=num_transfer_tokens[j])
-        transfer_index[j, select_index] = True
-        if threshold is not None:
-            for k in range(1, num_transfer_tokens[j]):
-                if confidence[j, select_index[k]] < threshold:
-                    transfer_index[j, select_index[k]] = False
-    return x0, transfer_index
+__all__ = [
+    "add_gumbel_noise",
+    "get_num_transfer_tokens",
+    "get_transfer_index",
+    "generate_ar",
+    "generate_dllm",
+    "set_tp_group",
+    "tp_follower_loop",
+    "tp_send_stop",
+]
 
 
 # ---------------------------------------------------------------------------

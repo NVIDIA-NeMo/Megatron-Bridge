@@ -193,10 +193,18 @@ def test_mapping_registry_contains_falcon_h1_weight_families():
     assert "output_layer.weight" in megatron_params
     assert "decoder.final_norm.weight" in megatron_params
     assert "decoder.layers.*.mamba_mixer.in_proj.weight" in megatron_params
+    assert "decoder.layers.*.mamba_mixer.conv1d_weight" in megatron_params
+    assert "decoder.layers.*.mamba_mixer.conv1d_bias" in megatron_params
     assert "decoder.layers.*.mamba_mixer.conv1d.weight" in megatron_params
+    assert "decoder.layers.*.mamba_mixer.conv1d.bias" in megatron_params
     assert "decoder.layers.*.self_attention.linear_qkv.weight" in megatron_params
     assert "decoder.layers.*.mlp.linear_fc1.weight" in megatron_params
     assert "decoder.layers.*.mlp.linear_fc2.weight" in megatron_params
+
+    reverse_weight = registry.hf_to_megatron_lookup("model.layers.0.mamba.conv1d.weight")
+    reverse_bias = registry.hf_to_megatron_lookup("model.layers.0.mamba.conv1d.bias")
+    assert reverse_weight.megatron_param == "decoder.layers.0.mamba_mixer.conv1d_weight"
+    assert reverse_bias.megatron_param == "decoder.layers.0.mamba_mixer.conv1d_bias"
 
     assert any(isinstance(mapping, MambaInProjMapping) for mapping in registry)
     assert any(isinstance(mapping, MambaConv1dMapping) for mapping in registry)

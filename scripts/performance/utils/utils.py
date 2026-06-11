@@ -57,9 +57,18 @@ class WorkloadBaseConfig:
     recompute_num_layers: Optional[int] = None
     recompute_modules: Optional[List[str]] = None
 
+    # Fine-grained activation offloading
+    fine_grained_activation_offloading: Optional[bool] = None
+    offload_modules: Optional[List[str]] = None
+
+    outer_dp_sharding_strategy: Optional[str] = None
+    num_distributed_optimizer_instances: Optional[int] = None
+
     # MoE configuration
     moe_flex_dispatcher_backend: Optional[str] = None
     moe_a2a_overlap: Optional[bool] = False
+    cutedsl_fused_grouped_mlp: Optional[bool] = False
+    fp8_dot_product_attention: Optional[bool] = None
     peft: Optional[str] = None
 
     # Pipeline parallelism layout

@@ -14,6 +14,7 @@
 
 """Tests for setup_optimizer in optim.py."""
 
+import builtins
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -237,6 +238,24 @@ class TestSyncHybridDeviceOptimizerFp32MasterCopies:
             "megatron.core.optimizer.cpu_offloading.hybrid_optimizer.HybridDeviceOptimizer",
             _FakeHDO,
         ):
+            assert sync_hybrid_device_optimizer_fp32_master_copies(_PlainDistribOpt()) is False
+
+    def test_import_error_is_noop(self):
+        """Missing HybridDeviceOptimizer support is a no-op."""
+        original_import = builtins.__import__
+
+        def _raise_for_hdo(
+            name: str,
+            globals_: dict[str, object] | None = None,
+            locals_: dict[str, object] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ) -> object:
+            if name == "megatron.core.optimizer.cpu_offloading.hybrid_optimizer":
+                raise ImportError("HybridDeviceOptimizer unavailable")
+            return original_import(name, globals_, locals_, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=_raise_for_hdo):
             assert sync_hybrid_device_optimizer_fp32_master_copies(_PlainDistribOpt()) is False
 
     def test_chained_optimizer_walks_each_sub_opt(self):

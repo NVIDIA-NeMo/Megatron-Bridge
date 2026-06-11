@@ -235,6 +235,9 @@ class Step35Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
 
         hf_config = hf_pretrained.config
+        mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
+        if provider.layer_types is not None and mtp_layer_types:
+            provider.layer_types = list(provider.layer_types) + list(mtp_layer_types)
 
         # ── Per-layer partial RoPE ────────────────────────────────────────
         partial_rotary_factors = getattr(hf_config, "partial_rotary_factors", None)
