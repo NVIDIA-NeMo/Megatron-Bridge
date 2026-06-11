@@ -588,7 +588,7 @@ def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length(
         )
 
 
-def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
+def test_forward_step_passes_packed_sequence_params_to_model(monkeypatch):
     class _MockProcessGroup:
         def rank(self):
             return 0
@@ -598,15 +598,18 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
 
     class _MockPGCollection:
         def __init__(self):
+            self.tp = _MockProcessGroup()
             self.pp = _MockProcessGroup()
             self.cp = _MockProcessGroup()
 
     class _Model:
         def __init__(self):
             self.config = type("Cfg", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
+            self.kwargs = None
 
-        def __call__(self, **kwargs):  # noqa: ARG002
-            raise AssertionError("model forward should not run when packed sequence is enabled")
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return torch.tensor(0.0)
 
     class _Timer:
         def __call__(self, *args, **kwargs):  # noqa: ARG002
@@ -665,8 +668,17 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
         ),
     )
 
-    with pytest.raises(NotImplementedError, match="packed sequence support"):
-        forward_step(state, iter([{}]), _Model())
+    model = _Model()
+    output, loss_fn = forward_step(state, iter([{}]), model)
+
+    assert isinstance(output, torch.Tensor)
+    assert callable(loss_fn)
+    assert model.kwargs is not None
+    assert model.kwargs["packed_seq_params"] is not None
+    assert model.kwargs["position_ids"] is None
+    assert model.kwargs["attention_mask"].shape == (1, 16)
+    assert model.kwargs["labels"].shape == (1, 16)
+    assert model.kwargs["loss_mask"].shape == (1, 16)
 
 
 def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():

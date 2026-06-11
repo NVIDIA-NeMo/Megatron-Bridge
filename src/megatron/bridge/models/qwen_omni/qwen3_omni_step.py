@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
@@ -29,7 +30,10 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.packed_seq_utils import build_uniform_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
+    get_padded_sequence_length,
+    pad_batch_sequence_tensors,
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
     pad_or_truncate_pos_to_len,
@@ -176,25 +180,63 @@ def pad_batch_sequences_for_context_parallel(
     full ``input_ids`` tensor remains available for model-internal mRoPE.
     """
 
+    tp_size = _parallel_size(pg_collection, "tp")
+    cp_size = _parallel_size(pg_collection, "cp")
+    divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
+    target_len = get_padded_sequence_length(
+        tokens.size(1),
+        divisible_by,
+        force_to_seq_length=force_to_seq_length,
+        seq_length=seq_length,
+        validate_forced_seq_length=True,
+        error_context="dense context parallelism",
+    )
+
+    return pad_batch_sequence_tensors(tokens, labels, loss_mask, attention_mask, position_ids, target_len)
+
+
+def pack_or_pad_batch_sequences(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    position_ids: torch.Tensor | None,
+    pg_collection,
+    *,
+    use_fp8_padding: bool = False,
+    force_to_seq_length: bool = False,
+    seq_length: int | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    PackedSeqParams,
+]:
+    """Pad Qwen3-Omni batch tensors and construct THD packed sequence metadata."""
+
     tp_size = pg_collection.tp.size()
     cp_size = pg_collection.cp.size()
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
-    target_len = math.ceil(tokens.size(1) / divisible_by) * divisible_by
-    if force_to_seq_length:
-        if seq_length is None:
-            raise ValueError("seq_length must be set when force_to_seq_length=True")
-        if seq_length % divisible_by != 0:
-            raise ValueError(
-                f"seq_length={seq_length} must be divisible by TP*CP*2={divisible_by} for dense context parallelism"
-            )
-        target_len = seq_length
+    divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
+    target_len = get_padded_sequence_length(
+        tokens.size(1),
+        divisible_by,
+        force_to_seq_length=force_to_seq_length,
+        seq_length=seq_length,
+    )
 
-    tokens = pad_or_truncate_2d_to_len(tokens, target_len, target_len, pad_value=0)
-    labels = pad_or_truncate_2d_to_len(labels, target_len, target_len, pad_value=-100)
-    loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len, target_len, pad_value=0)
-    attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len, target_len)
-    position_ids = pad_or_truncate_pos_to_len(position_ids, target_len, target_len)
-    return tokens, labels, loss_mask, attention_mask, position_ids
+    tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequence_tensors(
+        tokens, labels, loss_mask, attention_mask, position_ids, target_len
+    )
+    packed_seq_params = build_uniform_packed_seq_params(tokens.size(0), target_len, tokens.device)
+    return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
+
+
+def _parallel_size(pg_collection, name: str) -> int:
+    group = getattr(pg_collection, name, None)
+    return group.size() if group is not None else 1
 
 
 def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[str, Any]:
@@ -234,10 +276,20 @@ def forward_step(
     timers("batch-generator").stop()
 
     pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    packed_seq_params = None
     if pack_sequences_in_batch:
-        raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
-
-    if pg_collection.cp.size() > 1:
+        tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            pg_collection,
+            use_fp8_padding=True,
+            force_to_seq_length=_parallel_size(pg_collection, "pp") > 1 or _parallel_size(pg_collection, "ep") > 1,
+            seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
+        )
+    elif pg_collection.cp.size() > 1:
         tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequences_for_context_parallel(
             tokens,
             labels,
@@ -245,7 +297,7 @@ def forward_step(
             attention_mask,
             position_ids,
             pg_collection,
-            force_to_seq_length=pg_collection.pp.size() > 1 or pg_collection.ep.size() > 1,
+            force_to_seq_length=_parallel_size(pg_collection, "pp") > 1 or _parallel_size(pg_collection, "ep") > 1,
             seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
         )
 
@@ -270,10 +322,29 @@ def forward_step(
         "loss_mask": loss_mask,
     }
 
-    if pg_collection.cp.size() > 1:
+    if pack_sequences_in_batch:
+        original_tokens = tokens.clone()
+        if _parallel_size(pg_collection, "cp") > 1:
+            forward_args = _get_dense_batch_on_this_cp_rank(forward_args, cp_group=pg_collection.cp)
+        forward_args["input_ids"] = original_tokens
+        forward_args["position_ids"] = None
+        forward_args["attention_mask"] = torch.ones_like(
+            original_tokens,
+            dtype=torch.bool,
+            device=original_tokens.device,
+        )
+        forward_args["packed_seq_params"] = packed_seq_params
+        if forward_args["labels"] is not None:
+            forward_args["labels"] = forward_args["labels"].reshape(1, -1)
+        if forward_args["loss_mask"] is not None:
+            forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
+    elif pg_collection.cp.size() > 1:
         original_tokens = tokens.clone()
         forward_args = _get_dense_batch_on_this_cp_rank(forward_args, cp_group=pg_collection.cp)
         forward_args["input_ids"] = original_tokens
+        forward_args["packed_seq_params"] = None
+    else:
+        forward_args["packed_seq_params"] = None
 
     forward_args.update(multimodal_inputs)
 
