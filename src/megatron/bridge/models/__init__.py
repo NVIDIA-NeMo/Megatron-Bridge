@@ -223,7 +223,6 @@ __all__ = [
     "MiniMaxM2Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
-    "Exaone4Bridge",
     "NemotronHBridge",
     "MambaModelProvider",
     "MimoBridge",

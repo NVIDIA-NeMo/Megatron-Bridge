@@ -49,8 +49,9 @@ class TERowParallelLinearLayerNorm(TERowParallelLinear):
     def forward(self, x):
         """Forward with additional Post-LN on output."""
         output, bias = super().forward(x)
-        assert bias is None, (
-            "TERowParallelLinearLayerNorm assumes add_bias_linear=False. "
-            "Post-LN before deferred bias addition is incorrect when bias is present."
-        )
+        if bias is not None:
+            raise ValueError(
+                "TERowParallelLinearLayerNorm assumes add_bias_linear=False. "
+                "Post-LN before deferred bias addition is incorrect when bias is present."
+            )
         return self.post_layernorm(output), bias
