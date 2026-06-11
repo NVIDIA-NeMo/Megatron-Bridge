@@ -14,6 +14,9 @@
 
 """CPU-only unit tests for Gemma 4 modeling helpers."""
 
+import types
+import weakref
+from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -28,8 +31,10 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4OutputLayer,
     Gemma4RMSNorm,
     Gemma4RotaryEmbedding,
+    Gemma4SelfAttention,
     _compute_per_layer_inputs,
     _gemma4_layer_input,
+    _install_ple_forward,
     _is_gemma4_sliding_layer,
     _logit_softcapping,
     get_gemma4_layer_spec,
@@ -130,6 +135,360 @@ class TestGemma4LayerSpec:
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
 
 
+class TestGemma4DenseSelfAttention:
+    def test_init_marks_shared_layer_and_source_index(self, monkeypatch):
+        init_configs = []
+
+        def fake_init(self, config, submodules, layer_number, *args, **kwargs):
+            del submodules, args, kwargs
+            self.config = config
+            self.layer_number = layer_number
+            init_configs.append(config)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.__init__",
+            fake_init,
+        )
+        cfg = _config(
+            softmax_scale=None,
+            num_layers=6,
+            num_kv_shared_layers=2,
+            window_attn_skip_freq=[
+                "sliding_attention",
+                "full_attention",
+                "sliding_attention",
+                "full_attention",
+                "sliding_attention",
+                "full_attention",
+            ],
+            attention_k_eq_v=True,
+        )
+
+        attn = Gemma4DenseSelfAttention(cfg, submodules=object(), layer_number=5)
+
+        assert init_configs[0].softmax_scale == 1.0
+        assert init_configs[0].qk_layernorm is True
+        assert attn.is_gemma4_sliding_layer is True
+        assert attn.is_kv_shared_layer is True
+        assert attn.kv_shared_layer_index == 2
+        assert attn.store_full_length_kv is False
+        assert attn.attention_k_eq_v is False
+
+    def test_init_sets_global_attention_config_and_store_full_length_kv(self, monkeypatch):
+        def fake_init(self, config, submodules, layer_number, *args, **kwargs):
+            del submodules, args, kwargs
+            self.config = config
+            self.layer_number = layer_number
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.__init__",
+            fake_init,
+        )
+        cfg = _config(
+            softmax_scale=0.5,
+            num_layers=6,
+            num_kv_shared_layers=2,
+            window_attn_skip_freq=2,
+            global_kv_channels=16,
+            num_global_query_groups=3,
+            attention_k_eq_v=True,
+        )
+
+        attn = Gemma4DenseSelfAttention(cfg, submodules=object(), layer_number=4)
+
+        assert attn.config.softmax_scale == 0.5
+        assert attn.config.kv_channels == 16
+        assert attn.config.num_query_groups == 3
+        assert attn.is_gemma4_sliding_layer is False
+        assert attn.attention_k_eq_v is True
+        assert attn.is_kv_shared_layer is False
+        assert attn.store_full_length_kv is True
+
+    def _make_attention_for_methods(self):
+        attn = object.__new__(Gemma4DenseSelfAttention)
+        attn.is_kv_shared_layer = False
+        attn.attention_k_eq_v = False
+        attn.store_full_length_kv = False
+        attn._stored_kv = None
+        attn._kv_source_ref = None
+        attn.is_gemma4_sliding_layer = True
+        attn.layer_number = 2
+        attn.config = SimpleNamespace(
+            num_layers=4,
+            num_query_groups=2,
+            test_mode=False,
+        )
+        attn.original_config = _config(
+            num_layers=4,
+            window_attn_skip_freq=["sliding_attention", "full_attention", "sliding_attention", "full_attention"],
+        )
+        attn.hidden_size_per_attention_head = 2
+        attn.world_size = 1
+        attn.num_attention_heads_per_partition = 2
+        attn.pg_collection = SimpleNamespace(tp=None)
+        attn.q_layernorm = None
+        attn.k_layernorm = None
+        return attn
+
+    def test_sharded_state_dict_uses_sliding_or_global_prefix(self, monkeypatch):
+        calls = []
+
+        def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+            calls.append((prefix, sharded_offsets, metadata))
+            return {"plain": object()}
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.sharded_state_dict",
+            fake_sharded_state_dict,
+        )
+        attn = self._make_attention_for_methods()
+
+        result = Gemma4DenseSelfAttention.sharded_state_dict(attn, prefix="decoder.layers.0.self_attention.")
+
+        assert result.keys() == {"plain"}
+        assert calls[0][0] == "decoder.layers.0.self_attention_sliding."
+
+        calls.clear()
+        attn.is_gemma4_sliding_layer = False
+        Gemma4DenseSelfAttention.sharded_state_dict(attn, prefix="attention")
+        assert calls[0][0] == "attention_global"
+
+    def test_get_k_eq_v_query_key_value_tensors_splits_and_reshapes(self, monkeypatch):
+        mixed = torch.arange(2 * 1 * 1 * 8, dtype=torch.float32).view(2, 1, 1, 8)
+
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del self, hidden_states, key_value_states, output_gate, split_qkv
+            return mixed, [4, 2, 2]
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
+            fake_get_qkv,
+        )
+        attn = self._make_attention_for_methods()
+
+        query, key, raw_key = Gemma4DenseSelfAttention._get_k_eq_v_query_key_value_tensors(
+            attn,
+            hidden_states=torch.zeros(2, 1, 4),
+        )
+
+        assert query.shape == (2, 1, 2, 2)
+        torch.testing.assert_close(key, mixed[..., 4:6])
+        torch.testing.assert_close(raw_key, mixed[..., 4:6])
+
+    def test_shared_layer_reuses_source_kv_when_available(self, monkeypatch):
+        query = torch.ones(2, 1, 1, 2)
+        fallback_key = torch.full_like(query, 2.0)
+        fallback_value = torch.full_like(query, 3.0)
+
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del self, hidden_states, key_value_states, output_gate, split_qkv
+            return query, fallback_key, fallback_value
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
+            fake_get_qkv,
+        )
+        attn = self._make_attention_for_methods()
+        attn.is_kv_shared_layer = True
+        source_key = torch.full_like(query, 4.0)
+        source_value = torch.full_like(query, 5.0)
+
+        class Source:
+            pass
+
+        source = Source()
+        source._stored_kv = (source_key, source_value)
+        attn._kv_source_ref = weakref.ref(source)
+
+        out_query, out_key, out_value = Gemma4DenseSelfAttention.get_query_key_value_tensors(
+            attn,
+            hidden_states=torch.zeros(2, 1, 4),
+        )
+
+        assert out_query is query
+        torch.testing.assert_close(out_key, source_key)
+        torch.testing.assert_close(out_value, source_value)
+
+    def test_get_query_key_value_tensors_ties_value_and_stores_kv(self, monkeypatch):
+        query = torch.ones(2, 1, 1, 2)
+        key = torch.full_like(query, 2.0)
+        raw_value = torch.full_like(query, 7.0)
+
+        def fake_k_eq_v(self, hidden_states, key_value_states=None):
+            del self, hidden_states, key_value_states
+            return query, key, raw_value
+
+        attn = self._make_attention_for_methods()
+        attn.attention_k_eq_v = True
+        attn.store_full_length_kv = True
+        attn._get_k_eq_v_query_key_value_tensors = types.MethodType(fake_k_eq_v, attn)
+
+        out_query, out_key, out_value = Gemma4DenseSelfAttention.get_query_key_value_tensors(
+            attn,
+            hidden_states=torch.zeros(2, 1, 4),
+        )
+
+        assert out_query is query
+        assert out_key is key
+        torch.testing.assert_close(out_value, torch.ones_like(raw_value))
+        stored_key, stored_value = attn._stored_kv
+        assert stored_key is key
+        torch.testing.assert_close(stored_value, torch.ones_like(raw_value))
+
+    def test_get_query_key_value_tensors_output_gate_ties_value(self, monkeypatch):
+        query = torch.ones(2, 1, 1, 2)
+        key = torch.full_like(query, 2.0)
+        value = torch.full_like(query, 9.0)
+        gate = torch.full_like(query, 4.0)
+
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del self, hidden_states, key_value_states, output_gate, split_qkv
+            return query, key, value, gate
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
+            fake_get_qkv,
+        )
+        attn = self._make_attention_for_methods()
+        attn.attention_k_eq_v = True
+
+        out_query, out_key, out_value, out_gate = Gemma4DenseSelfAttention.get_query_key_value_tensors(
+            attn,
+            hidden_states=torch.zeros(2, 1, 4),
+            output_gate=True,
+        )
+
+        assert out_query is query
+        assert out_key is key
+        assert out_gate is gate
+        torch.testing.assert_close(out_value, torch.ones_like(key))
+
+    def test_forward_selects_attention_mask_from_dict(self, monkeypatch):
+        calls = []
+
+        def fake_forward(self, hidden_states, attention_mask, *args, **kwargs):
+            del self, args, kwargs
+            calls.append(attention_mask)
+            return hidden_states, None
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.forward",
+            fake_forward,
+        )
+        attn = self._make_attention_for_methods()
+        hidden_states = torch.zeros(2, 1, 4)
+        sliding_mask = torch.ones(1, 1, 2, 2, dtype=torch.bool)
+        full_mask = torch.zeros(1, 1, 2, 2, dtype=torch.bool)
+
+        out, bias = Gemma4DenseSelfAttention.forward(
+            attn,
+            hidden_states,
+            {"sliding_attention": sliding_mask, "full_attention": full_mask},
+        )
+
+        assert out is hidden_states
+        assert bias is None
+        assert calls[0] is sliding_mask
+
+
+class TestGemma4SelfAttention:
+    def _make_attention(self, *, layer_number):
+        attn = object.__new__(Gemma4SelfAttention)
+        object.__setattr__(attn, "layer_number", layer_number)
+        object.__setattr__(
+            attn,
+            "config",
+            SimpleNamespace(
+                interleaved_attn_pattern=(1, 1),
+                num_layers=4,
+            ),
+        )
+        return attn
+
+    def test_sharded_state_dict_remaps_global_layer_offsets(self, monkeypatch):
+        from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
+
+        tensor = ShardedTensor(
+            key="weight",
+            data=torch.zeros(2),
+            dtype=torch.float32,
+            local_shape=(2,),
+            global_shape=(4, 2),
+            global_offset=(3, 0),
+            axis_fragmentations=(4, 1),
+            prepend_axis_num=1,
+        )
+        untouched = ShardedTensor(
+            key="untouched",
+            data=torch.zeros(1, 2),
+            dtype=torch.float32,
+            local_shape=(1, 2),
+            global_shape=(4, 2),
+            global_offset=(3, 0),
+            axis_fragmentations=(4, 1),
+            prepend_axis_num=0,
+        )
+        obj = ShardedObject(key="obj", data={"x": 1}, global_shape=(4, 2), global_offset=(3, 0))
+        calls = []
+
+        def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+            del self
+            calls.append((prefix, sharded_offsets, metadata))
+            return {"tensor": tensor, "object": obj, "nested": {"untouched": untouched}, "plain": object()}
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.sharded_state_dict",
+            fake_sharded_state_dict,
+        )
+        attn = self._make_attention(layer_number=4)
+
+        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix="layers.3.self_attention.")
+
+        assert calls[0][0] == "layers.3.self_attention_global."
+        assert out["tensor"].global_shape == (2, 2)
+        assert out["tensor"].global_offset == (1, 0)
+        assert out["tensor"].axis_fragmentations == (2, 1)
+        assert out["object"].global_shape == (2, 2)
+        assert out["object"].global_offset == (1, 0)
+        assert out["nested"]["untouched"] is untouched
+
+    def test_sharded_state_dict_remaps_sliding_layer_offsets_without_dot_prefix(self, monkeypatch):
+        from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
+
+        tensor = ShardedTensor(
+            key="weight",
+            data=torch.zeros(2),
+            dtype=torch.float32,
+            local_shape=(2,),
+            global_shape=(4, 2),
+            global_offset=(2, 0),
+            axis_fragmentations=None,
+            prepend_axis_num=1,
+        )
+        obj = ShardedObject(key="obj", data={"x": 1}, global_shape=(4,), global_offset=(2,))
+        calls = []
+
+        def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+            del self
+            calls.append((prefix, sharded_offsets, metadata))
+            return {"tensor": tensor, "object": obj}
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.sharded_state_dict",
+            fake_sharded_state_dict,
+        )
+        attn = self._make_attention(layer_number=3)
+
+        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix="self_attention")
+
+        assert calls[0][0] == "self_attention_sliding"
+        assert out["tensor"].global_shape == (2, 2)
+        assert out["tensor"].global_offset == (1, 0)
+        assert out["tensor"].axis_fragmentations is None
+        assert out["object"].global_shape == (2,)
+        assert out["object"].global_offset == (1,)
+
+
 class TestGemma4RotaryEmbeddings:
     def test_dense_rotary_uses_full_attention_partial_factor(self):
         rotary = Gemma4DenseRotaryEmbedding(_config(), use_cpu_initialization=True)
@@ -150,6 +509,187 @@ class TestGemma4RotaryEmbeddings:
 
         assert rotary.inv_freq.numel() == 2
         assert rotary.rope_local.inv_freq.numel() == 4
+
+    def test_dense_rotary_forwards_to_sliding_and_full_rope(self):
+        class FakeRope:
+            def __init__(self, name):
+                self.name = name
+                self.calls = []
+
+            def __call__(self, max_seq_len, offset=0, packed_seq=False, cp_group=None):
+                self.calls.append((max_seq_len, offset, packed_seq, cp_group))
+                return f"{self.name}-emb"
+
+            def get_rotary_seq_len(self, *args, **kwargs):
+                self.calls.append(("seq", args, kwargs))
+                return 123
+
+            def get_cos_sin(self, max_seq_len, offset=0):
+                self.calls.append(("cos", max_seq_len, offset))
+                return f"{self.name}-cos-sin"
+
+        rotary = object.__new__(Gemma4DenseRotaryEmbedding)
+        object.__setattr__(rotary, "rope_sliding", FakeRope("sliding"))
+        object.__setattr__(rotary, "rope_full", FakeRope("full"))
+
+        out = Gemma4DenseRotaryEmbedding.forward(rotary, 8, offset=2, packed_seq=True, cp_group="pg")
+        seq_len = Gemma4DenseRotaryEmbedding.get_rotary_seq_len(rotary, "hidden", sequence_len_offset=1)
+        cos_sin = Gemma4DenseRotaryEmbedding.get_cos_sin(rotary, 4, offset=1)
+
+        assert out == ("sliding-emb", "full-emb")
+        assert rotary.rope_sliding.calls[0] == (8, 2, True, "pg")
+        assert rotary.rope_full.calls[0] == (8, 2, True, "pg")
+        assert seq_len == 123
+        assert rotary.rope_sliding.calls[1] == ("seq", ("hidden",), {"sequence_len_offset": 1})
+        assert cos_sin == ("sliding-cos-sin", "full-cos-sin")
+
+
+class TestGemma4DenseTransformerLayerForward:
+    def _make_layer(self, *, layer_number=1, fp32_residual_connection=True):
+        layer = object.__new__(Gemma4DenseTransformerLayer)
+        object.__setattr__(
+            layer,
+            "config",
+            SimpleNamespace(
+                fp32_residual_connection=fp32_residual_connection,
+                bias_dropout_fusion=False,
+                window_size=(511, 0),
+                window_attn_skip_freq=["sliding_attention", "full_attention"],
+            ),
+        )
+        object.__setattr__(layer, "layer_number", layer_number)
+        object.__setattr__(layer, "training", False)
+        object.__setattr__(layer, "hidden_dropout", 0.0)
+        object.__setattr__(layer, "bias_dropout_add_exec_handler", lambda: nullcontext())
+        return layer
+
+    def test_forward_attention_uses_sliding_rotary_tuple_paths_and_fp32_residual(self):
+        layer = self._make_layer(layer_number=1, fp32_residual_connection=True)
+        hidden_states = torch.ones(2, 1, 4, dtype=torch.bfloat16)
+        residual = torch.full_like(hidden_states, 2.0)
+        attn_bias = torch.full_like(hidden_states, 0.5)
+        calls = {}
+
+        object.__setattr__(layer, "input_layernorm", lambda x: (x + 1, residual))
+
+        def self_attention(hidden, **kwargs):
+            calls["attention_hidden"] = hidden
+            calls["rotary_pos_emb"] = kwargs["rotary_pos_emb"]
+            calls["attention_mask"] = kwargs["attention_mask"]
+            return torch.full_like(hidden, 3.0), attn_bias
+
+        object.__setattr__(layer, "self_attention", self_attention)
+        object.__setattr__(layer, "post_self_attn_layernorm", lambda x: x.float() + 4.0)
+
+        def self_attn_bda(training, bias_dropout_fusion):
+            assert training is False
+            assert bias_dropout_fusion is False
+
+            def apply(attention_output_with_bias, residual_arg, hidden_dropout):
+                assert hidden_dropout == 0.0
+                calls["residual_dtype"] = residual_arg.dtype
+                attn_out, bias = attention_output_with_bias
+                return attn_out + bias.float() + residual_arg
+
+            return apply
+
+        object.__setattr__(layer, "self_attn_bda", self_attn_bda)
+        rotary_sliding = object()
+        rotary_full = object()
+
+        out, context = Gemma4DenseTransformerLayer._forward_attention(
+            layer,
+            hidden_states,
+            attention_mask="mask",
+            rotary_pos_emb=(rotary_sliding, rotary_full),
+        )
+
+        assert context is None
+        assert calls["attention_mask"] == "mask"
+        assert calls["rotary_pos_emb"] is rotary_sliding
+        assert calls["residual_dtype"] == torch.float32
+        torch.testing.assert_close(out, torch.full((2, 1, 4), 9.5))
+
+    def test_forward_attention_uses_full_rotary_and_tensor_paths(self):
+        layer = self._make_layer(layer_number=2, fp32_residual_connection=False)
+        hidden_states = torch.ones(2, 1, 4)
+        calls = {}
+
+        object.__setattr__(layer, "input_layernorm", lambda x: x + 1.0)
+
+        def self_attention(hidden, **kwargs):
+            calls["rotary_pos_emb"] = kwargs["rotary_pos_emb"]
+            return hidden + 2.0
+
+        object.__setattr__(layer, "self_attention", self_attention)
+        object.__setattr__(layer, "post_self_attn_layernorm", lambda x: x + 3.0)
+        object.__setattr__(
+            layer, "self_attn_bda", lambda training, fusion: lambda out, residual, dropout: out + residual
+        )
+        rotary_sliding = object()
+        rotary_full = object()
+
+        out, _ = Gemma4DenseTransformerLayer._forward_attention(
+            layer,
+            hidden_states,
+            rotary_pos_emb=(rotary_sliding, rotary_full),
+        )
+
+        assert calls["rotary_pos_emb"] is rotary_full
+        torch.testing.assert_close(out, torch.full_like(hidden_states, 8.0))
+
+    def test_forward_mlp_combines_dense_and_moe_tuple_output(self):
+        layer = self._make_layer(fp32_residual_connection=True)
+        hidden_states = torch.ones(2, 1, 4, dtype=torch.bfloat16)
+        residual = torch.full_like(hidden_states, 3.0)
+        mlp_bias = torch.full_like(hidden_states, 0.25)
+
+        object.__setattr__(layer, "_forward_pre_mlp_layernorm", lambda x: (x + 1.0, residual))
+        object.__setattr__(layer, "mlp", lambda hidden, padding_mask=None: (torch.full_like(hidden, 5.0), mlp_bias))
+        object.__setattr__(layer, "post_feedforward_layernorm_1", lambda x: x.float() + 10.0)
+        object.__setattr__(layer, "pre_feedforward_layernorm_2", lambda x: x + 1.0)
+
+        def moe_router(hidden_flat):
+            assert hidden_flat.shape == (2, 4)
+            return None, torch.ones(2, 1), torch.zeros(2, 1, dtype=torch.long)
+
+        object.__setattr__(layer, "moe_router", moe_router)
+        object.__setattr__(
+            layer, "moe_experts", lambda hidden, top_k_index, top_k_weights: torch.full_like(hidden, 7.0)
+        )
+        object.__setattr__(layer, "post_feedforward_layernorm_2", lambda x: x + 20.0)
+        object.__setattr__(layer, "post_mlp_layernorm", lambda x: x + 100.0)
+
+        def mlp_bda(training, bias_dropout_fusion):
+            assert training is False
+            assert bias_dropout_fusion is False
+
+            def apply(mlp_output_with_bias, residual_arg, hidden_dropout):
+                assert hidden_dropout == 0.0
+                mlp_out, bias = mlp_output_with_bias
+                return mlp_out + bias.float() + residual_arg
+
+            return apply
+
+        object.__setattr__(layer, "mlp_bda", mlp_bda)
+
+        out = Gemma4DenseTransformerLayer._forward_mlp(layer, hidden_states, padding_mask="mask")
+
+        torch.testing.assert_close(out, torch.full((2, 1, 4), 145.25))
+
+    def test_forward_mlp_without_moe_uses_tensor_paths(self):
+        layer = self._make_layer(fp32_residual_connection=False)
+        hidden_states = torch.ones(2, 1, 4)
+
+        object.__setattr__(layer, "_forward_pre_mlp_layernorm", lambda x: x + 1.0)
+        object.__setattr__(layer, "mlp", lambda hidden, padding_mask=None: hidden + 2.0)
+        object.__setattr__(layer, "moe_router", None)
+        object.__setattr__(layer, "post_mlp_layernorm", lambda x: x + 3.0)
+        object.__setattr__(layer, "mlp_bda", lambda training, fusion: lambda out, residual, dropout: out + residual)
+
+        out = Gemma4DenseTransformerLayer._forward_mlp(layer, hidden_states)
+
+        torch.testing.assert_close(out, torch.full_like(hidden_states, 8.0))
 
 
 class TestGemma4PLEHelpers:
@@ -196,6 +736,136 @@ class TestGemma4PLEHelpers:
         out = _gemma4_layer_input(per_layer_inputs, layer)
 
         torch.testing.assert_close(out, per_layer_inputs[:, :, 1, :].transpose(0, 1))
+
+    def test_install_ple_forward_injects_per_layer_inputs(self):
+        class FakeDecoder(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList()
+
+            def forward(self, *args, **kwargs):
+                del args, kwargs
+                return None
+
+        class FakeEmbedding(torch.nn.Module):
+            def forward(self, input_ids, position_ids=None):
+                del position_ids
+                seq = input_ids.shape[1]
+                batch = input_ids.shape[0]
+                return torch.ones(seq, batch, 4)
+
+        class FakePLEmbedding(torch.nn.Module):
+            def forward(self, input_ids):
+                batch, seq = input_ids.shape
+                return torch.ones(batch, seq, 6)
+
+        class FakeProjection(torch.nn.Module):
+            def forward(self, hidden_states):
+                batch, seq, _ = hidden_states.shape
+                return torch.full((batch, seq, 6), 2.0), None
+
+        class FakeModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.decoder = FakeDecoder()
+                self.embedding = FakeEmbedding()
+                self.per_layer_embedding = FakePLEmbedding()
+                self.per_layer_model_proj = FakeProjection()
+                self.per_layer_proj_norm = torch.nn.Identity()
+                self.pre_process = True
+                self.config = SimpleNamespace(
+                    per_layer_embed_dim=3,
+                    num_layers=2,
+                    hidden_size=4,
+                    sequence_parallel=False,
+                    scale_embeddings_by_hidden_size=True,
+                )
+                self.forward_calls = []
+
+            def forward(
+                self,
+                input_ids,
+                position_ids,
+                attention_mask,
+                decoder_input=None,
+                labels=None,
+                inference_context=None,
+                packed_seq_params=None,
+                extra_block_kwargs=None,
+                runtime_gather_output=None,
+                **kwargs,
+            ):
+                del labels, inference_context, packed_seq_params, runtime_gather_output, kwargs
+                self.forward_calls.append(
+                    {
+                        "input_ids": input_ids,
+                        "position_ids": position_ids,
+                        "attention_mask": attention_mask,
+                        "decoder_input": decoder_input,
+                        "extra_block_kwargs": extra_block_kwargs,
+                    }
+                )
+                return "ok"
+
+        model = FakeModel()
+        input_ids = torch.ones(2, 3, dtype=torch.long)
+        attention_mask = torch.zeros(1, 1, 3, 3, dtype=torch.bool)
+
+        _install_ple_forward(model)
+        result = model(input_ids=input_ids, position_ids=None, attention_mask=attention_mask)
+
+        assert result == "ok"
+        assert model.decoder._gemma4_ple_threading_patched is True
+        call = model.forward_calls[-1]
+        assert call["decoder_input"].shape == (3, 2, 4)
+        assert call["extra_block_kwargs"]["per_layer_inputs"].shape == (2, 3, 2, 3)
+
+    def test_install_ple_forward_preserves_existing_extra_block_kwargs(self):
+        class FakeDecoder(torch.nn.Module):
+            layers = None
+
+        class FakeModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.decoder = FakeDecoder()
+                self.per_layer_embedding = None
+                self.pre_process = False
+                self.config = SimpleNamespace(sequence_parallel=False)
+                self.forward_calls = []
+
+            def forward(
+                self,
+                input_ids,
+                position_ids,
+                attention_mask,
+                decoder_input=None,
+                labels=None,
+                inference_context=None,
+                packed_seq_params=None,
+                extra_block_kwargs=None,
+                runtime_gather_output=None,
+                **kwargs,
+            ):
+                del labels, inference_context, packed_seq_params, runtime_gather_output, kwargs
+                self.forward_calls.append(extra_block_kwargs)
+                return decoder_input
+
+        model = FakeModel()
+        decoder_input = torch.zeros(3, 1, 4)
+        extra_kwargs = {"existing": object()}
+
+        _install_ple_forward(model)
+        result = model(
+            input_ids=torch.ones(1, 3, dtype=torch.long),
+            position_ids=None,
+            attention_mask=None,
+            decoder_input=decoder_input,
+            extra_block_kwargs=extra_kwargs,
+        )
+
+        assert result is decoder_input
+        assert model.forward_calls[-1] is extra_kwargs
+        assert model.decoder._gemma4_ple_threading_patched is True
 
 
 class TestGemma4OutputHelpers:

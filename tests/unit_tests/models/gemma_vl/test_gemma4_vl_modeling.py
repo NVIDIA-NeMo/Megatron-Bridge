@@ -266,3 +266,117 @@ class TestScatterModalityFeatures:
         assert decoder_input.shape == (3, 1, 4)
         torch.testing.assert_close(decoder_input[:2], torch.full((2, 1, 4), 9.0))
         torch.testing.assert_close(decoder_input[2], torch.zeros(1, 4))
+
+    def test_forward_scatters_sequence_parallel_decoder_input(self):
+        model = _make_model()
+        model.config.sequence_parallel = True
+        model.config.audio_token_id = 258_881
+        model.language_model = Mock()
+        model.language_model.forward.return_value = "outputs"
+        inputs_embeds = torch.ones(1, 2, 4)
+        input_ids = torch.tensor([[7, 8]])
+        calls = []
+
+        def fake_scatter(tensor):
+            calls.append(tensor)
+            return tensor + 1.0
+
+        with patch(
+            "megatron.bridge.models.gemma_vl.modeling_gemma4_vl.scatter_to_sequence_parallel_region", fake_scatter
+        ):
+            out = Gemma4VLModel.forward(model, input_ids=input_ids, inputs_embeds=inputs_embeds)
+
+        assert out == "outputs"
+        torch.testing.assert_close(calls[0], inputs_embeds.transpose(1, 0).contiguous())
+        torch.testing.assert_close(model.language_model.forward.call_args.kwargs["decoder_input"], calls[0] + 1.0)
+
+
+class TestFeatureExtractionAndFreeze:
+    class _Tower(torch.nn.Module):
+        def __init__(self, output):
+            super().__init__()
+            self.output = output
+            self.calls = []
+
+        def forward(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(last_hidden_state=self.output)
+
+    class _Embedder(torch.nn.Module):
+        def __init__(self, offset):
+            super().__init__()
+            self.offset = offset
+
+        def forward(self, x):
+            return x + self.offset
+
+    class _ParamHolder:
+        def __init__(self):
+            self.param = torch.nn.Parameter(torch.ones(1))
+
+        def parameters(self):
+            return [self.param]
+
+    def test_get_image_features_runs_tower_and_embedder(self):
+        model = _make_model()
+        hidden = torch.ones(1, 2, 3)
+        object.__setattr__(model, "vision_tower", self._Tower(hidden))
+        object.__setattr__(model, "embed_vision", self._Embedder(offset=2.0))
+        pixel_values = torch.zeros(1, 2, 3)
+        image_position_ids = torch.zeros(1, 2, 2, dtype=torch.long)
+
+        out = Gemma4VLModel.get_image_features(model, pixel_values, image_position_ids=image_position_ids)
+
+        torch.testing.assert_close(out, hidden + 2.0)
+        assert model.vision_tower.calls[-1]["pixel_values"] is pixel_values
+        assert model.vision_tower.calls[-1]["pixel_position_ids"] is image_position_ids
+
+    def test_get_audio_features_runs_tower_and_embedder(self):
+        model = _make_model()
+        hidden = torch.ones(1, 2, 3)
+        object.__setattr__(model, "audio_tower", self._Tower(hidden))
+        object.__setattr__(model, "embed_audio", self._Embedder(offset=3.0))
+        input_features = torch.zeros(1, 8, 128)
+
+        out = Gemma4VLModel.get_audio_features(model, input_features)
+
+        torch.testing.assert_close(out, hidden + 3.0)
+        assert model.audio_tower.calls[-1]["input_features"] is input_features
+
+    def test_freeze_updates_requested_modules_only(self):
+        model = SimpleNamespace(
+            language_model=self._ParamHolder(),
+            vision_tower=self._ParamHolder(),
+            embed_vision=self._ParamHolder(),
+            audio_tower=self._ParamHolder(),
+            embed_audio=self._ParamHolder(),
+        )
+
+        Gemma4VLModel.freeze(
+            model,
+            freeze_language_model=True,
+            freeze_vision_model=False,
+            freeze_vision_projection=True,
+            freeze_audio_model=True,
+            freeze_audio_projection=False,
+        )
+
+        assert model.language_model.param.requires_grad is False
+        assert model.vision_tower.param.requires_grad is True
+        assert model.embed_vision.param.requires_grad is False
+        assert model.audio_tower.param.requires_grad is False
+        assert model.embed_audio.param.requires_grad is True
+
+    def test_freeze_ignores_requested_but_missing_optional_modules(self):
+        model = SimpleNamespace(language_model=self._ParamHolder())
+
+        Gemma4VLModel.freeze(
+            model,
+            freeze_language_model=True,
+            freeze_vision_model=True,
+            freeze_vision_projection=True,
+            freeze_audio_model=True,
+            freeze_audio_projection=True,
+        )
+
+        assert model.language_model.param.requires_grad is False
