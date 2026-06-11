@@ -217,6 +217,67 @@ def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
     assert "video_grid_thw" not in batch
 
 
+def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+
+    class _PadAwareProcessor:
+        class _Tok:
+            pad_token_id = 99
+            pad_token = "<pad>"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return conversation[0]["content"][-1]["text"]
+
+        def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+            texts = text if isinstance(text, list) else [text]
+            lengths = [3 if "short" in item else 5 for item in texts]
+            max_len = max(lengths)
+            input_ids = torch.full((len(texts), max_len), self.tokenizer.pad_token_id)
+            attention_mask = torch.zeros((len(texts), max_len), dtype=torch.long)
+            for row, length in enumerate(lengths):
+                input_ids[row, :length] = torch.arange(1, length + 1)
+                attention_mask[row, :length] = 1
+            out = {"input_ids": input_ids, "attention_mask": attention_mask}
+            if images is not None:
+                out["pixel_values"] = torch.randn(1, len(images), 3, 4, 4)
+                out["image_grid_thw"] = torch.tensor([[[1, 2, 2]] * len(images)])
+            return out
+
+    def _fake_pvi(conv):
+        if "short image" in str(conv):
+            return ([object()], None)
+        return (None, None)
+
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
+
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "short image"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "long text only"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, _PadAwareProcessor())
+
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 99, 99], [1, 2, 3, 4, 5]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]
+
+
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     image_token_id = 163605
     input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])

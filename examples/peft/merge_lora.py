@@ -57,6 +57,7 @@ from megatron.core import dist_checkpointing
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.peft.lora import LoRA, VLMLoRA
+from megatron.bridge.peft.utils import enable_legacy_shared_expert_adapter_loading
 from megatron.bridge.training.checkpointing import (
     _generate_model_state_dict,
     apply_peft_adapter_filter_to_state_dict,
@@ -223,6 +224,9 @@ def merge_lora(
     sharded_state_dict = _generate_model_state_dict(model, {})
     # Keep only LoRA adapter tensors (and any other trainable parameters) so we don't read unnecessary dense weights.
     sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora_peft)
+    if enable_legacy_shared_expert_adapter_loading(model, sharded_state_dict, lora_dir):
+        sharded_state_dict = _generate_model_state_dict(model, {})
+        sharded_state_dict = apply_peft_adapter_filter_to_state_dict(sharded_state_dict, lora_peft)
 
     # Load those tensors from the checkpoint directory
     loaded_sd = dist_checkpointing.load(sharded_state_dict, str(lora_dir))

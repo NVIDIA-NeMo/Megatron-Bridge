@@ -51,6 +51,43 @@ def helper():
     return MergeTestHelper()
 
 
+class TestKimiVisionAttentionConfig:
+    """Test Kimi vision attention backend configuration."""
+
+    def test_configures_flash_attention_when_available(self):
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _configure_kimi_vision_attention
+
+        class DummyMoonViT:
+            _supports_flash_attn_2 = True
+
+        vision_config = Mock()
+        vision_config._attn_implementation = "eager"
+
+        with patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.is_flash_attn_2_available", return_value=True):
+            _configure_kimi_vision_attention(vision_config, DummyMoonViT)
+
+        assert vision_config._attn_implementation == "flash_attention_2"
+        assert DummyMoonViT._supports_flash_attn is True
+
+    def test_falls_back_to_eager_when_flash_attention_unavailable(self):
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _configure_kimi_vision_attention
+
+        class DummyMoonViT:
+            _supports_flash_attn_2 = True
+            _supports_flash_attn = False
+
+        vision_config = Mock()
+        vision_config._attn_implementation = "flash_attention_2"
+
+        with patch(
+            "megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.is_flash_attn_2_available", return_value=False
+        ):
+            _configure_kimi_vision_attention(vision_config, DummyMoonViT)
+
+        assert vision_config._attn_implementation == "eager"
+        assert DummyMoonViT._supports_flash_attn is False
+
+
 def _make_inputs(batch_size, seq_len, hidden_dim=HIDDEN_DIM):
     """Create basic input tensors."""
     input_ids = torch.randint(1000, 2000, (batch_size, seq_len))

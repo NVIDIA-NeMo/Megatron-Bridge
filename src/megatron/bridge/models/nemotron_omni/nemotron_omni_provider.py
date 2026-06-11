@@ -25,10 +25,10 @@ from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-from megatron.core.transformer.spec_utils import get_submodules
 
 from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import get_language_mlp_submodules
 
 
 @dataclass
@@ -232,7 +232,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
 
         language_spec = mamba_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(get_submodules(language_spec.submodules.mlp_layer.submodules.mlp))
+        vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
 
         add_encoder_flag = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
         add_decoder_flag = True
@@ -246,7 +246,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
             sound_model = self._build_sound_encoder()
 
             sound_proj_cfg = self._build_sound_projection_config(language_cfg)
-            sound_proj_spec = copy.deepcopy(get_submodules(language_spec.submodules.mlp_layer.submodules.mlp))
+            sound_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
             sound_projection = MultimodalProjector(
                 config=sound_proj_cfg,
                 submodules=sound_proj_spec,
