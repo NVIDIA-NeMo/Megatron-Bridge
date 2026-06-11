@@ -230,10 +230,13 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     class _PadAwareProcessor:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
             added_tokens_decoder = {}
+            chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
                 return {"input_ids": [1]}
@@ -242,7 +245,14 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
             self.tokenizer = self._Tok()
 
         def apply_chat_template(self, conversation, tokenize=False, **kwargs):
-            return conversation[0]["content"][-1]["text"]
+            rendered = conversation[0]["content"][-1]["text"]
+            if tokenize and kwargs.get("return_assistant_tokens_mask"):
+                length = 3 if "short" in rendered else 5
+                return {
+                    "input_ids": list(range(1, length + 1)),
+                    "assistant_masks": [0] * (length - 1) + [1],
+                }
+            return rendered
 
         def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
             texts = text if isinstance(text, list) else [text]
