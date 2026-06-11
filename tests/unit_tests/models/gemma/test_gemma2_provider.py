@@ -217,6 +217,7 @@ def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 
     config.attention_softmax_in_fp32 = True
     config.attention_dropout = 0.0
     config.sequence_parallel = False
+    config.attn_logit_softcapping = 0.0  # disable softcapping in unit tests
     return Gemma2DotProductAttention(
         config=config,
         layer_number=2,  # even layer → SWA active
@@ -247,16 +248,43 @@ class TestGemma2DotProductAttention:
             )
 
     def test_swa_applied_when_attention_mask_is_none(self):
-        """SWA mask must be generated even when attention_mask=None (the pretrain path)."""
-        attn = _make_attention(window_size=(4095, 0))
-        # Even layer → self.window_size is set; odd layer → None
-        assert attn.window_size == (4095, 0)
+        """SWA mask must be generated even when attention_mask=None (the pretrain path).
 
-        # get_swa should produce a boolean mask of the correct shape
-        seq_len = 8
-        mask = get_swa(seq_len, seq_len, (4095, 0))
-        assert mask.shape == (seq_len, seq_len)
-        assert mask.dtype == torch.bool
+        Prior to the fix, the gate was:
+            if attention_mask is not None and self.window_size is not None:
+        which was never True on the pretrain path (MCore passes attention_mask=None).
+        After the fix the gate is:
+            if self.window_size is not None:
+        We verify this by patching get_swa and confirming it is called from forward()
+        when attention_mask=None is passed to an even-numbered layer.
+        """
+        attn = _make_attention(window_size=(4095, 0))
+        assert attn.window_size == (4095, 0), "even layer must have window_size set"
+
+        sentinel = Mock(name="swa_mask")
+        with patch(
+            "megatron.bridge.models.gemma.gemma2_provider.get_swa",
+            return_value=sentinel,
+        ) as mock_get_swa:
+            # scale_mask_softmax is called with the mask; stub it so forward() completes.
+            attn.scale_mask_softmax = Mock(return_value=torch.zeros(1, 8, 4, 4))
+            attn.attention_dropout = torch.nn.Identity()
+            seq, batch, heads, head_dim = 4, 1, 8, 32
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            with patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps, \
+                    patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp:
+                buf = torch.zeros(batch * heads, seq, seq)
+                mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
+                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
+                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
+                attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        mock_get_swa.assert_called_once_with(seq, seq, (4095, 0))
+        # The SWA mask (our sentinel) must have been passed to scale_mask_softmax.
+        call_args = attn.scale_mask_softmax.call_args
+        assert call_args[0][1] is sentinel, "scale_mask_softmax must receive the SWA mask"
 
     def test_odd_layer_has_no_swa(self):
         """Odd-numbered layers must not have a window_size (full attention)."""
@@ -282,6 +310,72 @@ class TestGemma2DotProductAttention:
             attention_type="self",
         )
         assert odd_attn.window_size is None
+        assert odd_attn.attn_mask_type == AttnMaskType.causal
+        assert odd_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.causal
+
+    def test_swa_layer_uses_arbitrary_mask_type(self):
+        """Even-numbered (SWA) layers must override attn_mask_type to arbitrary.
+
+        FusedScaleMaskSoftmax with AttnMaskType.causal takes the ScaledUpperTriangMaskedSoftmax
+        path which silently ignores the mask argument. Switching to arbitrary routes through
+        ScaledMaskedSoftmax, which correctly applies the externally generated SWA mask.
+        Odd-numbered layers must keep AttnMaskType.causal to retain the fast fused path.
+        """
+        even_attn = _make_attention(window_size=(4095, 0))  # layer_number=2 (even)
+        assert even_attn.attn_mask_type == AttnMaskType.arbitrary, (
+            "SWA layers must use AttnMaskType.arbitrary so FusedScaleMaskSoftmax "
+            "routes through ScaledMaskedSoftmax and applies the mask"
+        )
+        # Also verify the FusedScaleMaskSoftmax instance stored the right type
+        assert even_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.arbitrary
+
+    def test_swa_combined_with_padding_mask(self):
+        """When a padding mask is present, forward() must OR it with the SWA mask.
+
+        Prior to this fix, the forward() code was:
+            attention_mask = get_swa(...)
+        which silently discarded any incoming padding mask. The correct behaviour is:
+            attention_mask = swa_mask if attention_mask is None else (swa_mask | attention_mask)
+        Both masks use True=masked-out, so logical OR gives the union of blocked positions.
+        """
+        attn = _make_attention(window_size=(4095, 0))
+
+        seq, batch, heads, head_dim = 4, 2, 8, 32
+        # Padding mask [b, 1, sq, sk]: block last key-position for the first sample only.
+        padding_mask = torch.zeros(batch, 1, seq, seq, dtype=torch.bool)
+        padding_mask[0, 0, :, -1] = True
+
+        # SWA mask returned by the patched get_swa (all-zeros for simplicity).
+        swa_mask_val = torch.zeros(seq, seq, dtype=torch.bool)
+
+        captured: dict = {}
+
+        def fake_softmax(scores, mask):
+            captured["mask"] = mask
+            return torch.zeros(batch, heads, seq, seq)
+
+        with patch(
+            "megatron.bridge.models.gemma.gemma2_provider.get_swa",
+            return_value=swa_mask_val,
+        ) as mock_get_swa:
+            attn.scale_mask_softmax = fake_softmax
+            attn.attention_dropout = torch.nn.Identity()
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            with patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps, \
+                    patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp:
+                buf = torch.zeros(batch * heads, seq, seq)
+                mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
+                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
+                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
+                attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
+
+        mock_get_swa.assert_called_once_with(seq, seq, (4095, 0))
+        expected = swa_mask_val | padding_mask  # [sq, sk] | [b, 1, sq, sk] → [b, 1, sq, sk]
+        assert torch.equal(captured["mask"], expected), (
+            "scale_mask_softmax must receive swa_mask | padding_mask, not just swa_mask"
+        )
 
     def test_window_size_default_is_4095(self):
         """Gemma2ModelProvider.window_size default must be (4095, 0) to match gemma2_bridge convention."""

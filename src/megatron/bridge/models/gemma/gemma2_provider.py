@@ -86,8 +86,14 @@ class Gemma2DotProductAttention(MegatronModule):
         if self.layer_number % 2 == 0:
             self.window_size = config.window_size
 
-        self.attn_mask_type = attn_mask_type
         self.attention_type = attention_type  # unused for now
+        # SWA layers generate an external mask via get_swa() in forward(). With
+        # AttnMaskType.causal, FusedScaleMaskSoftmax always takes the fused upper-
+        # triangular causal kernel (ScaledUpperTriangMaskedSoftmax) which never reads
+        # the mask argument, silently dropping the SWA mask. Switching to arbitrary
+        # for SWA layers routes through ScaledMaskedSoftmax, which applies the mask.
+        # Odd-numbered layers remain causal and keep the fast fused causal path.
+        self.attn_mask_type = AttnMaskType.arbitrary if self.window_size is not None else attn_mask_type
 
         projection_size = self.config.kv_channels * self.config.num_attention_heads
 
@@ -200,9 +206,13 @@ class Gemma2DotProductAttention(MegatronModule):
         # Attention probs and dropout
         # ===========================
 
-        # sliding window attention
+        # sliding window attention: combine SWA mask with any incoming padding mask.
+        # Both use True=masked-out; logical OR gives the union of masked positions.
+        # get_swa() returns [sq, sk]; a padding mask is typically [b, 1, sq, sk] —
+        # PyTorch broadcasts [sq, sk] to [b, 1, sq, sk] correctly under |.
         if self.window_size is not None:
-            attention_mask = get_swa(query.size(0), key.size(0), self.window_size)
+            swa_mask = get_swa(query.size(0), key.size(0), self.window_size)
+            attention_mask = swa_mask if attention_mask is None else (swa_mask | attention_mask)
 
         # attention scores and attention mask [b, np, sq, sk]
         attention_probs: Tensor = self.scale_mask_softmax(attention_scores, attention_mask)
