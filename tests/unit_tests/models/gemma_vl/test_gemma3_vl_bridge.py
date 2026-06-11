@@ -276,9 +276,39 @@ class TestGemma3VLBridgeMappingRegistry:
 
         vt_mapping = vision_mappings[0]
         assert str(vt_mapping.megatron_param) == "vision_tower.**", "Megatron vision_tower param should use wildcard"
+        # Default (no hf_pretrained set): assume Hub checkpoint with nested keys.
         assert str(vt_mapping.hf_param) == "vision_tower.vision_model.**", (
-            "HF param must map through vision_model.** to match SiglipVisionModel checkpoint keys"
+            "Default HF param must use nested vision_model.** to match Hub checkpoint keys"
         )
+
+    def test_mapping_registry_vision_tower_flat_checkpoint(self, gemma3_vl_bridge):
+        """Flat checkpoint (transformers >= 5.8): hf_param must use vision_tower.** directly."""
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
+
+        # Simulate a checkpoint with flat vision_tower.* keys (no vision_model. prefix).
+        mock_state = MagicMock()
+        mock_state.has_glob.side_effect = lambda pattern: pattern == "vision_tower.*"
+        mock_pretrained = MagicMock()
+        mock_pretrained.state = mock_state
+        gemma3_vl_bridge.hf_pretrained = mock_pretrained
+
+        registry = gemma3_vl_bridge.mapping_registry()
+
+        vision_mappings = [
+            m
+            for m in registry.mappings
+            if isinstance(m, ReplicatedMapping) and "vision_tower" in str(getattr(m, "megatron_param", ""))
+        ]
+        assert len(vision_mappings) == 1
+        vt_mapping = vision_mappings[0]
+        assert str(vt_mapping.hf_param) == "vision_tower.**", (
+            "Flat checkpoint: HF param must use vision_tower.** without vision_model. prefix"
+        )
+
+        # Cleanup so other tests are not affected.
+        del gemma3_vl_bridge.hf_pretrained
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""
@@ -355,6 +385,20 @@ class TestGemma3VLBridgeMappingRegistry:
         # Should contain attention mappings
         has_attention = any("self_attn" in name or "self_attention" in name for name in mapping_names)
         assert has_attention, "Should contain attention mappings"
+
+
+class TestGemma3VLVisionTowerConstruction:
+    """Test vision tower construction logic from Gemma3VLModel.__init__ without Megatron."""
+
+    def test_vision_tower_unwrap_and_no_head(self, mock_vision_config):
+        """vision_use_head=False + getattr unwrap produces a flat headless tower."""
+        from transformers import AutoModel
+
+        mock_vision_config.vision_use_head = False
+        raw = AutoModel.from_config(mock_vision_config)
+        tower = getattr(raw, "vision_model", raw)
+        assert not hasattr(tower, "head")
+        assert not hasattr(tower, "vision_model")
 
 
 class TestGemma3VLBridgeEdgeCases:
