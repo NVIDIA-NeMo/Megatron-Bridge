@@ -307,17 +307,17 @@ def _apply_gov_report_recipe_overrides(recipe: ConfigContainer, compute_dtype: s
       * CUDA graphs fully OFF (clear impl AND scope AND per-layer modules; full_iteration
         capture hits an unpinned CPU->CUDA copy in the packed-LoRA path). Dominant
         throughput delta vs the v6.0 reference. Re-enable with LORA_GOVREPORT_TRY_CUDA_GRAPH=1.
-      * nvfp4 -> selective recompute (all CP sizes). The parity overlay disables
-        fp8_dot_product_attention for nvfp4 because this stack has NO TE fp8-DPA backend for
-        the packed gov_report attention inputs at ANY context-parallel size -- confirmed at
-        CP1 (job 2089391) AND CP2 (job 2087735), both: "No dot product attention backend is
-        available for the provided inputs". The v6.0 reference gets fp8 attention via
-        kitchen_attention_backend='sdpa', which this stack lacks. bf16 attention activations
-        are larger, so recompute to fit; gate the amount on the shape: CP1/MBS1/seq8192 fits
-        with core_attn-only (matching the reference's recompute_modules=['core_attn']);
-        CP>1 (larger seq) also needs mlp. nvfp4-only deviation (conservative number).
-        Force core_attn-only via LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY=1; disable entirely via
-        LORA_GOVREPORT_NO_RECOMPUTE=1.
+      * nvfp4 -> selective core_attn+mlp recompute (all CP sizes). The parity overlay
+        disables fp8_dot_product_attention for nvfp4 because this stack has NO TE fp8-DPA
+        backend for the packed gov_report attention inputs at ANY context-parallel size --
+        confirmed at CP1 (job 2089391) AND CP2 (job 2087735), both: "No dot product attention
+        backend is available for the provided inputs". The v6.0 reference gets fp8 attention
+        via kitchen_attention_backend='sdpa', which this stack lacks. bf16 attention
+        activations are larger, so recompute both core_attn and mlp to fit -- core_attn-only
+        OOMs even the smallest CP1/MBS1/seq8192 shape at TP=1 (job 2089596: 276GiB full,
+        896MiB GEMM alloc failed), whereas core_attn+mlp fits and lands ~3105 TFLOP/s/GPU
+        (job 2089680). nvfp4-only deviation (conservative number). Force core_attn-only via
+        LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY=1; disable entirely via LORA_GOVREPORT_NO_RECOMPUTE=1.
     """
     if cp_size > 1:
         recipe.model.calculate_per_token_loss = True
@@ -336,10 +336,10 @@ def _apply_gov_report_recipe_overrides(recipe: ConfigContainer, compute_dtype: s
         compute_dtype == "nvfp4"
         and os.environ.get("LORA_GOVREPORT_NO_RECOMPUTE", "0") != "1"
     ):
-        if cp_size > 1 and os.environ.get("LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY", "0") != "1":
-            recipe.model.recompute_modules = ["core_attn", "mlp"]
-        else:
+        if os.environ.get("LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY", "0") == "1":
             recipe.model.recompute_modules = ["core_attn"]
+        else:
+            recipe.model.recompute_modules = ["core_attn", "mlp"]
         recipe.model.recompute_granularity = "selective"
 
     return recipe

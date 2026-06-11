@@ -104,15 +104,16 @@ def test_nvfp4_cp2_activates_core_attn_mlp_recompute():
     assert recipe.model.calculate_per_token_loss is True
 
 
-def test_nvfp4_cp1_recomputes_core_attn_only():
+def test_nvfp4_cp1_recomputes_core_attn_and_mlp():
     # nvfp4 has no fp8-DPA backend on this stack at ANY cp (confirmed at cp1, job 2089391),
-    # so attention falls back to bf16 and needs recompute even at cp1. The cp1/mbs1/seq8192
-    # shape fits with core_attn-only, matching the v6.0 reference recompute_modules.
+    # so attention falls back to bf16 and needs recompute even at cp1. core_attn-only OOMs the
+    # cp1/mbs1/seq8192 shape at TP=1 (job 2089596), so we recompute core_attn+mlp, which fits
+    # and lands ~3105 TFLOP/s/GPU (job 2089680).
     recipe = _make_recipe(context_parallel_size=1)
     _apply_gov_report_recipe_overrides(recipe, compute_dtype="nvfp4", cp_size=1)
 
     assert recipe.model.recompute_granularity == "selective"
-    assert recipe.model.recompute_modules == ["core_attn"]
+    assert recipe.model.recompute_modules == ["core_attn", "mlp"]
 
 
 def test_recompute_attn_only_env_override(monkeypatch):
