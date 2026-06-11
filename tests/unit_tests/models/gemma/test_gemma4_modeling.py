@@ -36,7 +36,10 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4TEDotProductAttention,
     Gemma4TopKRouter,
     Gemma4TransformerLayer,
+    _attach_ple_modules,
     _compute_per_layer_inputs,
+    _gemma4_block_spec,
+    _gemma4_checkpointed_forward,
     _gemma4_layer_input,
     _install_ple_forward,
     _install_tied_kv,
@@ -826,6 +829,67 @@ class TestGemma4RotaryEmbeddings:
         assert rotary.rope_sliding.calls[1] == ("seq", ("hidden",), {"sequence_len_offset": 1})
         assert cos_sin == ("sliding-cos-sin", "full-cos-sin")
 
+    def test_moe_rotary_forward_uses_cached_path_without_cp_group(self, monkeypatch):
+        class FakeLocalRope:
+            def __init__(self):
+                self.calls = []
+
+            def forward(self, max_seq_len, offset, packed_seq, cp_group):
+                self.calls.append((max_seq_len, offset, packed_seq, cp_group))
+                return "local"
+
+        global_calls = []
+
+        def fake_base_forward(self, max_seq_len, offset=0, packed_seq=False, cp_group=None):
+            del self
+            global_calls.append((max_seq_len, offset, packed_seq, cp_group))
+            return "global"
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.RotaryEmbedding.forward",
+            fake_base_forward,
+        )
+        rotary = object.__new__(Gemma4RotaryEmbedding)
+        object.__setattr__(rotary, "rope_local", FakeLocalRope())
+
+        first = Gemma4RotaryEmbedding.forward(rotary, 8, offset=2, packed_seq=True)
+        second = Gemma4RotaryEmbedding.forward(rotary, 8, offset=2, packed_seq=True)
+
+        assert first == ("local", "global")
+        assert second == first
+        assert global_calls == [(8, 2, True, None)]
+        assert rotary.rope_local.calls == [(8, 2, True, None)]
+
+    def test_moe_rotary_forward_bypasses_cache_with_cp_group(self, monkeypatch):
+        class FakeLocalRope:
+            def __init__(self):
+                self.calls = []
+
+            def forward(self, max_seq_len, offset, packed_seq, cp_group):
+                self.calls.append((max_seq_len, offset, packed_seq, cp_group))
+                return "local"
+
+        global_calls = []
+
+        def fake_base_forward(self, max_seq_len, offset=0, packed_seq=False, cp_group=None):
+            del self
+            global_calls.append((max_seq_len, offset, packed_seq, cp_group))
+            return "global"
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.RotaryEmbedding.forward",
+            fake_base_forward,
+        )
+        rotary = object.__new__(Gemma4RotaryEmbedding)
+        object.__setattr__(rotary, "rope_local", FakeLocalRope())
+        cp_group = object()
+
+        out = Gemma4RotaryEmbedding.forward(rotary, 8, offset=1, packed_seq=False, cp_group=cp_group)
+
+        assert out == ("local", "global")
+        assert global_calls == [(8, 1, False, cp_group)]
+        assert rotary.rope_local.calls == [(8, 1, False, cp_group)]
+
 
 class TestGemma4DenseTransformerLayerForward:
     def _make_layer(self, *, layer_number=1, fp32_residual_connection=True):
@@ -1004,6 +1068,54 @@ class TestGemma4SharedKVWiring:
 
 
 class TestGemma4PLEHelpers:
+    def test_attach_ple_modules_returns_without_valid_dimensions(self):
+        model = SimpleNamespace()
+        config = SimpleNamespace(init_method=object())
+        provider = SimpleNamespace(num_layers=2, per_layer_embed_dim=0, per_layer_embed_vocab_size=128)
+
+        _attach_ple_modules(model, config, provider)
+
+        assert not hasattr(model, "per_layer_embedding")
+
+    def test_attach_ple_modules_installs_embedding_projection_and_norm(self, monkeypatch):
+        calls = []
+
+        class FakeVocabParallelEmbedding:
+            def __init__(self, vocab_size, hidden_size, config, init_method):
+                calls.append(("embedding", vocab_size, hidden_size, config, init_method))
+
+        class FakeColumnParallelLinear:
+            def __init__(self, input_size, output_size, config, init_method, bias, gather_output):
+                calls.append(("projection", input_size, output_size, config, init_method, bias, gather_output))
+
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.VocabParallelEmbedding",
+            FakeVocabParallelEmbedding,
+        )
+        monkeypatch.setattr(
+            "megatron.core.tensor_parallel.ColumnParallelLinear",
+            FakeColumnParallelLinear,
+        )
+        model = SimpleNamespace()
+        config = _config(init_method="init", layernorm_epsilon=1e-6)
+        provider = SimpleNamespace(
+            num_layers=3,
+            per_layer_embed_dim=2,
+            per_layer_embed_vocab_size=128,
+            hidden_size=4,
+            layernorm_epsilon=1e-5,
+        )
+
+        _attach_ple_modules(model, config, provider)
+
+        assert isinstance(model.per_layer_embedding, FakeVocabParallelEmbedding)
+        assert isinstance(model.per_layer_model_proj, FakeColumnParallelLinear)
+        assert isinstance(model.per_layer_proj_norm, Gemma4RMSNorm)
+        assert calls == [
+            ("embedding", 128, 6, config, "init"),
+            ("projection", 4, 6, config, "init", False, True),
+        ]
+
     def test_compute_per_layer_inputs_combines_token_and_model_projections(self):
         class FakeEmbedding(torch.nn.Module):
             def forward(self, input_ids):
@@ -1251,8 +1363,218 @@ class TestGemma4PLEHelpers:
         assert calls[0][3] is per_layer_inputs
         assert transformer_block_module.checkpointed_forward is fake_orig_checkpointed_forward
 
+    def test_gemma4_checkpointed_forward_uniform_threads_ple_inputs(self, monkeypatch):
+        from megatron.core import tensor_parallel
+
+        checkpoint_calls = []
+
+        class FakeTransformerLayer:
+            def __init__(self, layer_number):
+                self.layer_number = layer_number
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                return (
+                    kwargs["hidden_states"] + kwargs["per_layer_input"].sum() + float(self.layer_number),
+                    f"context-{self.layer_number}",
+                )
+
+        class FakePlainLayer:
+            layer_number = 2
+
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                assert "per_layer_input" not in kwargs
+                assert "context" not in kwargs
+                return kwargs["hidden_states"] + 100.0
+
+        def fake_checkpoint(function, distribute_saved_activations, *args):
+            checkpoint_calls.append(distribute_saved_activations)
+            return function(*args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeTransformerLayer,
+        )
+        monkeypatch.setattr(tensor_parallel, "checkpoint", fake_checkpoint)
+        block = SimpleNamespace(
+            layers=[FakeTransformerLayer(1), FakePlainLayer(), FakeTransformerLayer(3)],
+            config=SimpleNamespace(
+                recompute_method="uniform",
+                recompute_num_layers=2,
+                fp8=False,
+                fp4=False,
+                distribute_saved_activations=False,
+            ),
+            num_layers_per_pipeline_rank=3,
+            pg_collection=SimpleNamespace(tp=None),
+        )
+        per_layer_inputs = torch.tensor([[[[10.0], [20.0], [30.0]]]])
+
+        hidden_states, intermediates = _gemma4_checkpointed_forward(
+            block,
+            torch.tensor(0.0),
+            attention_mask="mask",
+            context="context",
+            context_mask="context_mask",
+            rotary_pos_emb="rope",
+            attention_bias="bias",
+            packed_seq_params="packed",
+            use_inner_quantization_context=True,
+            padding_mask="padding",
+            extract_layer_indices={1},
+            per_layer_inputs=per_layer_inputs,
+        )
+
+        torch.testing.assert_close(hidden_states, torch.tensor(144.0))
+        torch.testing.assert_close(intermediates[0], torch.tensor(111.0))
+        assert checkpoint_calls == [False, False]
+        torch.testing.assert_close(
+            block.layers[0].calls[0]["per_layer_input"], per_layer_inputs[:, :, 0, :].transpose(0, 1)
+        )
+        assert block.layers[1].calls[0]["attention_mask"] == "mask"
+        torch.testing.assert_close(
+            block.layers[2].calls[0]["per_layer_input"], per_layer_inputs[:, :, 2, :].transpose(0, 1)
+        )
+
+    def test_gemma4_checkpointed_forward_block_recompute_extracts_start_layers(self, monkeypatch):
+        from megatron.core import tensor_parallel
+
+        checkpoint_calls = []
+
+        class FakeTransformerLayer:
+            def __init__(self, layer_number):
+                self.layer_number = layer_number
+
+            def __call__(self, **kwargs):
+                return kwargs["hidden_states"] + float(self.layer_number), None
+
+        def fake_checkpoint(function, distribute_saved_activations, *args):
+            checkpoint_calls.append(distribute_saved_activations)
+            return function(*args)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer",
+            FakeTransformerLayer,
+        )
+        monkeypatch.setattr(tensor_parallel, "checkpoint", fake_checkpoint)
+        block = SimpleNamespace(
+            layers=[FakeTransformerLayer(1), FakeTransformerLayer(2)],
+            config=SimpleNamespace(
+                recompute_method="block",
+                recompute_num_layers=1,
+                fp8=False,
+                fp4=False,
+                distribute_saved_activations=True,
+            ),
+            num_layers_per_pipeline_rank=2,
+            pg_collection=SimpleNamespace(tp=None),
+        )
+
+        hidden_states, intermediates = _gemma4_checkpointed_forward(
+            block,
+            torch.tensor(0.0),
+            attention_mask=None,
+            context=None,
+            context_mask=None,
+            rotary_pos_emb=None,
+            attention_bias=None,
+            packed_seq_params=None,
+            use_inner_quantization_context=False,
+            extract_layer_indices={5},
+            layer_offset=5,
+            per_layer_inputs=torch.zeros(1, 1, 2, 1),
+        )
+
+        torch.testing.assert_close(hidden_states, torch.tensor(3.0))
+        torch.testing.assert_close(intermediates[0], torch.tensor(1.0))
+        assert checkpoint_calls == [True]
+
+    def test_gemma4_checkpointed_forward_rejects_invalid_recompute_method(self):
+        block = SimpleNamespace(
+            layers=[],
+            config=SimpleNamespace(recompute_method="invalid", fp8=False, fp4=False),
+            num_layers_per_pipeline_rank=0,
+            pg_collection=SimpleNamespace(tp=None),
+        )
+
+        with pytest.raises(ValueError, match="Invalid activation recompute method"):
+            _gemma4_checkpointed_forward(
+                block,
+                torch.tensor(0.0),
+                attention_mask=None,
+                context=None,
+                context_mask=None,
+                rotary_pos_emb=None,
+                attention_bias=None,
+                packed_seq_params=None,
+                use_inner_quantization_context=False,
+            )
+
 
 class TestGemma4MoEHelpers:
+    def test_gemma4_block_spec_patches_attention_layer_and_moe_modules(self, monkeypatch):
+        from megatron.core.transformer.attention import SelfAttention
+        from megatron.core.transformer.moe.moe_layer import MoELayer
+
+        calls = []
+        attn_submodules = SimpleNamespace(core_attention="old_core", linear_proj="old_proj")
+        mlp_submodules = SimpleNamespace(router="old_router")
+        layer_spec = SimpleNamespace(
+            module=object,
+            submodules=SimpleNamespace(
+                self_attention=SimpleNamespace(module=SelfAttention, submodules=attn_submodules),
+                mlp=SimpleNamespace(module=MoELayer, submodules=mlp_submodules),
+            ),
+        )
+        block_spec = SimpleNamespace(layer_specs=[layer_spec])
+
+        def fake_get_gpt_decoder_block_spec(config, use_transformer_engine=True, **kwargs):
+            calls.append((config, use_transformer_engine, kwargs))
+            return block_spec
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.get_gpt_decoder_block_spec",
+            fake_get_gpt_decoder_block_spec,
+        )
+
+        out = _gemma4_block_spec("config", use_transformer_engine=True, extra="value")
+
+        assert out is block_spec
+        assert calls == [("config", True, {"extra": "value"})]
+        assert layer_spec.module is Gemma4TransformerLayer
+        assert layer_spec.submodules.self_attention.module is Gemma4SelfAttention
+        assert attn_submodules.core_attention is Gemma4TEDotProductAttention
+        assert attn_submodules.linear_proj != "old_proj"
+        assert layer_spec.submodules.mlp.module is Gemma4MoELayer
+        assert mlp_submodules.router is Gemma4TopKRouter
+
+    def test_gemma4_block_spec_skips_te_projection_patch_when_disabled(self, monkeypatch):
+        from megatron.core.transformer.attention import SelfAttention
+
+        attn_submodules = SimpleNamespace(core_attention="old_core", linear_proj="old_proj")
+        layer_spec = SimpleNamespace(
+            module=object,
+            submodules=SimpleNamespace(
+                self_attention=SimpleNamespace(module=SelfAttention, submodules=attn_submodules),
+                mlp=SimpleNamespace(module=object, submodules=None),
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.get_gpt_decoder_block_spec",
+            lambda *args, **kwargs: SimpleNamespace(layer_specs=[layer_spec]),
+        )
+
+        _gemma4_block_spec("config", use_transformer_engine=False)
+
+        assert layer_spec.module is Gemma4TransformerLayer
+        assert attn_submodules.core_attention is Gemma4TEDotProductAttention
+        assert attn_submodules.linear_proj == "old_proj"
+
     def test_transformer_layer_post_mlp_adds_bias_and_layer_scalar(self):
         layer = object.__new__(Gemma4TransformerLayer)
         layer.layer_scalar = torch.tensor([0.5])
@@ -1340,6 +1662,23 @@ class TestGemma4MoEHelpers:
 
         assert not hasattr(local_attn, "_tied_kv")
         assert global_attn._tied_kv is True
+
+    def test_install_tied_kv_returns_when_disabled_or_missing_decoder(self):
+        provider = SimpleNamespace(
+            attention_k_eq_v=False,
+            num_global_key_value_heads=1,
+            interleaved_attn_pattern=(1, 1),
+        )
+        model = SimpleNamespace(decoder=SimpleNamespace(layers=[]))
+
+        _install_tied_kv(model, provider)
+        _install_tied_kv(
+            SimpleNamespace(),
+            SimpleNamespace(attention_k_eq_v=True, num_global_key_value_heads=1, interleaved_attn_pattern=(1, 1)),
+        )
+        _install_tied_kv(model, SimpleNamespace(attention_k_eq_v=True, num_global_key_value_heads=0))
+
+        assert model.decoder.layers == []
 
 
 class TestGemma4OutputHelpers:
