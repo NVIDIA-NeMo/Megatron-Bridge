@@ -32,11 +32,13 @@ from megatron.bridge.data.hf_datasets.makers import (
 )
 from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 
 
 __all__ = [
     "ConversationDataset",
     "HFConversationDatasetProvider",
+    "HFTextSFTDatasetProvider",
     "make_cord_v2_dataset",
     "make_cv17_dataset",
     "make_default_audio_dataset",

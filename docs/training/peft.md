@@ -281,7 +281,8 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
-from megatron.bridge.data.hf_datasets import HFConversationDatasetProvider, text_chat_collate_fn
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -306,14 +307,15 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFConversationDatasetProvider(
+    dataset=HFTextSFTDatasetProvider(
         seq_length=512,
-        hf_processor_path=None,
         maker_name="squad",
-        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train[:90%]"},
-        val_maker_kwargs={"split": "train[90%:]"},
-        skip_test=True,
-        collate_impl=text_chat_collate_fn,
+        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
+        val_proportion=0.1,
+        do_validation=True,
+        do_test=False,
+        dataset_kwargs={"pad_to_max_length": True},
+        packed_sequence_specs=PackedSequenceSpecs(packed_sequence_size=512),
     ),
     checkpoint=CheckpointConfig(
         pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT

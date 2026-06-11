@@ -145,6 +145,14 @@ def test_make_squad_dataset_formats_messages(monkeypatch):
     ]
 
 
+def test_get_hf_dataset_maker_accepts_aliases_and_function_names():
+    assert makers.get_hf_dataset_maker("squad") is makers.make_squad_dataset
+    assert makers.get_hf_dataset_maker("make_squad_dataset") is makers.make_squad_dataset
+
+    with pytest.raises(ValueError, match="Unknown maker_name"):
+        makers.get_hf_dataset_maker("missing")
+
+
 def test_make_gsm8k_dataset_formats_messages_and_final_answer(monkeypatch):
     rows = [
         {

@@ -16,8 +16,8 @@
 
 from typing import Any
 
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
@@ -58,42 +58,46 @@ def _text_hf_dataset_provider(
     maker_kwargs: dict[str, Any],
     val_maker_kwargs: dict[str, Any] | None = None,
     test_maker_kwargs: dict[str, Any] | None = None,
-    skip_test: bool = True,
+    do_validation: bool = True,
+    do_test: bool = False,
+    packed_sequence_specs: PackedSequenceSpecs | None = None,
+    dataset_kwargs: dict[str, Any] | None = None,
+    val_proportion: float | None = None,
     num_workers: int = 2,
-) -> HFConversationDatasetProvider:
-    """Create a direct HF conversation provider for text-only SFT presets."""
-    return HFConversationDatasetProvider(
+) -> HFTextSFTDatasetProvider:
+    """Create an HF-backed text SFT provider with optional offline packing."""
+    return HFTextSFTDatasetProvider(
         seq_length=seq_length,
-        hf_processor_path=None,
         maker_name=maker_name,
         maker_kwargs=maker_kwargs,
         val_maker_kwargs=val_maker_kwargs,
         test_maker_kwargs=test_maker_kwargs,
-        skip_test=skip_test,
-        collate_impl=text_chat_collate_fn,
+        do_validation=do_validation,
+        do_test=do_test,
+        packed_sequence_specs=packed_sequence_specs,
+        dataset_kwargs=dataset_kwargs,
+        val_proportion=val_proportion,
         dataloader_type="batch",
         num_workers=num_workers,
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=False,
     )
 
 
 def default_squad_config(
     seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1
-) -> HFConversationDatasetProvider:
+) -> HFTextSFTDatasetProvider:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
         seq_length: Sequence length for the dataset
-        packed_sequence: Retained for API compatibility. The direct HF text
-            collate path does not currently support runtime packing.
-        pad_seq_to_mult: Retained for API compatibility with previous packed
-            JSONL configs.
+        packed_sequence: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
+            (set to `2 * context_parallel_size` for THD CP runs).
 
     Returns:
-        HFConversationDatasetProvider configured for SQuAD finetuning
+        HFTextSFTDatasetProvider configured for SQuAD finetuning
 
     Note:
         Uses consistent settings across all finetuning recipes:
@@ -101,16 +105,22 @@ def default_squad_config(
         - 10% validation slice
         - Seed 5678 (different from pretrain seed 1234)
     """
-    del packed_sequence, pad_seq_to_mult
+    dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    packed_sequence_specs = None
+    if packed_sequence:
+        dataset_kwargs["pad_to_max_length"] = True
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="squad",
         maker_kwargs={
             "path_or_dataset": "rajpurkar/squad",
-            "split": "train[:90%]",
+            "split": "train",
         },
-        val_maker_kwargs={"split": "train[90%:]"},
         seq_length=seq_length,
+        packed_sequence_specs=packed_sequence_specs,
+        dataset_kwargs=dataset_kwargs,
+        val_proportion=0.1,
         num_workers=1,
     )
 
@@ -119,9 +129,11 @@ def default_openmathinstruct2_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFConversationDatasetProvider:
+) -> HFTextSFTDatasetProvider:
     """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
-    del packed_sequence, pad_seq_to_mult
+    packed_sequence_specs = None
+    if packed_sequence:
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="openmathinstruct2",
@@ -129,8 +141,9 @@ def default_openmathinstruct2_config(
             "path_or_dataset": "nvidia/OpenMathInstruct-2",
             "split": "train_1M",
         },
-        val_maker_kwargs={"split": "train_1M[:5%]"},
         seq_length=seq_length,
+        packed_sequence_specs=packed_sequence_specs,
+        val_proportion=0.05,
         num_workers=2,
     )
 
@@ -139,7 +152,7 @@ def default_gsm8k_config(
     seq_length: int = 2048,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFConversationDatasetProvider:
+) -> HFTextSFTDatasetProvider:
     """Create default GSM8K dataset configuration for finetuning recipes.
 
     GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
@@ -147,19 +160,19 @@ def default_gsm8k_config(
 
     Args:
         seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
-        packed_sequence: Retained for API compatibility. The direct HF text
-            collate path does not currently support runtime packing.
-        pad_seq_to_mult: Retained for API compatibility with previous packed
-            JSONL configs.
+        packed_sequence: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing.
 
     Returns:
-        HFConversationDatasetProvider configured for GSM8K finetuning
+        HFTextSFTDatasetProvider configured for GSM8K finetuning
 
     Note:
         - GSM8K has 7,473 train and 1,319 test examples
         - Loads the full DatasetDict so the published test split is used for evaluation
     """
-    del packed_sequence, pad_seq_to_mult
+    packed_sequence_specs = None
+    if packed_sequence:
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="gsm8k",
@@ -169,8 +182,10 @@ def default_gsm8k_config(
             "split": "train",
         },
         test_maker_kwargs={"split": "test"},
-        skip_test=False,
+        do_validation=False,
+        do_test=True,
         seq_length=seq_length,
+        packed_sequence_specs=packed_sequence_specs,
         num_workers=2,
     )
 
@@ -179,7 +194,7 @@ def default_openmathinstruct2_thinking_packed_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFConversationDatasetProvider:
+) -> HFTextSFTDatasetProvider:
     """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
 
     Puts generated_solution (minus the trailing \boxed{N}) into the assistant thinking field
@@ -188,10 +203,8 @@ def default_openmathinstruct2_thinking_packed_config(
 
     Args:
         seq_length: Sequence length (default 4096)
-        packed_sequence: Retained for API compatibility. The direct HF text
-            collate path does not currently support runtime packing.
-        pad_seq_to_mult: Retained for API compatibility with previous packed
-            JSONL configs.
+        packed_sequence: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs).
     """
     cfg = default_openmathinstruct2_config(
         seq_length=seq_length,

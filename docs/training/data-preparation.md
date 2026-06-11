@@ -8,7 +8,7 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 |----------|-------------|--------------------|----------------------|
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
 | LLM SFT or PEFT from local files | JSONL split files | `FinetuningDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Direct Hugging Face chat/conversation rows | `HFConversationDatasetProvider` | `maker_name`, `maker_kwargs`, optional `hf_processor_path` |
+| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `HFTextSFTDatasetProvider` | `maker_name`, `maker_kwargs` |
 | VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, but `FinetuningDatasetConfig` uses `seq_length`.
@@ -93,19 +93,21 @@ For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same.
 
 ## Hugging Face Datasets for SFT and PEFT
 
-`HFConversationDatasetProvider` downloads or reads a Hugging Face dataset and converts rows directly into the shared chat/conversation schema. Text presets use the training tokenizer from the build context when `hf_processor_path=None`; set `hf_processor_path` explicitly when the dataset provider should load a tokenizer or processor itself.
+`HFTextSFTDatasetProvider` downloads or reads a Hugging Face dataset, converts rows into chat JSONL, and builds the result through the standard SFT dataset builder. This is the text-only Hugging Face path to use when offline packed sequences are needed.
 
 ```python
-from megatron.bridge.data.hf_datasets import HFConversationDatasetProvider, text_chat_collate_fn
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
 
-dataset = HFConversationDatasetProvider(
+dataset = HFTextSFTDatasetProvider(
     seq_length=512,
-    hf_processor_path=None,
     maker_name="squad",
-    maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train[:90%]"},
-    val_maker_kwargs={"split": "train[90%:]"},
-    skip_test=True,
-    collate_impl=text_chat_collate_fn,
+    maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
+    val_proportion=0.1,
+    do_validation=True,
+    do_test=False,
+    dataset_kwargs={"pad_to_max_length": True},
+    packed_sequence_specs=PackedSequenceSpecs(packed_sequence_size=512),
 )
 ```
 

@@ -14,7 +14,7 @@
 
 """
 Built-in maker functions that transform HuggingFace datasets into
-conversation-style examples consumable by VLM processors.
+Bridge chat or multimodal conversation examples.
 """
 
 import json
@@ -27,6 +27,24 @@ from datasets import concatenate_datasets, load_dataset
 
 from megatron.bridge.data.hf_datasets.token_utils import json2token
 from megatron.bridge.utils.common_utils import resolve_path
+
+
+HF_MAKER_ALIASES = {
+    "rdr": "make_rdr_dataset",
+    "cord_v2": "make_cord_v2_dataset",
+    "medpix": "make_medpix_dataset",
+    "text_chat": "make_text_chat_dataset",
+    "chat": "make_text_chat_dataset",
+    "squad": "make_squad_dataset",
+    "gsm8k": "make_gsm8k_dataset",
+    "openmathinstruct2": "make_openmathinstruct2_dataset",
+    "openmathinstruct2_thinking": "make_openmathinstruct2_thinking_dataset",
+    "cv17": "make_cv17_dataset",
+    "raven": "make_raven_dataset",
+    "llava_video_178k": "make_llava_video_178k_dataset",
+    "default_audio": "make_default_audio_dataset",
+    "valor32k_avqa": "make_valor32k_avqa_dataset",
+}
 
 
 def _load_hf_dataset(
@@ -656,3 +674,27 @@ def make_cv17_dataset(
         }
 
     return [format(example) for example in dataset]
+
+
+def get_hf_dataset_maker(maker_name: str):
+    """Return a built-in Hugging Face dataset maker by name or alias."""
+    registry = {
+        "make_rdr_dataset": make_rdr_dataset,
+        "make_cord_v2_dataset": make_cord_v2_dataset,
+        "make_medpix_dataset": make_medpix_dataset,
+        "make_text_chat_dataset": make_text_chat_dataset,
+        "make_squad_dataset": make_squad_dataset,
+        "make_gsm8k_dataset": make_gsm8k_dataset,
+        "make_openmathinstruct2_dataset": make_openmathinstruct2_dataset,
+        "make_openmathinstruct2_thinking_dataset": make_openmathinstruct2_thinking_dataset,
+        "make_cv17_dataset": make_cv17_dataset,
+        "make_raven_dataset": make_raven_dataset,
+        "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
+        "make_default_audio_dataset": make_default_audio_dataset,
+        "make_valor32k_avqa_dataset": make_valor32k_avqa_dataset,
+    }
+    resolved_name = HF_MAKER_ALIASES.get(maker_name, maker_name)
+    try:
+        return registry[resolved_name]
+    except KeyError as err:
+        raise ValueError(f"Unknown maker_name: {maker_name}") from err

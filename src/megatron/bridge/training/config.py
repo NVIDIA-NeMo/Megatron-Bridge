@@ -1401,13 +1401,13 @@ class ConfigContainer(Container):
 
         self._validate_cp_comm_type()
 
+        packed_sequence_specs = getattr(self.dataset, "packed_sequence_specs", None)
         if (
-            isinstance(self.dataset, FinetuningDatasetConfig)
-            and self.dataset.packed_sequence_specs is not None
-            and self.dataset.packed_sequence_specs.packed_sequence_size > 0
+            packed_sequence_specs is not None
+            and packed_sequence_specs.packed_sequence_size > 0
             and self.train.micro_batch_size > 1
         ):
-            packed_sequence_size = self.dataset.packed_sequence_specs.packed_sequence_size
+            packed_sequence_size = packed_sequence_specs.packed_sequence_size
             raise ValueError(
                 "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
                 f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting for "

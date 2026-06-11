@@ -888,6 +888,41 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_packed_sequence_micro_batch_size_validation_error_for_dataset_provider(self, monkeypatch):
+        """Test packed sequence validation for DatasetProvider configs."""
+        from dataclasses import dataclass
+        from typing import Optional, Tuple
+
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+
+        @dataclass
+        class PackedDatasetProvider(DatasetProvider):
+            seq_length: int = 512
+            packed_sequence_specs: PackedSequenceSpecs | None = None
+
+            def build_datasets(
+                self, context: DatasetBuildContext
+            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+                return None, None, None
+
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+        dataset_cfg = PackedDatasetProvider(packed_sequence_specs=PackedSequenceSpecs(packed_sequence_size=512))
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="Micro batch size should be 1 when training with packed sequence"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_packed_sequence_validation_skipped_when_specs_none(self, monkeypatch):
         """Test validation skipped when packed_sequence_specs is None."""
         # Create config with micro_batch_size > 1 but no packed sequences

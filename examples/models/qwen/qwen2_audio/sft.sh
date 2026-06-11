@@ -108,7 +108,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         "+dataset.maker_kwargs.prompt='Detect the language and recognize the speech: <|zh|>'" \
         "dataset.val_maker_kwargs.subset=dev" \
         "dataset.val_maker_kwargs.split=test" \
-        dataset.skip_test=true \
+        dataset.do_test=false \
         dataset.pack_sequences_in_batch=true \
         rng.seed=42 \
         ddp.grad_reduce_in_fp32=false

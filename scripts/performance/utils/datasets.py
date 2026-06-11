@@ -119,23 +119,29 @@ def create_c4_dataset_config(
 def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):
-    """Create SQuAD dataset configuration for Megatron-Bridge using direct HF loading."""
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-    from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+    """Create SQuAD dataset configuration for Megatron-Bridge using HF text SFT data."""
+    from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+    from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 
-    del dataset_root, packed, pad_seq_to_mult
+    dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    packed_sequence_specs = None
+    if packed:
+        dataset_kwargs["pad_to_max_length"] = True
+        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return HFConversationDatasetProvider(
+    return HFTextSFTDatasetProvider(
         seq_length=seq_length,
-        hf_processor_path=None,
         maker_name="squad",
         maker_kwargs={
             "path_or_dataset": "rajpurkar/squad",
-            "split": "train[:90%]",
+            "split": "train",
         },
-        val_maker_kwargs={"split": "train[90%:]"},
-        skip_test=True,
-        collate_impl=text_chat_collate_fn,
+        dataset_root=dataset_root,
+        val_proportion=0.1,
+        do_validation=True,
+        do_test=False,
+        dataset_kwargs=dataset_kwargs,
+        packed_sequence_specs=packed_sequence_specs,
         dataloader_type="single",
         num_workers=num_workers,
         data_sharding=True,

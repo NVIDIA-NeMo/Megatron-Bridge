@@ -200,18 +200,18 @@ def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, 
     )
     monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", staticmethod(lambda *a, **k: TextTokenizer()))
 
-    monkeypatch.setattr(
-        dp_mod,
-        "make_text_chat_dataset",
-        lambda **kwargs: [
+    def _fake_get_maker(maker_name):
+        assert maker_name == "text_chat"
+        return lambda **kwargs: [
             {
                 "messages": [
                     {"role": "user", "content": "ping"},
                     {"role": "assistant", "content": "pong"},
                 ]
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
 
     provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,
@@ -253,18 +253,18 @@ def test_hf_provider_uses_context_tokenizer_when_processor_path_is_unset(monkeyp
     class WrappedTokenizer:
         _tokenizer = TextTokenizer()
 
-    monkeypatch.setattr(
-        dp_mod,
-        "make_text_chat_dataset",
-        lambda **kwargs: [
+    def _fake_get_maker(maker_name):
+        assert maker_name == "text_chat"
+        return lambda **kwargs: [
             {
                 "messages": [
                     {"role": "user", "content": "ping"},
                     {"role": "assistant", "content": "pong"},
                 ]
             }
-        ],
-    )
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
 
     provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,

@@ -16,8 +16,7 @@
 
 import pytest
 
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -32,7 +31,7 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_openmathinstruct2_config()
-        assert isinstance(cfg, HFConversationDatasetProvider)
+        assert isinstance(cfg, HFTextSFTDatasetProvider)
 
     def test_default_dataset_name(self):
         cfg = default_openmathinstruct2_config()
@@ -53,7 +52,6 @@ class TestDefaultOpenmathinstruct2Config:
     def test_maker_is_openmathinstruct2(self):
         cfg = default_openmathinstruct2_config()
         assert cfg.maker_name == "openmathinstruct2"
-        assert cfg.collate_impl is text_chat_collate_fn
 
     def test_dataloader_type_batch(self):
         cfg = default_openmathinstruct2_config()
@@ -61,8 +59,10 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_validation_enabled(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.val_maker_kwargs["split"] == "train_1M[:5%]"
-        assert cfg.skip_test is True
+        assert cfg.val_maker_kwargs is None
+        assert cfg.val_proportion == 0.05
+        assert cfg.do_validation is True
+        assert cfg.do_test is False
 
     def test_worker_settings(self):
         cfg = default_openmathinstruct2_config()
@@ -74,17 +74,18 @@ class TestDefaultOpenmathinstruct2Config:
         assert cfg.pin_memory is True
         assert cfg.persistent_workers is False
 
-    def test_runtime_packing_disabled_by_default(self):
+    def test_packing_disabled_by_default(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.packed_sequence_specs is None
 
-    def test_packed_sequence_request_does_not_enable_unsupported_runtime_packing(self):
+    def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_openmathinstruct2_config(packed_sequence=True)
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.packed_sequence_specs is not None
+        assert cfg.packed_sequence_specs.packed_sequence_size == 4096
 
-    def test_pad_seq_to_mult_ignored_without_packing(self):
-        cfg = default_openmathinstruct2_config(packed_sequence=False, pad_seq_to_mult=4)
-        assert cfg.pack_sequences_in_batch is False
+    def test_pad_seq_to_mult_applies_to_packing(self):
+        cfg = default_openmathinstruct2_config(packed_sequence=True, pad_seq_to_mult=4)
+        assert cfg.packed_sequence_specs.pad_seq_to_mult == 4
 
 
 @pytest.mark.unit
@@ -93,7 +94,7 @@ class TestDefaultGsm8kConfig:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_gsm8k_config()
-        assert isinstance(cfg, HFConversationDatasetProvider)
+        assert isinstance(cfg, HFTextSFTDatasetProvider)
 
     def test_default_dataset_name(self):
         cfg = default_gsm8k_config()
@@ -118,7 +119,6 @@ class TestDefaultGsm8kConfig:
     def test_maker_is_gsm8k(self):
         cfg = default_gsm8k_config()
         assert cfg.maker_name == "gsm8k"
-        assert cfg.collate_impl is text_chat_collate_fn
 
     def test_dataloader_type_batch(self):
         cfg = default_gsm8k_config()
@@ -128,7 +128,8 @@ class TestDefaultGsm8kConfig:
         cfg = default_gsm8k_config()
         assert cfg.val_maker_kwargs is None
         assert cfg.test_maker_kwargs["split"] == "test"
-        assert cfg.skip_test is False
+        assert cfg.do_validation is False
+        assert cfg.do_test is True
 
     def test_worker_settings(self):
         cfg = default_gsm8k_config()
@@ -142,15 +143,16 @@ class TestDefaultGsm8kConfig:
 
     def test_runtime_packing_disabled(self):
         cfg = default_gsm8k_config()
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.packed_sequence_specs is None
 
-    def test_packed_sequence_request_does_not_enable_unsupported_runtime_packing(self):
+    def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_gsm8k_config(packed_sequence=True)
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.packed_sequence_specs is not None
+        assert cfg.packed_sequence_specs.packed_sequence_size == 2048
 
-    def test_pad_seq_to_mult_ignored_without_packing(self):
-        cfg = default_gsm8k_config(packed_sequence=False, pad_seq_to_mult=4)
-        assert cfg.pack_sequences_in_batch is False
+    def test_pad_seq_to_mult_applies_to_packing(self):
+        cfg = default_gsm8k_config(packed_sequence=True, pad_seq_to_mult=4)
+        assert cfg.packed_sequence_specs.pad_seq_to_mult == 4
 
 
 @pytest.mark.unit
@@ -159,20 +161,25 @@ class TestDefaultSquadConfig:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_squad_config(seq_length=512)
-        assert isinstance(cfg, HFConversationDatasetProvider)
+        assert isinstance(cfg, HFTextSFTDatasetProvider)
 
     def test_default_maker_config(self):
         cfg = default_squad_config(seq_length=512)
         assert cfg.maker_name == "squad"
         assert cfg.maker_kwargs["path_or_dataset"] == "rajpurkar/squad"
-        assert cfg.maker_kwargs["split"] == "train[:90%]"
-        assert cfg.val_maker_kwargs["split"] == "train[90%:]"
-        assert cfg.skip_test is True
-        assert cfg.collate_impl is text_chat_collate_fn
+        assert cfg.maker_kwargs["split"] == "train"
+        assert cfg.val_maker_kwargs is None
+        assert cfg.val_proportion == 0.1
+        assert cfg.do_validation is True
+        assert cfg.do_test is False
+        assert cfg.dataset_kwargs["chat"] is True
+        assert cfg.dataset_kwargs["use_hf_tokenizer_chat_template"] is True
 
-    def test_packed_sequence_request_does_not_enable_unsupported_runtime_packing(self):
+    def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_squad_config(seq_length=512, packed_sequence=True)
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.packed_sequence_specs is not None
+        assert cfg.packed_sequence_specs.packed_sequence_size == 512
+        assert cfg.dataset_kwargs["pad_to_max_length"] is True
 
 
 @pytest.mark.unit
@@ -188,8 +195,10 @@ class TestConfigDifferences:
     def test_different_validation_strategies(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.val_maker_kwargs["split"] == "train_1M[:5%]"
-        assert omi2.skip_test is True
+        assert omi2.val_maker_kwargs is None
+        assert omi2.val_proportion == 0.05
+        assert omi2.do_validation is True
+        assert omi2.do_test is False
         assert gsm8k.val_maker_kwargs is None
         assert gsm8k.test_maker_kwargs["split"] == "test"
 
@@ -217,7 +226,8 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
 
     def test_uses_thinking_maker(self):
         cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, packed_sequence=True)
-        assert isinstance(cfg, HFConversationDatasetProvider)
+        assert isinstance(cfg, HFTextSFTDatasetProvider)
         assert cfg.maker_name == "openmathinstruct2_thinking"
         assert cfg.maker_kwargs["split"] == "train_1M"
-        assert cfg.pack_sequences_in_batch is False
+        assert cfg.val_proportion == 0.05
+        assert cfg.packed_sequence_specs is not None

@@ -24,19 +24,7 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.data.hf_datasets.makers import (
-    make_cord_v2_dataset,
-    make_cv17_dataset,
-    make_default_audio_dataset,
-    make_gsm8k_dataset,
-    make_llava_video_178k_dataset,
-    make_medpix_dataset,
-    make_openmathinstruct2_dataset,
-    make_openmathinstruct2_thinking_dataset,
-    make_raven_dataset,
-    make_rdr_dataset,
-    make_squad_dataset,
-    make_text_chat_dataset,
-    make_valor32k_avqa_dataset,
+    get_hf_dataset_maker,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
@@ -58,9 +46,8 @@ class HFConversationDatasetProvider(DatasetProvider):
         1. A maker function loads a Hugging Face dataset split and normalizes each
            row into Bridge's chat schema: ``messages`` for text-only rows or
            ``conversation`` for processor-ready multimodal rows.
-        2. ``ConversationDataset`` repeats and optionally shuffles that normalized
-           list to the requested Megatron sample count, then binds the selected
-           collate implementation.
+        2. ``ConversationDataset`` repeats that normalized list to the requested
+           Megatron sample count, then binds the selected collate implementation.
         3. The collate function renders chat templates, tokenizes the batch, and
            builds shifted labels/loss masks or model-specific visual inputs.
     """
@@ -85,8 +72,9 @@ class HFConversationDatasetProvider(DatasetProvider):
     val_maker_kwargs: Optional[Dict[str, Any]] = None
     test_maker_kwargs: Optional[Dict[str, Any]] = None
 
-    # Skip building specific splits (returns None for that split)
-    skip_test: bool = False
+    # Control whether optional validation/test splits are built.
+    do_validation: bool = True
+    do_test: bool = True
 
     # Optional collate override. If None, inferred from processor type.
     collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None
@@ -113,42 +101,7 @@ class HFConversationDatasetProvider(DatasetProvider):
         return "pack_sequences" in inspect.signature(selected_impl).parameters
 
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
-        registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
-            "make_rdr_dataset": make_rdr_dataset,
-            "make_cord_v2_dataset": make_cord_v2_dataset,
-            "make_medpix_dataset": make_medpix_dataset,
-            "make_text_chat_dataset": make_text_chat_dataset,
-            "make_squad_dataset": make_squad_dataset,
-            "make_gsm8k_dataset": make_gsm8k_dataset,
-            "make_openmathinstruct2_dataset": make_openmathinstruct2_dataset,
-            "make_openmathinstruct2_thinking_dataset": make_openmathinstruct2_thinking_dataset,
-            "make_cv17_dataset": make_cv17_dataset,
-            "make_raven_dataset": make_raven_dataset,
-            "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
-            "make_default_audio_dataset": make_default_audio_dataset,
-            "make_valor32k_avqa_dataset": make_valor32k_avqa_dataset,
-        }
-        if self.maker_name in registry:
-            return registry[self.maker_name]
-        alias_map = {
-            "rdr": "make_rdr_dataset",
-            "cord_v2": "make_cord_v2_dataset",
-            "medpix": "make_medpix_dataset",
-            "text_chat": "make_text_chat_dataset",
-            "chat": "make_text_chat_dataset",
-            "squad": "make_squad_dataset",
-            "gsm8k": "make_gsm8k_dataset",
-            "openmathinstruct2": "make_openmathinstruct2_dataset",
-            "openmathinstruct2_thinking": "make_openmathinstruct2_thinking_dataset",
-            "cv17": "make_cv17_dataset",
-            "raven": "make_raven_dataset",
-            "llava_video_178k": "make_llava_video_178k_dataset",
-            "default_audio": "make_default_audio_dataset",
-            "valor32k_avqa": "make_valor32k_avqa_dataset",
-        }
-        if self.maker_name in alias_map and alias_map[self.maker_name] in registry:
-            return registry[alias_map[self.maker_name]]
-        raise ValueError(f"Unknown maker_name: {self.maker_name}")
+        return get_hf_dataset_maker(self.maker_name)
 
     def _build_split_dataset(
         self,
@@ -206,11 +159,15 @@ class HFConversationDatasetProvider(DatasetProvider):
         processor = self._load_processor_or_tokenizer(context.tokenizer)
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
-        valid_ds = self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)
+        valid_ds = (
+            self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)
+            if self.do_validation
+            else None
+        )
         test_ds = (
-            None
-            if self.skip_test
-            else self._build_split_dataset("test", context.test_samples, processor, self.test_maker_kwargs)
+            self._build_split_dataset("test", context.test_samples, processor, self.test_maker_kwargs)
+            if self.do_test
+            else None
         )
 
         return train_ds, valid_ds, test_ds

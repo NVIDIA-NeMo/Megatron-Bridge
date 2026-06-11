@@ -255,7 +255,8 @@ def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvi
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
         pack_sequences_in_batch=False,
-        skip_test=True,
+        do_validation=True,
+        do_test=False,
         trust_remote_code=args.trust_remote_code,
     )
     provider.drop_last = True
