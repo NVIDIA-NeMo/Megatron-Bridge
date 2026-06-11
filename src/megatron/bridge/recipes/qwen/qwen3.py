@@ -16,7 +16,7 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -654,7 +654,7 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
 
     # 128K sequence length with chat-format HF dataset input.
     cfg.model.seq_length = 128 * 1024
-    cfg.dataset = HFDatasetConversationProvider(
+    cfg.dataset = HFConversationDatasetProvider(
         seq_length=cfg.model.seq_length,
         hf_processor_path=hf_path,
         maker_name="text_chat",

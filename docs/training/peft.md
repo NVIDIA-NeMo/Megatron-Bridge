@@ -281,7 +281,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
-from megatron.bridge.data.hf_datasets import HFDatasetConversationProvider, text_chat_collate_fn
+from megatron.bridge.data.hf_datasets import HFConversationDatasetProvider, text_chat_collate_fn
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -306,7 +306,7 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFDatasetConversationProvider(
+    dataset=HFConversationDatasetProvider(
         seq_length=512,
         hf_processor_path=None,
         maker_name="squad",

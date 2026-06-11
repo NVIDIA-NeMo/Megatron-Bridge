@@ -8,7 +8,7 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 |----------|-------------|--------------------|----------------------|
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
 | LLM SFT or PEFT from local files | JSONL split files | `FinetuningDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Direct Hugging Face chat/conversation rows | `HFDatasetConversationProvider` | `maker_name`, `maker_kwargs`, optional `hf_processor_path` |
+| LLM SFT or PEFT from Hugging Face datasets | Direct Hugging Face chat/conversation rows | `HFConversationDatasetProvider` | `maker_name`, `maker_kwargs`, optional `hf_processor_path` |
 | VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, but `FinetuningDatasetConfig` uses `seq_length`.
@@ -93,12 +93,12 @@ For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same.
 
 ## Hugging Face Datasets for SFT and PEFT
 
-`HFDatasetConversationProvider` downloads or reads a Hugging Face dataset and converts rows directly into the shared chat/conversation schema. Text presets use the training tokenizer from the build context when `hf_processor_path=None`; set `hf_processor_path` explicitly when the dataset provider should load a tokenizer or processor itself.
+`HFConversationDatasetProvider` downloads or reads a Hugging Face dataset and converts rows directly into the shared chat/conversation schema. Text presets use the training tokenizer from the build context when `hf_processor_path=None`; set `hf_processor_path` explicitly when the dataset provider should load a tokenizer or processor itself.
 
 ```python
-from megatron.bridge.data.hf_datasets import HFDatasetConversationProvider, text_chat_collate_fn
+from megatron.bridge.data.hf_datasets import HFConversationDatasetProvider, text_chat_collate_fn
 
-dataset = HFDatasetConversationProvider(
+dataset = HFConversationDatasetProvider(
     seq_length=512,
     hf_processor_path=None,
     maker_name="squad",

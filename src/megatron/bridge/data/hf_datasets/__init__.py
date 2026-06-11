@@ -30,13 +30,13 @@ from megatron.bridge.data.hf_datasets.makers import (
     make_text_chat_dataset,
     make_valor32k_avqa_dataset,
 )
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
 
 __all__ = [
     "ConversationDataset",
-    "HFDatasetConversationProvider",
+    "HFConversationDatasetProvider",
     "make_cord_v2_dataset",
     "make_cv17_dataset",
     "make_default_audio_dataset",

@@ -18,7 +18,7 @@ from typing import Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -145,7 +145,7 @@ def _qwen2_audio_common(
             "subset": "dev",
             "split": "test",
         }
-    dataset_cfg = HFDatasetConversationProvider(
+    dataset_cfg = HFConversationDatasetProvider(
         seq_length=seq_length,
         hf_processor_path=hf_path,
         maker_name=maker_name,

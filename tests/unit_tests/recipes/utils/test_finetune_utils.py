@@ -16,7 +16,7 @@
 
 import pytest
 
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
@@ -32,7 +32,7 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_openmathinstruct2_config()
-        assert isinstance(cfg, HFDatasetConversationProvider)
+        assert isinstance(cfg, HFConversationDatasetProvider)
 
     def test_default_dataset_name(self):
         cfg = default_openmathinstruct2_config()
@@ -101,7 +101,7 @@ class TestDefaultGsm8kConfig:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_gsm8k_config()
-        assert isinstance(cfg, HFDatasetConversationProvider)
+        assert isinstance(cfg, HFConversationDatasetProvider)
 
     def test_default_dataset_name(self):
         cfg = default_gsm8k_config()
@@ -175,7 +175,7 @@ class TestDefaultSquadConfig:
 
     def test_returns_hf_conversation_provider(self):
         cfg = default_squad_config(seq_length=512)
-        assert isinstance(cfg, HFDatasetConversationProvider)
+        assert isinstance(cfg, HFConversationDatasetProvider)
 
     def test_default_maker_config(self):
         cfg = default_squad_config(seq_length=512)
@@ -233,7 +233,7 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
 
     def test_uses_thinking_maker(self):
         cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, packed_sequence=True)
-        assert isinstance(cfg, HFDatasetConversationProvider)
+        assert isinstance(cfg, HFConversationDatasetProvider)
         assert cfg.maker_name == "openmathinstruct2_thinking"
         assert cfg.maker_kwargs["split"] == "train_1M"
         assert cfg.pack_sequences_in_batch is False

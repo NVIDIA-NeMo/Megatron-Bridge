@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(kw_only=True)
-class HFDatasetConversationProvider(DatasetProvider):
+class HFConversationDatasetProvider(DatasetProvider):
     """DatasetProvider that builds conversation datasets from Hugging Face datasets.
 
     This provider leverages simple maker functions that return lists of examples

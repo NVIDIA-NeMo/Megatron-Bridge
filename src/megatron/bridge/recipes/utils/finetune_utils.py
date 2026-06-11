@@ -16,7 +16,7 @@
 
 from typing import Any
 
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
@@ -60,9 +60,9 @@ def _text_hf_dataset_provider(
     test_maker_kwargs: dict[str, Any] | None = None,
     skip_test: bool = True,
     num_workers: int = 2,
-) -> HFDatasetConversationProvider:
+) -> HFConversationDatasetProvider:
     """Create a direct HF conversation provider for text-only SFT presets."""
-    return HFDatasetConversationProvider(
+    return HFConversationDatasetProvider(
         seq_length=seq_length,
         hf_processor_path=None,
         maker_name=maker_name,
@@ -84,7 +84,7 @@ def _text_hf_dataset_provider(
 
 def default_squad_config(
     seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1
-) -> HFDatasetConversationProvider:
+) -> HFConversationDatasetProvider:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
@@ -95,7 +95,7 @@ def default_squad_config(
             JSONL configs.
 
     Returns:
-        HFDatasetConversationProvider configured for SQuAD finetuning
+        HFConversationDatasetProvider configured for SQuAD finetuning
 
     Note:
         Uses consistent settings across all finetuning recipes:
@@ -121,7 +121,7 @@ def default_openmathinstruct2_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConversationProvider:
+) -> HFConversationDatasetProvider:
     """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
     del packed_sequence, pad_seq_to_mult
 
@@ -141,7 +141,7 @@ def default_gsm8k_config(
     seq_length: int = 2048,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConversationProvider:
+) -> HFConversationDatasetProvider:
     """Create default GSM8K dataset configuration for finetuning recipes.
 
     GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
@@ -155,7 +155,7 @@ def default_gsm8k_config(
             JSONL configs.
 
     Returns:
-        HFDatasetConversationProvider configured for GSM8K finetuning
+        HFConversationDatasetProvider configured for GSM8K finetuning
 
     Note:
         - GSM8K has 7,473 train and 1,319 test examples
@@ -181,7 +181,7 @@ def default_openmathinstruct2_thinking_packed_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConversationProvider:
+) -> HFConversationDatasetProvider:
     """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
 
     Puts generated_solution (minus the trailing \boxed{N}) into the assistant thinking field

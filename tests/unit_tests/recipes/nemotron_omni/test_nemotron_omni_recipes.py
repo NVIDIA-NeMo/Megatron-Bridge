@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
-from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
 from megatron.bridge.training.config import ConfigContainer
 
@@ -131,7 +131,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_provider(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_sft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
+    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.maker_name == "cord_v2"
     assert cfg.dataset.collate_impl is nemotron_omni_collate_fn
@@ -145,7 +145,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_peft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFDatasetConversationProvider)
+    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
     assert cfg.peft is not None
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
     assert cfg.peft.dim == 16

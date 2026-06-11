@@ -120,12 +120,12 @@ def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):
     """Create SQuAD dataset configuration for Megatron-Bridge using direct HF loading."""
-    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     del dataset_root, packed, pad_seq_to_mult
 
-    return HFDatasetConversationProvider(
+    return HFConversationDatasetProvider(
         seq_length=seq_length,
         hf_processor_path=None,
         maker_name="squad",

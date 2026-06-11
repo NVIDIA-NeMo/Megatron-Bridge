@@ -153,9 +153,9 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     def _fake_get_maker(self):
         return lambda **kwargs: [_example(), _example()]
 
-    monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
 
-    provider = dp_mod.HFDatasetConversationProvider(seq_length=16, hf_processor_path="dummy/model", maker_name="rdr")
+    provider = dp_mod.HFConversationDatasetProvider(seq_length=16, hf_processor_path="dummy/model", maker_name="rdr")
 
     ctx = DatasetBuildContext(train_samples=2, valid_samples=1, test_samples=0)
     train_ds, valid_ds, test_ds = provider.build_datasets(ctx)
@@ -213,7 +213,7 @@ def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, 
         ],
     )
 
-    provider = dp_mod.HFDatasetConversationProvider(
+    provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,
         hf_processor_path="dummy/text-model",
         maker_name="text_chat",
@@ -266,7 +266,7 @@ def test_hf_provider_uses_context_tokenizer_when_processor_path_is_unset(monkeyp
         ],
     )
 
-    provider = dp_mod.HFDatasetConversationProvider(
+    provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,
         hf_processor_path=None,
         maker_name="text_chat",
@@ -290,9 +290,9 @@ def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypat
     def _fake_get_maker(self):
         return lambda **kwargs: [_example(), _example()]
 
-    monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
 
-    provider = dp_mod.HFDatasetConversationProvider(
+    provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,
         hf_processor_path="dummy/model",
         maker_name="rdr",
@@ -315,9 +315,9 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
     def _fake_get_maker(self):
         return lambda **kwargs: [_example(), _example()]
 
-    monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
 
-    provider = dp_mod.HFDatasetConversationProvider(
+    provider = dp_mod.HFConversationDatasetProvider(
         seq_length=16,
         hf_processor_path="dummy/model",
         maker_name="rdr",
