@@ -292,7 +292,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
     global_batch_size=256,
     micro_batch_size=2,
     pipeline_model_parallel_size=1,
-    expert_model_parallel_size=32,
+    expert_model_parallel_size=64,
     use_megatron_fsdp=True,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
@@ -304,8 +304,8 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
-    outer_dp_sharding_strategy="optim",
-    num_distributed_optimizer_instances=2,
+    outer_dp_sharding_strategy="no_shard",
+    num_distributed_optimizer_instances=1,
 )
 
 # =============================================================================
