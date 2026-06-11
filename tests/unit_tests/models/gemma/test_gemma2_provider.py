@@ -14,10 +14,16 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+import torch
+
 from megatron.core.activations import fast_gelu
+from megatron.core.transformer.enums import AttnMaskType
 
 from megatron.bridge.models.gemma.gemma2_provider import (
+    Gemma2DotProductAttention,
     Gemma2ModelProvider,
+    get_swa,
 )
 from megatron.bridge.utils.fusions import can_enable_gradient_accumulation_fusion
 
@@ -54,7 +60,7 @@ class TestGemma2ModelProvider:
         # Check Gemma2-specific parameters
         assert provider.layernorm_epsilon == 1e-6
         assert provider.rotary_base == 10000
-        assert provider.window_size == (4096, 0)
+        assert provider.window_size == (4095, 0)
         assert provider.vocab_size == 256000
         assert provider.gradient_accumulation_fusion is can_enable_gradient_accumulation_fusion()
         assert provider.query_pre_attn_scalar == 224
@@ -192,3 +198,96 @@ class TestGemma2ModelProviderIntegration:
             assert provider.normalization == "RMSNorm"
             assert provider.activation_func == fast_gelu
             assert provider.gated_linear_unit is True
+
+
+def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 0)) -> Gemma2DotProductAttention:
+    """Build a Gemma2DotProductAttention with minimal mock config."""
+    config = Mock()
+    config.context_parallel_size = context_parallel_size
+    config.window_size = window_size
+    config.kv_channels = 256
+    config.num_attention_heads = 8
+    config.num_query_groups = 8
+    config.tensor_model_parallel_size = 1
+    config.apply_query_key_layer_scaling = False
+    config.query_pre_attn_scalar = 224
+    config.fp16 = False
+    config.bf16 = True
+    config.masked_softmax_fusion = False
+    config.attention_softmax_in_fp32 = True
+    config.attention_dropout = 0.0
+    config.sequence_parallel = False
+    return Gemma2DotProductAttention(
+        config=config,
+        layer_number=2,  # even layer → SWA active
+        attn_mask_type=AttnMaskType.causal,
+        attention_type="self",
+    )
+
+
+class TestGemma2DotProductAttention:
+    """Tests for Gemma2DotProductAttention fixes."""
+
+    def test_cp_greater_than_1_raises_value_error(self):
+        """CP > 1 must raise ValueError, not bare AssertionError."""
+        with pytest.raises(ValueError, match="Context parallelism"):
+            _make_attention(context_parallel_size=2)
+
+    def test_packed_seq_raises_value_error(self):
+        """packed_seq_params != None must raise ValueError."""
+        attn = _make_attention()
+        dummy = torch.zeros(4, 8, 8)
+        with pytest.raises(ValueError, match="Packed sequence"):
+            attn.forward(
+                query=dummy,
+                key=dummy,
+                value=dummy,
+                attention_mask=None,
+                packed_seq_params=Mock(),
+            )
+
+    def test_swa_applied_when_attention_mask_is_none(self):
+        """SWA mask must be generated even when attention_mask=None (the pretrain path)."""
+        attn = _make_attention(window_size=(4095, 0))
+        # Even layer → self.window_size is set; odd layer → None
+        assert attn.window_size == (4095, 0)
+
+        # get_swa should produce a boolean mask of the correct shape
+        seq_len = 8
+        mask = get_swa(seq_len, seq_len, (4095, 0))
+        assert mask.shape == (seq_len, seq_len)
+        assert mask.dtype == torch.bool
+
+    def test_odd_layer_has_no_swa(self):
+        """Odd-numbered layers must not have a window_size (full attention)."""
+        config = Mock()
+        config.context_parallel_size = 1
+        config.window_size = (4095, 0)
+        config.kv_channels = 256
+        config.num_attention_heads = 8
+        config.num_query_groups = 8
+        config.tensor_model_parallel_size = 1
+        config.apply_query_key_layer_scaling = False
+        config.query_pre_attn_scalar = 224
+        config.fp16 = False
+        config.bf16 = True
+        config.masked_softmax_fusion = False
+        config.attention_softmax_in_fp32 = True
+        config.attention_dropout = 0.0
+        config.sequence_parallel = False
+        odd_attn = Gemma2DotProductAttention(
+            config=config,
+            layer_number=1,  # odd → full attention
+            attn_mask_type=AttnMaskType.causal,
+            attention_type="self",
+        )
+        assert odd_attn.window_size is None
+
+    def test_window_size_default_is_4095(self):
+        """Gemma2ModelProvider.window_size default must be (4095, 0) to match gemma2_bridge convention."""
+        provider = Gemma2ModelProvider(
+            num_layers=42,
+            hidden_size=3584,
+            num_attention_heads=16,
+        )
+        assert provider.window_size == (4095, 0)

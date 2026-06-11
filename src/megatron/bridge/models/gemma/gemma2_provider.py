@@ -77,9 +77,8 @@ class Gemma2DotProductAttention(MegatronModule):
 
         self.config: TransformerConfig = config
 
-        assert self.config.context_parallel_size == 1, (
-            "Context parallelism is only supported by TEDotProductAttention!"
-        )
+        if self.config.context_parallel_size != 1:
+            raise ValueError("Context parallelism is only supported by TEDotProductAttention!")
 
         self.layer_number = max(1, layer_number)
 
@@ -137,9 +136,10 @@ class Gemma2DotProductAttention(MegatronModule):
         Modified from mcore.transformer.dot_product_attention to support Gemma2-specific
         final_logit_softcapping.
         """
-        assert packed_seq_params is None, (
-            "Packed sequence is not supported by DotProductAttention.Please use TEDotProductAttention instead."
-        )
+        if packed_seq_params is not None:
+            raise ValueError(
+                "Packed sequence is not supported by DotProductAttention. Use TEDotProductAttention instead."
+            )
 
         # ===================================
         # Raw attention scores. [b, n/p, s, s]
@@ -201,7 +201,7 @@ class Gemma2DotProductAttention(MegatronModule):
         # ===========================
 
         # sliding window attention
-        if attention_mask is not None and self.window_size is not None:
+        if self.window_size is not None:
             attention_mask = get_swa(query.size(0), key.size(0), self.window_size)
 
         # attention scores and attention mask [b, np, sq, sk]
@@ -359,7 +359,7 @@ class Gemma2ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
     rotary_base: float = 10000
 
-    window_size: tuple[int, int] = (4096, 0)
+    window_size: tuple[int, int] = (4095, 0)
     vocab_size: int = 256000
 
     transformer_layer_spec: Union[ModuleSpec, Callable[["GPTModelProvider"], ModuleSpec]] = gemma2_layer_spec
