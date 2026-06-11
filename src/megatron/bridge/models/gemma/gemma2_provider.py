@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+import logging
 import math
 from dataclasses import dataclass
 from typing import Callable, Optional, Union
@@ -47,6 +49,43 @@ from torch import Tensor
 
 from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+logger = logging.getLogger(__name__)
+
+_HAVE_FLEX_ATTN = False
+_flex_attn_func = None
+_create_flex_block_mask = None
+
+try:
+    from torch.nn.attention.flex_attention import create_block_mask as _flex_mask_candidate
+    from torch.nn.attention.flex_attention import flex_attention as _flex_candidate
+
+    _flex_attn_func = torch.compile(_flex_candidate)
+    _create_flex_block_mask = _flex_mask_candidate
+    _HAVE_FLEX_ATTN = True
+    logger.warning("Gemma2: PyTorch FlexAttention available — softcap+SWA fused via Triton score_mod.")
+    del _flex_candidate, _flex_mask_candidate
+except ImportError:
+    pass
+
+if not _HAVE_FLEX_ATTN:
+    logger.warning("Gemma2: FlexAttention not available — using unfused attention fallback.")
+
+
+@functools.lru_cache(maxsize=None)
+def _get_softcap_score_mod(softcap: float):
+    """Return a score_mod closure for the given softcap, cached so all layers share one object.
+
+    torch.compile guards on score_mod identity (id(fn)), so sharing one object across the
+    N attention layers avoids N redundant Triton kernel recompilations at startup.
+    """
+
+    def _score_mod(score, b, h, q_idx, kv_idx):
+        return softcap * torch.tanh(score / softcap)
+
+    _score_mod.__qualname__ = f"softcap_score_mod_{softcap}"
+    return _score_mod
 
 
 class Gemma2DotProductAttention(MegatronModule):
@@ -208,11 +247,20 @@ class Gemma2DotProductAttention(MegatronModule):
 
         # sliding window attention: combine SWA mask with any incoming padding mask.
         # Both use True=masked-out; logical OR gives the union of masked positions.
-        # get_swa() returns [sq, sk]; a padding mask is typically [b, 1, sq, sk] —
-        # PyTorch broadcasts [sq, sk] to [b, 1, sq, sk] correctly under |.
-        if self.window_size is not None:
+        # get_swa() returns [sq, sk]; the fused CUDA softmax kernel requires a 4D
+        # mask [b, np, sq, sk], so we unsqueeze to [1, 1, sq, sk] when there is no
+        # padding mask. When a padding mask [b, 1, sq, sk] is present, the | already
+        # produces a 4D result via broadcasting.
+        # Skip mask generation when the window fully covers the sequence: masking only
+        # fires when query index i > window_size[0], i.e. seq_q > window_size[0] + 1.
+        # For seq_length=4096 with window=4095 this is a no-op, so we stay on the
+        # fast ScaledUpperTriangMaskedSoftmax (and FlexAttention) path.
+        if self.window_size is not None and query.size(0) > self.window_size[0] + 1:
             swa_mask = get_swa(query.size(0), key.size(0), self.window_size)
-            attention_mask = swa_mask if attention_mask is None else (swa_mask | attention_mask)
+            if attention_mask is None:
+                attention_mask = swa_mask.unsqueeze(0).unsqueeze(0)
+            else:
+                attention_mask = swa_mask | attention_mask
 
         # attention scores and attention mask [b, np, sq, sk]
         attention_probs: Tensor = self.scale_mask_softmax(attention_scores, attention_mask)
@@ -260,6 +308,97 @@ class Gemma2DotProductAttention(MegatronModule):
         new_context_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
         context = context.view(*new_context_shape)
         return context
+
+
+class Gemma2FlexDotProductAttention(Gemma2DotProductAttention):
+    """Gemma2 fused attention with native softcap and sliding window support.
+
+    Uses PyTorch FlexAttention (built-in, PyTorch 2.5+) to fuse softcap and SWA into
+    a single Triton kernel. Falls back to the unfused parent when a padding
+    attention_mask is present (fine-tuning / variable-length batches) or when
+    dropout is active. Pretraining always uses the fused path.
+    """
+
+    def __init__(
+        self,
+        config: TransformerConfig,
+        layer_number: int,
+        attn_mask_type: AttnMaskType,
+        attention_type: str,
+        attention_dropout: float = None,
+        **kwargs,
+    ):
+        super().__init__(config, layer_number, attn_mask_type, attention_type, attention_dropout, **kwargs)
+        # softcap passed directly to the fused kernel; avoids post-hoc tanh rescaling
+        self.softcap = float(getattr(config, "attn_logit_softcapping", 0.0) or 0.0)
+        # Gemma2 uses 1/sqrt(query_pre_attn_scalar=224), not 1/sqrt(head_dim) — must override
+        self.softmax_scale = 1.0 / self.norm_factor
+        self.dropout_p = config.attention_dropout if attention_dropout is None else attention_dropout
+        # window_size for FlexAttention block_mask: (-1, -1) = full causal; (left, right) = SWA
+        self._flex_window_size = (-1, -1) if self.window_size is None else (self.window_size[0], self.window_size[1])
+
+        if _HAVE_FLEX_ATTN:
+            self._flex_score_mod = _get_softcap_score_mod(self.softcap)
+            self._flex_block_mask_cache: dict = {}
+
+    def _build_flex_block_mask(self, sq: int, sk: int, device: torch.device):
+        """Build a FlexAttention block_mask encoding causal + optional SWA."""
+        window_left = self._flex_window_size[0]
+        if window_left < 0:
+
+            def _mask(b, h, q_idx, kv_idx):
+                return q_idx >= kv_idx
+
+        else:
+            w = window_left
+
+            def _mask(b, h, q_idx, kv_idx, _w=w):
+                return (q_idx >= kv_idx) & (q_idx - kv_idx <= _w)
+
+        return _create_flex_block_mask(_mask, B=None, H=None, Q_LEN=sq, KV_LEN=sk, device=device)
+
+    def forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        attention_mask: Tensor,
+        attn_mask_type: AttnMaskType = None,
+        packed_seq_params: PackedSeqParams = None,
+        **kwargs,
+    ):
+        """Forward: FlexAttention fused path when possible, unfused fallback otherwise."""
+        if packed_seq_params is not None:
+            raise ValueError(
+                "Packed sequence is not supported by DotProductAttention. Use TEDotProductAttention instead."
+            )
+
+        dropout_p = self.dropout_p if self.training else 0.0
+        fused_eligible = attention_mask is None and dropout_p == 0.0
+
+        if _HAVE_FLEX_ATTN and fused_eligible:
+            # FlexAttention path — expects [b, np, sq, hn]
+            sq, b, np_heads, hn = query.shape
+            q = query.permute(1, 2, 0, 3)
+            k = key.permute(1, 2, 0, 3)
+            v = value.permute(1, 2, 0, 3)
+            cache_key = (sq, key.size(0))
+            if cache_key not in self._flex_block_mask_cache:
+                self._flex_block_mask_cache[cache_key] = self._build_flex_block_mask(
+                    *cache_key, query.device
+                )
+            out = _flex_attn_func(
+                q, k, v,
+                score_mod=self._flex_score_mod,
+                block_mask=self._flex_block_mask_cache[cache_key],
+                scale=self.softmax_scale,
+                enable_gqa=(k.size(1) != q.size(1)),
+            )
+            return out.permute(2, 0, 1, 3).contiguous().view(sq, b, np_heads * hn)
+
+        return super().forward(
+            query, key, value, attention_mask, attn_mask_type=attn_mask_type, packed_seq_params=None, **kwargs
+        )
 
 
 class TERowParallelLinearLayerNorm(TERowParallelLinear):
@@ -326,7 +465,7 @@ def gemma2_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
                 params={"attn_mask_type": AttnMaskType.causal},
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
-                    core_attention=Gemma2DotProductAttention,  # use unfused SDPA for attn logit softcapping
+                    core_attention=Gemma2FlexDotProductAttention,  # FlexAttention fast path; falls back to unfused when unavailable
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),

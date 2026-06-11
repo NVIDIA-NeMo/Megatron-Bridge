@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from unittest.mock import Mock, patch
 
 import pytest
@@ -22,6 +23,7 @@ from megatron.core.transformer.enums import AttnMaskType
 
 from megatron.bridge.models.gemma.gemma2_provider import (
     Gemma2DotProductAttention,
+    Gemma2FlexDotProductAttention,
     Gemma2ModelProvider,
     get_swa,
 )
@@ -254,22 +256,26 @@ class TestGemma2DotProductAttention:
             if attention_mask is not None and self.window_size is not None:
         which was never True on the pretrain path (MCore passes attention_mask=None).
         After the fix the gate is:
-            if self.window_size is not None:
+            if self.window_size is not None and query.size(0) > self.window_size[0] + 1:
         We verify this by patching get_swa and confirming it is called from forward()
-        when attention_mask=None is passed to an even-numbered layer.
+        when attention_mask=None is passed to an even-numbered layer whose window is
+        smaller than the sequence length.  window=(2, 0) with seq=4: 4 > 3, so the
+        guard fires and the SWA mask is built and unsqueezed to [1, 1, sq, sk].
         """
-        attn = _make_attention(window_size=(4095, 0))
-        assert attn.window_size == (4095, 0), "even layer must have window_size set"
+        seq, batch, heads, head_dim = 4, 1, 8, 32
+        # window=(2, 0): seq=4 > window+1=3, so the SWA guard fires.
+        attn = _make_attention(window_size=(2, 0))
+        assert attn.window_size == (2, 0), "even layer must have window_size set"
 
-        sentinel = Mock(name="swa_mask")
+        # Use a real bool tensor so the unsqueeze chain produces a verifiable result.
+        swa_tensor = torch.zeros(seq, seq, dtype=torch.bool)
         with patch(
             "megatron.bridge.models.gemma.gemma2_provider.get_swa",
-            return_value=sentinel,
+            return_value=swa_tensor,
         ) as mock_get_swa:
             # scale_mask_softmax is called with the mask; stub it so forward() completes.
             attn.scale_mask_softmax = Mock(return_value=torch.zeros(1, 8, 4, 4))
             attn.attention_dropout = torch.nn.Identity()
-            seq, batch, heads, head_dim = 4, 1, 8, 32
             q = torch.zeros(seq, batch, heads, head_dim)
             k = torch.zeros(seq, batch, heads, head_dim)
             v = torch.zeros(seq, batch, heads, head_dim)
@@ -281,10 +287,13 @@ class TestGemma2DotProductAttention:
                 mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
                 attn.forward(query=q, key=k, value=v, attention_mask=None)
 
-        mock_get_swa.assert_called_once_with(seq, seq, (4095, 0))
-        # The SWA mask (our sentinel) must have been passed to scale_mask_softmax.
+        mock_get_swa.assert_called_once_with(seq, seq, (2, 0))
+        # The SWA mask is unsqueezed to [1, 1, sq, sk] before being passed to scale_mask_softmax.
         call_args = attn.scale_mask_softmax.call_args
-        assert call_args[0][1] is sentinel, "scale_mask_softmax must receive the SWA mask"
+        expected_mask = swa_tensor.unsqueeze(0).unsqueeze(0)
+        assert torch.equal(call_args[0][1], expected_mask), (
+            "scale_mask_softmax must receive the SWA mask unsqueezed to [1, 1, sq, sk]"
+        )
 
     def test_odd_layer_has_no_swa(self):
         """Odd-numbered layers must not have a window_size (full attention)."""
@@ -337,16 +346,19 @@ class TestGemma2DotProductAttention:
         which silently discarded any incoming padding mask. The correct behaviour is:
             attention_mask = swa_mask if attention_mask is None else (swa_mask | attention_mask)
         Both masks use True=masked-out, so logical OR gives the union of blocked positions.
+        window=(2, 0) with seq=4: 4 > 3, so the SWA guard fires.
         """
-        attn = _make_attention(window_size=(4095, 0))
+        # window=(2, 0): seq=4 > window+1=3, so the SWA guard fires.
+        attn = _make_attention(window_size=(2, 0))
 
         seq, batch, heads, head_dim = 4, 2, 8, 32
         # Padding mask [b, 1, sq, sk]: block last key-position for the first sample only.
         padding_mask = torch.zeros(batch, 1, seq, seq, dtype=torch.bool)
         padding_mask[0, 0, :, -1] = True
 
-        # SWA mask returned by the patched get_swa (all-zeros for simplicity).
+        # SWA mask returned by the patched get_swa: first column masked to give a non-trivial OR.
         swa_mask_val = torch.zeros(seq, seq, dtype=torch.bool)
+        swa_mask_val[:, 0] = True  # mask first key-position for all queries
 
         captured: dict = {}
 
@@ -371,7 +383,7 @@ class TestGemma2DotProductAttention:
                 mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
                 attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
 
-        mock_get_swa.assert_called_once_with(seq, seq, (4095, 0))
+        mock_get_swa.assert_called_once_with(seq, seq, (2, 0))
         expected = swa_mask_val | padding_mask  # [sq, sk] | [b, 1, sq, sk] → [b, 1, sq, sk]
         assert torch.equal(captured["mask"], expected), (
             "scale_mask_softmax must receive swa_mask | padding_mask, not just swa_mask"
@@ -385,3 +397,330 @@ class TestGemma2DotProductAttention:
             num_attention_heads=16,
         )
         assert provider.window_size == (4095, 0)
+
+
+def _make_flex_attention(layer_number: int = 1) -> Gemma2FlexDotProductAttention:
+    """Build a Gemma2FlexDotProductAttention with minimal mock config."""
+    config = Mock()
+    config.context_parallel_size = 1
+    config.window_size = (4095, 0)
+    config.kv_channels = 256
+    config.num_attention_heads = 8
+    config.num_query_groups = 8
+    config.tensor_model_parallel_size = 1
+    config.apply_query_key_layer_scaling = False
+    config.query_pre_attn_scalar = 224
+    config.fp16 = False
+    config.bf16 = True
+    config.masked_softmax_fusion = False
+    config.attention_softmax_in_fp32 = True
+    config.attention_dropout = 0.0
+    config.sequence_parallel = False
+    config.attn_logit_softcapping = 50.0
+    return Gemma2FlexDotProductAttention(
+        config=config,
+        layer_number=layer_number,
+        attn_mask_type=AttnMaskType.causal,
+        attention_type="self",
+    )
+
+
+class TestGemma2FlexDotProductAttention:
+    """Tests for Gemma2FlexDotProductAttention FlexAttention fast path and fallback behavior."""
+
+    def test_flex_path_used_when_available(self):
+        """When _HAVE_FLEX_ATTN=True and mask=None, _flex_attn_func must be called, not baddbmm."""
+        seq, batch, heads, head_dim = 4, 2, 8, 32
+        # FlexAttention output: [b, np, sq, hn]
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=1)
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            out = attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        mock_flex.assert_called_once()
+        assert out.shape == (seq, batch, heads * head_dim)
+
+    def test_fallback_when_no_flex(self):
+        """When _HAVE_FLEX_ATTN=False, forward must delegate entirely to the unfused parent path."""
+        attn = _make_flex_attention(layer_number=1)
+        mock_flex = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", False), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ):
+            with patch.object(
+                Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
+            ) as mock_parent:
+                q = torch.zeros(4, 2, 8, 32)
+                k = torch.zeros(4, 2, 8, 32)
+                v = torch.zeros(4, 2, 8, 32)
+                attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        mock_flex.assert_not_called()
+        mock_parent.assert_called_once()
+
+    def test_fallback_when_dropout_nonzero(self):
+        """Non-zero dropout must trigger unfused fallback: FlexAttention has no dropout_p param."""
+        config = Mock()
+        config.context_parallel_size = 1
+        config.window_size = (4095, 0)
+        config.kv_channels = 256
+        config.num_attention_heads = 8
+        config.num_query_groups = 8
+        config.tensor_model_parallel_size = 1
+        config.apply_query_key_layer_scaling = False
+        config.query_pre_attn_scalar = 224
+        config.fp16 = False
+        config.bf16 = True
+        config.masked_softmax_fusion = False
+        config.attention_softmax_in_fp32 = True
+        config.attention_dropout = 0.1  # non-zero dropout
+        config.sequence_parallel = False
+        config.attn_logit_softcapping = 50.0
+        mock_flex = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ):
+            attn = Gemma2FlexDotProductAttention(
+                config=config, layer_number=1, attn_mask_type=AttnMaskType.causal, attention_type="self"
+            )
+            attn.train()  # ensure self.training=True so dropout_p > 0
+            with patch.object(
+                Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
+            ) as mock_parent:
+                q = torch.zeros(4, 2, 8, 32)
+                k = torch.zeros(4, 2, 8, 32)
+                v = torch.zeros(4, 2, 8, 32)
+                attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        mock_flex.assert_not_called()
+        mock_parent.assert_called_once()
+
+    def test_flex_call_has_no_dropout_p_kwarg(self):
+        """FlexAttention call must NOT include a dropout_p kwarg — it has no such parameter."""
+        seq, batch, heads, head_dim = 4, 2, 8, 32
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=1)
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        assert "dropout_p" not in mock_flex.call_args.kwargs, (
+            "dropout_p must not be passed to FlexAttention: it has no such parameter."
+        )
+
+    def test_fallback_when_attention_mask_not_none(self):
+        """Non-None attention_mask (fine-tuning) must trigger unfused fallback even with FlexAttention present."""
+        attn = _make_flex_attention(layer_number=1)
+        mock_flex = Mock()
+        padding_mask = torch.zeros(2, 1, 4, 4, dtype=torch.bool)
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ):
+            with patch.object(
+                Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
+            ) as mock_parent:
+                q = torch.zeros(4, 2, 8, 32)
+                k = torch.zeros(4, 2, 8, 32)
+                v = torch.zeros(4, 2, 8, 32)
+                attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
+
+        mock_flex.assert_not_called()
+        mock_parent.assert_called_once()
+
+    def test_score_mod_encodes_softcap(self):
+        """FlexAttention must be called with a score_mod that applies the Gemma2 softcap of 50.0.
+
+        Softcap is now passed via score_mod (a callable closure), not as a raw kwarg.
+        A regression that omits the score_mod would silently produce uncapped logits and
+        diverge from the reference Gemma2 implementation.
+        """
+        seq, batch, heads, head_dim = 4, 2, 8, 32
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=1)
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        score_mod = mock_flex.call_args.kwargs["score_mod"]
+        assert callable(score_mod), "score_mod must be a callable"
+        test_score = torch.tensor(1.0)
+        result = score_mod(test_score, None, None, None, None)
+        expected = 50.0 * torch.tanh(test_score / 50.0)
+        assert torch.allclose(result, expected), (
+            f"score_mod must apply 50.0 * tanh(score / 50.0), got {result:.6f} expected {expected:.6f}"
+        )
+
+    def test_score_mod_shared_across_layers(self):
+        """All layers with the same softcap must share one score_mod object (lru_cache invariant).
+
+        torch.compile guards on id(fn): if each layer has a unique score_mod object, compile
+        recompiles N times at startup. This test verifies the sharing invariant so a regression
+        (e.g. moving the factory inside __init__) is caught immediately.
+        """
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=Mock(),
+        ):
+            attn1 = _make_flex_attention(layer_number=1)
+            attn2 = _make_flex_attention(layer_number=3)
+        assert attn1._flex_score_mod is attn2._flex_score_mod, (
+            "Layers with the same softcap must share one score_mod object to avoid torch.compile recompilations"
+        )
+
+    def test_output_shape_flex_path(self):
+        """FlexAttention path output shape must be [sq, b, num_heads * head_dim]."""
+        seq, batch, heads, head_dim = 6, 3, 8, 32
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=1)
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            out = attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        assert out.shape == (seq, batch, heads * head_dim)
+
+    def test_softmax_scale_passed_to_flex(self):
+        """FlexAttention must receive scale=1/sqrt(224), not the default 1/sqrt(head_dim).
+
+        Gemma2 uses query_pre_attn_scalar=224 for the attention scale, not the usual
+        head_dim (256 for kv_channels=256). The wrong scale silently produces incorrect
+        attention weights and loss spikes.
+        """
+        seq, batch, heads, head_dim = 4, 1, 8, 32
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=1)
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        expected_scale = 1.0 / math.sqrt(224)
+        actual_scale = mock_flex.call_args.kwargs["scale"]
+        assert abs(actual_scale - expected_scale) < 1e-9, (
+            f"scale must be 1/sqrt(224)={expected_scale:.6f}, got {actual_scale:.6f}. "
+            "FlexAttention's default 1/sqrt(head_dim) would be wrong for Gemma2."
+        )
+
+    def test_swa_layer_passes_block_mask(self):
+        """For even-numbered (SWA) layers, FlexAttention must receive a block_mask.
+
+        SWA is encoded in the block_mask built from _flex_window_size=(4095, 0). A regression
+        that omits block_mask would silently compute full causal attention instead of SWA.
+        """
+        seq, batch, heads, head_dim = 4, 2, 8, 32
+        flex_out = torch.zeros(batch, heads, seq, head_dim)
+        mock_flex = Mock(return_value=flex_out)
+        mock_block_mask = Mock()
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+            return_value=mock_block_mask,
+        ):
+            attn = _make_flex_attention(layer_number=2)  # even → SWA layer
+            assert attn._flex_window_size == (4095, 0), "SWA layer must have _flex_window_size=(4095, 0)"
+            q = torch.zeros(seq, batch, heads, head_dim)
+            k = torch.zeros(seq, batch, heads, head_dim)
+            v = torch.zeros(seq, batch, heads, head_dim)
+            attn.forward(query=q, key=k, value=v, attention_mask=None)
+
+        mock_flex.assert_called_once()
+        assert mock_flex.call_args.kwargs.get("block_mask") is mock_block_mask, (
+            "SWA layer must pass block_mask to FlexAttention — omitting it silently disables SWA."
+        )
+
+    def test_swa_layer_fallback_with_padding_mask(self):
+        """An even-numbered (SWA) layer receiving a non-None mask must fall back to the
+        unfused parent, even when FlexAttention is available.
+
+        The unfused parent OR-combines the SWA mask with the padding mask via get_swa().
+        The FlexAttention path only runs when attention_mask is None.
+        """
+        attn = _make_flex_attention(layer_number=2)  # even → SWA layer
+        mock_flex = Mock()
+        padding_mask = torch.zeros(2, 1, 4, 4, dtype=torch.bool)
+
+        with patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True), patch(
+            "megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex
+        ):
+            with patch.object(
+                Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
+            ) as mock_parent:
+                q = torch.zeros(4, 2, 8, 32)
+                k = torch.zeros(4, 2, 8, 32)
+                v = torch.zeros(4, 2, 8, 32)
+                attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
+
+        mock_flex.assert_not_called()
+        mock_parent.assert_called_once()
+
+    def test_packed_seq_raises_value_error_on_flex_subclass(self):
+        """Gemma2FlexDotProductAttention must raise ValueError for packed_seq_params,
+        independent of the parent class check.
+
+        Removing this guard would let packed sequences silently reach the FlexAttention
+        path, which does not support them.
+        """
+        attn = _make_flex_attention(layer_number=1)
+        dummy = torch.zeros(4, 2, 8, 32)
+        with pytest.raises(ValueError, match="Packed sequence"):
+            attn.forward(
+                query=dummy,
+                key=dummy,
+                value=dummy,
+                attention_mask=None,
+                packed_seq_params=Mock(),
+            )
