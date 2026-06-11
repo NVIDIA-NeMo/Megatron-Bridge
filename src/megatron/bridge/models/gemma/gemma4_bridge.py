@@ -398,7 +398,12 @@ class Gemma4Bridge(MegatronModelBridge):
             # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
             # reference HF checkpoint.  Mapped via ReplicatedMapping below.
             "decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            # === Dense MLP fused pre-FFN norm ===
+            # TE backend fuses the pre-MLP RMSNorm into linear_fc1 as
+            # linear_fc1.layer_norm_weight.  In Gemma 4 the pre-MLP norm is
+            # pre_feedforward_layernorm (post_attention_layernorm is a separate
+            # norm already mapped to self_attention.linear_proj.post_layernorm).
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_feedforward_layernorm.weight",
         }
 
         mapping_list = []

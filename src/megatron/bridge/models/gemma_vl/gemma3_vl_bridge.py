@@ -135,7 +135,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             [
                 ReplicatedMapping(
                     megatron_param="vision_tower.**",
-                    hf_param="vision_tower.vision_model.**",
+                    hf_param="vision_tower.**",
                 ),
                 AutoMapping(
                     megatron_param="multi_modal_projector.proj.weight",

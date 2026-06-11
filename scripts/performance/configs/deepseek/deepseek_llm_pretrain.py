@@ -98,6 +98,11 @@ def deepseek_v3_pretrain_config_gb300(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
+    if cfg.ddp.use_megatron_fsdp and cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_param_gather = True
+        cfg.model.fp8_param = True
+        cfg.model.moe_router_dtype = "bf16"
+
     return cfg
 
 
@@ -117,6 +122,9 @@ def deepseek_v3_pretrain_config_gb200(
 
     cfg = pretrain_config()
     cfg.mixed_precision = precision_config
+
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
 
     # Apply model-specific settings that were previously passed as constructor args
     cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
