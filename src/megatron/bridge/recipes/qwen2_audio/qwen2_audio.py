@@ -136,14 +136,15 @@ def _qwen2_audio_common(
     # Dataset: HF conversation provider with audio maker
     if maker_kwargs is None:
         maker_kwargs = {
-            "path_or_dataset": "yuekai/aishell",
-            "subset": "train",
+            "path_or_dataset": "ysdede/commonvoice_17_tr_fixed",
             "split": "train",
+            "text_column": "transcription",
+            "prompt": "Transcribe the Turkish audio clip.",
+            "remove_text_spaces": False,
         }
     if val_maker_kwargs is None:
         val_maker_kwargs = {
-            "subset": "dev",
-            "split": "test",
+            "split": "validation",
         }
     dataset_cfg = HFDatasetConversationProvider(
         seq_length=seq_length,

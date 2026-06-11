@@ -29,6 +29,7 @@ LOG_FILE=./qwen2_audio_7b_asr.log
 exec > >(tee "${LOG_FILE}") 2>&1
 
 export TORCHDYNAMO_DISABLE=1
+export WANDB_MODE=${WANDB_MODE:-disabled}
 
 set -euo pipefail
 
@@ -37,9 +38,8 @@ WORKSPACE=${WORKSPACE:-/workspace/Megatron-Bridge/examples/models/qwen/qwen2_aud
 NPROC=${NPROC:-8}
 HF_MODEL=${HF_MODEL:-Qwen/Qwen2-Audio-7B}
 
-# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# Before training, set WANDB_MODE=online and WANDB_API_KEY to enable wandb logging.
 # export WANDB_API_KEY=<your_wandb_api_key>
-# export WANDB_MODE=disabled
 
 # Common configurations
 MODEL_NAME=qwen2_audio_7b
@@ -102,12 +102,12 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_asr_tp${TP}_pp${PP} \
         dataset.maker_name=make_default_audio_dataset \
-        "dataset.maker_kwargs.path_or_dataset=yuekai/aishell" \
-        "dataset.maker_kwargs.subset=train" \
-        "dataset.maker_kwargs.split=test" \
-        "+dataset.maker_kwargs.prompt='Detect the language and recognize the speech: <|zh|>'" \
-        "dataset.val_maker_kwargs.subset=dev" \
-        "dataset.val_maker_kwargs.split=test" \
+        "dataset.maker_kwargs.path_or_dataset=ysdede/commonvoice_17_tr_fixed" \
+        "dataset.maker_kwargs.split=train" \
+        "dataset.maker_kwargs.text_column=transcription" \
+        "dataset.maker_kwargs.remove_text_spaces=false" \
+        "+dataset.maker_kwargs.prompt='Transcribe the Turkish audio clip.'" \
+        "dataset.val_maker_kwargs.split=validation" \
         dataset.skip_test=true \
         dataset.pack_sequences_in_batch=true \
         rng.seed=42 \
