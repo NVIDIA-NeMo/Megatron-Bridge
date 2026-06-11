@@ -100,10 +100,39 @@ class _GenerationMaskTokenizer(_Tokenizer):
         return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 0, 1, 0]}
 
 
+class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
+    def __init__(self):
+        self.template_kwargs = []
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+        **kwargs,
+    ):
+        self.template_kwargs.append(kwargs)
+        return super().apply_chat_template(
+            conversation,
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+            return_dict=return_dict,
+            return_assistant_tokens_mask=return_assistant_tokens_mask,
+        )
+
+
 class _GenerationMaskProcessor(_Processor):
     def __init__(self):
         super().__init__()
         self.tokenizer = _GenerationMaskTokenizer()
+
+
+class _ToolsGenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _ToolsGenerationMaskTokenizer()
 
 
 class _ChatMLTokenizer:
@@ -193,6 +222,24 @@ def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(in
     mask = build_assistant_loss_mask(example, input_ids, _GenerationMaskProcessor())
 
     assert mask.tolist() == expected_mask
+
+
+def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        "tools": tools,
+    }
+
+    processor = _ToolsGenerationMaskProcessor()
+
+    mask = build_assistant_loss_mask(example, torch.tensor([1, 2, 3, 4]), processor)
+
+    assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
+    assert processor.tokenizer.template_kwargs == [{"tools": tools}]
 
 
 def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():

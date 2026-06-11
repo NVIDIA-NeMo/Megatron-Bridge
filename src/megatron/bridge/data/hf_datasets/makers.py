@@ -282,27 +282,34 @@ def make_text_chat_dataset(
     split: str = "train",
     messages_column: str = "messages",
     conversation_column: str = "conversation",
+    conversations_column: str = "conversations",
     **kwargs,
 ) -> List[Dict[str, Any]]:
     """Load a text-only HF chat dataset into the conversation-provider schema.
 
-    The input dataset must already contain OpenAI-style ``messages`` or a
-    processor-ready ``conversation`` column. Extra fields are preserved so
-    collators can consume metadata such as tool schemas.
+    The input dataset must already contain OpenAI-style ``messages``, a
+    processor-ready ``conversation`` column, or a legacy ``conversations``
+    column. Extra fields are preserved so collators can consume metadata such
+    as tool schemas.
     """
     if subset is None:
         dataset = load_dataset(path_or_dataset, split=split, **kwargs)
     else:
         dataset = load_dataset(path_or_dataset, subset, split=split, **kwargs)
 
+    schema_columns = {messages_column, conversation_column, conversations_column}
+
     def format_example(example):
-        extra = {key: value for key, value in example.items() if key not in {messages_column, conversation_column}}
+        extra = {key: value for key, value in example.items() if key not in schema_columns}
         if messages_column in example and example[messages_column] is not None:
             return {"messages": example[messages_column], **extra}
         if conversation_column in example and example[conversation_column] is not None:
             return {"conversation": example[conversation_column], **extra}
+        if conversations_column in example and example[conversations_column] is not None:
+            return {"conversations": example[conversations_column], **extra}
         raise ValueError(
-            f"Text chat dataset rows must contain '{messages_column}' or '{conversation_column}' columns."
+            f"Text chat dataset rows must contain '{messages_column}', '{conversation_column}', "
+            f"or '{conversations_column}' columns."
         )
 
     return [format_example(example) for example in dataset]

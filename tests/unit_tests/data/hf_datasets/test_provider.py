@@ -168,7 +168,9 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     assert isinstance(batch, dict)
 
 
-def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch):
+def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, caplog):
+    import logging
+
     import transformers
 
     from megatron.bridge.data.hf_datasets import provider as dp_mod
@@ -218,11 +220,13 @@ def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch):
         collate_impl=text_chat_collate_fn,
     )
 
+    caplog.set_level(logging.DEBUG, logger=dp_mod.__name__)
     ctx = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0)
     train_ds, _, _ = provider.build_datasets(ctx)
 
     assert train_ds is not None
     assert train_ds.collate_fn([train_ds[0]])["tokens"].tolist() == [[3, 4, 5]]
+    assert "falling back to AutoTokenizer" in caplog.text
 
 
 def test_hf_provider_uses_context_tokenizer_when_processor_path_is_unset(monkeypatch):

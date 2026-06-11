@@ -45,7 +45,10 @@ class _TextChatTokenizer:
         tokenized = [[11, 12, 21, 22] if item == "bye" else [11, 21, 22] for item in texts]
         if truncation and max_length is not None:
             tokenized = [ids[:max_length] for ids in tokenized]
-        max_len = max(len(ids) for ids in tokenized) if padding else None
+        if padding == "max_length" and max_length is not None:
+            max_len = max_length
+        else:
+            max_len = max(len(ids) for ids in tokenized) if padding else None
         input_ids = []
         attention_mask = []
         for ids in tokenized:
@@ -88,3 +91,25 @@ def test_text_chat_collate_fn_builds_shifted_assistant_labels_from_messages():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0], [0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3], [0, 1, 2, 3]]
     assert batch["token_count"] == [3, 4]
+
+
+def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "conversations": [
+                {"from": "User", "value": "hi"},
+                {"from": "Assistant", "value": "hello"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, max_length=4, pad_to_max_length=True)
+
+    expected_conversation = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    assert tokenizer.conversations == [expected_conversation, expected_conversation]
+    assert batch["tokens"].tolist() == [[11, 21, 22, 0]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1, 0]]
+    assert batch["labels"].tolist() == [[21, 22, -100, -100]]
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0]]
+    assert batch["token_count"] == [3]

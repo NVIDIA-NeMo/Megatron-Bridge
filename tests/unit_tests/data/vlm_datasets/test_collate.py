@@ -350,8 +350,10 @@ class _KimiDummyProcessor:
     def __init__(self, *, include_image: bool = False):
         self.tokenizer = _KimiDummyTokenizer()
         self._include_image = include_image
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
+        self.template_kwargs.append(kwargs)
         if tokenize and kwargs.get("return_assistant_tokens_mask"):
             if self._include_image:
                 return {
@@ -470,6 +472,24 @@ def test_kimi_k25_vl_collate_fn_multi_sample_batch():
     assert batch["input_ids"].shape[0] == 2
     # All sequences must have the same length after collation
     assert batch["input_ids"].shape[1] == batch["labels"].shape[1]
+
+
+def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
+    proc = _KimiDummyProcessor(include_image=False)
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+            "tools": tools,
+        },
+    ]
+
+    collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["tools"] == tools
 
 
 # ---------------------------------------------------------------------------

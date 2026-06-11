@@ -77,7 +77,7 @@ def test_make_medpix_dataset(monkeypatch):
     assert out and out[0]["conversation"][1]["content"][0]["type"] == "text"
 
 
-def test_make_text_chat_dataset_accepts_messages_and_conversation(monkeypatch):
+def test_make_text_chat_dataset_accepts_messages_conversation_and_conversations(monkeypatch):
     rows = [
         {
             "messages": [
@@ -92,6 +92,12 @@ def test_make_text_chat_dataset_accepts_messages_and_conversation(monkeypatch):
                 {"role": "assistant", "content": "later"},
             ]
         },
+        {
+            "conversations": [
+                {"from": "human", "value": "question"},
+                {"from": "gpt", "value": "answer"},
+            ]
+        },
     ]
     _monkeypatch_load_dataset(monkeypatch, rows)
 
@@ -100,6 +106,14 @@ def test_make_text_chat_dataset_accepts_messages_and_conversation(monkeypatch):
     assert out[0]["messages"][1]["content"] == "hello"
     assert out[0]["extra"] == "kept"
     assert out[1]["conversation"][1]["content"] == "later"
+    assert out[2]["conversations"][1]["value"] == "answer"
+
+
+def test_make_text_chat_dataset_requires_chat_columns(monkeypatch):
+    _monkeypatch_load_dataset(monkeypatch, [{"prompt": "hi", "response": "hello"}])
+
+    with pytest.raises(ValueError, match="messages.*conversation.*conversations"):
+        makers.make_text_chat_dataset(path_or_dataset="dummy/text", split="train")
 
 
 def test_make_squad_dataset_formats_messages(monkeypatch):

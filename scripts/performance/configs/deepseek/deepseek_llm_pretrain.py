@@ -98,6 +98,11 @@ def deepseek_v3_pretrain_config_gb300(
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
+    if cfg.ddp.use_megatron_fsdp and cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_param_gather = True
+        cfg.model.fp8_param = True
+        cfg.model.moe_router_dtype = "bf16"
+
     return cfg
 
 

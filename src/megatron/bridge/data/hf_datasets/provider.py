@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Provider that builds conversation datasets from HuggingFace datasets.
-"""
+"""Provider that builds conversation datasets from HuggingFace datasets."""
 
 import inspect
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
@@ -43,6 +42,9 @@ from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
+logger = logging.getLogger(__name__)
+
+
 @dataclass(kw_only=True)
 class HFDatasetConversationProvider(DatasetProvider):
     """DatasetProvider that builds conversation datasets from Hugging Face datasets.
@@ -51,6 +53,16 @@ class HFDatasetConversationProvider(DatasetProvider):
     with a ``messages`` or ``conversation`` schema understood by model processors.
     It binds a Hugging Face processor/tokenizer for the specified model and
     selects an appropriate collate function for batching.
+
+    HF data creation workflow:
+        1. A maker function loads a Hugging Face dataset split and normalizes each
+           row into Bridge's chat schema: ``messages`` for text-only rows or
+           ``conversation`` for processor-ready multimodal rows.
+        2. ``ConversationDataset`` repeats and optionally shuffles that normalized
+           list to the requested Megatron sample count, then binds the selected
+           collate implementation.
+        3. The collate function renders chat templates, tokenizes the batch, and
+           builds shifted labels/loss masks or model-specific visual inputs.
     """
 
     # Required to match model.seq_length (enforced by ConfigContainer.validate)
@@ -185,6 +197,11 @@ class HFDatasetConversationProvider(DatasetProvider):
                 trust_remote_code=trust_remote_code,
             )
         except (OSError, ValueError):
+            logger.debug(
+                "AutoProcessor.from_pretrained failed for %s; falling back to AutoTokenizer.",
+                self.hf_processor_path,
+                exc_info=True,
+            )
             return AutoTokenizer.from_pretrained(
                 self.hf_processor_path,
                 trust_remote_code=trust_remote_code,
