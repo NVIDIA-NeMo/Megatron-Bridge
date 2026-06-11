@@ -22,7 +22,9 @@ Welcome to the Megatron Bridge documentation! This guide helps you navigate our 
 → Check [NeMo 2 Migration Guide](nemo2-migration-guide.md) or [Megatron-LM Migration Guide](megatron-lm-to-megatron-bridge.md)
 
 **📊 Use training recipes**
-→ Read [Recipe Usage](recipe-usage.md) for pre-configured training recipes
+→ Read [Recipe Usage](recipe-usage.md) for pre-configured training recipes and browse the repository
+[`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory for runnable data prep,
+recipe, and training examples
 
 **🔌 Add support for a new model**
 → Refer to [Adding New Models](adding-new-models.md)

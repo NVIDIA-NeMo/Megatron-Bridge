@@ -276,9 +276,19 @@ class TestGemma3VLBridgeMappingRegistry:
 
         vt_mapping = vision_mappings[0]
         assert str(vt_mapping.megatron_param) == "vision_tower.**", "Megatron vision_tower param should use wildcard"
-        assert str(vt_mapping.hf_param) == "vision_tower.vision_model.**", (
-            "HF param must map through vision_model.** to match SiglipVisionModel checkpoint keys"
+        assert str(vt_mapping.hf_param) == "vision_tower.**", (
+            "HF param must match the current Gemma3 checkpoint namespace"
         )
+
+    def test_mapping_registry_accepts_current_transformers_vision_tower_keys(self, gemma3_vl_bridge):
+        """Test mapping_registry accepts current transformers Gemma3 vision tower keys."""
+        registry = gemma3_vl_bridge.mapping_registry()
+
+        mapping = registry.hf_to_megatron_lookup("vision_tower.embeddings.patch_embedding.bias")
+
+        assert mapping is not None
+        assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
+        assert str(mapping.hf_param) == "vision_tower.embeddings.patch_embedding.bias"
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""

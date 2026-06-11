@@ -58,6 +58,9 @@ from megatron.core.utils import (
     check_param_hashes_across_dp_replicas,
     get_attr_wrapped_model,
     get_model_config,
+    nvtx_decorator,
+    nvtx_range_pop,
+    nvtx_range_push,
 )
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
@@ -788,6 +791,7 @@ def train(
         )
 
 
+@nvtx_decorator()
 def train_step(
     forward_step_func: ForwardStepCallable,
     data_iterator: Optional[Union[RerunDataIterator, list[RerunDataIterator]]],
@@ -901,6 +905,7 @@ def train_step(
         torch.cuda.empty_cache()
 
     # Update parameters.
+    nvtx_range_push(suffix="optimizer_step")
     timers("optimizer", log_level=1).start(barrier=optim_config.barrier_with_L1_time)
     update_successful, grad_norm, num_zeros_in_grad = optimizer.step()
 
@@ -911,6 +916,7 @@ def train_step(
         log_max_attention_logit = clip_qk(model)
 
     timers("optimizer").stop()
+    nvtx_range_pop(suffix="optimizer_step")
 
     # when freezing sub-models we may have a mixture of successful and unsucessful ranks,
     # so we must gather across mp ranks
