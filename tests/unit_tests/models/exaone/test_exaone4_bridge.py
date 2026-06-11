@@ -131,10 +131,12 @@ class TestExaone4Bridge:
             vocab_size=32000,
             rope_scaling=True,
             rope_scaling_factor=8.0,
-            rope_scaling_low_freq_factor=2.0,
-            rope_scaling_high_freq_factor=6.0,
-            rope_scaling_original_max_position_embeddings=4096,
         )
+        # llama3-style scaling fields are not GPTModelProvider dataclass fields;
+        # provider_bridge sets them as plain attributes, so mirror that here.
+        provider.rope_scaling_low_freq_factor = 2.0
+        provider.rope_scaling_high_freq_factor = 6.0
+        provider.rope_scaling_original_max_position_embeddings = 4096
 
         hf_config = Exaone4Bridge.megatron_to_hf_config(provider)
 
