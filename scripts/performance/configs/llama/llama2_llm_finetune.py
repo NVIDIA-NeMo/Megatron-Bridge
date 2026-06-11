@@ -105,6 +105,13 @@ def llama2_70b_lora_config_gb200(precision: str = "fp8_cs", config_variant: str 
     _set_llama2_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    # set_workload_base_configs finalizes CP (e.g. NVFP4 V1 sets CP=2), so re-derive the
+    # packed-sequence padding here: _peft_common requires pad_seq_to_mult = CP*2 when CP>1.
+    # The recipe-level adjustment in llama2_70b_lora_config() runs before CP is overridden,
+    # so without this the NVFP4 CP>1 path would keep pad_seq_to_mult=1.
+    if cfg.model.context_parallel_size > 1 and cfg.dataset.packed_sequence_specs is not None:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
@@ -136,6 +143,13 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_cs", config_variant: str 
     cfg.mixed_precision = precision_config
     _set_llama2_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+
+    # set_workload_base_configs finalizes CP (e.g. NVFP4 V1 sets CP=2), so re-derive the
+    # packed-sequence padding here: _peft_common requires pad_seq_to_mult = CP*2 when CP>1.
+    # The recipe-level adjustment in llama2_70b_lora_config() runs before CP is overridden,
+    # so without this the NVFP4 CP>1 path would keep pad_seq_to_mult=1.
+    if cfg.model.context_parallel_size > 1 and cfg.dataset.packed_sequence_specs is not None:
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 

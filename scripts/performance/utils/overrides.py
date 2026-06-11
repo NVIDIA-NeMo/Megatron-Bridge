@@ -88,20 +88,26 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
     # average_in_collective is not supported with Megatron FSDP
     recipe.ddp.average_in_collective = False
 
-    # Meta-device init is incompatible with loading a legacy torch_dist (ShardedTensor)
-    # base checkpoint: torch DCP's meta-device load path only supports DTensor and
-    # raises "Found unsupported type ShardedTensor for meta device loading." This FSDP
-    # path is LoRA-only (pretrain leaves use_megatron_fsdp unset), and LoRA always loads
-    # a pretrained base checkpoint, so init on real device (70B fits per-rank on GB200/GB300).
-    recipe.model.init_model_with_meta_device = False
     recipe.model.gradient_accumulation_fusion = True
 
-    # Finetuning with context parallelism requires per-token loss (Megatron asserts this in
-    # training/config.py: "When finetuning with CP>1, calculate_per_token_loss must be True").
-    # The LoRA nvfp4 variant runs CP=2, so enable it here; average_in_collective is already
-    # forced False above, which is the required pairing for per-token loss.
-    if getattr(recipe.model, "context_parallel_size", 1) > 1:
-        recipe.model.calculate_per_token_loss = True
+    # The two knobs below are finetuning(LoRA)-specific and must NOT leak into pretraining
+    # FSDP benchmarks. Gate them on the presence of a PEFT config (pretraining leaves
+    # recipe.peft is None).
+    is_finetuning = getattr(recipe, "peft", None) is not None
+    if is_finetuning:
+        # Meta-device init is incompatible with loading a legacy torch_dist (ShardedTensor)
+        # base checkpoint: torch DCP's meta-device load path only supports DTensor and
+        # raises "Found unsupported type ShardedTensor for meta device loading." LoRA always
+        # loads a pretrained base checkpoint, so init on the real device (70B fits per-rank on
+        # GB200/GB300). Pretraining has no base checkpoint to load, so it keeps meta-device init.
+        recipe.model.init_model_with_meta_device = False
+
+        # Finetuning with context parallelism requires per-token loss (Megatron asserts this in
+        # training/config.py: "When finetuning with CP>1, calculate_per_token_loss must be True").
+        # The LoRA nvfp4 variant runs CP=2; average_in_collective is already forced False above,
+        # which is the required pairing for per-token loss. Pretraining with CP>1 does not need it.
+        if getattr(recipe.model, "context_parallel_size", 1) > 1:
+            recipe.model.calculate_per_token_loss = True
 
     if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
         if recipe.comm_overlap.defer_embedding_wgrad_compute:

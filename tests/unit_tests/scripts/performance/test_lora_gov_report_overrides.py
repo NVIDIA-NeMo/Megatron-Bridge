@@ -32,7 +32,7 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 try:
-    from utils.overrides import _apply_gov_report_recipe_overrides
+    from utils.overrides import _apply_gov_report_recipe_overrides, _set_megatron_fsdp_overrides
 
     HAS_OVERRIDES = True
 except Exception:  # noqa: BLE001 - module pulls in megatron.bridge; only import in-container
@@ -141,3 +141,54 @@ def test_try_cuda_graph_env_keeps_graphs_on(monkeypatch):
     # Opt-in escape hatch: leave whatever the base config set untouched.
     assert recipe.model.cuda_graph_impl == "local"
     assert recipe.model.cuda_graph_scope == "full_iteration"
+
+
+def _make_fsdp_recipe(peft, cp_size=1):
+    """Minimal stand-in recipe for the FSDP-override path (peft=None => pretraining)."""
+    model = types.SimpleNamespace(
+        init_model_with_meta_device=True,
+        gradient_accumulation_fusion=False,
+        context_parallel_size=cp_size,
+        calculate_per_token_loss=False,
+    )
+    ddp = types.SimpleNamespace(
+        use_megatron_fsdp=False,
+        data_parallel_sharding_strategy=None,
+        keep_fp8_transpose_cache=True,
+        average_in_collective=True,
+    )
+    return types.SimpleNamespace(
+        model=model,
+        ddp=ddp,
+        optimizer=types.SimpleNamespace(use_precision_aware_optimizer=False),
+        checkpoint=types.SimpleNamespace(load="/base/ckpt"),
+        comm_overlap=None,
+        peft=peft,
+    )
+
+
+def test_fsdp_pretraining_keeps_meta_device_and_no_per_token_loss():
+    # peft is None -> pretraining FSDP: LoRA-only knobs must NOT be applied (comments
+    # malay-nagda left on PR #4012). Even at CP>1, per-token loss is not forced for pretrain.
+    recipe = _make_fsdp_recipe(peft=None, cp_size=2)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=True)
+
+    assert recipe.ddp.use_megatron_fsdp is True  # generic FSDP knobs still applied
+    assert recipe.model.init_model_with_meta_device is True  # LoRA-only knob NOT applied
+    assert recipe.model.calculate_per_token_loss is False  # LoRA-only knob NOT applied
+
+
+def test_fsdp_finetuning_disables_meta_device_and_forces_per_token_loss_cp_gt_1():
+    recipe = _make_fsdp_recipe(peft=object(), cp_size=2)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=True)
+
+    assert recipe.model.init_model_with_meta_device is False
+    assert recipe.model.calculate_per_token_loss is True
+
+
+def test_fsdp_finetuning_cp1_disables_meta_device_but_no_per_token_loss():
+    recipe = _make_fsdp_recipe(peft=object(), cp_size=1)
+    _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=True)
+
+    assert recipe.model.init_model_with_meta_device is False
+    assert recipe.model.calculate_per_token_loss is False

@@ -257,6 +257,11 @@ class PerfEnvPlugin(Plugin):
         moe_flex_dispatcher_backend: str,
         gpu_sm100_or_newer: bool,
     ):
+        # If CUDA_DEVICE_MAX_CONNECTIONS was already set explicitly (user --env on the CLI, or
+        # an external launcher/parity bundle that exports it -- e.g. the MLPerf v6.0 launch.sh
+        # pins it to 1), honor that value instead of the heuristic below. Without this guard the
+        # sm100+ branch would silently overwrite an intentional setting (e.g. force 32), breaking
+        # MLPerf parity.
         if "CUDA_DEVICE_MAX_CONNECTIONS" in executor.env_vars:
             logger.info(
                 f"Respecting explicit CUDA_DEVICE_MAX_CONNECTIONS="
