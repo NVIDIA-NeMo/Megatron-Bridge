@@ -136,11 +136,9 @@ def create_squad_dataset_config(
         val_maker_kwargs={"split": "train[90%:]"},
         skip_test=True,
         collate_impl=text_chat_collate_fn,
-        seed=1234,
         dataloader_type="single",
         num_workers=num_workers,
         data_sharding=True,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
-        shuffle=False,
     )

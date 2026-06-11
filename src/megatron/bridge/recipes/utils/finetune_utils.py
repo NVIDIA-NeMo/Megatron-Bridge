@@ -77,8 +77,6 @@ def _text_hf_dataset_provider(
         pin_memory=True,
         persistent_workers=False,
         pack_sequences_in_batch=False,
-        shuffle=False,
-        seed=5678,
     )
 
 

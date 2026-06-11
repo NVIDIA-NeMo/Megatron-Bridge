@@ -669,8 +669,6 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
         },
         skip_test=True,
         collate_impl=text_chat_collate_fn,
-        seed=5678,
-        shuffle=False,
         dataloader_type="single",
         num_workers=2,
         data_sharding=True,

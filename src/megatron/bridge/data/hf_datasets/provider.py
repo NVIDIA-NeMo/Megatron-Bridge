@@ -100,10 +100,6 @@ class HFConversationDatasetProvider(DatasetProvider):
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     pack_sequences_in_batch: bool = False
 
-    # Control deterministic shuffling in the repeating dataset wrapper.
-    shuffle: bool = True
-    seed: int = 42
-
     def _collate_supports_packing(self, processor: Any) -> bool:
         collate_key = type(processor).__name__ if processor is not None else "default"
         if self.collate_impl is not None:
@@ -176,8 +172,6 @@ class HFConversationDatasetProvider(DatasetProvider):
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
-            shuffle=self.shuffle,
-            seed=self.seed,
             pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
         )
 

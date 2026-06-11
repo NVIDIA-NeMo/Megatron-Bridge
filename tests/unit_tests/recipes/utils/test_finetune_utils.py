@@ -55,10 +55,6 @@ class TestDefaultOpenmathinstruct2Config:
         assert cfg.maker_name == "openmathinstruct2"
         assert cfg.collate_impl is text_chat_collate_fn
 
-    def test_default_seed(self):
-        cfg = default_openmathinstruct2_config()
-        assert cfg.seed == 5678
-
     def test_dataloader_type_batch(self):
         cfg = default_openmathinstruct2_config()
         assert cfg.dataloader_type == "batch"
@@ -77,10 +73,6 @@ class TestDefaultOpenmathinstruct2Config:
         assert cfg.data_sharding is True
         assert cfg.pin_memory is True
         assert cfg.persistent_workers is False
-
-    def test_shuffle_disabled_for_text_preset(self):
-        cfg = default_openmathinstruct2_config()
-        assert cfg.shuffle is False
 
     def test_runtime_packing_disabled_by_default(self):
         cfg = default_openmathinstruct2_config()
@@ -128,10 +120,6 @@ class TestDefaultGsm8kConfig:
         assert cfg.maker_name == "gsm8k"
         assert cfg.collate_impl is text_chat_collate_fn
 
-    def test_default_seed(self):
-        cfg = default_gsm8k_config()
-        assert cfg.seed == 5678
-
     def test_dataloader_type_batch(self):
         cfg = default_gsm8k_config()
         assert cfg.dataloader_type == "batch"
@@ -151,10 +139,6 @@ class TestDefaultGsm8kConfig:
         assert cfg.data_sharding is True
         assert cfg.pin_memory is True
         assert cfg.persistent_workers is False
-
-    def test_shuffle_disabled_for_text_preset(self):
-        cfg = default_gsm8k_config()
-        assert cfg.shuffle is False
 
     def test_runtime_packing_disabled(self):
         cfg = default_gsm8k_config()

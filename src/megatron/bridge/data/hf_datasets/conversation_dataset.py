@@ -14,7 +14,6 @@
 
 """Core dataset types for HF conversation-style examples."""
 
-import random
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
@@ -28,8 +27,6 @@ class ConversationDataset(torch.utils.data.Dataset):
       "audio" are passed through and consumed by the collate function.
     - Dataset length is set to a target length and indexes wrap around the
       underlying list to meet the requested size.
-    - Examples are shuffled on construction to ensure diverse batches when
-      used with sequential samplers (e.g. MegatronPretrainingSampler).
     - A `collate_fn` attribute is exposed so the framework can pass it to the
       DataLoader.
     """
@@ -40,14 +37,9 @@ class ConversationDataset(torch.utils.data.Dataset):
         target_length: int,
         processor: Any,
         collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None,
-        shuffle: bool = True,
-        seed: int = 42,
         pack_sequences: bool = False,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
-        if shuffle:
-            base_examples = list(base_examples)
-            random.Random(seed).shuffle(base_examples)
         self._base_examples = base_examples
         self._length = int(max(0, target_length))
         self._processor = processor
