@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
-from transformers import AutoProcessor
+from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
@@ -33,6 +33,7 @@ from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_medpix_dataset,
     make_raven_dataset,
     make_rdr_dataset,
+    make_text_chat_dataset,
     make_valor32k_avqa_dataset,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
@@ -94,6 +95,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             "make_rdr_dataset": make_rdr_dataset,
             "make_cord_v2_dataset": make_cord_v2_dataset,
             "make_medpix_dataset": make_medpix_dataset,
+            "make_text_chat_dataset": make_text_chat_dataset,
             "make_cv17_dataset": make_cv17_dataset,
             "make_raven_dataset": make_raven_dataset,
             "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
@@ -106,6 +108,8 @@ class HFDatasetConversationProvider(DatasetProvider):
             "rdr": "make_rdr_dataset",
             "cord_v2": "make_cord_v2_dataset",
             "medpix": "make_medpix_dataset",
+            "text_chat": "make_text_chat_dataset",
+            "chat": "make_text_chat_dataset",
             "cv17": "make_cv17_dataset",
             "raven": "make_raven_dataset",
             "llava_video_178k": "make_llava_video_178k_dataset",
@@ -141,15 +145,25 @@ class HFDatasetConversationProvider(DatasetProvider):
             pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
         )
 
+    def _load_processor_or_tokenizer(self) -> Any:
+        trust_remote_code = is_safe_repo(
+            trust_remote_code=self.trust_remote_code,
+            hf_path=self.hf_processor_path,
+        )
+        try:
+            return AutoProcessor.from_pretrained(
+                self.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
+        except (OSError, ValueError):
+            return AutoTokenizer.from_pretrained(
+                self.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
+
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
         # Bind processor for the requested model
-        processor = AutoProcessor.from_pretrained(
-            self.hf_processor_path,
-            trust_remote_code=is_safe_repo(
-                trust_remote_code=self.trust_remote_code,
-                hf_path=self.hf_processor_path,
-            ),
-        )
+        processor = self._load_processor_or_tokenizer()
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
         valid_ds = self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)

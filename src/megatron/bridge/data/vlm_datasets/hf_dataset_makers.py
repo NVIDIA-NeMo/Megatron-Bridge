@@ -113,6 +113,38 @@ def make_medpix_dataset(
     return [format(example) for example in dataset]
 
 
+def make_text_chat_dataset(
+    path_or_dataset: str,
+    subset: str | None = None,
+    split: str = "train",
+    messages_column: str = "messages",
+    conversation_column: str = "conversation",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load a text-only HF chat dataset into the conversation-provider schema.
+
+    The input dataset must already contain OpenAI-style ``messages`` or a
+    processor-ready ``conversation`` column. Extra fields are preserved so
+    collators can consume metadata such as tool schemas.
+    """
+    if subset is None:
+        dataset = load_dataset(path_or_dataset, split=split, **kwargs)
+    else:
+        dataset = load_dataset(path_or_dataset, subset, split=split, **kwargs)
+
+    def format_example(example):
+        extra = {key: value for key, value in example.items() if key not in {messages_column, conversation_column}}
+        if messages_column in example and example[messages_column] is not None:
+            return {"messages": example[messages_column], **extra}
+        if conversation_column in example and example[conversation_column] is not None:
+            return {"conversation": example[conversation_column], **extra}
+        raise ValueError(
+            f"Text chat dataset rows must contain '{messages_column}' or '{conversation_column}' columns."
+        )
+
+    return [format_example(example) for example in dataset]
+
+
 def make_raven_dataset(
     path_or_dataset: str = "HuggingFaceM4/the_cauldron",
     subset: str = "raven",

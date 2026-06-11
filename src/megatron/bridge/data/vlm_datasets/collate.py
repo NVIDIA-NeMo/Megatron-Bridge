@@ -14,6 +14,7 @@
 
 """Compatibility exports for VLM model-specific collators."""
 
+from megatron.bridge.data.vlm_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
 from megatron.bridge.models.gemma_vl.data.collate_fn import gemma3_vl_collate_fn, gemma4_vl_collate_fn
 from megatron.bridge.models.glm_vl.data.collate_fn import glm4v_collate_fn
@@ -52,4 +53,5 @@ __all__ = [
     "nemotron_omni_collate_fn",
     "qwen2_5_collate_fn",
     "qwen2_audio_collate_fn",
+    "text_chat_collate_fn",
 ]

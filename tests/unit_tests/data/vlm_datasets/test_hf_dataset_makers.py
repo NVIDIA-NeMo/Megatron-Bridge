@@ -76,6 +76,31 @@ def test_make_medpix_dataset(monkeypatch):
     assert out and out[0]["conversation"][1]["content"][0]["type"] == "text"
 
 
+def test_make_text_chat_dataset_accepts_messages_and_conversation(monkeypatch):
+    rows = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "extra": "kept",
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": "bye"},
+                {"role": "assistant", "content": "later"},
+            ]
+        },
+    ]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_text_chat_dataset(path_or_dataset="dummy/text", split="train")
+
+    assert out[0]["messages"][1]["content"] == "hello"
+    assert out[0]["extra"] == "kept"
+    assert out[1]["conversation"][1]["content"] == "later"
+
+
 def test_make_cv17_dataset(monkeypatch):
     rows = [{"audio": {"array": [0.1, 0.2], "sampling_rate": 16000}, "transcription": "hello"}]
     _monkeypatch_load_dataset(monkeypatch, rows)
