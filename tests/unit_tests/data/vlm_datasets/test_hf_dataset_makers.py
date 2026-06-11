@@ -81,6 +81,8 @@ def test_make_cv17_dataset(monkeypatch):
     _monkeypatch_load_dataset(monkeypatch, rows)
     out = makers.make_cv17_dataset()
     assert out and isinstance(out[0]["audio"], tuple)
+    assert out[0]["conversation"][0]["content"][0]["type"] == "audio"
+    assert out[0]["conversation"][1]["content"][0]["text"] == "hello"
 
 
 def test_make_default_audio_dataset_custom_text_column_keeps_spaces(monkeypatch):
