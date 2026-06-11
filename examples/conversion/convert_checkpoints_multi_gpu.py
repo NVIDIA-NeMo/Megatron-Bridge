@@ -216,6 +216,18 @@ def export_megatron_to_hf(
                     model_provider.pipeline_model_parallel_layout = saved_layout
                     print_rank_0(f"  Read pipeline layout from checkpoint ({len(saved_layout)} stages)")
                     break
+        # run_config.yaml serializes an already-finalized layout as an object stub
+        # (the layout data is lost), so fall back to auto-generation like import does.
+        if not isinstance(getattr(model_provider, "pipeline_model_parallel_layout", None), list) and hasattr(
+            bridge._model_bridge, "generate_pipeline_layout"
+        ):
+            hf_config = bridge.hf_pretrained.config
+            num_layers = hf_config.num_hidden_layers
+            mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+            model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
+                num_layers, pp, mtp
+            )
+            print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
