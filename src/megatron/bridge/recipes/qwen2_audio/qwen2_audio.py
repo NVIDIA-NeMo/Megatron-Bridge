@@ -92,7 +92,7 @@ def _qwen2_audio_common(
     peft: Optional[Union[str, PEFT]] = None,
     finetune_lr: Optional[float] = None,
     # Dataset
-    maker_name: str = "make_default_audio_dataset",
+    maker_name: str = "make_cv17_dataset",
     maker_kwargs: Optional[dict] = None,  # defaults applied below
     val_maker_kwargs: Optional[dict] = None,  # per-split overrides for validation
     test_maker_kwargs: Optional[dict] = None,  # per-split overrides for test
@@ -138,9 +138,6 @@ def _qwen2_audio_common(
         maker_kwargs = {
             "path_or_dataset": "ysdede/commonvoice_17_tr_fixed",
             "split": "train",
-            "text_column": "transcription",
-            "prompt": "Transcribe the Turkish audio clip.",
-            "remove_text_spaces": False,
         }
     if val_maker_kwargs is None:
         val_maker_kwargs = {

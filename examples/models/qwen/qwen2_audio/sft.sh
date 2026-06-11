@@ -101,12 +101,9 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_asr_tp${TP}_pp${PP} \
-        dataset.maker_name=make_default_audio_dataset \
+        dataset.maker_name=make_cv17_dataset \
         "dataset.maker_kwargs.path_or_dataset=ysdede/commonvoice_17_tr_fixed" \
         "dataset.maker_kwargs.split=train" \
-        "dataset.maker_kwargs.text_column=transcription" \
-        "dataset.maker_kwargs.remove_text_spaces=false" \
-        "dataset.maker_kwargs.prompt='Transcribe the Turkish audio clip.'" \
         "dataset.val_maker_kwargs.split=validation" \
         dataset.skip_test=true \
         dataset.pack_sequences_in_batch=true \
