@@ -43,6 +43,7 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
+    megatron_mimo_runtime_config_update,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -3143,6 +3144,13 @@ class TestEpochBasedTraining:
         with pytest.raises(AssertionError, match="Batch size rampup not supported with epoch-based training"):
             train_cfg.finalize()
 
+    @pytest.mark.parametrize("num_epochs", [0.0, -1.0])
+    def test_epoch_based_training_rejects_non_positive_num_epochs(self, num_epochs):
+        train_cfg = create_test_training_config(train_iters=None, num_epochs=num_epochs)
+
+        with pytest.raises(AssertionError, match="num_epochs must be a positive number"):
+            train_cfg.finalize()
+
     def test_epoch_based_training_requires_finite_finetuning_dataset(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
         container, og_ws, cfg_mod = create_test_config_container(
@@ -3157,12 +3165,13 @@ class TestEpochBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_epoch_based_training_allows_single_dataloader(self):
+    @pytest.mark.parametrize("dataloader_type", ["single", "cyclic"])
+    def test_epoch_based_training_rejects_non_batch_dataloader(self, dataloader_type):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
         dataset_cfg = FinetuningDatasetConfig(
             dataset_root="/tmp/dataset",
             seq_length=512,
-            dataloader_type="single",
+            dataloader_type=dataloader_type,
         )
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3172,9 +3181,17 @@ class TestEpochBasedTraining:
         )
 
         try:
-            container.validate()
+            with pytest.raises(ValueError, match='dataloader_type="batch"'):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self):
+        cfg = MagicMock()
+        cfg.train.num_epochs = 1.0
+
+        with pytest.raises(ValueError, match="num_epochs is not supported for MegatronMIMO datasets"):
+            megatron_mimo_runtime_config_update(cfg)
 
 
 class TestDatasetSequenceLengthValidation:

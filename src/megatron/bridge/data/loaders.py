@@ -179,6 +179,8 @@ def build_train_valid_test_datasets_for_num_epochs(
             "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
             "providers may build a requested number of samples instead of exposing their true dataset size."
         )
+    if cfg.dataset.dataloader_type != "batch":
+        raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
     train_ds, valid_ds, test_ds = build_train_valid_test_datasets_provider([0, 0, 0], cfg.dataset)
     if train_ds is None:
@@ -186,7 +188,7 @@ def build_train_valid_test_datasets_for_num_epochs(
 
     try:
         train_dataset_size = len(train_ds)
-    except TypeError as error:
+    except (TypeError, NotImplementedError) as error:
         raise ValueError("num_epochs requires a training dataset with a finite length") from error
 
     cfg._resolve_num_epochs(train_dataset_size)
@@ -247,6 +249,9 @@ def build_train_valid_test_data_loaders(
 
         return train_dataloader, valid_dataloader, test_dataloader
 
+    if cfg.train.num_epochs is not None and cfg.dataset.dataloader_type != "batch":
+        raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
+
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
@@ -257,10 +262,13 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
+    keep_partial_final_global_batch = cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"
+
     # Check that the train dataset has at least one global batch of samples.
     if (
         train_ds is not None
         and cfg.dataset.dataloader_type != "external"
+        and not keep_partial_final_global_batch
         and len(train_ds) < cfg.train.global_batch_size
     ):
         raise RuntimeError(
@@ -278,10 +286,6 @@ def build_train_valid_test_data_loaders(
     # Resolve DP rank/size from provided data-parallel process group
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
-
-    # Only the batch sampler pads partial global batches. Other samplers keep
-    # the established drop-last behavior for incomplete local microbatches.
-    keep_partial_final_global_batch = cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(

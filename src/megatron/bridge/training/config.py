@@ -563,7 +563,7 @@ class TrainingConfig(MTrainTrainingConfig):
         assert num_training_modes > 0, "One of train_iters, train_samples, or num_epochs must be provided"
         assert num_training_modes == 1, "Cannot specify more than one of train_iters, train_samples, or num_epochs"
         if has_num_epochs:
-            assert self.num_epochs > 0, "num_epochs must be positive"
+            assert self.num_epochs > 0, "num_epochs must be a positive number"
             assert self.rampup_batch_size is None, "Batch size rampup not supported with epoch-based training"
             assert self.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
         if has_train_samples:
@@ -1206,6 +1206,8 @@ class ConfigContainer(Container):
                 "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
                 "providers may build a requested number of samples instead of exposing their true dataset size."
             )
+        if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
+            raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if getattr(self.dataset, "pack_sequences_in_batch", False):
