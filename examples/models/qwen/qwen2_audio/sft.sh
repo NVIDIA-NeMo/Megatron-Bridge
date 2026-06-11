@@ -106,7 +106,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         "dataset.maker_kwargs.split=train" \
         "dataset.maker_kwargs.text_column=transcription" \
         "dataset.maker_kwargs.remove_text_spaces=false" \
-        "+dataset.maker_kwargs.prompt='Transcribe the Turkish audio clip.'" \
+        "dataset.maker_kwargs.prompt='Transcribe the Turkish audio clip.'" \
         "dataset.val_maker_kwargs.split=validation" \
         dataset.skip_test=true \
         dataset.pack_sequences_in_batch=true \
