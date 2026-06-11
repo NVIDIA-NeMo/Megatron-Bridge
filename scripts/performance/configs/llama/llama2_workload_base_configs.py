@@ -72,13 +72,19 @@ LLAMA2_70B_LORA_CONFIG_GB200_FP8_CS_MLPERF_V1 = replace(
 )
 LLAMA2_70B_LORA_CONFIG_GB300_FP8_CS_MLPERF_V1 = LLAMA2_70B_LORA_CONFIG_GB200_FP8_CS_MLPERF_V1
 
+# NVFP4 8G matches the v6.0 reference run GB300_2x4x1xtp1pp1cp1_fp4 (job 2071875):
+# TP1/PP1/CP1/MBS1/GBS8/seq8192. nvfp4 weights are smaller than fp8, so CP1/MBS1 fits at
+# TP=1. (Was CP2/MBS2 -- an unjustified shape deviation vs the reference.) fp8 attention is
+# left to the parity overlay (it disables fp8_dot_product_attention for nvfp4 because this
+# stack has no TE fp8-DPA backend for the packed gov_report inputs at any CP), and the
+# gov_report overlay adds core_attn selective recompute to fit the resulting bf16 attention.
 LLAMA2_70B_LORA_CONFIG_GB200_NVFP4_MLPERF_V1 = replace(
     BASE_LLAMA2_70B_LORA_CONFIG,
     num_gpus=8,
     tensor_model_parallel_size=1,
     pipeline_model_parallel_size=1,
-    context_parallel_size=2,
-    micro_batch_size=2,
+    context_parallel_size=1,
+    micro_batch_size=1,
     global_batch_size=8,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",

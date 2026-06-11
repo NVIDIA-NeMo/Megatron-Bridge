@@ -307,12 +307,17 @@ def _apply_gov_report_recipe_overrides(recipe: ConfigContainer, compute_dtype: s
       * CUDA graphs fully OFF (clear impl AND scope AND per-layer modules; full_iteration
         capture hits an unpinned CPU->CUDA copy in the packed-LoRA path). Dominant
         throughput delta vs the v6.0 reference. Re-enable with LORA_GOVREPORT_TRY_CUDA_GRAPH=1.
-      * nvfp4 + CP>1 -> selective core_attn+mlp recompute. The parity overlay disables
-        fp8_dot_product_attention for nvfp4 (no TE fp8-DPA backend for CP>1 packed
-        gov_report on this stack), which grows attention activations to bf16 and OOMs the
-        CP2/MBS2 shape at TP=1; recompute buys the memory back. nvfp4-only deviation
-        (conservative number). core_attn-only via LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY=1;
-        disable via LORA_GOVREPORT_NO_RECOMPUTE=1.
+      * nvfp4 -> selective recompute (all CP sizes). The parity overlay disables
+        fp8_dot_product_attention for nvfp4 because this stack has NO TE fp8-DPA backend for
+        the packed gov_report attention inputs at ANY context-parallel size -- confirmed at
+        CP1 (job 2089391) AND CP2 (job 2087735), both: "No dot product attention backend is
+        available for the provided inputs". The v6.0 reference gets fp8 attention via
+        kitchen_attention_backend='sdpa', which this stack lacks. bf16 attention activations
+        are larger, so recompute to fit; gate the amount on the shape: CP1/MBS1/seq8192 fits
+        with core_attn-only (matching the reference's recompute_modules=['core_attn']);
+        CP>1 (larger seq) also needs mlp. nvfp4-only deviation (conservative number).
+        Force core_attn-only via LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY=1; disable entirely via
+        LORA_GOVREPORT_NO_RECOMPUTE=1.
     """
     if cp_size > 1:
         recipe.model.calculate_per_token_loss = True
@@ -329,13 +334,12 @@ def _apply_gov_report_recipe_overrides(recipe: ConfigContainer, compute_dtype: s
 
     if (
         compute_dtype == "nvfp4"
-        and cp_size > 1
         and os.environ.get("LORA_GOVREPORT_NO_RECOMPUTE", "0") != "1"
     ):
-        if os.environ.get("LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY", "0") == "1":
-            recipe.model.recompute_modules = ["core_attn"]
-        else:
+        if cp_size > 1 and os.environ.get("LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY", "0") != "1":
             recipe.model.recompute_modules = ["core_attn", "mlp"]
+        else:
+            recipe.model.recompute_modules = ["core_attn"]
         recipe.model.recompute_granularity = "selective"
 
     return recipe
