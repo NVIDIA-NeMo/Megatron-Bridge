@@ -237,8 +237,8 @@ class TestDataLoaders:
         mock_build_datasets.return_value = (fake_train_ds, None, None)
         fake_train_loader = object()
         # Return a loader for train (non-None dataset), None for valid/test (None dataset)
-        mock_build_loader.side_effect = (
-            lambda dataset, *args, **kwargs: fake_train_loader if dataset is not None else None
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: (
+            fake_train_loader if dataset is not None else None
         )
 
         train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
@@ -256,6 +256,43 @@ class TestDataLoaders:
         assert train_state.do_valid == 0
         assert train_state.do_test == 0
         assert train_dataloader is not None
+        assert valid_dataloader is None
+        assert test_dataloader is None
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_allows_none_train_dataset(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
+        cfg = create_simple_test_config()
+        cfg.validation.eval_iters = 0
+        train_state = TrainState()
+        dp_group = object()
+        dataset_provider = mock.Mock()
+
+        mock_build_datasets.return_value = (None, None, None)
+        mock_build_loader.return_value = None
+
+        train_dataloader, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=dataset_provider,
+            dp_group=dp_group,
+        )
+
+        mock_build_loader.assert_called_once()
+        assert mock_build_loader.call_args.args[0] is None
+        mock_broadcast.assert_called_once_with(mock.ANY, 0)
+        actual_flags = mock_broadcast.call_args[0][0]
+        expected_flags = torch.tensor([0, 0, 0], dtype=torch.long, device="cuda")
+        assert torch.equal(actual_flags, expected_flags)
+        assert train_state.do_train == 0
+        assert train_state.do_valid == 0
+        assert train_state.do_test == 0
+        assert train_dataloader is None
         assert valid_dataloader is None
         assert test_dataloader is None
 

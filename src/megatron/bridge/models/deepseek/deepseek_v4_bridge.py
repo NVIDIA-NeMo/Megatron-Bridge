@@ -69,6 +69,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
@@ -99,6 +100,47 @@ _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO = {
 _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
     ratio: layer_type for layer_type, ratio in _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO.items()
 }
+
+
+def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
+    """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
+
+    DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
+    embedding on the first pipeline stage, so an explicit
+    ``pipeline_model_parallel_layout`` is required whenever
+    ``pipeline_model_parallel_size > 1``. This builds an even decoder split with
+    the embedding on the first stage and the MTP/loss layers on the last stage.
+
+    Args:
+        model_cfg: The DeepSeek-V4 model provider to configure in place.
+    """
+    pp_size = model_cfg.pipeline_model_parallel_size or 1
+    if pp_size <= 1:
+        model_cfg.pipeline_model_parallel_layout = None
+        return
+
+    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
+    if num_layers <= 0:
+        model_cfg.pipeline_model_parallel_layout = None
+        return
+
+    mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
+    base_layers, extra_layers = divmod(num_layers, pp_size)
+    layout: list[list[str]] = []
+    for pp_rank in range(pp_size):
+        stage: list[str] = []
+        if pp_rank == 0:
+            stage.append("embedding")
+
+        decoder_layers = base_layers + int(pp_rank < extra_layers)
+        stage.extend(["decoder"] * decoder_layers)
+
+        if pp_rank == pp_size - 1:
+            stage.extend(["mtp"] * mtp_layers)
+            stage.append("loss")
+        layout.append(stage)
+
+    model_cfg.pipeline_model_parallel_layout = layout
 
 
 def _dsv4_num_hash_layers(hf_config) -> int:
@@ -160,6 +202,13 @@ def _dsv4_compress_ratios(hf_config) -> list[int]:
         )
 
     return ratios[:expected_len]
+
+
+def _dsv4_use_mxfp4_export(hf_param: str, weight: torch.Tensor, source_scale: torch.Tensor) -> bool:
+    """Routed DSv4 experts use packed MXFP4; all other scaled weights export as FP8."""
+    if ".ffn.experts." not in hf_param or ".shared_experts." in hf_param:
+        return False
+    return quantization_utils.is_mxfp4_e2m1_scale_geometry(weight, source_scale)
 
 
 # ---------------------------------------------------------------------------
@@ -254,16 +303,6 @@ class _HCAlphaSecondaryMapping(MegatronParamMapping):
         return {}
 
 
-# MXFP4 E2M1 lookup table: nibble value 0-15 → float32
-# FP4 E2M1 (sign=1, exponent=2, mantissa=1, exp_bias=1):
-#   positive: [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0]
-#   negative: [-0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0]
-_FP4_E2M1_TABLE = torch.tensor(
-    [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0],
-    dtype=torch.float32,
-)
-
-
 class _ReplicatedOptional(ReplicatedMapping):
     """ReplicatedMapping for CSA-optional weights (compressor / indexer).
 
@@ -348,6 +387,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
         provider.v_head_dim = hf_config.head_dim  # 512
         provider.qk_pos_emb_head_dim = hf_config.qk_rope_head_dim  # 64
+        # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
+        # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
+        # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
+        # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
+        # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
+        provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
         provider.o_groups = hf_config.o_groups  # 8
@@ -500,52 +545,6 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # FP8 / MXFP4 dequantisation on import
     # ------------------------------------------------------------------
 
-    def _dequant_mxfp4(
-        self,
-        hf_param: str,
-        weight_i8: torch.Tensor,
-        hf_state_dict: Mapping[str, torch.Tensor],
-    ) -> torch.Tensor:
-        """Dequantize MXFP4-packed expert weights (I8 body + F8_E8M0 block scale).
-
-        Each I8 byte stores 2 FP4 E2M1 nibbles (low nibble = first element,
-        high nibble = second element, i.e. [lo0, hi0, lo1, hi1, ...]).
-        One E8M0 scale covers 32 consecutive FP4 elements along K.
-
-        Args:
-            hf_param: Weight tensor name (used to derive scale key).
-            weight_i8: Raw I8 tensor of shape (M, K//2).
-            hf_state_dict: Full HF state dict for scale lookup.
-
-        Returns:
-            Dequantised weight as bfloat16 of shape (M, K).
-        """
-        scale_key = hf_param[: -len(".weight")] + ".scale" if hf_param.endswith(".weight") else None
-        if scale_key is None or scale_key not in hf_state_dict:
-            return weight_i8.to(torch.bfloat16)
-
-        scale = hf_state_dict[scale_key]  # F8_E8M0, shape (M, K_scale)
-
-        # Reinterpret int8 as uint8 so bitwise ops give correct 0-15 nibbles
-        w_u8 = weight_i8.view(torch.uint8)  # (M, K_packed)
-        lo = (w_u8 & 0xF).to(torch.int64)  # (M, K_packed)
-        hi = (w_u8 >> 4).to(torch.int64)  # (M, K_packed)
-
-        table = _FP4_E2M1_TABLE.to(weight_i8.device)
-        # stack [lo_row, hi_row] along last dim then flatten → interleaved (M, K_logical)
-        # This creates a contiguous output avoiding slow strided writes.
-        logical = torch.stack([table[lo], table[hi]], dim=-1).reshape(
-            weight_i8.shape[0], -1
-        )  # (M, K_logical), float32
-
-        # E8M0 scale: value = 2^(e - 127), block_size = K_logical / K_scale = 32
-        scale_f32 = scale.to(torch.float32)  # E8M0 .to(f32) already gives 2^(e-127)
-        block_size = logical.shape[1] // scale_f32.shape[1]
-        # repeat_interleave along dim=1 expands (M, K_scale) → (M, K_logical)
-        scale_exp = scale_f32.repeat_interleave(block_size, dim=1)
-
-        return (logical * scale_exp).to(torch.bfloat16)
-
     def maybe_modify_loaded_hf_weight(
         self,
         hf_param,
@@ -558,54 +557,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         F8_E8M0 per-32-element scales.  For dict hf_param (GatedMLPMapping etc.),
         dequantizes each key individually so expert gate/up weights are also handled.
         """
-        if isinstance(hf_param, dict):
-            # Recurse for each key so each string key gets dequantized individually
-            return {k: self.maybe_modify_loaded_hf_weight(v, hf_state_dict) for k, v in hf_param.items()}
-
-        weight = hf_state_dict[hf_param]
-
-        # MXFP4 packed (I8): expert FFN gate/up/down weights
-        if weight.dtype == torch.int8:
-            return self._dequant_mxfp4(hf_param, weight, hf_state_dict)
-
-        if weight.dtype != torch.float8_e4m3fn:
-            return weight
-
-        if not hf_param.endswith(".weight"):
-            return weight.to(torch.bfloat16)
-
-        scale_key = hf_param[: -len(".weight")] + ".scale"
-        if scale_key not in hf_state_dict:
-            return weight.to(torch.bfloat16)
-
-        scale = hf_state_dict[scale_key]  # [ceil(out/128), ceil(in/128)], float8_e8m0fnu
-        weight_bf16 = weight.to(torch.bfloat16)
-
-        # Detect scale format: 128-tile (attn) vs per-row/16-tile (expert FFN)
-        # Attention: scale = (ceil(M/128), ceil(K/128))
-        # Expert FFN: scale = (M, ceil(K/16))  [per-row, 16-element K-tiles]
-        scale_f32 = scale.to(torch.float32)
-        if scale_f32.dim() == 1:
-            # 1-D scale: single value per row (broadcast over K)
-            if scale_f32.shape[0] == weight_bf16.shape[0]:
-                scale_exp = scale_f32.unsqueeze(1)
-            else:
-                scale_exp = scale_f32.repeat_interleave(128)[: weight_bf16.shape[0]].unsqueeze(1)
-        elif scale_f32.shape[0] == weight_bf16.shape[0]:
-            # Per-row format: scale[i, j] covers weight[i, j*16:(j+1)*16]
-            tile_k = weight_bf16.shape[1] // scale_f32.shape[1]
-            scale_exp = scale_f32.repeat_interleave(tile_k, dim=1)[:, : weight_bf16.shape[1]]
-        else:
-            # 128-tile format: scale[i, j] covers weight[i*128:(i+1)*128, j*128:(j+1)*128]
-            scale_exp = scale_f32.repeat_interleave(128, dim=0)[: weight_bf16.shape[0]]
-            scale_exp = scale_exp.repeat_interleave(128, dim=1)[:, : weight_bf16.shape[1]]
-        if scale_exp.shape != weight_bf16.shape:
-            raise RuntimeError(
-                f"FP8 dequant shape mismatch for {hf_param!r}: "
-                f"weight={tuple(weight_bf16.shape)} scale={tuple(scale.shape)} "
-                f"scale_exp={tuple(scale_exp.shape)}"
-            )
-        return (weight_bf16.to(torch.float32) * scale_exp).to(torch.bfloat16)
+        return quantization_utils.maybe_dequantize_hf_quantized_weight(hf_param, hf_state_dict)
 
     # ------------------------------------------------------------------
     # Weight mapping registry
@@ -939,7 +891,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mappings)
 
     # ------------------------------------------------------------------
-    # Export: synthesise inv_freq (keeps roundtrip HF compat)
+    # Export: restore HF quantized weight/scale pairs
     # ------------------------------------------------------------------
 
     def maybe_modify_converted_hf_weight(
@@ -948,5 +900,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """No-op for V4: the checkpoint does not contain inv_freq tensors."""
-        return converted_weights_dict
+        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index."""
+        del task
+        return quantization_utils.requantize_hf_weight_scale_pairs(
+            converted_weights_dict,
+            hf_state_dict,
+            use_mxfp4=_dsv4_use_mxfp4_export,
+        )

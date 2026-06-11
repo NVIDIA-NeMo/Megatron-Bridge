@@ -62,6 +62,24 @@ class TestStep35Config:
         assert cfg.moe_num_experts == 8
         assert cfg.head_dim == 64
 
+    def test_layer_types_with_mtp_entries_are_normalized_to_decoder_layers(self):
+        layer_types = [
+            "full_attention",
+            "sliding_attention",
+            "sliding_attention",
+            "sliding_attention",
+        ] * 12
+
+        cfg = Step35Config(
+            num_hidden_layers=45,
+            num_nextn_predict_layers=3,
+            layer_types=layer_types,
+        )
+
+        assert len(layer_types) == cfg.num_hidden_layers + cfg.num_nextn_predict_layers
+        assert cfg.layer_types == layer_types[: cfg.num_hidden_layers]
+        assert cfg.mtp_layer_types == layer_types[cfg.num_hidden_layers :]
+
 
 # ---------------------------------------------------------------------------
 # Step35ModelProvider

@@ -19,6 +19,8 @@ from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.diffusion.recipes.wan.wan import (
     wan_1_3b_pretrain_config,
     wan_1_3b_sft_config,
+    wan_1_3b_text2image_pretrain_config,
+    wan_1_3b_text2video_pretrain_config,
     wan_14b_pretrain_config,
     wan_14b_sft_config,
 )
@@ -152,3 +154,29 @@ class TestWanFinetuneConfigs:
         config = wan_14b_sft_config(pretrained_checkpoint="/path/to/ckpt")
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/ckpt"
+
+
+class TestWan1_3BText2ImageText2VideoConfigs:
+    """Tests for wan_1_3b text2image / text2video pretrain config variants."""
+
+    def test_text2image_overrides(self):
+        config = wan_1_3b_text2image_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert config.model.seq_length == 4096
+        assert config.dataset.seq_length == 4096
+        assert config.model.context_parallel_size == 1
+        assert config.optimizer.lr == 1e-4
+        assert config.optimizer.min_lr == 1e-4
+        assert config.optimizer.weight_decay == 0.001
+
+    def test_text2video_overrides(self):
+        config = wan_1_3b_text2video_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert config.model.seq_length == 43008
+        assert config.dataset.seq_length == 43008
+        assert config.model.context_parallel_size == 4
+        assert config.optimizer.lr == 1e-4
+        assert config.optimizer.min_lr == 1e-4
+        assert config.optimizer.weight_decay == 0.001

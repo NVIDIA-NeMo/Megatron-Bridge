@@ -41,7 +41,7 @@ test = ["coverage>=7.8.1"]
 
 [tool.uv.sources]
 "nemo-export-deploy" = { path = "/opt/Export-Deploy", editable = true }
-"nemo-evaluator" = { path = "/opt/Evaluator/packages/nemo-evaluator", editable = true }
+"nemo-evaluator" = { path = "/opt/Evaluator", editable = true }
 "nemo-run" = { path = "/opt/Run", editable = true }
 "lightning" = { path = "stubs/lightning" }
 
@@ -60,7 +60,8 @@ override-dependencies = [
     "ctc_segmentation==1.7.4",
     "pyzmq==25.1.2",                            # @URL: https://github.com/NVIDIA/NeMo/issues/13625
     "tiktoken>=0.9.0",                          # let megatron-hub win over nemo-toolkit
-    "datasets==3.1.0",
+    "datasets==4.8.5",
+    "pyarrow>=21.0.0",                          # datasets 4.8.5 needs >=21; override export-deploy's <21 cap (not exercised by training)
     "fsspec[http]>=2023.1.0,<=2024.9.0",
     "transformers; sys_platform == 'never'",    # Defer to transformers in MBridge install
     "packaging>=25.0",
@@ -68,10 +69,14 @@ override-dependencies = [
     "urllib3>=2.0.7",
     "sh==2.2.2",
     "jupyter-core==5.8.1",
-    "pillow==12.1.1",
+    "pillow==12.2.0",
     "protobuf==6.33.5",
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
+    # 0.1.12rc0's tvm_ffi is incompatible with the TVM that tilelang vendors and
+    # breaks `import tilelang`/`import mamba_ssm`; an explicit pin is required
+    # because prerelease="allow" would otherwise float the unlocked sync onto it.
+    "apache-tvm-ffi==0.1.11",
     "levenshtein; sys_platform == 'never'",
     "pytest==8.4.2",
     "wandb>=0.25.0",

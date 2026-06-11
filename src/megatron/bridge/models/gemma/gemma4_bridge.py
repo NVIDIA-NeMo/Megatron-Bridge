@@ -37,7 +37,7 @@ Key architecture-specific handling:
 """
 
 import re
-from typing import Mapping
+from typing import Any, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -109,6 +109,14 @@ class Gemma4Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-4-12B-A2B")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
+
+    def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
+        """Gate Gemma4 conditional MoE fields on the HF MoE block flag."""
+        if megatron_name in self._CONDITIONAL_MOE_FIELDS:
+            return getattr(hf_config, "enable_moe_block", True)
+        return super()._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma4ModelProvider:
         """Convert HuggingFace config to Gemma4ModelProvider."""
@@ -390,7 +398,12 @@ class Gemma4Bridge(MegatronModelBridge):
             # (Gemma4TopKRouter.scale) so it round-trips on export without needing the
             # reference HF checkpoint.  Mapped via ReplicatedMapping below.
             "decoder.layers.*.mlp.linear_fc2.weight": ("model.layers.*.mlp.down_proj.weight"),
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.post_attention_layernorm.weight",
+            # === Dense MLP fused pre-FFN norm ===
+            # TE backend fuses the pre-MLP RMSNorm into linear_fc1 as
+            # linear_fc1.layer_norm_weight.  In Gemma 4 the pre-MLP norm is
+            # pre_feedforward_layernorm (post_attention_layernorm is a separate
+            # norm already mapped to self_attention.linear_proj.post_layernorm).
+            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_feedforward_layernorm.weight",
         }
 
         mapping_list = []

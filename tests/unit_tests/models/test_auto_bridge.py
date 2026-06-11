@@ -25,7 +25,12 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.auto_bridge import (
+    AutoBridge,
+    _config_disables_mtp,
+    _drop_readonly_config_properties,
+    _saved_config_disables_mtp,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -123,6 +128,28 @@ class TestAutoBridge:
             assert "Model architecture not supported by AutoBridge" in str(exc_info.value)
             assert "BertForMaskedLM" in str(exc_info.value)
 
+    def test_drop_readonly_config_properties(self):
+        """Test auto-config synthesis drops properties HuggingFace configs cannot set."""
+
+        class CustomConfig(PretrainedConfig):
+            @property
+            def layers_block_type(self):
+                return ["mamba", "attention"]
+
+        config_dict = {
+            "hidden_size": 768,
+            "layers_block_type": ["mamba", "attention"],
+            "num_hidden_layers": 2,
+        }
+
+        filtered = _drop_readonly_config_properties(config_dict, CustomConfig)
+
+        assert filtered == {
+            "hidden_size": 768,
+            "num_hidden_layers": 2,
+        }
+        assert config_dict["layers_block_type"] == ["mamba", "attention"]
+
     def test_from_pretrained_config_load_failure(self):
         """Test AutoBridge handles config loading failures gracefully."""
         with patch(
@@ -137,6 +164,21 @@ class TestAutoBridge:
 
             assert "Failed to load configuration" in str(exc_info.value)
             assert "Config not found" in str(exc_info.value)
+
+    def test_mtp_disabled_helpers(self, tmp_path):
+        """Detect disabled MTP in object, nested, and saved HF configs."""
+        assert _config_disables_mtp(None) is False
+        assert _config_disables_mtp(Mock(num_nextn_predict_layers=0)) is True
+        assert _config_disables_mtp({"num_nextn_predict_layers": None, "text_config": {"mtp_num_layers": "0"}}) is True
+        assert _config_disables_mtp({"text_config": {"mtp_num_hidden_layers": 0}}) is True
+        assert _config_disables_mtp(Mock(num_nextn_predict_layers=1)) is False
+        assert _config_disables_mtp({"mtp_num_layers": "2"}) is False
+        assert _saved_config_disables_mtp(tmp_path) is False
+
+        with open(tmp_path / "config.json", "w") as f:
+            json.dump({"num_nextn_predict_layers": 0}, f)
+
+        assert _saved_config_disables_mtp(tmp_path) is True
 
     def test_can_handle_supported_model(self, llama_config_mock):
         """Test can_handle returns True for supported models."""
@@ -1490,3 +1532,47 @@ class TestAutoBridge:
                 merge_adapter_weights=True,
             )
             mock_torch_save.assert_not_called()
+
+    @patch("torch.distributed.barrier")
+    @patch("torch.distributed.is_available", return_value=True)
+    @patch("torch.distributed.is_initialized", return_value=True)
+    @patch("torch.distributed.get_rank", return_value=0)
+    def test_save_hf_weights_ignores_mtp_source_keys_when_mtp_disabled(
+        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, tmp_path
+    ):
+        """Pass MTP source-key ignore prefixes when the exported config disables MTP."""
+        from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+
+        class ModelWrapper:
+            pass
+
+        class ModelInstance:
+            pass
+
+        model_instance = ModelInstance()
+        model_instance.config = {"num_nextn_predict_layers": 0}
+        wrapper = ModelWrapper()
+        wrapper.module = model_instance
+
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_hf_model.config = {"num_nextn_predict_layers": 1}
+        mock_hf_model.state = Mock()
+        mock_source = Mock(spec=SafeTensorsStateSource)
+        mock_source.has_glob.return_value = True
+        mock_hf_model.state.source = mock_source
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        mock_model_bridge = Mock()
+        mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter([("model.weight", torch.ones(1))])
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
+            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+        ):
+            mock_model_bridge_prop.return_value = mock_model_bridge
+            bridge.save_hf_weights([wrapper], tmp_path)
+
+        assert mock_source.save_generator.call_args.kwargs["ignored_source_key_prefixes"] == ("mtp.",)
+        mock_source.has_glob.assert_called_once_with("mtp.*")

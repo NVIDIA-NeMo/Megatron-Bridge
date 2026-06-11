@@ -1,0 +1,101 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Auto-request NVSkills CI
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+    paths:
+      - "skills/nemo-mbridge-*/**"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  comment:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Comment /nvskills-ci for catalog skill changes
+        uses: actions/github-script@v7
+        env:
+          NVSKILLS_SIGNATURE_COMMIT_TITLE: ${{ vars.NVSKILLS_SIGNATURE_COMMIT_TITLE }}
+          NVSKILLS_SIGNATURE_PUSH_ACTOR: ${{ vars.NVSKILLS_SIGNATURE_PUSH_ACTOR }}
+        with:
+          github-token: ${{ secrets.PAT }}
+          script: |
+            const pr = context.payload.pull_request;
+            const headOwner = pr.head.repo.owner.login;
+            const headRepo = pr.head.repo.name;
+            const sameRepoBranch = pr.head.repo.full_name === `${context.repo.owner}/${context.repo.repo}`;
+            const trustedAuthorAssociations = new Set(["COLLABORATOR", "MEMBER", "OWNER"]);
+            if (!sameRepoBranch && !trustedAuthorAssociations.has(pr.author_association)) {
+              core.info("Skipping NVSkills auto-request for an untrusted fork PR.");
+              return;
+            }
+
+            const signatureActor = process.env.NVSKILLS_SIGNATURE_PUSH_ACTOR || "nv-skills-ci[bot]";
+            const signatureCommitTitle =
+              process.env.NVSKILLS_SIGNATURE_COMMIT_TITLE || "Attach NVSkills validation signatures";
+
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner: headOwner,
+              repo: headRepo,
+              ref: pr.head.sha,
+            });
+
+            const headMessage = commit.commit.message || "";
+            const headAuthor = commit.author?.login || "";
+            if (headAuthor === signatureActor || headMessage.startsWith(signatureCommitTitle)) {
+              core.info("Skipping NVSkills auto-request for an NVSkills signature commit.");
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const hasCatalogSkillChange = files.some((file) =>
+              file.filename.startsWith("skills/nemo-mbridge-")
+            );
+            if (!hasCatalogSkillChange) {
+              core.info("No catalog-bound NeMo MBridge skill changes found.");
+              return;
+            }
+
+            const marker = `<!-- auto-nvskills-ci:${pr.head.sha} -->`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              per_page: 100,
+            });
+
+            if (comments.some((comment) => comment.body?.includes(marker))) {
+              core.info("NVSkills CI has already been requested for this head commit.");
+              return;
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              body: `/nvskills-ci\n${marker}`,
+            });

@@ -306,6 +306,22 @@ class PerfEnvPlugin(Plugin):
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
+        if workload_base_config.cuda_graph_impl == "full_iteration" or (
+            workload_base_config.cuda_graph_impl == "local"
+            and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
+        ):
+            cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
+            if "graph_capture_record_stream_reuse" not in cur:
+                sep = "," if cur else ""
+                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = f"{cur}{sep}graph_capture_record_stream_reuse:True"
+            executor.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "0"
+
+        if workload_base_config.cutedsl_fused_grouped_mlp:
+            executor.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = "1"
+
+        if workload_base_config.cutedsl_fused_grouped_mlp and workload_base_config.moe_a2a_overlap:
+            executor.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] = "8"
+
         remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
             model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
         )
@@ -333,6 +349,8 @@ class PerfEnvPlugin(Plugin):
             if model_family_name == "kimi":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
+            if model_family_name == "gpt_oss" and model_recipe_name == "gpt_oss_20b" and train_task == "pretrain":
+                del_cudnn_ln = False
         if gpu in ["b200", "b300"]:
             if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
                 if compute_dtype in ("nvfp4", "fp8_cs"):
@@ -503,6 +521,9 @@ class PerfEnvPlugin(Plugin):
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
+
+        if getattr(workload_base_config, "fine_grained_activation_offloading", False):
+            executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
 
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)

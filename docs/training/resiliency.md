@@ -7,7 +7,7 @@ due to failures and interruptions during training.
 
 This page is the stable overview for what each resiliency feature is, when to
 use it, and which constraints are durable. For operational setup, config knobs,
-parameter tables, code anchors, and verification commands, see [skills/resiliency/SKILL.md](../skills/resiliency/SKILL.md).
+parameter tables, code anchors, and verification commands, see [skills/nemo-mbridge-resiliency/SKILL.md](../skills/nemo-mbridge-resiliency/SKILL.md).
 
 ## What It Is
 
@@ -124,7 +124,7 @@ Local checkpointing is useful when:
 
 - Node-local storage must have sufficient capacity for at least one checkpoint
 - Replication degree must be configured to survive the expected failure rate
-- Requires compatible checkpoint format (see [skills/resiliency/SKILL.md](../skills/resiliency/SKILL.md))
+- Requires compatible checkpoint format (see [skills/nemo-mbridge-resiliency/SKILL.md](../skills/nemo-mbridge-resiliency/SKILL.md))
 
 ## Re-run State Machine
 
@@ -186,7 +186,7 @@ with job-level fault tolerance.
 
 - [docs/training/checkpointing.md](checkpointing.md)
 - [docs/performance-guide.md](../performance-guide.md)
-- [skills/resiliency/SKILL.md](../skills/resiliency/SKILL.md)
-- [skills/resiliency/card.yaml](../skills/resiliency/card.yaml)
+- [skills/nemo-mbridge-resiliency/SKILL.md](../skills/nemo-mbridge-resiliency/SKILL.md)
+- [skills/nemo-mbridge-resiliency/card.yaml](../skills/nemo-mbridge-resiliency/card.yaml)
 - [NVIDIA Resiliency Extension](https://github.com/NVIDIA/nvidia-resiliency-ext)
 - [In-Process Restart Guide](https://nvidia.github.io/nvidia-resiliency-ext/inprocess/index.html)
