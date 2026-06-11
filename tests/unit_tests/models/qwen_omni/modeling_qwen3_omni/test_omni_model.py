@@ -35,7 +35,10 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_index
-from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import _trim_feature_sequence
+from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import (
+    Qwen3OmniThinkerModel,
+    _trim_feature_sequence,
+)
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
@@ -477,6 +480,30 @@ class TestQwen3OmniModel:
             feature_attention_mask=feature_attention_mask,
         )
         assert output is not None
+
+    def test_audio_feature_trim_handles_multiple_audio_samples(self):
+        class _FakeAudioModel:
+            dtype = torch.float32
+
+            def __call__(self, input_features, feature_lens):
+                assert input_features.shape == (8, 3648)
+                assert feature_lens.tolist() == [3000, 648]
+                return SimpleNamespace(last_hidden_state=torch.arange(474 * 2, dtype=torch.float32).view(474, 2))
+
+        thinker = SimpleNamespace(audio_model=_FakeAudioModel())
+        input_features = torch.randn(2, 8, 3000)
+        feature_attention_mask = torch.zeros(2, 3000, dtype=torch.long)
+        feature_attention_mask[0, :3000] = 1
+        feature_attention_mask[1, :648] = 1
+
+        audio_embeds = Qwen3OmniThinkerModel.get_audio_features(
+            thinker,
+            input_features,
+            feature_attention_mask=feature_attention_mask,
+            expected_audio_token_counts=torch.tensor([390, 84]),
+        )
+
+        assert audio_embeds.shape == (474, 2)
 
     def test_audio_only_rope_index(self):
         input_ids = torch.tensor([[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, AUDIO_TOKEN_ID, 17, 18]])

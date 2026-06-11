@@ -34,6 +34,7 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config imp
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
+    preprocess_packed_seqs,
     split_data_cp_rank,
     split_deepstack_embs,
 )
@@ -62,6 +63,14 @@ def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor
     base = torch.arange(seq_len, device=input_ids.device, dtype=torch.long)
     base = base.unsqueeze(0).expand(batch_size, -1)
     return torch.stack([base, base, base], dim=0)
+
+
+def _get_qwen3_omni_audio_output_lengths(input_lengths: torch.LongTensor) -> torch.LongTensor:
+    """Match HF Qwen3-Omni audio encoder forward output lengths."""
+
+    input_lengths_leave = input_lengths % 100
+    feat_lengths = (input_lengths_leave - 1) // 2 + 1
+    return ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
 
 
 def _configure_multimodal_attn_impl(config: object, attn_impl: str | None) -> None:
@@ -337,7 +346,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
         if expected_audio_token_counts is None:
             return audio_embeds
 
-        _, produced_output_lengths = self.audio_model._get_feat_extract_output_lengths(audio_feature_lengths)
+        produced_output_lengths = _get_qwen3_omni_audio_output_lengths(audio_feature_lengths)
         expected_audio_token_counts = expected_audio_token_counts.to(produced_output_lengths.device)
 
         trimmed_embeds = []
@@ -380,13 +389,12 @@ class Qwen3OmniThinkerModel(MegatronModule):
     ) -> torch.Tensor:
         if inference_params is not None:
             raise NotImplementedError("Qwen3-Omni Megatron inference is not implemented yet.")
-        if packed_seq_params is not None:
-            raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
 
         cp_size = self.pg_collection.cp.size() if self.pg_collection is not None else 1
         cp_rank = self.pg_collection.cp.rank() if self.pg_collection is not None else 0
         tp_size = self.pg_collection.tp.size() if self.pg_collection is not None else 1
         tp_rank = self.pg_collection.tp.rank() if self.pg_collection is not None else 0
+        lm_input_ids = input_ids
 
         if audio_feature_lengths is None and feature_attention_mask is not None:
             audio_feature_lengths = torch.sum(feature_attention_mask, dim=1)
@@ -537,9 +545,52 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
             sp_pad_len = 0
+            if packed_seq_params is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                lm_input_ids, _ = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=True,
+                    pg_collection=self.pg_collection,
+                )
+
+                if deepstack_visual_embeds is not None:
+                    assert visual_pos_masks is not None
+                    visual_pos_masks_thd = preprocess_packed_seqs(
+                        visual_pos_masks,
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0].bool()
+                    tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                    packed_deepstack_embeds = []
+                    for visual_embed in deepstack_visual_embeds:
+                        tmp_embeddings[visual_pos_masks] = visual_embed
+                        tmp_embeddings_thd = preprocess_packed_seqs(
+                            tmp_embeddings.contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0]
+                        packed_deepstack_embeds.append(tmp_embeddings_thd[visual_pos_masks_thd].contiguous())
+                    visual_pos_masks = visual_pos_masks_thd
+                    deepstack_visual_embeds = packed_deepstack_embeds
+
+                combined_embeddings = (
+                    preprocess_packed_seqs(
+                        combined_embeddings.transpose(0, 1).contiguous(),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    .transpose(0, 1)
+                    .contiguous()
+                )
+
             if self.config.sequence_parallel:
                 seq_len = combined_embeddings.shape[0]
-                sp_pad_len = (tp_size - seq_len % tp_size) % tp_size
+                sp_pad_len = 0 if packed_seq_params is not None else (tp_size - seq_len % tp_size) % tp_size
                 if sp_pad_len > 0:
                     combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
                     if visual_pos_masks is not None:
@@ -553,23 +604,63 @@ class Qwen3OmniThinkerModel(MegatronModule):
             visual_pos_masks = None
             deepstack_visual_embeds = None
             sp_pad_len = 0
+            if packed_seq_params is not None:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
+                lm_input_ids, _ = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=True,
+                    pg_collection=self.pg_collection,
+                )
 
         if sp_pad_len > 0 and position_ids is not None:
             position_ids = torch.nn.functional.pad(position_ids, (0, sp_pad_len), mode="replicate")
 
         if self.config.sequence_parallel or cp_size > 1:
-            visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
-                visual_pos_masks,
-                deepstack_visual_embeds,
-                tp_size=tp_size,
-                tp_rank=tp_rank,
-                cp_size=cp_size,
-                cp_rank=cp_rank,
-                sequence_parallel=self.config.sequence_parallel,
+            if packed_seq_params is None:
+                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                    visual_pos_masks,
+                    deepstack_visual_embeds,
+                    tp_size=tp_size,
+                    tp_rank=tp_rank,
+                    cp_size=cp_size,
+                    cp_rank=cp_rank,
+                    sequence_parallel=self.config.sequence_parallel,
+                )
+            elif self.config.sequence_parallel:
+                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                    visual_pos_masks,
+                    deepstack_visual_embeds,
+                    tp_size=tp_size,
+                    tp_rank=tp_rank,
+                    cp_size=1,
+                    cp_rank=0,
+                    sequence_parallel=self.config.sequence_parallel,
+                )
+
+        if packed_seq_params is not None and position_ids is not None:
+            position_ids = (
+                preprocess_packed_seqs(
+                    position_ids.permute(1, 2, 0),
+                    attention_mask,
+                    pre_process=True,
+                    pg_collection=self.pg_collection,
+                )[0]
+                .permute(2, 0, 1)
+                .contiguous()
             )
+            attention_mask = None
+            self.language_model.rotary_pos_emb.is_thd_format = True
 
         return self.language_model(
-            input_ids=None if combined_embeddings is not None else input_ids,
+            input_ids=(
+                lm_input_ids
+                if packed_seq_params is not None
+                else None
+                if combined_embeddings is not None
+                else input_ids
+            ),
             position_ids=position_ids,
             attention_mask=attention_mask,
             decoder_input=combined_embeddings,
