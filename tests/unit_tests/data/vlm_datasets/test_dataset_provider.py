@@ -67,6 +67,10 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
+def _packable_collate(examples, processor, *, pack_sequences=False):
+    return {"pack_sequences": pack_sequences}
+
+
 def test_vlm_conversation_dataset_basic():
     from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 
@@ -121,3 +125,55 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     # Ensure collate_fn is bound and callable
     batch = train_ds.collate_fn([_example()])
     assert isinstance(batch, dict)
+
+
+def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypatch):
+    import transformers
+
+    from megatron.bridge.data.vlm_datasets import hf_provider as dp_mod
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+
+    def _fake_get_maker(self):
+        return lambda **kwargs: [_example(), _example()]
+
+    monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
+
+    provider = dp_mod.HFDatasetConversationProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        maker_name="rdr",
+        pack_sequences_in_batch=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None and len(train_ds) == 2
+
+
+def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
+    import transformers
+
+    from megatron.bridge.data.vlm_datasets import hf_provider as dp_mod
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+
+    def _fake_get_maker(self):
+        return lambda **kwargs: [_example(), _example()]
+
+    monkeypatch.setattr(dp_mod.HFDatasetConversationProvider, "_get_maker", _fake_get_maker)
+
+    provider = dp_mod.HFDatasetConversationProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        maker_name="rdr",
+        collate_impl=_packable_collate,
+        pack_sequences_in_batch=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    assert train_ds.collate_fn([_example()])["pack_sequences"] is True

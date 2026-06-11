@@ -22,6 +22,7 @@ from megatron.bridge.recipes.gpt_oss import gpt_oss_20b_pretrain_config, gpt_oss
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,25 @@ def set_gpt_oss_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.model.moe_router_fusion = True
     cfg.model.moe_router_force_load_balancing = True
+
+
+def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    """Apply defaults required by full-iteration CUDA graph capture with dropless MoE.
+
+    Dropless MoE produces variable-shaped per-expert tensors that CG cannot
+    capture; we pad to a fixed capacity (pad_experts + capacity factor) and use
+    MCore PR #4247 paged stashing to recover memory. Callers should gate on
+    `is_full_iteration_cuda_graph(cfg.model)`.
+    """
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    if cfg.model.moe_expert_rank_capacity_factor is None:
+        cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.cuda_graph_warmup_steps = 2
+    if cfg.model.offload_modules is None:
+        cfg.model.offload_modules = []
 
 
 def set_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
@@ -399,6 +419,12 @@ def gpt_oss_120b_pretrain_config_gb300(
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     return cfg
 
 
@@ -424,6 +450,12 @@ def gpt_oss_120b_pretrain_config_gb200(
     cfg.comm_overlap.tp_comm_overlap = False if precision == "nvfp4" else cfg.comm_overlap.tp_comm_overlap
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
 
     return cfg
 
@@ -475,6 +507,9 @@ def gpt_oss_120b_pretrain_config_b300(
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+
     return cfg
 
 
@@ -498,6 +533,9 @@ def gpt_oss_120b_pretrain_config_b200(
         apply_flex_dispatcher_backend(cfg.model, base_cfg.moe_flex_dispatcher_backend)
     set_gpt_oss_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     return cfg
 
