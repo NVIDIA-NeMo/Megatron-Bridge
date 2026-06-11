@@ -124,10 +124,10 @@ def create_squad_dataset_config(
     from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 
     dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed:
         dataset_kwargs["pad_to_max_length"] = True
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return HFTextSFTDatasetProvider(
         seq_length=seq_length,
@@ -141,7 +141,8 @@ def create_squad_dataset_config(
         do_validation=True,
         do_test=False,
         dataset_kwargs=dataset_kwargs,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=packed,
+        offline_packing_specs=offline_packing_specs,
         dataloader_type="single",
         num_workers=num_workers,
         data_sharding=True,

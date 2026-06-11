@@ -68,7 +68,7 @@ class MockVLMConversationProvider(DatasetProvider):
     _processor: Optional[Any] = None
 
     # Enable batch-level online sequence packing
-    pack_sequences_in_batch: bool = False
+    enable_in_batch_packing: bool = False
 
     def _make_single_example(
         self, rng: numpy.random.Generator, prompt_text: str, response_text: str
@@ -110,7 +110,7 @@ class MockVLMConversationProvider(DatasetProvider):
 
         num_examples = 1000
 
-        if self.pack_sequences_in_batch:
+        if self.enable_in_batch_packing:
             # When packing is enabled, produce examples with varied response lengths
             # so that the packing logic concatenates sequences of different sizes.
             resp_len_range = (10, 100)

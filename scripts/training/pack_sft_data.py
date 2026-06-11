@@ -88,19 +88,21 @@ def main() -> None:
 
     if cfg.dataset is None:
         sys.exit("Error: recipe has no dataset configuration.")
-    packed_sequence_specs = getattr(cfg.dataset, "packed_sequence_specs", None)
-    if packed_sequence_specs is None:
-        sys.exit(f"Error: recipe '{args.recipe}' does not use offline packed sequences.")
+    if not getattr(cfg.dataset, "enable_offline_packing", False):
+        sys.exit(f"Error: recipe '{args.recipe}' does not enable offline packed sequences.")
+    offline_packing_specs = getattr(cfg.dataset, "offline_packing_specs", None)
+    if offline_packing_specs is None:
+        sys.exit(f"Error: recipe '{args.recipe}' has no offline packing specs.")
 
     # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
     # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
     # Use 1 worker to avoid /dev/shm OOM: num_workers==1 runs single-threaded
     # with no multiprocessing shared memory (see packed_sequence._retrieve_tokenized).
-    packed_sequence_specs.num_tokenizer_workers = 1
+    offline_packing_specs.num_tokenizer_workers = 1
 
     print(f"Recipe:   {args.recipe}")
-    print(f"Seq len:  {packed_sequence_specs.packed_sequence_size}")
-    print(f"Workers:  {packed_sequence_specs.num_tokenizer_workers} (single-threaded, no /dev/shm)")
+    print(f"Seq len:  {offline_packing_specs.packed_sequence_size}")
+    print(f"Workers:  {offline_packing_specs.num_tokenizer_workers} (single-threaded, no /dev/shm)")
     print()
 
     print("Building tokenizer...")
@@ -137,13 +139,13 @@ def main() -> None:
             input_path=Path(args.train_input_path),
             output_path=Path(args.packed_train_data_path),
             output_metadata_path=packed_metadata_path,
-            packed_sequence_size=packed_sequence_specs.packed_sequence_size,
+            packed_sequence_size=offline_packing_specs.packed_sequence_size,
             tokenizer=tokenizer,
             max_seq_length=cfg.dataset.seq_length,
             seed=cfg.dataset.seed,
             dataset_kwargs=cfg.dataset.dataset_kwargs,
-            pad_seq_to_mult=packed_sequence_specs.pad_seq_to_mult,
-            num_tokenizer_workers=packed_sequence_specs.num_tokenizer_workers,
+            pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
+            num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
         )
 
         if args.val_input_path and args.packed_val_data_path:
@@ -151,13 +153,13 @@ def main() -> None:
                 input_path=Path(args.val_input_path),
                 output_path=Path(args.packed_val_data_path),
                 output_metadata_path=packed_metadata_path,
-                packed_sequence_size=packed_sequence_specs.packed_sequence_size,
+                packed_sequence_size=offline_packing_specs.packed_sequence_size,
                 tokenizer=tokenizer,
                 max_seq_length=cfg.dataset.seq_length,
                 seed=cfg.dataset.seed,
                 dataset_kwargs=cfg.dataset.dataset_kwargs,
-                pad_seq_to_mult=packed_sequence_specs.pad_seq_to_mult,
-                num_tokenizer_workers=packed_sequence_specs.num_tokenizer_workers,
+                pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
+                num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
             )
         elif args.val_input_path or args.packed_val_data_path:
             sys.exit("Error: --val-input-path and --packed-val-data-path must be provided together.")

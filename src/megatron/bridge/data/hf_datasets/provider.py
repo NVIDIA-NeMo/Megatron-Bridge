@@ -86,7 +86,7 @@ class HFConversationDatasetProvider(DatasetProvider):
     dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "single"
 
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
-    pack_sequences_in_batch: bool = False
+    enable_in_batch_packing: bool = False
 
     def _collate_supports_packing(self, processor: Any) -> bool:
         collate_key = type(processor).__name__ if processor is not None else "default"
@@ -125,7 +125,7 @@ class HFConversationDatasetProvider(DatasetProvider):
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
-            pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
+            pack_sequences=self.enable_in_batch_packing and self._collate_supports_packing(processor),
         )
 
     def _load_processor_or_tokenizer(self, tokenizer: Any | None = None) -> Any:

@@ -135,7 +135,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_provider(fake_processor):
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.maker_name == "cord_v2"
     assert cfg.dataset.collate_impl is nemotron_omni_collate_fn
-    assert cfg.dataset.pack_sequences_in_batch is False
+    assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
@@ -161,7 +161,7 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, EnergonProvider)
     assert cfg.dataset.path == ""
-    assert cfg.dataset.pack_sequences_in_batch is False
+    assert cfg.dataset.enable_in_batch_packing is False
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniTaskEncoder)
     assert cfg.dataset.task_encoder.processor is fake_processor
     assert cfg.dataset.task_encoder.max_audio_duration == 10.0

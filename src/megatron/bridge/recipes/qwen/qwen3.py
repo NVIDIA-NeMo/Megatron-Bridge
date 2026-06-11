@@ -530,7 +530,7 @@ def qwen3_600m_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -607,8 +607,8 @@ def qwen3_600m_sft_128k_config() -> ConfigContainer:
     # 128K sequence length
     cfg.model.seq_length = 131072
     cfg.dataset.seq_length = 131072
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 131072
-    cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 131072
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Smaller batch size to fit 128K sequences
     cfg.train.global_batch_size = 2
@@ -734,7 +734,7 @@ def qwen3_1p7b_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -822,7 +822,7 @@ def qwen3_4b_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -910,7 +910,7 @@ def qwen3_8b_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -998,7 +998,7 @@ def qwen3_14b_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1087,7 +1087,7 @@ def qwen3_32b_sft_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1188,7 +1188,7 @@ def qwen3_600m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1282,7 +1282,7 @@ def qwen3_1p7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1376,7 +1376,7 @@ def qwen3_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1470,7 +1470,7 @@ def qwen3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1564,7 +1564,7 @@ def qwen3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1659,7 +1659,7 @@ def qwen3_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg.train.global_batch_size = 8
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Training config
     cfg.validation.eval_interval = 30

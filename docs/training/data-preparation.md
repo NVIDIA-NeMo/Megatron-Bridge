@@ -107,7 +107,8 @@ dataset = HFTextSFTDatasetProvider(
     do_validation=True,
     do_test=False,
     dataset_kwargs={"pad_to_max_length": True},
-    packed_sequence_specs=PackedSequenceSpecs(packed_sequence_size=512),
+    enable_offline_packing=True,
+    offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
 )
 ```
 

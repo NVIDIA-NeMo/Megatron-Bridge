@@ -280,6 +280,59 @@ def test_hf_provider_uses_context_tokenizer_when_processor_path_is_unset(monkeyp
     assert train_ds.collate_fn([train_ds[0]])["tokens"].tolist() == [[6, 7, 8]]
 
 
+def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch):
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+    from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+
+    class TextTokenizer:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+            if tokenize:
+                return {"input_ids": [6, 7, 8], "assistant_masks": [0, 1, 1]}
+            return "rendered"
+
+        def __call__(self, text, padding=True, truncation=False, return_tensors="pt", **kwargs):
+            return {
+                "input_ids": torch.tensor([[6, 7, 8]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+            }
+
+    class WrappedTokenizer:
+        _tokenizer = TextTokenizer()
+
+    def _fake_get_maker(maker_name):
+        assert maker_name == "text_chat"
+        return lambda **kwargs: [
+            {
+                "messages": [
+                    {"role": "user", "content": "ping"},
+                    {"role": "assistant", "content": "pong"},
+                ]
+            }
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path=None,
+        maker_name="text_chat",
+        collate_impl=text_chat_collate_fn,
+        enable_in_batch_packing=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0, tokenizer=WrappedTokenizer())
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    batch = train_ds.collate_fn([train_ds[0]])
+    assert batch["_padding_mask"].tolist() == [[1, 1, 1]]
+
+
 def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypatch):
     import transformers
 
@@ -296,7 +349,7 @@ def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypat
         seq_length=16,
         hf_processor_path="dummy/model",
         maker_name="rdr",
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
@@ -322,7 +375,7 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
         hf_processor_path="dummy/model",
         maker_name="rdr",
         collate_impl=_packable_collate,
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)

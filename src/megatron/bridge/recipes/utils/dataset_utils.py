@@ -249,7 +249,7 @@ def apply_dataset_override(
             data_sharding=True,
             pin_memory=True,
             persistent_workers=False,
-            pack_sequences_in_batch=False,
+            enable_in_batch_packing=False,
         )
 
     elif dataset_type == "vlm-preloaded":

@@ -52,7 +52,7 @@ def nemotron_omni_cord_v2_sft_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigC
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -104,7 +104,7 @@ def nemotron_omni_cord_v2_peft_config(hf_path: str = _DEFAULT_HF_PATH) -> Config
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -229,7 +229,7 @@ def nemotron_omni_valor32k_sft_config(
         global_batch_size=cfg.train.global_batch_size,
         num_workers=2,
         task_encoder=task_encoder,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -294,7 +294,7 @@ def nemotron_omni_valor32k_peft_config(
         global_batch_size=cfg.train.global_batch_size,
         num_workers=2,
         task_encoder=task_encoder,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg

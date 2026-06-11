@@ -31,7 +31,7 @@ feature_meaning:
     and consumed through THD packed-sequence metadata.
   vlm_in_batch_packing: >
     Runtime batch concatenation path for some VLM training flows controlled by
-    pack_sequences_in_batch=True.
+    enable_in_batch_packing=True.
   long_context_training: >
     Training at longer sequence lengths, primarily enabled through context
     parallelism plus recipe-specific long-context presets and memory tuning
@@ -40,13 +40,14 @@ recommended_path:
   llm_packed_sft:
     train.micro_batch_size: 1
     dataset.dataset_kwargs.pad_to_max_length: true
-    dataset.packed_sequence_specs.packed_sequence_size: match_seq_length
+    dataset.enable_offline_packing: true
+    dataset.offline_packing_specs.packed_sequence_size: match_seq_length
   cp_finetuning:
     model.calculate_per_token_loss: true
     ddp.average_in_collective: false
-    dataset.packed_sequence_specs.pad_seq_to_mult: 2 * context_parallel_size
+    dataset.offline_packing_specs.pad_seq_to_mult: 2 * context_parallel_size
   vlm_in_batch_packing:
-    dataset.pack_sequences_in_batch: true
+    dataset.enable_in_batch_packing: true
     train.micro_batch_size: ">1"
 known_constraints:
   - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
@@ -60,7 +61,7 @@ known_limitations:
   - Packing support is model-family-specific rather than universal.
   - Qwen3-Next SFT disables packed sequences.
   - GLM-4.5 SFT and PEFT disable packed sequences.
-  - Qwen3.5-VL disables pack_sequences_in_batch.
+  - Qwen3.5-VL disables enable_in_batch_packing.
   - The repo does not contain checked-in benchmark results validating long-context throughput claims.
 evidence:
   - docs/training/packed-sequences.md

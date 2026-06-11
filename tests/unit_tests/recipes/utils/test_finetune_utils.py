@@ -76,16 +76,18 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_packing_disabled_by_default(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.packed_sequence_specs is None
+        assert cfg.enable_offline_packing is False
+        assert cfg.offline_packing_specs is None
 
     def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_openmathinstruct2_config(packed_sequence=True)
-        assert cfg.packed_sequence_specs is not None
-        assert cfg.packed_sequence_specs.packed_sequence_size == 4096
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None
+        assert cfg.offline_packing_specs.packed_sequence_size == 4096
 
     def test_pad_seq_to_mult_applies_to_packing(self):
         cfg = default_openmathinstruct2_config(packed_sequence=True, pad_seq_to_mult=4)
-        assert cfg.packed_sequence_specs.pad_seq_to_mult == 4
+        assert cfg.offline_packing_specs.pad_seq_to_mult == 4
 
 
 @pytest.mark.unit
@@ -143,16 +145,18 @@ class TestDefaultGsm8kConfig:
 
     def test_runtime_packing_disabled(self):
         cfg = default_gsm8k_config()
-        assert cfg.packed_sequence_specs is None
+        assert cfg.enable_offline_packing is False
+        assert cfg.offline_packing_specs is None
 
     def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_gsm8k_config(packed_sequence=True)
-        assert cfg.packed_sequence_specs is not None
-        assert cfg.packed_sequence_specs.packed_sequence_size == 2048
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None
+        assert cfg.offline_packing_specs.packed_sequence_size == 2048
 
     def test_pad_seq_to_mult_applies_to_packing(self):
         cfg = default_gsm8k_config(packed_sequence=True, pad_seq_to_mult=4)
-        assert cfg.packed_sequence_specs.pad_seq_to_mult == 4
+        assert cfg.offline_packing_specs.pad_seq_to_mult == 4
 
 
 @pytest.mark.unit
@@ -177,8 +181,9 @@ class TestDefaultSquadConfig:
 
     def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_squad_config(seq_length=512, packed_sequence=True)
-        assert cfg.packed_sequence_specs is not None
-        assert cfg.packed_sequence_specs.packed_sequence_size == 512
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None
+        assert cfg.offline_packing_specs.packed_sequence_size == 512
         assert cfg.dataset_kwargs["pad_to_max_length"] is True
 
 
@@ -230,4 +235,5 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
         assert cfg.maker_name == "openmathinstruct2_thinking"
         assert cfg.maker_kwargs["split"] == "train_1M"
         assert cfg.val_proportion == 0.05
-        assert cfg.packed_sequence_specs is not None
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None

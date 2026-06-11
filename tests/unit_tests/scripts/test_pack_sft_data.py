@@ -47,7 +47,8 @@ class _DatasetConfig:
     seq_length: int = 2048
     seed: int = 123
     dataset_kwargs: dict[str, object] = field(default_factory=lambda: {"chat": "template"})
-    packed_sequence_specs: _PackedSequenceSpecs | None = field(default_factory=_PackedSequenceSpecs)
+    enable_offline_packing: bool = True
+    offline_packing_specs: _PackedSequenceSpecs | None = field(default_factory=_PackedSequenceSpecs)
 
 
 @dataclass

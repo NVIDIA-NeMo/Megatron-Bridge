@@ -358,7 +358,12 @@ def num_floating_point_operations(
         is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
-        packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)
+        dataset_cfg = getattr(cfg, "dataset", None)
+        packed_specs = (
+            getattr(dataset_cfg, "offline_packing_specs", None)
+            if getattr(dataset_cfg, "enable_offline_packing", False)
+            else None
+        )
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
         # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).

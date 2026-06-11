@@ -109,7 +109,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         "dataset.val_maker_kwargs.subset=dev" \
         "dataset.val_maker_kwargs.split=test" \
         dataset.do_test=false \
-        dataset.pack_sequences_in_batch=true \
+        dataset.enable_in_batch_packing=true \
         rng.seed=42 \
         ddp.grad_reduce_in_fp32=false
 done

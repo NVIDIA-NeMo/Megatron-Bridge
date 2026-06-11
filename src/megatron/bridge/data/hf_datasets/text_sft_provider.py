@@ -35,8 +35,8 @@ class HFTextSFTDatasetProvider(DatasetProvider):
     """Build text SFT datasets from Hugging Face makers via the standard SFT builder.
 
     Maker outputs are written as JSONL chat rows and then loaded through
-    ``FinetuningDatasetBuilder``. This preserves offline packed-sequence
-    preparation through ``PackedSequenceSpecs`` while keeping Hugging Face row
+    ``FinetuningDatasetBuilder``. This preserves optional offline packed-sequence
+    preparation through ``enable_offline_packing`` and ``PackedSequenceSpecs`` while keeping Hugging Face row
     normalization in ``megatron.bridge.data.hf_datasets``.
     """
 
@@ -49,7 +49,8 @@ class HFTextSFTDatasetProvider(DatasetProvider):
     seed: int = 5678
     memmap_workers: int = 1
     max_train_samples: int | None = None
-    packed_sequence_specs: PackedSequenceSpecs | None = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: PackedSequenceSpecs | None = None
     dataset_kwargs: dict[str, Any] | None = None
     val_proportion: float | None = None
     do_validation: bool = True
@@ -168,7 +169,8 @@ class HFTextSFTDatasetProvider(DatasetProvider):
                 seed=self.seed,
                 memmap_workers=self.memmap_workers,
                 max_train_samples=self.max_train_samples,
-                packed_sequence_specs=self.packed_sequence_specs,
+                enable_offline_packing=self.enable_offline_packing,
+                offline_packing_specs=self.offline_packing_specs,
                 dataset_kwargs=self._effective_dataset_kwargs(),
                 do_validation=self.do_validation,
                 do_test=self.do_test,

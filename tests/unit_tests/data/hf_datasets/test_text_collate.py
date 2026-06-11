@@ -113,3 +113,25 @@ def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
     assert batch["labels"].tolist() == [[21, 22, -100, -100]]
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0]]
     assert batch["token_count"] == [3]
+
+
+def test_text_chat_collate_fn_exposes_padding_mask_for_in_batch_packing():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "later"},
+                {"role": "assistant", "content": "bye"},
+            ]
+        },
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True)
+
+    assert batch["_padding_mask"].tolist() == batch["attention_mask"].tolist()

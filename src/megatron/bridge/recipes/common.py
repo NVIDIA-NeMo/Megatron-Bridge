@@ -412,7 +412,7 @@ def _sft_common_vlm() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     # VLM uses NullTokenizer - actual tokenization is handled by the processor
@@ -515,7 +515,7 @@ def _peft_common_vlm() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     # VLM uses NullTokenizer - actual tokenization is handled by the processor

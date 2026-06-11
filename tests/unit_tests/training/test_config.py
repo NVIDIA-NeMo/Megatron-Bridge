@@ -848,7 +848,8 @@ class TestConfigContainerValidation:
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
-        dataset_cfg.packed_sequence_specs = packed_specs
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = packed_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -874,7 +875,8 @@ class TestConfigContainerValidation:
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
-        dataset_cfg.packed_sequence_specs = packed_specs
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = packed_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -899,7 +901,8 @@ class TestConfigContainerValidation:
         @dataclass
         class PackedDatasetProvider(DatasetProvider):
             seq_length: int = 512
-            packed_sequence_specs: PackedSequenceSpecs | None = None
+            enable_offline_packing: bool = False
+            offline_packing_specs: PackedSequenceSpecs | None = None
 
             def build_datasets(
                 self, context: DatasetBuildContext
@@ -908,7 +911,10 @@ class TestConfigContainerValidation:
 
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = PackedDatasetProvider(packed_sequence_specs=PackedSequenceSpecs(packed_sequence_size=512))
+        dataset_cfg = PackedDatasetProvider(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
+        )
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -924,12 +930,12 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_packed_sequence_validation_skipped_when_specs_none(self, monkeypatch):
-        """Test validation skipped when packed_sequence_specs is None."""
+        """Test validation skipped when offline_packing_specs is None."""
         # Create config with micro_batch_size > 1 but no packed sequences
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
         dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
-        # packed_sequence_specs defaults to None
+        # offline_packing_specs defaults to None
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -949,7 +955,7 @@ class TestConfigContainerValidation:
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
         dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
-        # GPTDatasetConfig doesn't have packed_sequence_specs
+        # GPTDatasetConfig doesn't have offline_packing_specs
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -963,12 +969,12 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_pack_sequences_in_batch_requires_micro_batch_size_gt_1(self, monkeypatch):
-        """Test validation error when micro_batch_size == 1 with pack_sequences_in_batch=True."""
+    def test_enable_in_batch_packing_requires_micro_batch_size_gt_1(self, monkeypatch):
+        """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
         dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
-        dataset_cfg.pack_sequences_in_batch = True
+        dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -977,7 +983,7 @@ class TestConfigContainerValidation:
             dataset_config_override=dataset_cfg,
         )
         error_msg = (
-            "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+            "micro_batch_size should be greater than 1 when using enable_in_batch_packing=True. "
             "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
             "are required per micro-batch."
         )
@@ -990,12 +996,12 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_pack_sequences_in_batch_passes_with_micro_batch_size_gt_1(self, monkeypatch):
-        """Test validation passes when micro_batch_size > 1 with pack_sequences_in_batch=True."""
+    def test_enable_in_batch_packing_passes_with_micro_batch_size_gt_1(self, monkeypatch):
+        """Test validation passes when micro_batch_size > 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
         dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
-        dataset_cfg.pack_sequences_in_batch = True
+        dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -1006,6 +1012,76 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_enable_offline_packing_requires_specs(self, monkeypatch):
+        """Test validation error when offline packing is enabled without specs."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = None
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="offline_packing_specs must be set"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_offline_packing_specs_require_enable_offline_packing(self, monkeypatch):
+        """Test validation error when offline specs are set without enabling offline packing."""
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match="enable_offline_packing must be True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_offline_and_in_batch_packing_are_mutually_exclusive(self, monkeypatch):
+        """Test validation error when both packing modes are enabled."""
+        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.enable_offline_packing = True
+        dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
+        dataset_cfg.enable_in_batch_packing = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                ValueError,
+                match="enable_offline_packing and enable_in_batch_packing are mutually exclusive",
+            ):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

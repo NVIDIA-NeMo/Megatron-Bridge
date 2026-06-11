@@ -632,7 +632,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     # Dataset config - packed_sequence=True by default (from _sft_common)
     # Override seq_length for NemotronH (uses 8192)
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -672,7 +672,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - NemotronH uses specific optimizer settings
     cfg.optimizer.adam_beta2 = 0.95
@@ -759,7 +759,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -798,7 +798,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -887,7 +887,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -926,7 +926,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1015,7 +1015,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1054,7 +1054,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1152,7 +1152,7 @@ def nemotronh_4b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1207,7 +1207,7 @@ def nemotronh_4b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1298,7 +1298,7 @@ def nemotronh_8b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1353,7 +1353,7 @@ def nemotronh_8b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1446,7 +1446,7 @@ def nemotronh_47b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1501,7 +1501,7 @@ def nemotronh_47b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1595,7 +1595,7 @@ def nemotronh_56b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1650,7 +1650,7 @@ def nemotronh_56b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95

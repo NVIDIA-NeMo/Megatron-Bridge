@@ -372,10 +372,10 @@ class TestLoRAFinetune:
         """Create a local SFT dataset configuration."""
         if packed_sequences:
             dataset_kwargs = {"pad_to_max_length": True}
-            packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
+            offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
         else:
             dataset_kwargs = {}
-            packed_sequence_specs = None
+            offline_packing_specs = None
 
         config = FinetuningDatasetConfig(
             dataset_root=dataset_root,
@@ -386,7 +386,8 @@ class TestLoRAFinetune:
             do_validation=False,
             do_test=False,
             dataset_kwargs=dataset_kwargs,
-            packed_sequence_specs=packed_sequence_specs,
+            enable_offline_packing=packed_sequences,
+            offline_packing_specs=offline_packing_specs,
             max_train_samples=max_train_samples,
         )
 

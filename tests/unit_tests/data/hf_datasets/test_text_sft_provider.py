@@ -48,7 +48,8 @@ def test_hf_text_sft_provider_writes_jsonl_and_delegates_to_finetuning_builder(m
         maker_kwargs={"path_or_dataset": "mock/squad", "split": "train[:90%]"},
         val_maker_kwargs={"split": "train[90%:]"},
         do_test=False,
-        packed_sequence_specs=packed_specs,
+        enable_offline_packing=True,
+        offline_packing_specs=packed_specs,
         dataset_kwargs={"pad_to_max_length": True},
     )
 
@@ -66,7 +67,8 @@ def test_hf_text_sft_provider_writes_jsonl_and_delegates_to_finetuning_builder(m
 
     builder_kwargs = _FakeBuilder.init_kwargs
     assert builder_kwargs["dataset_root"] == tmp_path
-    assert builder_kwargs["packed_sequence_specs"] is packed_specs
+    assert builder_kwargs["enable_offline_packing"] is True
+    assert builder_kwargs["offline_packing_specs"] is packed_specs
     assert builder_kwargs["dataset_kwargs"] == {
         "chat": True,
         "use_hf_tokenizer_chat_template": True,

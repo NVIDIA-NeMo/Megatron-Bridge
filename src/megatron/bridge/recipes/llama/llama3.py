@@ -1248,11 +1248,11 @@ def llama32_1b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -1359,11 +1359,11 @@ def llama32_3b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -1468,11 +1468,11 @@ def llama3_8b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - SFT uses TP=2
     cfg.model.pipeline_model_parallel_layout = None
@@ -1571,11 +1571,11 @@ def llama31_8b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - SFT uses TP=2
     cfg.model.pipeline_model_parallel_layout = None
@@ -1674,11 +1674,11 @@ def llama3_70b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 70B SFT uses TP=8, PP=4
     cfg.model.pipeline_model_parallel_layout = None
@@ -1777,11 +1777,11 @@ def llama31_70b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 70B SFT uses TP=8, PP=4
     cfg.model.pipeline_model_parallel_layout = None
@@ -1881,11 +1881,11 @@ def llama31_405b_sft_config() -> ConfigContainer:
     seq_length = 2048
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 405B SFT uses TP=8, PP=16, SP=True
     cfg.model.pipeline_model_parallel_layout = None
@@ -2007,7 +2007,7 @@ def llama32_1b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -2015,7 +2015,7 @@ def llama32_1b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -2120,7 +2120,7 @@ def llama32_3b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config
     peft_cfg = default_peft_config(peft_scheme)
@@ -2128,7 +2128,7 @@ def llama32_3b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -2233,7 +2233,7 @@ def llama3_8b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - 8B uses dim=8, alpha=16
     peft_cfg = default_peft_config(peft_scheme)
@@ -2244,7 +2244,7 @@ def llama3_8b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - PEFT uses TP=1
     cfg.model.pipeline_model_parallel_layout = None
@@ -2349,7 +2349,7 @@ def llama31_8b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - 8B uses dim=8, alpha=16
     peft_cfg = default_peft_config(peft_scheme)
@@ -2360,7 +2360,7 @@ def llama31_8b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - PEFT uses TP=1
     cfg.model.pipeline_model_parallel_layout = None
@@ -2465,7 +2465,7 @@ def llama3_70b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - 70B uses dim=16, alpha=32
     peft_cfg = default_peft_config(peft_scheme)
@@ -2476,7 +2476,7 @@ def llama3_70b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 70B PEFT uses TP=8
     cfg.model.pipeline_model_parallel_layout = None
@@ -2581,7 +2581,7 @@ def llama31_70b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - 70B uses dim=16, alpha=32
     peft_cfg = default_peft_config(peft_scheme)
@@ -2592,7 +2592,7 @@ def llama31_70b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 70B PEFT uses TP=8
     cfg.model.pipeline_model_parallel_layout = None
@@ -2698,7 +2698,7 @@ def llama31_405b_peft_config(
     seq_length = 2048
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - 405B uses dim=16, alpha=32, target_modules=["linear_qkv"]
     peft_cfg = default_peft_config(peft_scheme)
@@ -2710,7 +2710,7 @@ def llama31_405b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 405B PEFT uses TP=4, PP=8, VPP=8, SP=True
     cfg.model.pipeline_model_parallel_layout = None

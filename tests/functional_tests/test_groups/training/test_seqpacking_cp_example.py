@@ -88,7 +88,8 @@ class TestPeftSftExample:
             do_test=False,
             dataset_kwargs={"pad_to_max_length": True},
             max_train_samples=16,
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,

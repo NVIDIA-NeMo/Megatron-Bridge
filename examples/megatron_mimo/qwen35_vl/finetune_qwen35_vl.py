@@ -223,8 +223,8 @@ def _build_mimo_provider(
     standard_provider.use_cpu_initialization = True
     if hasattr(standard_provider, "mtp_num_layers"):
         standard_provider.mtp_num_layers = None
-    if hasattr(standard_provider, "_pack_sequences_in_batch"):
-        standard_provider._pack_sequences_in_batch = False
+    if hasattr(standard_provider, "_enable_in_batch_packing"):
+        standard_provider._enable_in_batch_packing = False
 
     provider = MegatronMIMOProvider.from_standard_provider(
         standard_provider=standard_provider,
@@ -254,7 +254,7 @@ def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvi
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
         do_validation=True,
         do_test=False,
         trust_remote_code=args.trust_remote_code,

@@ -60,7 +60,8 @@ def _text_hf_dataset_provider(
     test_maker_kwargs: dict[str, Any] | None = None,
     do_validation: bool = True,
     do_test: bool = False,
-    packed_sequence_specs: PackedSequenceSpecs | None = None,
+    enable_offline_packing: bool = False,
+    offline_packing_specs: PackedSequenceSpecs | None = None,
     dataset_kwargs: dict[str, Any] | None = None,
     val_proportion: float | None = None,
     num_workers: int = 2,
@@ -74,7 +75,8 @@ def _text_hf_dataset_provider(
         test_maker_kwargs=test_maker_kwargs,
         do_validation=do_validation,
         do_test=do_test,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
         val_proportion=val_proportion,
         dataloader_type="batch",
@@ -106,10 +108,10 @@ def default_squad_config(
         - Seed 5678 (different from pretrain seed 1234)
     """
     dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed_sequence:
         dataset_kwargs["pad_to_max_length"] = True
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="squad",
@@ -118,7 +120,8 @@ def default_squad_config(
             "split": "train",
         },
         seq_length=seq_length,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
         val_proportion=0.1,
         num_workers=1,
@@ -131,9 +134,9 @@ def default_openmathinstruct2_config(
     pad_seq_to_mult: int = 1,
 ) -> HFTextSFTDatasetProvider:
     """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="openmathinstruct2",
@@ -142,7 +145,8 @@ def default_openmathinstruct2_config(
             "split": "train_1M",
         },
         seq_length=seq_length,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
         val_proportion=0.05,
         num_workers=2,
     )
@@ -170,9 +174,9 @@ def default_gsm8k_config(
         - GSM8K has 7,473 train and 1,319 test examples
         - Loads the full DatasetDict so the published test split is used for evaluation
     """
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_provider(
         maker_name="gsm8k",
@@ -185,7 +189,8 @@ def default_gsm8k_config(
         do_validation=False,
         do_test=True,
         seq_length=seq_length,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
         num_workers=2,
     )
 

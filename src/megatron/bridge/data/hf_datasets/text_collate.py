@@ -147,6 +147,7 @@ def text_chat_collate_fn(
     pad_to_max_length: bool = False,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
+    pack_sequences: bool = False,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
 
@@ -160,6 +161,8 @@ def text_chat_collate_fn(
             ``max_length`` instead of the longest row in the batch.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
+        pack_sequences: If True, expose ``_padding_mask`` for the runtime
+            in-batch sequence packer.
 
     Returns:
         Batch dictionary with VLM-style ``input_ids`` and GPT-style ``tokens``
@@ -206,4 +209,6 @@ def text_chat_collate_fn(
     batch["loss_mask"] = shifted_loss_mask
     batch["metadata"] = [_metadata_from_example(example) for example in examples]
     batch["token_count"] = [int(count) for count in batch["attention_mask"].sum(dim=1).tolist()]
+    if pack_sequences:
+        batch["_padding_mask"] = batch["attention_mask"]
     return batch
