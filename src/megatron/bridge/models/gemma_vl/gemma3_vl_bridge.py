@@ -131,11 +131,24 @@ class Gemma3VLBridge(MegatronModelBridge):
             mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # Add special mappings that require parameter concatenation/transformation
+        #
+        # Hub checkpoints produced with transformers < 5.8 store SiglipVisionModel
+        # weights under the nested prefix vision_tower.vision_model.**.  Checkpoints
+        # produced with transformers >= 5.8 (where SiglipVisionModel was flattened)
+        # use the flat prefix vision_tower.**.  Detect which format the source
+        # checkpoint uses so the mapping is correct for both input and output.
+        hf_pretrained = getattr(self, "hf_pretrained", None)
+        if hf_pretrained is not None and hasattr(hf_pretrained, "state"):
+            nested_vision_tower = hf_pretrained.state.has_glob("vision_tower.vision_model.*")
+        else:
+            nested_vision_tower = True  # default: Hub checkpoints use the nested format
+        vision_tower_hf_param = "vision_tower.vision_model.**" if nested_vision_tower else "vision_tower.**"
+
         mapping_list.extend(
             [
                 ReplicatedMapping(
                     megatron_param="vision_tower.**",
-                    hf_param="vision_tower.**",
+                    hf_param=vision_tower_hf_param,
                 ),
                 AutoMapping(
                     megatron_param="multi_modal_projector.proj.weight",

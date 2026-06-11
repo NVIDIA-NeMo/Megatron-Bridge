@@ -91,8 +91,11 @@ class Gemma3VLModel(MegatronModule):
         self.post_process = post_process
         self.vp_stage = vp_stage
         if pre_process:
-            # Unwrap SiglipVisionModel so vision_tower params stay flat
-            # (vision_tower.embeddings.*), matching HF checkpoint keys.
+            # Unwrap SiglipVisionModel → SiglipVisionTransformer so the Megatron model's
+            # vision_tower parameters are always flat (vision_tower.embeddings.*).
+            # The bridge detects the HF checkpoint format at conversion time and maps
+            # to either vision_tower.** (transformers >= 5.8) or
+            # vision_tower.vision_model.** (transformers < 5.8 / Hub checkpoints).
             _vc = config.vision_config
             _vc.vision_use_head = False
             _raw_vision = AutoModel.from_config(_vc)

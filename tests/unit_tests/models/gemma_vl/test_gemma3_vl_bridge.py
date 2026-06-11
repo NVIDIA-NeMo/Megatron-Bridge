@@ -276,19 +276,44 @@ class TestGemma3VLBridgeMappingRegistry:
 
         vt_mapping = vision_mappings[0]
         assert str(vt_mapping.megatron_param) == "vision_tower.**", "Megatron vision_tower param should use wildcard"
-        assert str(vt_mapping.hf_param) == "vision_tower.**", (
-            "HF param must match the current Gemma3 checkpoint namespace"
+        assert str(vt_mapping.hf_param) == "vision_tower.vision_model.**", (
+            "Default HF param must use nested vision_model.** to match Hub checkpoint keys"
         )
 
-    def test_mapping_registry_accepts_current_transformers_vision_tower_keys(self, gemma3_vl_bridge):
-        """Test mapping_registry accepts current transformers Gemma3 vision tower keys."""
+    def test_mapping_registry_vision_tower_flat_checkpoint(self, gemma3_vl_bridge):
+        """Flat checkpoint (transformers >= 5.8): hf_param must use vision_tower.** directly."""
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
+
+        mock_state = MagicMock()
+        mock_state.has_glob.side_effect = lambda pattern: pattern == "vision_tower.*"
+        mock_pretrained = MagicMock()
+        mock_pretrained.state = mock_state
+        gemma3_vl_bridge.hf_pretrained = mock_pretrained
+
         registry = gemma3_vl_bridge.mapping_registry()
 
-        mapping = registry.hf_to_megatron_lookup("vision_tower.embeddings.patch_embedding.bias")
+        vision_mappings = [
+            m
+            for m in registry.mappings
+            if isinstance(m, ReplicatedMapping) and "vision_tower" in str(getattr(m, "megatron_param", ""))
+        ]
+        assert len(vision_mappings) == 1
+        vt_mapping = vision_mappings[0]
+        assert str(vt_mapping.hf_param) == "vision_tower.**", (
+            "Flat checkpoint: HF param must use vision_tower.** without vision_model. prefix"
+        )
+        del gemma3_vl_bridge.hf_pretrained
+
+    def test_mapping_registry_accepts_hub_vision_tower_keys(self, gemma3_vl_bridge):
+        """Test mapping_registry resolves Hub-format nested vision tower keys (default)."""
+        registry = gemma3_vl_bridge.mapping_registry()
+
+        mapping = registry.hf_to_megatron_lookup("vision_tower.vision_model.embeddings.patch_embedding.bias")
 
         assert mapping is not None
         assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
-        assert str(mapping.hf_param) == "vision_tower.embeddings.patch_embedding.bias"
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""
