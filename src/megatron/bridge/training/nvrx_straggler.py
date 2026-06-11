@@ -14,13 +14,15 @@
 
 import logging
 import time
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import torch
 
 from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.utils.import_utils import MISSING_NVRX_MSG
 
+
+straggler: Any | None = None
 
 # NOTE: catch broadly here, not just (ImportError, ModuleNotFoundError).
 # ``nvidia-resiliency-ext`` is an optional dependency, and importing
