@@ -25,7 +25,12 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge, _config_disables_mtp, _saved_config_disables_mtp
+from megatron.bridge.models.conversion.auto_bridge import (
+    AutoBridge,
+    _config_disables_mtp,
+    _drop_readonly_config_properties,
+    _saved_config_disables_mtp,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -122,6 +127,28 @@ class TestAutoBridge:
 
             assert "Model architecture not supported by AutoBridge" in str(exc_info.value)
             assert "BertForMaskedLM" in str(exc_info.value)
+
+    def test_drop_readonly_config_properties(self):
+        """Test auto-config synthesis drops properties HuggingFace configs cannot set."""
+
+        class CustomConfig(PretrainedConfig):
+            @property
+            def layers_block_type(self):
+                return ["mamba", "attention"]
+
+        config_dict = {
+            "hidden_size": 768,
+            "layers_block_type": ["mamba", "attention"],
+            "num_hidden_layers": 2,
+        }
+
+        filtered = _drop_readonly_config_properties(config_dict, CustomConfig)
+
+        assert filtered == {
+            "hidden_size": 768,
+            "num_hidden_layers": 2,
+        }
+        assert config_dict["layers_block_type"] == ["mamba", "attention"]
 
     def test_from_pretrained_config_load_failure(self):
         """Test AutoBridge handles config loading failures gracefully."""
