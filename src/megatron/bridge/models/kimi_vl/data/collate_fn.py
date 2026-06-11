@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -146,7 +146,6 @@ def kimi_k25_vl_collate_fn(
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
     skipped_tokens = extract_skipped_token_ids(processor)
-    conversations = [example["conversation"] for example in examples]
 
     # Get media token ID
     media_token_id = getattr(processor, "media_placeholder_token_id", None)
@@ -169,7 +168,8 @@ def kimi_k25_vl_collate_fn(
     all_pixel_values = []
     all_grid_thws = []
 
-    for i, conversation in enumerate(conversations):
+    for i, example in enumerate(examples):
+        conversation = example["conversation"]
         # Collect medias for this conversation
         medias = []
         for message in conversation:
@@ -179,7 +179,12 @@ def kimi_k25_vl_collate_fn(
                     if isinstance(item, dict) and item.get("type") == "image":
                         medias.append({"type": "image", "image": item.get("image")})
 
-        text = processor.apply_chat_template(conversation, add_generation_prompt=False, tokenize=False)
+        text = processor.apply_chat_template(
+            conversation,
+            add_generation_prompt=False,
+            tokenize=False,
+            **chat_template_kwargs_from_example(example),
+        )
 
         processor_kwargs = {
             "text": text,

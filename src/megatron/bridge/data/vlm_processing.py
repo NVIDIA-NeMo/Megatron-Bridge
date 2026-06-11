@@ -339,6 +339,20 @@ def _conversation_from_example(
     return example_or_conversation
 
 
+def chat_template_kwargs_from_example(
+    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return optional HF chat-template kwargs stored alongside a conversation."""
+    if not isinstance(example_or_conversation, Mapping):
+        return {}
+
+    kwargs: dict[str, Any] = {}
+    tools = example_or_conversation.get("tools")
+    if tools is not None:
+        kwargs["tools"] = tools
+    return kwargs
+
+
 def find_token_span(sequence: Sequence[int] | torch.Tensor, pattern: Sequence[int], start: int = 0) -> tuple[int, int]:
     """Find the first ``[start, end)`` token span matching ``pattern``.
 
@@ -437,6 +451,7 @@ def _assistant_mask_from_hf_chat_template(
 ) -> torch.Tensor | None:
     """Return HF generation-block assistant mask when it aligns to ``ids``."""
     conversation = _conversation_from_example(example_or_conversation)
+    chat_template_kwargs = chat_template_kwargs_from_example(example_or_conversation)
     seen: set[int] = set()
     for template_owner in (tokenizer, processor):
         if id(template_owner) in seen:
@@ -454,6 +469,7 @@ def _assistant_mask_from_hf_chat_template(
                 add_generation_prompt=False,
                 return_dict=True,
                 return_assistant_tokens_mask=True,
+                **chat_template_kwargs,
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             continue
@@ -668,16 +684,15 @@ def apply_assistant_labels_to_batch(
     unmask_last_token: bool = False,
 ) -> None:
     """Attach ``labels`` and ``loss_mask`` to a collated HF VLM batch."""
-    normalized_samples = [normalize_hf_vlm_example(example) for example in examples]
     loss_masks = [
         build_assistant_loss_mask(
-            sample.conversation,
+            example,
             input_ids,
             processor,
             skipped_tokens,
             boundary_config=boundary_config,
         )
-        for sample, input_ids in zip(normalized_samples, batch["input_ids"])
+        for example, input_ids in zip(examples, batch["input_ids"])
     ]
     loss_mask_t = torch.stack(loss_masks).to(device=batch["input_ids"].device, dtype=torch.float32)
     if unmask_last_token and loss_mask_t.numel() > 0:

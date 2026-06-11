@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -50,7 +50,14 @@ def qwen2_5_collate_fn(
 
     skipped_tokens = extract_skipped_token_ids(processor)
 
-    texts = [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
+    texts = [
+        processor.apply_chat_template(
+            example["conversation"],
+            tokenize=False,
+            **chat_template_kwargs_from_example(example),
+        )
+        for example in examples
+    ]
     # Build per-example media (list) and split by presence.  Qwen processors accept
     # nested per-example image/video lists; splitting avoids passing empty media
     # kwargs for text-only rows.
