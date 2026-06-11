@@ -346,6 +346,12 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         # head_dim = 512 (nope_dim + rope_dim = 448 + 64)
         provider.v_head_dim = hf_config.head_dim  # 512
         provider.qk_pos_emb_head_dim = hf_config.qk_rope_head_dim  # 64
+        # HF's partial_rotary_factor (0.125) is relative to head_dim (512); the rope split is
+        # already fully encoded by qk_pos_emb_head_dim (64). The generic partial_rotary_factor
+        # -> rotary_percent mapping would shrink the rope cache to 64*0.125 = 8 dims: the
+        # unfused path then silently rotates only 8 of 64 rope dims, and the fused MLA rope
+        # kernel reads cos/sin out of bounds (garbage values -> the SFT loss NaN).
+        provider.rotary_percent = 1.0
         # qk_head_dim and kv_lora_rank derived automatically in DSv4HybridConfig
         provider.q_lora_rank = hf_config.q_lora_rank  # 1024
         provider.o_groups = hf_config.o_groups  # 8
