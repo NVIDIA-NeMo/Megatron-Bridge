@@ -28,10 +28,10 @@ from megatron.bridge.training.losses import (
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
-from megatron.bridge.training.utils.packed_seq_utils import build_uniform_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
-    get_padded_sequence_length,
-    pad_batch_sequence_tensors,
+    pad_or_truncate_2d_to_len,
+    pad_or_truncate_attn_to_len,
+    pad_or_truncate_pos_to_len,
 )
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -169,22 +169,41 @@ def pack_or_pad_batch_sequences(
     Otherwise, return thd tokens and packed sequences.
     """
 
+    batch_size, cur_len = tokens.shape
+    device = tokens.device
+
     tp_size = this_pg_collection.tp.size()
     cp_size = this_pg_collection.cp.size()
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
 
     # build bshd sequences with tiny padding to be compatible with qwen3vl model
-    target_len = get_padded_sequence_length(
-        tokens.size(1),
-        divisible_by,
-        force_to_seq_length=force_to_pad_to_seq_len,
-        seq_length=seq_length,
+    target_len = math.ceil(cur_len / divisible_by) * divisible_by
+    if force_to_pad_to_seq_len:
+        target_len = seq_length
+    tokens = pad_or_truncate_2d_to_len(tokens, target_len=target_len, max_cap=target_len, pad_value=0)
+    labels = pad_or_truncate_2d_to_len(labels, target_len=target_len, max_cap=target_len, pad_value=-100)
+    loss_mask = pad_or_truncate_2d_to_len(loss_mask, target_len=target_len, max_cap=target_len, pad_value=0)
+    attention_mask = pad_or_truncate_attn_to_len(attention_mask, target_len=target_len, max_cap=target_len)
+    position_ids = pad_or_truncate_pos_to_len(position_ids, target_len=target_len, max_cap=target_len)
+
+    seqlens_in_batch = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
+    seqlens_in_batch_padded = torch.ones(batch_size, dtype=torch.int32, device=device) * target_len
+    cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens[1:] = torch.cumsum(seqlens_in_batch, dim=0)
+    cu_seqlens_padded = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens_padded[1:] = torch.cumsum(seqlens_in_batch_padded, dim=0)
+    max_seqlen_in_batch = seqlens_in_batch.max().item()
+
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        max_seqlen_q=max_seqlen_in_batch,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_kv=max_seqlen_in_batch,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
     )
-    tokens, labels, loss_mask, attention_mask, position_ids = pad_batch_sequence_tensors(
-        tokens, labels, loss_mask, attention_mask, position_ids, target_len
-    )
-    packed_seq_params = build_uniform_packed_seq_params(tokens.size(0), target_len, tokens.device)
 
     return tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params
 
