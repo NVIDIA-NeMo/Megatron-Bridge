@@ -18,30 +18,27 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def apply_determinism_overrides(cfg: ConfigContainer) -> None:
-    """Apply determinism config overrides to an existing ConfigContainer in-place.
+    """Flip a recipe into deterministic mode in-place.
 
-    Sets the model-level flags required for bit-exact reproducibility and
-    disables TP comm overlap (which uses non-deterministic NCCL collectives).
-    Attention backend selection is a separate concern and is not touched here.
+    Sets ``cfg.model.deterministic_mode = True``. The matching validator
+    :meth:`megatron.bridge.training.config.ConfigContainer._validate_and_apply_deterministic_mode`
+    delegates to ``megatron.training.determinism.apply_determinism_to_args``
+    at training time, which is the single source of truth for what
+    deterministic mode enforces (cross-entropy fusion off, NCCL_ALGO
+    membership, tp_comm_overlap disabled, env-var setdefault,
+    ``torch.use_deterministic_algorithms(True)``).
 
-    The matching validator that enforces these flags at training time is
-    :meth:`megatron.bridge.training.config.ConfigContainer._validate_and_apply_deterministic_mode`.
-
-    This function is idempotent and is safe to call on configs with
-    ``comm_overlap = None``.
+    Idempotent. Safe to call on configs with ``comm_overlap = None``.
 
     Note:
-        Bit-exact reproducibility additionally requires runtime env vars
-        (``NCCL_ALGO=Ring``, ``NVTE_ALLOW_NONDETERMINISTIC_ALGO=0``,
-        ``CUBLAS_WORKSPACE_CONFIG=:4096:8``). The performance launcher sets
-        these via ``PerfEnvPlugin(deterministic=True)``; callers outside that
-        launcher must set them themselves.
+        Bit-exact reproducibility also requires the launcher to export the
+        determinism env vars (``NCCL_ALGO=Ring``, ``NVTE_ALLOW_NONDETERMINISTIC_ALGO=0``,
+        ``CUBLAS_WORKSPACE_CONFIG=:4096:8``). The performance launcher does
+        this via ``PerfEnvPlugin(deterministic=True)``; callers outside that
+        launcher must set them themselves (or rely on the in-process
+        setdefault that the validator triggers).
 
     Args:
         cfg: Recipe config to modify.
     """
     cfg.model.deterministic_mode = True
-    cfg.model.cross_entropy_loss_fusion = False
-
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.tp_comm_overlap = False
