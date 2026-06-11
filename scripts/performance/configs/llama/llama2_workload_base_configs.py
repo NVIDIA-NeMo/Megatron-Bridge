@@ -50,7 +50,14 @@ LLAMA2_70B_LORA_CONFIG_GB300_NVFP4_V1 = replace(
 # Llama2-70B LoRA presets — MLPERF (MLPerf v6.0 reference parity, GB200/GB300 only; scale buckets V1=8/V2=72/V3=512 GPU).
 # All variants pin cuda_graph_impl=local/full_iteration; recipe-level parity knobs applied by set_llama2_mlperf_parity_overrides() in llama2_llm_finetune.py.
 
-# MLPERF_V1: 8 GPU. Megatron-FSDP shards frozen base weights across DP to fit per-rank memory at TP=1.
+# MLPERF_V1: 8 GPU. FSDP is intentionally OFF: Megatron-FSDP flattens the frozen, quantized
+# (uint8 fp8/nvfp4) base weights into its trainable optimizer buffer and calls
+# requires_grad_(True) on them, which raises "only Tensors of floating point dtype can require
+# gradients" (megatron_fsdp/param_and_grad_buffer.py::_init_optimizer_named_parameters). The
+# original motivation for FSDP here was to shard the base to fit per-rank memory at TP=1, but the
+# base is stored quantized (~70GB fp8 / ~35GB nvfp4) and fits per-rank on GB200/GB300 (192GB)
+# without sharding. TODO(re-enable FSDP) once the upstream Megatron-LM FSDP+quantized-LoRA path
+# skips frozen non-float params.
 LLAMA2_70B_LORA_CONFIG_GB200_FP8_CS_MLPERF_V1 = replace(
     BASE_LLAMA2_70B_LORA_CONFIG,
     num_gpus=8,
@@ -61,7 +68,7 @@ LLAMA2_70B_LORA_CONFIG_GB200_FP8_CS_MLPERF_V1 = replace(
     global_batch_size=8,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
-    use_megatron_fsdp=True,
+    use_megatron_fsdp=False,
 )
 LLAMA2_70B_LORA_CONFIG_GB300_FP8_CS_MLPERF_V1 = LLAMA2_70B_LORA_CONFIG_GB200_FP8_CS_MLPERF_V1
 
@@ -75,7 +82,7 @@ LLAMA2_70B_LORA_CONFIG_GB200_NVFP4_MLPERF_V1 = replace(
     global_batch_size=8,
     cuda_graph_impl="local",
     cuda_graph_scope="full_iteration",
-    use_megatron_fsdp=True,
+    use_megatron_fsdp=False,
 )
 LLAMA2_70B_LORA_CONFIG_GB300_NVFP4_MLPERF_V1 = LLAMA2_70B_LORA_CONFIG_GB200_NVFP4_MLPERF_V1
 

@@ -74,6 +74,14 @@ def set_llama2_mlperf_parity_overrides(cfg: ConfigContainer, precision: str) -> 
         if hasattr(cfg.mixed_precision, "fp4_param_gather"):
             cfg.mixed_precision.fp4_param_gather = False
 
+    # Context parallelism requires per-token loss during finetuning. Megatron asserts this in
+    # training/config.py ("When finetuning with CP>1, calculate_per_token_loss must be True"),
+    # and average_in_collective must be False whenever per-token loss is enabled. The nvfp4 LoRA
+    # variant runs CP=2; this is independent of the FSDP path (which is disabled here).
+    if cfg.model.context_parallel_size > 1:
+        cfg.model.calculate_per_token_loss = True
+        cfg.ddp.average_in_collective = False
+
 
 def _is_mlperf_variant(config_variant: str) -> bool:
     """True if config_variant selects an MLPerf v6.0 reference parity variant."""

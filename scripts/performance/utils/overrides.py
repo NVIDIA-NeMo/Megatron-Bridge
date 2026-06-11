@@ -96,6 +96,13 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
     recipe.model.init_model_with_meta_device = False
     recipe.model.gradient_accumulation_fusion = True
 
+    # Finetuning with context parallelism requires per-token loss (Megatron asserts this in
+    # training/config.py: "When finetuning with CP>1, calculate_per_token_loss must be True").
+    # The LoRA nvfp4 variant runs CP=2, so enable it here; average_in_collective is already
+    # forced False above, which is the required pairing for per-token loss.
+    if getattr(recipe.model, "context_parallel_size", 1) > 1:
+        recipe.model.calculate_per_token_loss = True
+
     if recipe.comm_overlap is not None and isinstance(recipe.comm_overlap, CommOverlapConfig):
         if recipe.comm_overlap.defer_embedding_wgrad_compute:
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
@@ -288,6 +295,52 @@ def _set_nccl_ub_overrides(recipe: ConfigContainer, nccl_ub: bool = False) -> Co
     return recipe
 
 
+def _apply_gov_report_recipe_overrides(recipe: ConfigContainer, compute_dtype: str, cp_size: int) -> ConfigContainer:
+    """Apply the rc5 gov_report (Llama2-70B LoRA MLPerf) recipe-knob overrides.
+
+    These are the parity-relevant deviations that make the gov_report LoRA path train
+    on the mbridge 26.06.rc5 stack. Kept as a standalone, side-effect-free-on-dataset
+    helper so it is unit-testable without constructing dataset objects or a GPU:
+
+      * CP>1 -> calculate_per_token_loss=True (Megatron asserts this when finetuning).
+      * fused_single_qkv_rope OFF (asserted-out for LoRA-on-linear_qkv in this stack).
+      * CUDA graphs fully OFF (clear impl AND scope AND per-layer modules; full_iteration
+        capture hits an unpinned CPU->CUDA copy in the packed-LoRA path). Dominant
+        throughput delta vs the v6.0 reference. Re-enable with LORA_GOVREPORT_TRY_CUDA_GRAPH=1.
+      * nvfp4 + CP>1 -> selective core_attn+mlp recompute. The parity overlay disables
+        fp8_dot_product_attention for nvfp4 (no TE fp8-DPA backend for CP>1 packed
+        gov_report on this stack), which grows attention activations to bf16 and OOMs the
+        CP2/MBS2 shape at TP=1; recompute buys the memory back. nvfp4-only deviation
+        (conservative number). core_attn-only via LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY=1;
+        disable via LORA_GOVREPORT_NO_RECOMPUTE=1.
+    """
+    if cp_size > 1:
+        recipe.model.calculate_per_token_loss = True
+
+    if hasattr(recipe.model, "fused_single_qkv_rope"):
+        recipe.model.fused_single_qkv_rope = False
+
+    if os.environ.get("LORA_GOVREPORT_TRY_CUDA_GRAPH", "0") != "1":
+        recipe.model.cuda_graph_impl = "none"
+        if hasattr(recipe.model, "cuda_graph_scope"):
+            recipe.model.cuda_graph_scope = None
+        if hasattr(recipe.model, "cuda_graph_modules"):
+            recipe.model.cuda_graph_modules = []
+
+    if (
+        compute_dtype == "nvfp4"
+        and cp_size > 1
+        and os.environ.get("LORA_GOVREPORT_NO_RECOMPUTE", "0") != "1"
+    ):
+        if os.environ.get("LORA_GOVREPORT_RECOMPUTE_ATTN_ONLY", "0") == "1":
+            recipe.model.recompute_modules = ["core_attn"]
+        else:
+            recipe.model.recompute_modules = ["core_attn", "mlp"]
+        recipe.model.recompute_granularity = "selective"
+
+    return recipe
+
+
 def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Set the user overrides."""
     _set_megatron_fsdp_overrides(recipe, use_megatron_fsdp=args.use_megatron_fsdp)
@@ -415,23 +468,51 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     elif args.data == "gov_report":
+        if not args.dataset_root:
+            raise ValueError("--dataset-root is required for gov_report dataset")
+        train_npy = os.path.join(args.dataset_root, "train.npy")
+        val_npy = os.path.join(args.dataset_root, "validation.npy")
+        meta_json = os.path.join(args.dataset_root, "gov_report_packed_metadata.json")
         from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-        lora_root = os.environ.get("LORA_DATA_ROOT", "/lustre/share/coreai_mlperf_training/data/lora")
-        gov_dir = os.environ.get("GOV_REPORT_DIR", f"{lora_root}/gov_report")
-        metadata_path = os.environ.get("GOV_REPORT_METADATA", f"{gov_dir}/gov_report_packed_metadata.json")
-        if recipe.dataset.packed_sequence_specs is None:
-            cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
-            pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
-            recipe.dataset.packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=args.seq_length or recipe.model.seq_length, pad_seq_to_mult=pad_seq_to_mult)
-        specs = recipe.dataset.packed_sequence_specs
-        specs.packed_train_data_path = f"{gov_dir}/train.npy"
-        specs.packed_val_data_path = f"{gov_dir}/validation.npy"
-        specs.packed_metadata_path = metadata_path
-        specs.pad_cu_seqlens = True
-        if recipe.dataset.dataset_kwargs is None:
-            recipe.dataset.dataset_kwargs = {}
-        recipe.dataset.dataset_kwargs["pad_to_max_length"] = True
-        logger.info("gov_report dataset: train=%s val=%s metadata=%s", specs.packed_train_data_path, specs.packed_val_data_path, specs.packed_metadata_path)
+        from megatron.bridge.training.config import FinetuningDatasetConfig
+
+        cp_size = getattr(recipe.model, "context_parallel_size", 1) or 1
+        pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
+        seq_len = args.seq_length or recipe.model.seq_length
+        orig_mbs = recipe.train.micro_batch_size
+        if orig_mbs > 1:
+            # gov_report ships as packed sequences, so a micro-batch of N is expressed
+            # as one packed sample of length N*seq_len with MBS=1 (GBS scaled down by N).
+            # This mirrors the v6.0 reference packing for MBS>1 shapes (e.g. nvfp4 MBS=2).
+            seq_len = seq_len * orig_mbs
+            recipe.train.micro_batch_size = 1
+            recipe.train.global_batch_size = recipe.train.global_batch_size // orig_mbs
+            recipe.model.seq_length = seq_len
+            logger.info(
+                "Packed-sequence MBS adjustment: MBS %d→1, GBS→%d, seq_len→%d",
+                orig_mbs,
+                recipe.train.global_batch_size,
+                seq_len,
+            )
+        specs = PackedSequenceSpecs(
+            packed_sequence_size=seq_len,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+        specs.packed_train_data_path = train_npy
+        specs.packed_val_data_path = val_npy
+        specs.packed_metadata_path = meta_json
+        if cp_size > 1:
+            specs.pad_cu_seqlens = True
+        recipe.dataset = FinetuningDatasetConfig(
+            dataset_root=args.dataset_root,
+            seq_length=seq_len,
+            packed_sequence_specs=specs,
+            dataset_kwargs={"pad_to_max_length": True},
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=True,
+            persistent_workers=recipe.dataset.persistent_workers,
+        )
+        _apply_gov_report_recipe_overrides(recipe, args.compute_dtype, cp_size)
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
     if args.hidden_size is not None:
