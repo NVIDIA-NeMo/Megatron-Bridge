@@ -19,13 +19,176 @@ conversation-style examples consumable by VLM processors.
 
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 from datasets import concatenate_datasets, load_dataset
 
-from megatron.bridge.data.vlm_datasets.token_utils import json2token
+from megatron.bridge.data.hf_datasets.token_utils import json2token
 from megatron.bridge.utils.common_utils import resolve_path
+
+
+def _load_hf_dataset(
+    path_or_dataset: str,
+    subset: str | None = None,
+    split: str = "train",
+    **kwargs,
+) -> Any:
+    """Load a Hugging Face dataset with optional subset."""
+    if subset is None:
+        return load_dataset(path_or_dataset, split=split, **kwargs)
+    return load_dataset(path_or_dataset, subset, split=split, **kwargs)
+
+
+def _make_messages_example(
+    prompt: str,
+    answer: str,
+    original_answers: list[str] | None = None,
+) -> Dict[str, Any]:
+    """Create a text-only chat example with optional evaluation answers."""
+    example: Dict[str, Any] = {
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": answer},
+        ],
+    }
+    if original_answers is not None:
+        example["original_answers"] = original_answers
+    return example
+
+
+def _extract_final_answer(answer: str) -> str:
+    """Extract the final numerical answer after the ``####`` delimiter."""
+    if "####" in answer:
+        return answer.split("####")[-1].strip()
+    return answer.strip()
+
+
+def _strip_intermediate_boxed(text: str) -> str:
+    """Replace all ``\\boxed{content}`` occurrences in text with ``content``."""
+    marker = r"\boxed{"
+    result = []
+    i = 0
+    while i < len(text):
+        idx = text.find(marker, i)
+        if idx == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:idx])
+        depth = 0
+        end = -1
+        for j in range(idx + len(marker) - 1, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            result.append(text[idx:])
+            break
+        result.append(text[idx + len(marker) : end])
+        i = end + 1
+    return "".join(result)
+
+
+def make_squad_dataset(
+    path_or_dataset: str = "rajpurkar/squad",
+    subset: str | None = None,
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess SQuAD into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Context: {example['context']} Question: {example['question']} Answer:"
+        answers = example["answers"]["text"]
+        return _make_messages_example(prompt=prompt, answer=answers[0], original_answers=answers)
+
+    return [format_example(example) for example in dataset]
+
+
+def make_gsm8k_dataset(
+    path_or_dataset: str = "openai/gsm8k",
+    subset: str | None = "main",
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess GSM8K into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Question: {example['question']} Answer:"
+        answer = example["answer"]
+        return _make_messages_example(prompt=prompt, answer=answer, original_answers=[_extract_final_answer(answer)])
+
+    return [format_example(example) for example in dataset]
+
+
+def make_openmathinstruct2_dataset(
+    path_or_dataset: str = "nvidia/OpenMathInstruct-2",
+    subset: str | None = None,
+    split: str = "train_1M",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess OpenMathInstruct-2 into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Problem: {example['problem']} Solution:"
+        return _make_messages_example(
+            prompt=prompt,
+            answer=example["generated_solution"],
+            original_answers=[str(example["expected_answer"])],
+        )
+
+    return [format_example(example) for example in dataset]
+
+
+def make_openmathinstruct2_thinking_dataset(
+    path_or_dataset: str = "nvidia/OpenMathInstruct-2",
+    subset: str | None = None,
+    split: str = "train_1M",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load OpenMathInstruct-2 with reasoning in ``thinking`` and final answer in content."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        solution = example["generated_solution"]
+        expected_answer = str(example["expected_answer"])
+
+        marker = r"\boxed{"
+        idx = solution.rfind(marker)
+        if idx != -1:
+            depth = 0
+            end = -1
+            for i in range(idx + len(marker) - 1, len(solution)):
+                if solution[i] == "{":
+                    depth += 1
+                elif solution[i] == "}":
+                    depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+            thinking = re.sub(r"\$?\s*$", "", solution[:idx]).rstrip() if end != -1 else solution.rstrip()
+        else:
+            thinking = solution.rstrip()
+
+        thinking = _strip_intermediate_boxed(thinking)
+
+        return {
+            "messages": [
+                {"role": "user", "content": example["problem"]},
+                {"role": "assistant", "thinking": thinking, "content": f"#### {expected_answer}"},
+            ],
+            "original_answers": [expected_answer],
+        }
+
+    return [format_example(example) for example in dataset]
 
 
 def make_rdr_dataset(

@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
 
-import megatron.bridge.data.vlm_datasets.hf_dataset_makers as makers
+import megatron.bridge.data.hf_datasets.makers as makers
 
 
 pytestmark = pytest.mark.unit
@@ -101,9 +102,79 @@ def test_make_text_chat_dataset_accepts_messages_and_conversation(monkeypatch):
     assert out[1]["conversation"][1]["content"] == "later"
 
 
+def test_make_squad_dataset_formats_messages(monkeypatch):
+    rows = [
+        {
+            "context": "The Amazon rainforest is a moist broadleaf forest.",
+            "question": "What type of forest is the Amazon rainforest?",
+            "answers": {"text": ["moist broadleaf forest", "broadleaf forest"]},
+        }
+    ]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_squad_dataset(split="train")
+
+    assert out == [
+        {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "Context: The Amazon rainforest is a moist broadleaf forest. "
+                        "Question: What type of forest is the Amazon rainforest? Answer:"
+                    ),
+                },
+                {"role": "assistant", "content": "moist broadleaf forest"},
+            ],
+            "original_answers": ["moist broadleaf forest", "broadleaf forest"],
+        }
+    ]
+
+
+def test_make_gsm8k_dataset_formats_messages_and_final_answer(monkeypatch):
+    rows = [
+        {
+            "question": "Janet has 3 apples. She buys 2 more. How many does she have?",
+            "answer": "Janet starts with 3 apples. 3 + 2 = <<3+2=5>>5.\n#### 5",
+        }
+    ]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_gsm8k_dataset(split="train")
+
+    assert out[0]["messages"] == [
+        {
+            "role": "user",
+            "content": "Question: Janet has 3 apples. She buys 2 more. How many does she have? Answer:",
+        },
+        {"role": "assistant", "content": "Janet starts with 3 apples. 3 + 2 = <<3+2=5>>5.\n#### 5"},
+    ]
+    assert out[0]["original_answers"] == ["5"]
+
+
+def test_make_openmathinstruct2_thinking_dataset_formats_messages(monkeypatch):
+    rows = [
+        {
+            "problem": "What is 2 + 3?",
+            "generated_solution": r"We add 2 and 3 to get \boxed{5}.",
+            "expected_answer": "5",
+        }
+    ]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_openmathinstruct2_thinking_dataset(split="train_1M")
+
+    assert out[0]["messages"] == [
+        {"role": "user", "content": "What is 2 + 3?"},
+        {"role": "assistant", "thinking": "We add 2 and 3 to get", "content": "#### 5"},
+    ]
+    assert out[0]["original_answers"] == ["5"]
+
+
 def test_make_cv17_dataset(monkeypatch):
     rows = [{"audio": {"array": [0.1, 0.2], "sampling_rate": 16000}, "transcription": "hello"}]
     _monkeypatch_load_dataset(monkeypatch, rows)
+    monkeypatch.setitem(sys.modules, "soundfile", SimpleNamespace(read=lambda *_args, **_kwargs: None))
     out = makers.make_cv17_dataset()
     assert out and isinstance(out[0]["audio"], tuple)
 

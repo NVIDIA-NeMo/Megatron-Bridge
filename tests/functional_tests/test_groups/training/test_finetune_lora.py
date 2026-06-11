@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -20,15 +21,14 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
+    FinetuningDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -115,7 +115,12 @@ class TestLoRAFinetune:
 
             # Create LoRA config and run finetuning
             lora_cfg = self._create_lora_config(
-                lora_iters, lora_checkpoint_dir, lora_tensorboard_dir, pretrain_checkpoint_dir, seq_length
+                lora_iters,
+                lora_checkpoint_dir,
+                lora_tensorboard_dir,
+                pretrain_checkpoint_dir,
+                seq_length,
+                dataset_root=self._write_sft_dataset(shared_base_dir),
             )
             finetune(lora_cfg, forward_step)
             verify_checkpoint_files(
@@ -175,6 +180,7 @@ class TestLoRAFinetune:
                 pretrain_checkpoint_dir,
                 seq_length,
                 scheduler_total_iters=total_lora_iters,
+                dataset_root=self._write_sft_dataset(shared_base_dir),
             )
 
             # Run initial LoRA finetuning (simulate job getting interrupted)
@@ -196,6 +202,7 @@ class TestLoRAFinetune:
                 seq_length,
                 load_checkpoint=lora_checkpoint_dir,
                 scheduler_total_iters=total_lora_iters,  # Keep total for scheduler calculation
+                dataset_root=self._write_sft_dataset(shared_base_dir),
             )
             # Override save interval for final phase and use checkpoint scheduler settings
             lora_resume_cfg.checkpoint.save_interval = total_lora_iters - initial_lora_iters
@@ -257,6 +264,7 @@ class TestLoRAFinetune:
                 pretrain_checkpoint_dir,
                 packed_sequence_size,
                 packed_sequences=True,
+                dataset_root=self._write_sft_dataset(shared_base_dir),
             )
             # Ensure micro_batch_size is 1 for packed sequences (requirement)
             lora_cfg.train.micro_batch_size = 1
@@ -346,8 +354,22 @@ class TestLoRAFinetune:
             num_workers=1,
         )
 
-    def _create_squad_dataset_config(self, seq_length, seed=5678, packed_sequences=False, max_train_samples=None):
-        """Create a SQuAD dataset configuration."""
+    def _write_sft_dataset(self, base_dir):
+        """Create a tiny local SFT dataset shared by all distributed ranks."""
+        dataset_root = os.path.join(base_dir, "sft_data")
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(dataset_root, exist_ok=True)
+            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(32)]
+            with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+        torch.distributed.barrier()
+        return dataset_root
+
+    def _create_sft_dataset_config(
+        self, dataset_root, seq_length, seed=5678, packed_sequences=False, max_train_samples=None
+    ):
+        """Create a local SFT dataset configuration."""
         if packed_sequences:
             dataset_kwargs = {"pad_to_max_length": True}
             packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length)
@@ -355,20 +377,17 @@ class TestLoRAFinetune:
             dataset_kwargs = {}
             packed_sequence_specs = None
 
-        config = HFDatasetConfig(
-            dataset_name="rajpurkar/squad",
-            process_example_fn=process_squad_example,
+        config = FinetuningDatasetConfig(
+            dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,
             dataloader_type="cyclic" if packed_sequences else "single",
             num_workers=1,
             do_validation=False,
             do_test=False,
-            val_proportion=None,
             dataset_kwargs=dataset_kwargs,
             packed_sequence_specs=packed_sequence_specs,
             max_train_samples=max_train_samples,
-            rewrite=False,
         )
 
         return config
@@ -460,10 +479,13 @@ class TestLoRAFinetune:
         load_checkpoint=None,
         scheduler_total_iters=None,
         max_train_samples=None,
+        dataset_root=None,
     ):
         """Create complete LoRA finetuning configuration with model and PEFT."""
         model = self._create_model_provider(seq_length, tensor_parallel_size, pipeline_parallel_size)
         lora_peft = self._create_lora_peft()
+        if dataset_root is None:
+            raise ValueError("dataset_root is required for LoRA finetune functional tests.")
 
         # Use scheduler_total_iters if provided, otherwise use train_iters
         scheduler_iters = scheduler_total_iters if scheduler_total_iters is not None else train_iters
@@ -475,8 +497,11 @@ class TestLoRAFinetune:
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(scheduler_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_squad_dataset_config(
-                seq_length, packed_sequences=packed_sequences, max_train_samples=max_train_samples
+            dataset=self._create_sft_dataset_config(
+                dataset_root,
+                seq_length,
+                packed_sequences=packed_sequences,
+                max_train_samples=max_train_samples,
             ),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=self._create_finetune_tokenizer_config(),

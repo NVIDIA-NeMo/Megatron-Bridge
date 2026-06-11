@@ -12,19 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Core dataset types for conversation-style VLM examples.
-"""
+"""Core dataset types for HF conversation-style examples."""
 
 import random
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
 
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 
-
-class VLMConversationDataset(torch.utils.data.Dataset):
+class ConversationDataset(torch.utils.data.Dataset):
     """Repeating wrapper over a list of HF-style conversation examples.
 
     - Each base example is expected to contain a "conversation" key following
@@ -60,9 +56,11 @@ class VLMConversationDataset(torch.utils.data.Dataset):
         if collate_impl is not None:
             selected_impl = collate_impl
         else:
+            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
+
             if collate_key not in COLLATE_FNS:
                 raise ValueError(
-                    f"No VLM collate function registered for processor type '{collate_key}'. "
+                    f"No conversation collate function registered for processor type '{collate_key}'. "
                     "Add it to COLLATE_FNS or pass collate_impl explicitly."
                 )
             selected_impl = COLLATE_FNS[collate_key]

@@ -21,8 +21,8 @@ import torch
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.training.config import ConfigContainer
 
 

@@ -185,7 +185,7 @@ def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
@@ -197,7 +197,7 @@ def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatc
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 

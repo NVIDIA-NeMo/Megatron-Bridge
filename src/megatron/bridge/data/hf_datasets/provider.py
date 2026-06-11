@@ -23,16 +23,19 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import torch
 from transformers import AutoProcessor, AutoTokenizer
 
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
-from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
-from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
+from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+from megatron.bridge.data.hf_datasets.makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
     make_default_audio_dataset,
+    make_gsm8k_dataset,
     make_llava_video_178k_dataset,
     make_medpix_dataset,
+    make_openmathinstruct2_dataset,
+    make_openmathinstruct2_thinking_dataset,
     make_raven_dataset,
     make_rdr_dataset,
+    make_squad_dataset,
     make_text_chat_dataset,
     make_valor32k_avqa_dataset,
 )
@@ -42,19 +45,21 @@ from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 @dataclass(kw_only=True)
 class HFDatasetConversationProvider(DatasetProvider):
-    """DatasetProvider that builds VLM conversation datasets from HF datasets.
+    """DatasetProvider that builds conversation datasets from Hugging Face datasets.
 
     This provider leverages simple maker functions that return lists of examples
-    with a "conversation" schema understood by model processors. It binds a
-    HuggingFace `AutoProcessor` for the specified model and selects an
-    appropriate collate function for batching.
+    with a ``messages`` or ``conversation`` schema understood by model processors.
+    It binds a Hugging Face processor/tokenizer for the specified model and
+    selects an appropriate collate function for batching.
     """
 
     # Required to match model.seq_length (enforced by ConfigContainer.validate)
     seq_length: int
 
-    # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct")
-    hf_processor_path: str
+    # HF processor/model identifier (e.g., "Qwen/Qwen2.5-VL-3B-Instruct").
+    # Text-only presets may leave this unset and use the training tokenizer from
+    # DatasetBuildContext instead.
+    hf_processor_path: str | None = None
 
     # Select which maker to use. Must match a function defined in makers module
     # like `make_rdr_dataset`, `make_cord_v2_dataset`, `make_medpix_dataset`, `make_cv17_dataset`.
@@ -78,14 +83,23 @@ class HFDatasetConversationProvider(DatasetProvider):
     skip_getting_attention_mask_from_dataset: bool = True
 
     # DataloaderConfig fields are inherited (num_workers, dataloader_type, etc.)
-    dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
+    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "single"
 
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     pack_sequences_in_batch: bool = False
 
+    # Control deterministic shuffling in the repeating dataset wrapper.
+    shuffle: bool = True
+    seed: int = 42
+
     def _collate_supports_packing(self, processor: Any) -> bool:
         collate_key = type(processor).__name__ if processor is not None else "default"
-        selected_impl = self.collate_impl or COLLATE_FNS.get(collate_key)
+        if self.collate_impl is not None:
+            selected_impl = self.collate_impl
+        else:
+            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
+
+            selected_impl = COLLATE_FNS.get(collate_key)
         if selected_impl is None:
             return False
         return "pack_sequences" in inspect.signature(selected_impl).parameters
@@ -96,6 +110,10 @@ class HFDatasetConversationProvider(DatasetProvider):
             "make_cord_v2_dataset": make_cord_v2_dataset,
             "make_medpix_dataset": make_medpix_dataset,
             "make_text_chat_dataset": make_text_chat_dataset,
+            "make_squad_dataset": make_squad_dataset,
+            "make_gsm8k_dataset": make_gsm8k_dataset,
+            "make_openmathinstruct2_dataset": make_openmathinstruct2_dataset,
+            "make_openmathinstruct2_thinking_dataset": make_openmathinstruct2_thinking_dataset,
             "make_cv17_dataset": make_cv17_dataset,
             "make_raven_dataset": make_raven_dataset,
             "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
@@ -110,6 +128,10 @@ class HFDatasetConversationProvider(DatasetProvider):
             "medpix": "make_medpix_dataset",
             "text_chat": "make_text_chat_dataset",
             "chat": "make_text_chat_dataset",
+            "squad": "make_squad_dataset",
+            "gsm8k": "make_gsm8k_dataset",
+            "openmathinstruct2": "make_openmathinstruct2_dataset",
+            "openmathinstruct2_thinking": "make_openmathinstruct2_thinking_dataset",
             "cv17": "make_cv17_dataset",
             "raven": "make_raven_dataset",
             "llava_video_178k": "make_llava_video_178k_dataset",
@@ -126,7 +148,7 @@ class HFDatasetConversationProvider(DatasetProvider):
         target_length: int,
         processor: Any,
         extra_kwargs: Optional[Dict[str, Any]] = None,
-    ) -> Optional[VLMConversationDataset]:
+    ) -> Optional[ConversationDataset]:
         if target_length <= 0:
             return None
         maker = self._get_maker()
@@ -137,15 +159,22 @@ class HFDatasetConversationProvider(DatasetProvider):
         base_examples = maker(**kwargs)  # type: ignore[misc]
         if not isinstance(base_examples, list) or len(base_examples) == 0:
             raise ValueError(f"Maker '{self.maker_name}' returned no examples for split='{split}'")
-        return VLMConversationDataset(
+        return ConversationDataset(
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
+            shuffle=self.shuffle,
+            seed=self.seed,
             pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
         )
 
-    def _load_processor_or_tokenizer(self) -> Any:
+    def _load_processor_or_tokenizer(self, tokenizer: Any | None = None) -> Any:
+        if self.hf_processor_path is None:
+            if tokenizer is None:
+                raise ValueError("hf_processor_path must be set when no tokenizer is available in build context.")
+            return getattr(tokenizer, "_tokenizer", tokenizer)
+
         trust_remote_code = is_safe_repo(
             trust_remote_code=self.trust_remote_code,
             hf_path=self.hf_processor_path,
@@ -163,7 +192,7 @@ class HFDatasetConversationProvider(DatasetProvider):
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
         # Bind processor for the requested model
-        processor = self._load_processor_or_tokenizer()
+        processor = self._load_processor_or_tokenizer(context.tokenizer)
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
         valid_ds = self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)

@@ -20,8 +20,8 @@ All recipes use ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``)
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer

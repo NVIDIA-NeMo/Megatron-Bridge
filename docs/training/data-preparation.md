@@ -8,7 +8,7 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 |----------|-------------|--------------------|----------------------|
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
 | LLM SFT or PEFT from local files | JSONL split files | `FinetuningDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Hugging Face dataset processed to JSONL | `HFDatasetConfig` | `dataset_name`, `process_example_fn`, optional `dataset_root` |
+| LLM SFT or PEFT from Hugging Face datasets | Direct Hugging Face chat/conversation rows | `HFDatasetConversationProvider` | `maker_name`, `maker_kwargs`, optional `hf_processor_path` |
 | VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, but `FinetuningDatasetConfig` uses `seq_length`.
@@ -93,23 +93,21 @@ For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same.
 
 ## Hugging Face Datasets for SFT and PEFT
 
-`HFDatasetConfig` downloads or reads a Hugging Face dataset, applies a processing function to each example, writes Bridge-compatible JSONL split files, and then builds the same fine-tuning dataset used by local JSONL.
+`HFDatasetConversationProvider` downloads or reads a Hugging Face dataset and converts rows directly into the shared chat/conversation schema. Text presets use the training tokenizer from the build context when `hf_processor_path=None`; set `hf_processor_path` explicitly when the dataset provider should load a tokenizer or processor itself.
 
 ```python
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.hf_datasets import HFDatasetConversationProvider, text_chat_collate_fn
 
-dataset = HFDatasetConfig(
-    dataset_name="rajpurkar/squad",
-    process_example_fn=process_squad_example,
-    dataset_root="/data/processed/squad",
+dataset = HFDatasetConversationProvider(
     seq_length=512,
-    val_proportion=0.1,
-    do_test=False,
+    hf_processor_path=None,
+    maker_name="squad",
+    maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train[:90%]"},
+    val_maker_kwargs={"split": "train[90%:]"},
+    skip_test=True,
+    collate_impl=text_chat_collate_fn,
 )
 ```
-
-If `dataset_root` is omitted, the processed JSONL is cached under the NeMo datasets cache for the dataset name. Set `rewrite=False` when you want later runs to reuse already processed files.
 
 The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
 

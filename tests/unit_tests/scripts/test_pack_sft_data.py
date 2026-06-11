@@ -67,15 +67,6 @@ class _FinetuningDatasetBuilder:
         raise AssertionError("explicit pack-path tests should not call prepare_packed_data")
 
 
-class _HFDatasetConfig:
-    pass
-
-
-class _HFDatasetBuilder(_FinetuningDatasetBuilder):
-    def prepare_data(self) -> None:
-        raise AssertionError("explicit pack-path tests should not call prepare_data")
-
-
 def _load_module():
     spec = importlib.util.spec_from_file_location("pack_sft_data_under_test", _SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
@@ -102,10 +93,6 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     finetuning_dataset = types.ModuleType("megatron.bridge.data.builders.finetuning_dataset")
     finetuning_dataset.FinetuningDatasetBuilder = _FinetuningDatasetBuilder
 
-    hf_dataset = types.ModuleType("megatron.bridge.data.builders.hf_dataset")
-    hf_dataset.HFDatasetBuilder = _HFDatasetBuilder
-    hf_dataset.HFDatasetConfig = _HFDatasetConfig
-
     packed_sequence = types.ModuleType("megatron.bridge.data.datasets.packed_sequence")
     prepare_packed_sequence_data = Mock()
     packed_sequence.prepare_packed_sequence_data = prepare_packed_sequence_data
@@ -125,7 +112,6 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers", tokenizers)
     monkeypatch.setitem(sys.modules, "megatron.bridge.recipes", recipes)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders.finetuning_dataset", finetuning_dataset)
-    monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders.hf_dataset", hf_dataset)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.datasets.packed_sequence", packed_sequence)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.config", training_config)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers.tokenizer", tokenizer_module)
@@ -135,7 +121,6 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setattr(data, "builders", builders, raising=False)
     monkeypatch.setattr(data, "datasets", datasets, raising=False)
     monkeypatch.setattr(builders, "finetuning_dataset", finetuning_dataset, raising=False)
-    monkeypatch.setattr(builders, "hf_dataset", hf_dataset, raising=False)
     monkeypatch.setattr(datasets, "packed_sequence", packed_sequence, raising=False)
     monkeypatch.setattr(bridge, "training", training, raising=False)
     monkeypatch.setattr(training, "config", training_config, raising=False)

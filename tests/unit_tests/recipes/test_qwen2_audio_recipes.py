@@ -147,7 +147,7 @@ class TestQwen2AudioFinetuneConfig:
 
     def test_finetune_config_uses_hf_conversation_provider(self):
         """Dataset is HFDatasetConversationProvider with the audio maker."""
-        from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+        from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 

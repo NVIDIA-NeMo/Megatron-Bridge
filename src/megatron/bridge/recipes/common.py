@@ -16,7 +16,7 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -140,7 +140,7 @@ def _sft_common() -> ConfigContainer:
     before use.
 
     Key differences from pre-training:
-    - Uses HFDatasetConfig with SQuAD as default dataset
+    - Uses HFDatasetConversationProvider with SQuAD as default dataset
     - Lower learning rate (5e-6) suitable for full fine-tuning
     - Fewer training iterations (1000)
     - Smaller batch sizes

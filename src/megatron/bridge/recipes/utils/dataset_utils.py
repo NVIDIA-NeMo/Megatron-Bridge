@@ -18,8 +18,8 @@ import logging
 from typing import Callable, List, Optional, Tuple
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,

@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
 
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -645,13 +645,6 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     cfg = qwen3_600m_sft_config()
     hf_path = "Qwen/Qwen3-0.6B"
 
-    def process_hf_chat_messages_example(
-        example: dict[str, Any], tokenizer: Optional[Any] = None
-    ) -> dict[str, list[dict[str, str]]]:
-        """Return HF chat-format messages unchanged for chat-template SFT."""
-        del tokenizer
-        return {"messages": example["messages"]}
-
     # Model and tokenizer use the same HF checkpoint so the chat template matches the dataset.
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
     cfg.tokenizer.tokenizer_model = hf_path
@@ -661,32 +654,28 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
 
     # 128K sequence length with chat-format HF dataset input.
     cfg.model.seq_length = 128 * 1024
-    cfg.dataset = HFDatasetConfig(
-        dataset_name="nvidia/Nemotron-Cascade-2-SFT-Data",
-        dataset_subset="math",
-        process_example_fn=process_hf_chat_messages_example,
-        split="train",
-        hf_kwargs={
+    cfg.dataset = HFDatasetConversationProvider(
+        seq_length=cfg.model.seq_length,
+        hf_processor_path=hf_path,
+        maker_name="text_chat",
+        maker_kwargs={
+            "path_or_dataset": "nvidia/Nemotron-Cascade-2-SFT-Data",
+            "subset": "math",
+            "split": "train",
             "data_files": {"train": "math/math_notool.jsonl"},
         },
-        seq_length=cfg.model.seq_length,
+        val_maker_kwargs={
+            "split": "train[:1%]",
+        },
+        skip_test=True,
+        collate_impl=text_chat_collate_fn,
         seed=5678,
-        memmap_workers=8,
-        dataloader_type="batch",
-        do_validation=True,
-        do_test=False,
-        val_proportion=0.001,
+        shuffle=False,
+        dataloader_type="single",
         num_workers=2,
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        packed_sequence_specs=None,
-        dataset_kwargs={
-            "chat": True,
-            "use_hf_tokenizer_chat_template": True,
-            "pad_to_max_length": True,
-        },
-        rewrite=False,
     )
 
     # Apply YaRN RoPE scaling from the model's native 40K context window to 128K.

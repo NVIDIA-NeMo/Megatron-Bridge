@@ -18,7 +18,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.training.config import DatasetBuildContext
 
 

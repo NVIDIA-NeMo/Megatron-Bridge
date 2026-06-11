@@ -516,7 +516,7 @@ def test_qwen35_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
@@ -527,7 +527,7 @@ def test_qwen35_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 

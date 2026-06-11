@@ -311,7 +311,7 @@ def test_ministral3_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 
@@ -323,7 +323,7 @@ def test_ministral3_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch
 
     cfg = _ministral3_module.ministral3_3b_peft_config()
 
-    from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 
     assert isinstance(cfg.dataset, HFDatasetConversationProvider)
 

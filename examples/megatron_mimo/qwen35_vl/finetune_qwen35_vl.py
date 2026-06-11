@@ -43,9 +43,9 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,

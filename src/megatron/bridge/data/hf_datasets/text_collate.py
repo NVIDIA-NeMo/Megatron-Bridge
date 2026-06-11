@@ -23,7 +23,7 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _convert_to_openai_messages
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,

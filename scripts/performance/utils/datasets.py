@@ -119,30 +119,28 @@ def create_c4_dataset_config(
 def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):
-    """Create SQuAD dataset configuration for Megatron-Bridge using HF dataset."""
-    from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-    from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-    from megatron.bridge.data.hf_processors import process_squad_example
+    """Create SQuAD dataset configuration for Megatron-Bridge using direct HF loading."""
+    from megatron.bridge.data.hf_datasets.provider import HFDatasetConversationProvider
+    from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
-    if packed:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+    del dataset_root, packed, pad_seq_to_mult
 
-    return HFDatasetConfig(
-        dataset_name="rajpurkar/squad",  # Hugging Face dataset name (canonical namespaced id)
-        process_example_fn=process_squad_example,  # Processing function
-        dataset_root=dataset_root,  # Local cache/processed files location
+    return HFDatasetConversationProvider(
         seq_length=seq_length,
+        hf_processor_path=None,
+        maker_name="squad",
+        maker_kwargs={
+            "path_or_dataset": "rajpurkar/squad",
+            "split": "train[:90%]",
+        },
+        val_maker_kwargs={"split": "train[90%:]"},
+        skip_test=True,
+        collate_impl=text_chat_collate_fn,
         seed=1234,
-        memmap_workers=1,
-        # Dataloader config parameters
         dataloader_type="single",
         num_workers=num_workers,
         data_sharding=True,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,  # Rewrite existing processed files
-        delete_raw=False,  # Keep raw HF dataset cache
+        shuffle=False,
     )
