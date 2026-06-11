@@ -90,11 +90,11 @@ def split_batch_into_microbatches(
 
 
 def prepare_finetuning_batch(
-    data_iterator: Iterator,
+    data_iterator: Iterator | None,
     num_microbatches: int,
     default_seq_length: int,
     seq_key: str = "tokens",
-) -> tuple[Iterator, int]:
+) -> tuple[Iterator | None, int]:
     """Prepare a finetuning batch by getting global batch and splitting into microbatches.
 
     This function handles the finetuning-specific data flow:
@@ -125,6 +125,9 @@ def prepare_finetuning_batch(
         >>> batch1 = next(microbatch_iter)
         >>> batch1['tokens'].shape  # torch.Size([4, 240])
     """
+    if data_iterator is None:
+        return data_iterator, default_seq_length
+
     # Get full global batch from dataloader
     global_batch = next(data_iterator)
 
