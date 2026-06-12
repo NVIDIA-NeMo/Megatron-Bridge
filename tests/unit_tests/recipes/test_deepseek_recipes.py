@@ -315,6 +315,7 @@ def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
 def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    monkeypatch.setattr(mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: True)
     return getattr(mod, name)()
 
 
