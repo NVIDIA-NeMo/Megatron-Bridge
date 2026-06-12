@@ -19,11 +19,13 @@ and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion import quantization_utils
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     DeepSeekV4Bridge,
@@ -56,6 +58,38 @@ def _by_megatron(registry):
 
 def _dummy_task():
     return SimpleNamespace(param_name="", global_param_name="", mapping=None)
+
+
+def _deepseek_v4_hf_config():
+    return SimpleNamespace(
+        head_dim=512,
+        qk_rope_head_dim=64,
+        q_lora_rank=1024,
+        o_groups=8,
+        o_lora_rank=1024,
+        rope_theta=10000,
+        compress_rope_theta=160000,
+        rope_scaling={"factor": 16, "original_max_position_embeddings": 65536},
+        num_hidden_layers=4,
+        num_nextn_predict_layers=1,
+        num_hash_layers=3,
+        compress_ratios=[0, 4, 128, 4, 0],
+        sliding_window=128,
+        index_n_heads=64,
+        index_head_dim=128,
+        index_topk=512,
+        hc_mult=4,
+        hc_sinkhorn_iters=20,
+        scoring_func="sqrtsoftplus",
+        num_experts_per_tok=6,
+        norm_topk_prob=True,
+        routed_scaling_factor=1.5,
+        vocab_size=129280,
+        swiglu_limit=10.0,
+        moe_intermediate_size=1024,
+        n_shared_experts=1,
+        tie_word_embeddings=False,
+    )
 
 
 class TestNativeDeepSeekV4ConfigTranslation:
@@ -349,42 +383,8 @@ class TestDeepSeekV4RotaryPercent:
     rotates 8/64 dims and the fused MLA rope kernel reads cos/sin out of bounds (SFT NaN)."""
 
     def test_provider_bridge_forces_full_rotary_percent(self):
-        from unittest.mock import MagicMock, patch
-
-        from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-        from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
-
-        hf_config = SimpleNamespace(
-            head_dim=512,
-            qk_rope_head_dim=64,
-            q_lora_rank=1024,
-            o_groups=8,
-            o_lora_rank=1024,
-            rope_theta=10000,
-            compress_rope_theta=160000,
-            rope_scaling={"factor": 16, "original_max_position_embeddings": 65536},
-            num_hidden_layers=4,
-            num_nextn_predict_layers=1,
-            num_hash_layers=3,
-            compress_ratios=[0, 4, 128, 4, 0],
-            sliding_window=128,
-            index_n_heads=64,
-            index_head_dim=128,
-            index_topk=512,
-            hc_mult=4,
-            hc_sinkhorn_iters=20,
-            scoring_func="sqrtsoftplus",
-            num_experts_per_tok=6,
-            norm_topk_prob=True,
-            routed_scaling_factor=1.5,
-            vocab_size=129280,
-            swiglu_limit=10.0,
-            moe_intermediate_size=1024,
-            n_shared_experts=1,
-            tie_word_embeddings=False,
-        )
         hf_pretrained = MagicMock()
-        hf_pretrained.config = hf_config
+        hf_pretrained.config = _deepseek_v4_hf_config()
         provider = MagicMock()
         # what the generic partial_rotary_factor -> rotary_percent mapping produces
         provider.rotary_percent = 0.125
@@ -394,3 +394,45 @@ class TestDeepSeekV4RotaryPercent:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.rotary_percent == 1.0
+
+
+class TestDeepSeekV4HardwareDefaults:
+    """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
+
+    @pytest.mark.parametrize(
+        ("capability", "expected"),
+        [
+            ((9, 0), False),
+            ((10, 0), True),
+        ],
+    )
+    def test_provider_bridge_gates_blackwell_only_fusions(self, capability, expected):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=capability),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.apply_dsa_kernel_fusion is expected
+        assert out.use_fused_mhc is expected
+
+    def test_provider_bridge_preserves_fused_defaults_without_cuda(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=False),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.apply_dsa_kernel_fusion is True
+        assert out.use_fused_mhc is True
