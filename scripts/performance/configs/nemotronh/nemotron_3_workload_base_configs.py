@@ -159,7 +159,36 @@ NEMOTRON_3_SUPER_PRETRAIN_CONFIG_B200_NVFP4_V1 = replace(
 )
 
 
+# =============================================================================
+# Nemotron 3 Ultra Pretrain - V1
+#
+# 550B total / A55B active. GB200 minimum is 96 GPUs (24 nodes x 4), matching
+# the README Hardware Starting Points table: TP=2 PP=3 EP=32 ETP=1.
+# =============================================================================
+
+BASE_NEMOTRON_3_ULTRA_CONFIG = WorkloadBaseConfig(
+    num_gpus=96,
+    global_batch_size=128,
+    micro_batch_size=1,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=3,
+    expert_tensor_parallel_size=1,
+    expert_model_parallel_size=32,
+    moe_flex_dispatcher_backend="hybridep",
+    cuda_graph_impl="none",
+    cuda_graph_scope=[],
+    recompute_modules=["moe", "layernorm", "core_attn", "moe_act", "mlp", "shared_experts"],
+)
+
+NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_BF16_V1 = BASE_NEMOTRON_3_ULTRA_CONFIG
+NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = BASE_NEMOTRON_3_ULTRA_CONFIG
+NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_NVFP4_V1 = BASE_NEMOTRON_3_ULTRA_CONFIG
+
+
 __all__ = [
+    "NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_BF16_V1",
+    "NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
+    "NEMOTRON_3_ULTRA_PRETRAIN_CONFIG_GB200_NVFP4_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_BF16_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
     "NEMOTRON_3_NANO_PRETRAIN_CONFIG_GB300_NVFP4_V1",
