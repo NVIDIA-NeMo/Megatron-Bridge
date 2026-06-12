@@ -394,10 +394,10 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
 def test_deepseek_v4_flash_sft_recipe_uses_fused_mhc(monkeypatch: pytest.MonkeyPatch):
     cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
 
-    # Fused mHC is enabled (verified clean on Blackwell); the earlier "fused mHC NaN" was a
-    # confound with fused rope. apply_rope_fusion stays False (the real SFT blocker).
+    # Fused mHC and fused rope are both enabled (full-model validated on GB300; the
+    # historical rope NaN was the rotary_percent mapping bug fixed in #4271).
     assert cfg.model.use_fused_mhc is True
-    assert cfg.model.apply_rope_fusion is False
+    assert cfg.model.apply_rope_fusion is True
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 8
