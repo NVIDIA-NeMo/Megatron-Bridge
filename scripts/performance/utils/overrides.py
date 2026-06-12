@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from utils.datasets import (
     create_c4_dataset_config,
     create_mock_dataset_config,
@@ -63,8 +64,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
     if hasattr(recipe.model, "apply_rope_fusion"):
         recipe.model.apply_rope_fusion = True
     if hasattr(recipe.model, "cross_entropy_fusion_impl"):
@@ -97,10 +96,6 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if recipe.optimizer.use_precision_aware_optimizer:
-        recipe.optimizer.use_precision_aware_optimizer = False
-        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
-
     recipe.checkpoint.load = None
     return recipe
 
@@ -130,6 +125,9 @@ def _set_cuda_graph_overrides(
     elif recipe.model.cuda_graph_impl == "none":
         recipe.model.cuda_graph_scope = []
         recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+
+    if is_full_iteration_cuda_graph(recipe.model):
+        recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
 
@@ -233,6 +231,14 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
+    if settings.cutedsl_fused_grouped_mlp:
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        if settings.moe_a2a_overlap:
+            cfg.model.high_priority_a2a_comm_stream = True
+            cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    if settings.fp8_dot_product_attention is not None:
+        cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
@@ -244,6 +250,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
         cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.fine_grained_activation_offloading is not None:
+        cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
+    if settings.offload_modules is not None:
+        cfg.model.offload_modules = settings.offload_modules
+
+    if settings.outer_dp_sharding_strategy is not None:
+        cfg.ddp.outer_dp_sharding_strategy = settings.outer_dp_sharding_strategy
+    if settings.num_distributed_optimizer_instances is not None:
+        cfg.ddp.num_distributed_optimizer_instances = settings.num_distributed_optimizer_instances
 
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)

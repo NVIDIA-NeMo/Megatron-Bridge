@@ -96,7 +96,7 @@ docker build \
   --build-arg NEMO_FW_FINAL_BASE_IMAGE=megatron-bridge:latest \
   --build-arg NEMO_COMMIT=<commit-sha> \
   --build-arg NEMO_EXPORT_DEPLOY_COMMIT=<commit-sha> \
-  --build-arg NEMO_EVAL_COMMIT=<commit-sha> \
+  --build-arg NEMO_EVALUATOR_COMMIT=<commit-sha> \
   --build-arg NEMO_RUN_COMMIT=<commit-sha> \
   -t fw-final:latest \
   .
@@ -149,7 +149,7 @@ docker build \
 | `NEMO_FW_FINAL_BASE_IMAGE` | Base image; must be a megatron-bridge image |
 | `NEMO_COMMIT` | NeMo git commit SHA |
 | `NEMO_EXPORT_DEPLOY_COMMIT` | NeMo Export-Deploy git commit SHA |
-| `NEMO_EVAL_COMMIT` | NeMo Evaluator git commit SHA |
+| `NEMO_EVALUATOR_COMMIT` | NeMo Evaluator git commit SHA |
 | `NEMO_RUN_COMMIT` | NeMo Run git commit SHA |
 
 ---

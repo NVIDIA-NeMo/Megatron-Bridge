@@ -37,6 +37,7 @@ from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
+    SharedOuterGroupedExpertAdapter,
     align_expert_dim_for_tp,
     get_adapter_attributes_from_linear,
     get_effective_lora_dim,
@@ -92,6 +93,13 @@ class LoRA(PEFT, ModuleMatcher):
             so it is comparable to a dense model. Defaults to False.
         share_expert_adapters (bool): When True, grouped MoE expert linears share one adapter across all local
             experts on the EP rank. Set to False to create one adapter per local expert instead. Defaults to True.
+        experts_shared_outer_loras (bool): When True, grouped-expert LoRA
+            (``TE*ParallelGroupedLinear`` base modules) uses
+            :class:`SharedOuterGroupedExpertAdapter` — ``gate_up`` lora_A and
+            ``down`` lora_B are shared across experts (expert_dim=1), matching
+            SGLang's ``experts_shared_outer_loras=True`` serving contract (PR
+            #21466). Default False preserves the adapter layout selected by
+            ``share_expert_adapters``.
     """
 
     target_modules: List[str] = field(
@@ -107,6 +115,7 @@ class LoRA(PEFT, ModuleMatcher):
     lora_dtype: torch.dtype = None
     normalize_moe_lora: bool = False
     share_expert_adapters: bool = True
+    experts_shared_outer_loras: bool = False
 
     def transform(self, module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None) -> nn.Module:
         """
@@ -165,10 +174,15 @@ class LoRA(PEFT, ModuleMatcher):
                 is_expert=is_expert,
                 input_is_parallel=attrs.input_is_parallel,
             )
-            use_per_expert_adapter = is_grouped_expert_linear(full_name) and not self.share_expert_adapters
+            is_grouped_expert_name = is_grouped_expert_linear(full_name)
+            use_shared_outer_adapter = self.experts_shared_outer_loras and is_grouped_expert_name
+            use_per_expert_adapter = (
+                is_grouped_expert_name and not self.share_expert_adapters and not use_shared_outer_adapter
+            )
+            use_grouped_expert_adapter = use_shared_outer_adapter or use_per_expert_adapter
 
             enable_op_fuser = (
-                not use_per_expert_adapter
+                not use_grouped_expert_adapter
                 and not is_expert
                 and getattr(module.config, "use_transformer_engine_op_fuser", False)
                 # TP not yet supported
@@ -176,7 +190,12 @@ class LoRA(PEFT, ModuleMatcher):
             )
 
             logger.info(f"Adding lora to: {full_name}")
-            adapter_cls = GroupedExpertLinearAdapter if use_per_expert_adapter else ParallelLinearAdapter
+            if use_shared_outer_adapter:
+                adapter_cls = SharedOuterGroupedExpertAdapter
+            elif use_per_expert_adapter:
+                adapter_cls = GroupedExpertLinearAdapter
+            else:
+                adapter_cls = ParallelLinearAdapter
             adapter_kwargs = dict(
                 base_linear_name=full_name,
                 activation="identity",
@@ -189,7 +208,7 @@ class LoRA(PEFT, ModuleMatcher):
                 alpha=self.alpha,
                 base_linear_is_parallel=attrs.base_linear_is_parallel,
             )
-            if use_per_expert_adapter:
+            if use_grouped_expert_adapter:
                 first_param = next(module.parameters())
                 adapter_kwargs.update(
                     num_local_experts=module.num_gemms,

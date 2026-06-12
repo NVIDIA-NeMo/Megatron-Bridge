@@ -124,7 +124,7 @@ Three independent CLI-overridable controls bound a sample's GPU cost. They compo
 Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
 
 ```yaml
-__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+__module__: megatron.bridge.models.qwen_vl.data.energon
 __class__: ChatMLWebdataset
 field_map:
   imgs: jpg
@@ -182,7 +182,7 @@ Below is an example for finetuning on a dataset containing multiple images in a 
 4. Change the file `.nv-meta/dataset.yaml` to the following:
 
     ```yaml
-    __module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
+    __module__: megatron.bridge.models.qwen_vl.data.energon
     __class__: ChatMLWebdataset
     field_map:
       imgs: jpgs
