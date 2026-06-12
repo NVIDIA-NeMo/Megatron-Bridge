@@ -22,6 +22,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -54,6 +55,10 @@ logger = logging.getLogger(__name__)
 # `AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")` would route to a
 # different config class and the bridge resolution below would fail.
 AutoConfig.register("step3p5", Step35Config, exist_ok=True)
+
+
+def _mcore_supports_head_wise_attn_gate() -> bool:
+    return "head_wise_attn_gate" in getattr(MCoreTransformerConfig, "__dataclass_fields__", {})
 
 
 class StackedExpertAutoMapping(AutoMapping):
@@ -233,6 +238,15 @@ class Step35Bridge(MegatronModelBridge):
            to wrong values.
         """
         provider = super().provider_bridge(hf_pretrained)
+
+        if (
+            getattr(provider, "head_wise_attn_gate", False)
+            and getattr(provider, "attention_output_gate", False)
+            and _mcore_supports_head_wise_attn_gate()
+        ):
+            # TODO: remove this guard when Megatron-Core main exposes head_wise_attn_gate
+            # and Bridge no longer needs the attention_output_gate fallback.
+            provider.attention_output_gate = False
 
         hf_config = hf_pretrained.config
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)

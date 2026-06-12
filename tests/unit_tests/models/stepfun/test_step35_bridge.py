@@ -198,6 +198,7 @@ class TestStep35BridgeProviderBridge:
         provider.moe_router_topk = hf_config.moe_top_k
         provider.moe_shared_expert_intermediate_size = hf_config.share_expert_dim
         provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
+        provider.attention_output_gate = getattr(hf_config, "attention_output_gate", None)
         provider.layer_types = hf_config.layer_types
         provider.kv_channels = hf_config.head_dim
         for k, v in (provider_overrides or {}).items():
@@ -252,6 +253,29 @@ class TestStep35BridgeProviderBridge:
         """
         _, p = self._run()
         assert p.head_wise_attn_gate is True
+
+    def test_provider_uses_native_head_wise_gate_when_mcore_supports_it(self):
+        """MCore dev supports Step-3.5 scalar gates without attention_output_gate."""
+        _, p = self._run(
+            hf_overrides={
+                "use_head_wise_attn_gate": True,
+                "attention_output_gate": True,
+            }
+        )
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
+
+    def test_provider_preserves_attention_output_gate_without_mcore_head_wise_support(self, monkeypatch):
+        """Older MCore commits still need the expanded attention_output_gate layout."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "use_head_wise_attn_gate": True,
+                "attention_output_gate": True,
+            }
+        )
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
 
     def test_sliding_attention_setting_populated_from_hf_config(self):
         """Shape fields are pulled out of HF's ``attention_other_setting`` and

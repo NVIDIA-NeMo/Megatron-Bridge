@@ -31,6 +31,11 @@ from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 
+def _mcore_cross_attention_accepts_head_wise_gate() -> bool:
+    code = getattr(CrossAttention.get_query_key_value_tensors, "__code__", None)
+    return code is not None and "head_wise_gate" in code.co_varnames
+
+
 @dataclass
 class DiTCrossAttentionSubmodules:
     """
@@ -102,10 +107,16 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         else:
             self.k_layernorm = None
 
-    def get_query_key_value_tensors(self, hidden_states, key_value_states=None, output_gate=None, split_qkv=True):
+    def get_query_key_value_tensors(
+        self, hidden_states, key_value_states=None, output_gate=None, head_wise_gate=False, split_qkv=True
+    ):
         """
         Derives `query`, `key` and `value` tensors from `hidden_states`.
         """
+        if head_wise_gate:
+            # TODO: remove this guard when DiT attention supports MCore head_wise_attn_gate rows.
+            raise NotImplementedError("DiTSelfAttention does not support head_wise_gate.")
+
         # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn)]
         mixed_qkv, _ = self.linear_qkv(hidden_states)
 
@@ -256,15 +267,22 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             name=(name + ".linear_kv") if name is not None else None,
         )
 
-    def get_query_key_value_tensors(self, hidden_states, key_value_states, output_gate=None, split_qkv=True):
+    def get_query_key_value_tensors(
+        self, hidden_states, key_value_states, output_gate=None, head_wise_gate=False, split_qkv=True
+    ):
         """
         Derives `query` tensor from `hidden_states`, and `key`/`value` tensors
         from `key_value_states`.
         """
 
-        query, key, value = super().get_query_key_value_tensors(
-            hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
-        )
+        kwargs = {"output_gate": output_gate, "split_qkv": split_qkv}
+        if _mcore_cross_attention_accepts_head_wise_gate():
+            kwargs["head_wise_gate"] = head_wise_gate
+        elif head_wise_gate:
+            # TODO: remove this guard when Megatron-Core main exposes the head_wise_gate keyword.
+            raise NotImplementedError("DiTCrossAttention does not support head_wise_gate.")
+
+        query, key, value = super().get_query_key_value_tensors(hidden_states, key_value_states, **kwargs)
 
         # gather query and key heads across TP ranks if self.layernorm_across_heads is True
         if self.layernorm_across_heads and parallel_state.get_tensor_model_parallel_world_size() > 1:
