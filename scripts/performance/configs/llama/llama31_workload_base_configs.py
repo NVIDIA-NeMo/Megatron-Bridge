@@ -114,7 +114,7 @@ LLAMA31_405B_PRETRAIN_CONFIG_GB200_NVFP4_V1 = replace(
     virtual_pipeline_model_parallel_size=8,
     global_batch_size=64,
     cuda_graph_impl="none",
-    cuda_graph_scope="full_iteration",
+    cuda_graph_scope=[],
     recompute_num_layers=1,
 )
 

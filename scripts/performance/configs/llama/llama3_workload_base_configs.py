@@ -259,8 +259,8 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = replace(
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=5,
     context_parallel_size=1,
-    cuda_graph_impl="transformer_engine",
-    cuda_graph_scope=["mlp", "attn"],
+    cuda_graph_impl="none",
+    cuda_graph_scope="full_iteration",
 )
 
 
