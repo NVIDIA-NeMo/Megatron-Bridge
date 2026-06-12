@@ -26,6 +26,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.data.sequence_packing import pack_batch_sequences
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -38,7 +39,6 @@ from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_pos_to_len,
 )
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
-from megatron.bridge.training.vlm_step import pack_batch_sequences
 
 
 logger = logging.getLogger(__name__)

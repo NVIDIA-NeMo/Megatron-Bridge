@@ -19,12 +19,22 @@ from PIL import Image
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
-def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def ministral3_collate_fn(
+    examples: list,
+    processor,
+    *,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences: bool = False,
+    pack_sequences_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Ministral 3 VL model."""
     skipped_tokens = extract_skipped_token_ids(processor)
 
@@ -113,5 +123,14 @@ def ministral3_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    prepare_vlm_batch_for_training(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
 
     return batch

@@ -201,6 +201,9 @@ class PreloadedVLMConversationProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
 
     def _build_split_dataset(
         self,
@@ -224,6 +227,11 @@ class PreloadedVLMConversationProvider(DatasetProvider):
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
+            sequence_length=self.seq_length,
+            pad_to_max_length=self.pad_to_max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            enable_in_batch_packing=self.enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:

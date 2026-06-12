@@ -52,7 +52,6 @@ class MockVLMConversationProvider(DatasetProvider):
     prompt: str = "Describe this image."
     random_seed: int = 0
     image_size: Tuple[int, int] = (256, 256)
-    pad_to_max_length: bool = True
     create_attention_mask: bool = True
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
@@ -69,6 +68,9 @@ class MockVLMConversationProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
 
     def _make_single_example(
         self, rng: numpy.random.Generator, prompt_text: str, response_text: str
@@ -149,6 +151,11 @@ class MockVLMConversationProvider(DatasetProvider):
                 target_length=size,
                 processor=self._processor,
                 collate_impl=None,  # infer collate from processor type (qwen2_5_collate_fn)
+                sequence_length=self.seq_length,
+                pad_to_max_length=self.pad_to_max_length,
+                pad_to_multiple_of=self.pad_to_multiple_of,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
             )
 
         train_ds = _maybe_make(context.train_samples)

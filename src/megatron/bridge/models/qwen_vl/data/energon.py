@@ -133,6 +133,11 @@ class QwenVLTaskBatch(Batch):
     loss_mask: torch.Tensor
     visual_inputs: GenericVisualInputs | None
     attention_mask: torch.Tensor | None = None
+    cu_seqlens: torch.Tensor | None = None
+    cu_seqlens_unpadded: torch.Tensor | None = None
+    cu_seqlens_argmin: torch.Tensor | None = None
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None
+    max_seqlen: torch.Tensor | None = None
 
 
 def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", video_pattern: str = "<video>"):
@@ -164,7 +169,30 @@ def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", v
 
 
 class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenVLTaskBatch, dict]):
-    """A simple task encoder for captioning."""
+    """Energon task encoder for Qwen VL samples.
+
+    Args:
+        tokenizer: HF tokenizer for resolving multimodal token ids.
+        image_processor: HF processor passed to the Qwen collate function.
+        temporal_patch_size: Temporal patch size used for video token accounting.
+        spatial_merge_size: Spatial merge size used for visual token accounting.
+        patch_size: Vision patch size.
+        max_padding_length: Maximum sequence length accepted after collation.
+        min_pixels: Minimum pixel constraint forwarded to Qwen vision processing.
+        max_pixels: Maximum pixel constraint forwarded to Qwen vision processing.
+        max_num_images: Optional per-sample image count limit.
+        max_num_frames: Optional per-video frame limit.
+        max_visual_tokens: Optional per-sample visual token budget.
+        pad_to_max_length: Whether collate-time padding should pad non-packed
+            batches to ``max_padding_length``.
+        pad_to_multiple_of: Non-packed collate-time padding multiple used when
+            ``pad_to_max_length`` is false.
+        enable_in_batch_packing: Whether the Qwen collate should do in-batch
+            sequence packing.
+        in_batch_packing_pad_to_multiple_of: Per-sample padding multiple used
+            only by the in-batch packed path, typically to satisfy CP/SP
+            divisibility.
+    """
 
     def __init__(
         self,
@@ -179,6 +207,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         max_num_images: int | None = 10,
         max_num_frames: int | None = 60,
         max_visual_tokens: int | None = 16384,
+        pad_to_max_length: bool = False,
+        pad_to_multiple_of: int = 128,
+        enable_in_batch_packing: bool = False,
+        in_batch_packing_pad_to_multiple_of: int = 1,
     ):
         super().__init__()
 
@@ -190,6 +222,10 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         self.max_num_images = max_num_images
         self.max_num_frames = max_num_frames
         self.max_visual_tokens = max_visual_tokens
+        self.pad_to_max_length = pad_to_max_length
+        self.pad_to_multiple_of = pad_to_multiple_of
+        self.enable_in_batch_packing = enable_in_batch_packing
+        self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
 
         self.temporal_patch_size = temporal_patch_size
         self.merge_size = spatial_merge_size
@@ -293,9 +329,14 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
         return qwen2_5_collate_fn(
             examples,
             self.image_processor,
+            sequence_length=self.seq_length,
             min_pixels=self.min_pixels,
             max_pixels=self.max_pixels,
             require_assistant_matches=True,
+            pad_to_max_length=self.pad_to_max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            pack_sequences=self.enable_in_batch_packing,
+            pack_sequences_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:
@@ -326,6 +367,11 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             labels=collated["labels"],
             loss_mask=collated["loss_mask"],
             visual_inputs=collated.get("visual_inputs"),
+            cu_seqlens=collated.get("cu_seqlens"),
+            cu_seqlens_unpadded=collated.get("cu_seqlens_unpadded"),
+            cu_seqlens_argmin=collated.get("cu_seqlens_argmin"),
+            cu_seqlens_unpadded_argmin=collated.get("cu_seqlens_unpadded_argmin"),
+            max_seqlen=collated.get("max_seqlen"),
         )
 
     def encode_batch(self, batch: QwenVLTaskBatch) -> dict:

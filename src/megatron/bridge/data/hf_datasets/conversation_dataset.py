@@ -37,8 +37,11 @@ class ConversationDataset(torch.utils.data.Dataset):
         target_length: int,
         processor: Any,
         collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None,
-        pack_sequences: bool = False,
-        pack_sequences_pad_to_multiple_of: int = 1,
+        sequence_length: int | None = None,
+        pad_to_max_length: bool = False,
+        pad_to_multiple_of: int = 128,
+        enable_in_batch_packing: bool = False,
+        in_batch_packing_pad_to_multiple_of: int = 1,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
         self._base_examples = base_examples
@@ -58,24 +61,33 @@ class ConversationDataset(torch.utils.data.Dataset):
                 )
             selected_impl = COLLATE_FNS[collate_key]
 
-        # If packing requested, only collates that advertise `pack_sequences` support it;
-        # bind via functools.partial so the DataLoader just calls f(batch, processor).
-        if pack_sequences:
-            import inspect
-            from functools import partial
+        # If in-batch packing is requested, bind the selected collate's packing
+        # kwargs via functools.partial so the DataLoader just calls f(batch, processor).
+        import inspect
+        from functools import partial
 
-            sig = inspect.signature(selected_impl)
+        sig = inspect.signature(selected_impl)
+        collate_kwargs: dict[str, Any] = {}
+        if sequence_length is not None and "sequence_length" in sig.parameters:
+            collate_kwargs["sequence_length"] = sequence_length
+            if "pad_to_max_length" in sig.parameters:
+                collate_kwargs["pad_to_max_length"] = pad_to_max_length
+            if "pad_to_multiple_of" in sig.parameters:
+                collate_kwargs["pad_to_multiple_of"] = pad_to_multiple_of
+
+        if enable_in_batch_packing:
             if "pack_sequences" in sig.parameters:
-                pack_kwargs: dict[str, Any] = {"pack_sequences": True}
+                collate_kwargs["pack_sequences"] = True
                 if "pack_sequences_pad_to_multiple_of" in sig.parameters:
-                    pack_kwargs["pack_sequences_pad_to_multiple_of"] = pack_sequences_pad_to_multiple_of
-                selected_impl = partial(selected_impl, **pack_kwargs)
+                    collate_kwargs["pack_sequences_pad_to_multiple_of"] = in_batch_packing_pad_to_multiple_of
             else:
                 raise ValueError(
                     f"Collate function {getattr(selected_impl, '__name__', selected_impl)} "
-                    f"does not accept pack_sequences=True. Use a collate that supports packing "
+                    f"does not accept in-batch packing. Use a collate that supports packing "
                     f"(e.g. nemotron_omni_collate_fn)."
                 )
+        if collate_kwargs:
+            selected_impl = partial(selected_impl, **collate_kwargs)
 
         def _bound_collate(batch: list) -> Dict[str, torch.Tensor]:
             return selected_impl(batch, self._processor)  # type: ignore[call-arg]

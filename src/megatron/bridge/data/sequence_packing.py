@@ -16,10 +16,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import MutableMapping
 from typing import Any
 
 import torch
+
+
+logger = logging.getLogger(__name__)
 
 
 def _sequence_lengths(tokens: torch.Tensor, *, pad_token_id: int, padding_mask: torch.Tensor | None) -> list[int]:
@@ -166,3 +170,64 @@ def pack_padded_sequences_in_batch(
     if cu_seqlens_unpadded != cu_seqlens:
         batch["cu_seqlens_unpadded"] = torch.tensor([cu_seqlens_unpadded], dtype=torch.int32, device=device)
         batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
+
+
+def pack_batch_sequences(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    position_ids: torch.Tensor,
+    pad_token_id: int = 0,
+    pad_to_multiple_of: int = 1,
+    padding_mask: torch.Tensor | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Pack 2D sequence tensors and return the legacy tuple form.
+
+    This compatibility wrapper keeps older audio/VLM callers off the training
+    step module while reusing the collate-time packing implementation.
+    """
+    batch: dict[str, Any] = {
+        "input_ids": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "attention_mask": padding_mask,
+        "position_ids": position_ids,
+    }
+    try:
+        pack_padded_sequences_in_batch(
+            batch,
+            pad_token_id=pad_token_id,
+            pad_to_multiple_of=pad_to_multiple_of,
+        )
+    except ValueError as exc:
+        if str(exc) != "Cannot pack a batch with no non-padding tokens.":
+            raise
+        logger.warning("No valid sequences found in batch, skipping packing")
+        return (
+            tokens[:, :0],
+            labels[:, :0] if labels is not None else None,
+            loss_mask[:, :0] if loss_mask is not None else None,
+            attention_mask,
+            position_ids[:, :0],
+            torch.tensor([0], dtype=torch.int32, device=tokens.device),
+            torch.tensor(0, dtype=torch.int32, device=tokens.device),
+        )
+
+    return (
+        batch["input_ids"],
+        batch.get("labels"),
+        batch.get("loss_mask"),
+        batch.get("attention_mask"),
+        batch["position_ids"],
+        batch["cu_seqlens"].squeeze(),
+        batch["max_seqlen"].squeeze().to(device=tokens.device),
+    )

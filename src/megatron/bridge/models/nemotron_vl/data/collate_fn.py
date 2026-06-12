@@ -18,11 +18,22 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
-def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_token=None) -> dict[str, torch.Tensor]:
+def nemotron_nano_v2_vl_collate_fn(
+    examples: list,
+    processor,
+    start_of_response_token=None,
+    *,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences: bool = False,
+    pack_sequences_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Nano V2 VL model."""
     from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 
@@ -120,4 +131,13 @@ def nemotron_nano_v2_vl_collate_fn(examples: list, processor, start_of_response_
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
+    prepare_vlm_batch_for_training(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return batch

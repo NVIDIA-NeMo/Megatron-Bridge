@@ -18,6 +18,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -28,6 +29,10 @@ def nemotron_omni_collate_fn(
     start_of_response_token=None,
     *,
     pack_sequences: bool = False,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Omni model (vision + audio + language).
 
@@ -38,9 +43,10 @@ def nemotron_omni_collate_fn(
 
     When ``pack_sequences=True``, samples in the microbatch are concatenated
     along the sequence dim into a single ``[1, sum(L_i)]`` batch, and
-    ``cu_seqlens`` / ``cu_seqlens_unpadded`` / ``cu_seqlens_argmin`` /
-    ``max_seqlen`` are emitted so TE's THD attention kernels handle per-sample
-    masking without an attention mask. Requires ``mbs > 1`` to be meaningful.
+    ``cu_seqlens`` / ``cu_seqlens_argmin`` / ``max_seqlen`` are emitted so
+    TE's THD attention kernels handle per-sample masking without an attention
+    mask. ``cu_seqlens_unpadded`` is also emitted when per-sequence padding is
+    inserted for CP/SP divisibility.
     """
     from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
         compute_mel_features,
@@ -374,43 +380,14 @@ def nemotron_omni_collate_fn(
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
 
-    if pack_sequences and batch["input_ids"].shape[0] > 1:
-        # Pack [B, S_padded] → [1, sum(L_i)] using actual per-sample lengths.
-        # Derive per-sample length from input_ids non-pad positions.
-        pad_id = getattr(processor.tokenizer, "pad_token_id", None)
-        if pad_id is None:
-            pad_id = getattr(processor.tokenizer, "eos_token_id", 0) or 0
-        input_ids_b = batch["input_ids"]
-        labels_b = batch["labels"]
-        loss_mask_b = batch["loss_mask"]
-        pos_b = batch["position_ids"]
-        B = input_ids_b.shape[0]
-        lengths = [int((input_ids_b[i] != pad_id).sum().item()) for i in range(B)]
-        ids_flat = torch.cat([input_ids_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        labels_flat = torch.cat([labels_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        loss_mask_flat = torch.cat([loss_mask_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        pos_flat = torch.cat(
-            [torch.arange(L, dtype=pos_b.dtype, device=pos_b.device) for L in lengths], dim=0
-        ).unsqueeze(0)
-
-        cu = [0]
-        for L in lengths:
-            cu.append(cu[-1] + L)
-        cu_t = torch.tensor(cu, dtype=torch.int32)
-        # argmin = len(cu): downstream `cu_seqlens_padded[: argmin]` becomes a no-op.
-        argmin_t = torch.tensor(len(cu), dtype=torch.int32)
-        max_t = torch.tensor(max(lengths), dtype=torch.int32)
-
-        batch["input_ids"] = ids_flat
-        batch["labels"] = labels_flat
-        batch["loss_mask"] = loss_mask_flat
-        batch["position_ids"] = pos_flat
-        batch["cu_seqlens"] = cu_t
-        batch["cu_seqlens_unpadded"] = cu_t.clone()
-        batch["cu_seqlens_argmin"] = argmin_t
-        batch["cu_seqlens_unpadded_argmin"] = argmin_t.clone()
-        batch["max_seqlen"] = max_t
-        # TE derives the causal + per-sample mask from cu_seqlens; drop attention_mask.
-        batch["attention_mask"] = None
+    prepare_vlm_batch_for_training(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
 
     return batch

@@ -60,6 +60,11 @@ class HFEnergonBatch(Batch):
     position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     visual_inputs: GenericVisualInputs | None = None
     attention_mask: torch.Tensor | None = None
+    cu_seqlens: torch.Tensor | None = None
+    cu_seqlens_unpadded: torch.Tensor | None = None
+    cu_seqlens_argmin: torch.Tensor | None = None
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None
+    max_seqlen: torch.Tensor | None = None
 
 
 class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
@@ -75,6 +80,17 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             the selected collate function.
         max_pixels: Optional max pixel constraint forwarded when supported by
             the selected collate function.
+        collate_fn: Optional collate implementation override. If omitted, the
+            implementation is selected from the processor type.
+        pad_to_max_length: Whether collate-time padding should pad non-packed
+            batches to ``seq_length`` when the selected collate supports it.
+        pad_to_multiple_of: Non-packed collate-time padding multiple used when
+            ``pad_to_max_length`` is false and the selected collate supports it.
+        enable_in_batch_packing: Whether the selected collate should do
+            in-batch sequence packing.
+        in_batch_packing_pad_to_multiple_of: Per-sample padding multiple used
+            only by the in-batch packed path, typically to satisfy CP/SP
+            divisibility.
     """
 
     def __init__(
@@ -85,6 +101,10 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
         collate_fn: Callable[[list, Any], dict[str, Any]] | None = None,
+        pad_to_max_length: bool = False,
+        pad_to_multiple_of: int = 128,
+        enable_in_batch_packing: bool = False,
+        in_batch_packing_pad_to_multiple_of: int = 1,
     ):
         super().__init__()
         self.processor = processor
@@ -92,6 +112,10 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         self.visual_keys: Tuple[str, ...] = tuple(visual_keys)
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
+        self.pad_to_max_length = pad_to_max_length
+        self.pad_to_multiple_of = pad_to_multiple_of
+        self.enable_in_batch_packing = enable_in_batch_packing
+        self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
         collate_key = type(processor).__name__ if processor is not None else "default"
         if collate_fn is not None:
             self._collate_impl = collate_fn
@@ -111,7 +135,14 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             return {}
 
         accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
-        candidates: dict[str, Any] = {"visual_keys": self.visual_keys}
+        candidates: dict[str, Any] = {
+            "visual_keys": self.visual_keys,
+            "sequence_length": self.seq_length,
+            "pad_to_max_length": self.pad_to_max_length,
+            "pad_to_multiple_of": self.pad_to_multiple_of,
+            "pack_sequences": self.enable_in_batch_packing,
+            "pack_sequences_pad_to_multiple_of": self.in_batch_packing_pad_to_multiple_of,
+        }
         if self.min_pixels is not None:
             candidates["min_pixels"] = self.min_pixels
         if self.max_pixels is not None:
@@ -164,9 +195,14 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         """Collate normalized samples with the selected HF VLM collator."""
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
-        if collated["input_ids"].shape[1] > self.seq_length:
+        collated_seq_len = (
+            int(collated["max_seqlen"].max().item())
+            if collated.get("max_seqlen") is not None
+            else collated["input_ids"].shape[1]
+        )
+        if collated_seq_len > self.seq_length:
             raise ValueError(
-                f"Collated seq_len {collated['input_ids'].shape[1]} exceeds seq_length {self.seq_length}. "
+                f"Collated seq_len {collated_seq_len} exceeds seq_length {self.seq_length}. "
                 "The selected HF VLM collator must enforce seq_length while preserving visual metadata."
             )
 
@@ -181,6 +217,11 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             attention_mask=collated.get("attention_mask"),
             position_ids=collated["position_ids"],
             visual_inputs=collated.get("visual_inputs"),
+            cu_seqlens=collated.get("cu_seqlens"),
+            cu_seqlens_unpadded=collated.get("cu_seqlens_unpadded"),
+            cu_seqlens_argmin=collated.get("cu_seqlens_argmin"),
+            cu_seqlens_unpadded_argmin=collated.get("cu_seqlens_unpadded_argmin"),
+            max_seqlen=collated.get("max_seqlen"),
         )
 
         return HFEnergonBatch(**batch_kwargs)

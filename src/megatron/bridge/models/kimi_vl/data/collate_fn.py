@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -136,6 +137,12 @@ def kimi_k25_vl_collate_fn(
     examples: list[dict[str, Any]],
     processor,
     max_length: int | None = None,
+    *,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences: bool = False,
+    pack_sequences_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Kimi K2.5 VL processors with pre-expanded image tokens.
 
@@ -297,4 +304,13 @@ def kimi_k25_vl_collate_fn(
     for key in ("pixel_values", "pixel_values_videos", "grid_thws", "video_grid_thw"):
         result.pop(key, None)
     result["visual_inputs"] = visual_inputs
+    prepare_vlm_batch_for_training(
+        result,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return result
