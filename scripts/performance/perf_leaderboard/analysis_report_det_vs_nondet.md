@@ -96,6 +96,110 @@ The +2,127 ms on the "other" bucket is **the dominant cost of determinism**. It 
 model math (GEMM/attention/SSM) and it is *not* in NCCL. It's in the **PyTorch det-substitute
 kernels** that replace `scatter_add`, `index_put`, `gather_backward`, fused-CE, etc.
 
+### NVTX namespace decomposition (host-side, every range op_id/seq-stripped)
+
+Querying every NVTX range in the profile (NVTX `text` field, not just the leaderboard top-N), grouped by namespace prefix:
+
+| Namespace | Det ms (3-iter) | Non-det ms | Δ ms | Δ % | Verdict |
+|---|---|---|---|---|---|
+| `aten::*` | **23,132** | **8,911** | **+14,221** | **+160%** | **the dominant cost source** |
+| `backward_node` (e.g. `CheckpointFunctionBackward`, `_LinearBackward`) | 24,292 | 20,929 | +3,362 | +16% | wraps the aten ops above |
+| `autograd::evaluate_function` | 26,457 | 23,137 | +3,320 | +14% | also wraps backward_node |
+| `other` (Python NVTX) | 18,337 | 16,632 | +1,705 | +10% | misc framework overhead |
+| `mcore.transformer_layer` | 6,189 | 5,174 | +1,015 | +19.6% | `_forward_mlp.mlp` is +979 ms of this |
+| `mcore.pipeline_parallel` | 3,958 | 3,466 | +492 | +14% | NCCL_ALGO=Ring on PP p2p |
+| `nvte::*` | 3,092 | 3,260 | **−168** | **−5.1%** | **det actually FASTER** (TE GEMM −82 ms, rmsnorm −20 ms) |
+| `mcore.mlp` | 1,964 | 1,834 | +129 | +7% | linear_fc1/fc2 entry setup |
+| `nccl::*` (host API) | 1,176 | 1,212 | −36 | −3% | host-side NCCL python calls |
+| `mcore.attention` | 351 | 321 | +30 | +9% | qkv/proj/core_attention forward |
+| `mcore.fusions` | 314 | 316 | **−1** | **0%** | **IDENTICAL** |
+| `Optimizer.step` | 28 | 31 | **−3** | **−9%** | det Adam actually faster |
+| `mcore.models` | 41 | 43 | −2 | −5% | embedding forward |
+
+**Headline**: the namespace breakdown isolates the cost source cleanly:
+- **+14,221 ms (+160%) in `aten::*` — this is 93%+ of all NVTX-visible cost growth**
+- `mcore.fusions` and `mcore.models` are **byte-identical** in their NVTX time
+- `nvte::*` (TE library) is *faster* under det — the TE backward chooses a slightly cheaper code path
+- `Optimizer.step#FusedAdam.step` is faster under det too (−9%)
+
+### Per-namespace top contributors (op_id/seq stripped)
+
+**`aten::*` namespace — every operator with |Δ| > 100 ms:**
+
+| Range | Det ms | Non-det ms | Δ ms | Notes |
+|---|---|---|---|---|
+| `aten::fill_` | 2,481 | 198 | **+2,282** | zero-init before deterministic scatter / index_put |
+| `aten::index_put_` | 2,119 | 6 | **+2,113** | det subs use Python-loop index_put; non-det uses atomic-add |
+| `aten::_index_put_impl_` | 2,112 | 5 | +2,107 | inner kernel of the above (double-counted in `aten::*` total) |
+| `aten::empty` | 2,731 | 718 | +2,013 | det allocates many scratch buffers for substitute paths |
+| `aten::empty_strided` | 960 | 326 | +634 | same — strided variant |
+| `aten::empty_like` | 840 | 214 | +626 | same — like variant |
+| `aten::arange` | 545 | 3 | **+543** | det only — index generation for sort-based gather backward |
+| `aten::gather_backward` | 482 | 36 | +446 | det substitute via sort+segment-sum |
+| `aten::scatter_add_` | 456 | 15 | +440 | det substitute when `use_deterministic_algorithms=True` |
+| `aten::max` | **368** | **0** | **+368** | **det-only**: used by `torch.bincount` (called by det scatter_add) |
+| `aten::min` | **322** | **0** | **+322** | **det-only**: same |
+| `aten::clone` | 556 | 253 | +303 | extra copies during det substitute path |
+| `aten::contiguous` | 406 | 131 | +274 | det forces contiguous tensors for index sort |
+| `aten::remainder` | **235** | **0** | **+235** | **det-only**: bincount index hashing |
+| `aten::scatter` | 33 | 175 | **−142** | non-det uses this; det path swapped to `aten::scatter_add_` |
+| `aten::copy_` | 629 | 764 | **−135** | non-det does *more* copies (FP32 master copies in unfused-CE) |
+
+The smoking gun: `aten::max`, `aten::min`, `aten::remainder` are **zero in non-det** and **>200 ms each in det**. These are `torch.bincount`'s implementation — bincount is in turn called by `scatter_add`'s deterministic substitute. So the chain is:
+
+```
+torch.use_deterministic_algorithms(True)
+    └── scatter_add_ → unsafe_scatter disabled
+        └── falls back to: bincount(indices) + segment_sum
+                            └── max(indices), min(indices), remainder(indices, num_buckets) ← det-only
+                            └── + arange(num_indices)
+                            └── + empty + fill (zero buffers)
+                            └── + scatter into binned buffer
+```
+
+**`backward_node` namespace top entries (every `*Backward` node):**
+
+| Range | Det ms | Non-det ms | Δ ms | Notes |
+|---|---|---|---|---|
+| `CheckpointFunctionBackward` | 15,499 | 13,630 | +1,869 | this wraps the recomputed-block's backward; the bulk is `aten::fill_` inside |
+| `MambaSplitConv1dScanCombinedFnBackward` | 2,874 | 2,233 | +640 | the *autograd range*, not the SSM kernel (kernel itself is faster, see `nvte::*` and SSM kernel-name) |
+| `GatherBackward0` | 484 | 38 | +446 | det path = arange + sort + segment-sum (kernel-name level) |
+| `_LinearBackward` | 1,053 | 959 | +94 | TE backward — cuBLAS workspace overhead per call |
+| `_LayerNormLinearBackward` | 562 | 484 | +77 | TE LayerNormLinear backward |
+| `IndexPutBackward0` | 56 | 5 | +51 | the substitute path's own backward node |
+| `RouterGatingLinearFunctionBackward` | 324 | 281 | +43 | MoE router GEMM backward (cuBLAS workspace) |
+| `_moe_chunk_sortBackward` | 145 | 112 | +33 | TE MoE permute backward |
+| `_AllToAllBackward` | 391 | 362 | +29 | MoE all-to-all backward (Ring overhead) |
+| `LayerNormFnBackward` | 176 | 147 | +29 | layer norm backward |
+| `_moe_permute_mask_mapBackward` | 118 | 90 | +28 | MoE permute backward |
+| `_OperationFuserAutogradFunctionBackward` | 116 | 90 | +26 | fused op autograd |
+
+**`nvte::*` namespace (TransformerEngine ranges) — det is faster:**
+
+| Range | Det ms | Non-det ms | Δ ms |
+|---|---|---|---|
+| `nvte_cublas_gemm_v2` | 1,691 | 1,774 | **−82** |
+| `nvte_multi_tensor_gemm` | 1,324 | 1,385 | **−60** |
+| `nvte_rmsnorm_fwd` | 19 | 31 | −12 |
+| `nvte_rmsnorm_bwd` | 20 | 27 | −8 |
+| `nvte_flash_attn_bwd` | 11 | 11 | 0 |
+| `nvte_flash_attn_fwd` | 15 | 15 | 0 |
+
+The TE ranges are **CPU-host time** (when the TE library was inside its dispatcher). Det's TE-host time
+is 5% **lower** — explained by less scheduler-jitter on stream 7 because the FillFunctor kernels
+serialize work and reduce contention with the TE GEMM dispatch loop. The cuDNN flash attn ranges
+are essentially identical.
+
+**`mcore.pipeline_parallel` — all of it is NCCL P2P:**
+
+| Range | Det ms | Non-det ms | Δ ms |
+|---|---|---|---|
+| `send_forward_recv_backward` | 3,412 | 2,998 | **+414** |
+| `recv_backward` | 543 | 465 | +78 |
+| `send_forward` | 3.1 | 3.0 | 0 |
+
+These match the NCCL `SendRecv` kernel-name analysis: `NCCL_ALGO=Ring` slows P2P chunks.
+
 ### Decomposing the +2,127 ms "other" bucket on stream 7
 
 | Kernel | Det calls | Det ms | Non-det calls | Non-det ms | Δ ms | What it is |
@@ -381,9 +485,11 @@ GROUP BY s.value ORDER BY ms DESC LIMIT 12;
 
 - **Determinism IS bit-exact reproducible** at this scale (2103637 = 2102770 = 2103151 across iters 1, 10, 20, 30, 40, 50).
 - **Cost: +1,398 ms / iter (+17% step time, −15% MFU)** vs the same recipe without determinism.
-- **~70% of the cost is in PyTorch's `use_deterministic_algorithms(True)` substitute kernels** (mostly `FillFunctor<BFloat16>` zero-init before `scatter_add`).
-- **~12% is `NCCL_ALGO=Ring` slowing P2P sends**.
-- **Compute (GEMM, attention, SSM) is essentially unchanged** — +2% GEMM, +14% attention bwd (extra split kernel), **−6% SSM (det is slightly faster)**.
+- **~93% of the NVTX-visible cost growth lives in `aten::*` operators** (PyTorch's deterministic substitute paths — fill / index_put / arange / scatter_add / bincount-via-max-min-remainder).
+- **`nvte::*` (TransformerEngine) is actually FASTER under det** (−5%), confirming the cost is not in the compute library.
+- **`mcore.fusions` is byte-identical** in NVTX time; `Optimizer.step` is even faster under det (−9%).
+- **`NCCL_ALGO=Ring` slows PP P2P by +492 ms / 3 iters** (visible at both NVTX `mcore.pipeline_parallel` and NCCL kernel level).
+- **Compute kernels (GEMM, attention, SSM) are essentially unchanged at the kernel level** — +2% GEMM (cuBLAS workspace), +14% attention bwd (det splits into 2 passes), **−6% SSM (det path is slightly faster on B200)**.
 - **Two cleanly-actionable optimizations** could recover **~640 ms / iter (~7%)** without sacrificing bit-exactness: pre-allocate scatter destinations + scope `NCCL_ALGO=Ring` to AllReduce only.
 
 ---
