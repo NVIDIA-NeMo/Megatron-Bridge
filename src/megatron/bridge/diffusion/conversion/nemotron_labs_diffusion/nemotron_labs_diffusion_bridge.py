@@ -82,13 +82,12 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
         # (hidden_size, rope_parameters, etc.).  Adding to_cfg_dict to the class
         # makes the serializer use PretrainedConfig.to_dict() which captures everything.
         cfg_cls = type(hf_config)
-        if not hasattr(cfg_cls, "to_cfg_dict"):
-            import inspect as _inspect
+        if not hasattr(cfg_cls, "to_cfg_dict") and hasattr(hf_config, "to_dict"):
 
             def _to_cfg_dict(self):
                 cls = self.__class__
                 return {
-                    "_target_": f"{_inspect.getmodule(cls).__name__}.{cls.__qualname__}.from_dict",
+                    "_target_": f"{cls.__module__}.{cls.__qualname__}.from_dict",
                     "_call_": True,
                     "config_dict": self.to_dict(),
                 }
