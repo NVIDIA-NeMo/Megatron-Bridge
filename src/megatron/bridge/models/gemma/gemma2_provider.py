@@ -251,11 +251,12 @@ class Gemma2DotProductAttention(MegatronModule):
         # mask [b, np, sq, sk], so we unsqueeze to [1, 1, sq, sk] when there is no
         # padding mask. When a padding mask [b, 1, sq, sk] is present, the | already
         # produces a 4D result via broadcasting.
-        # Skip mask generation when the window fully covers the sequence: masking only
-        # fires when query index i > window_size[0], i.e. seq_q > window_size[0] + 1.
-        # For seq_length=4096 with window=4095 this is a no-op, so we stay on the
-        # fast ScaledUpperTriangMaskedSoftmax (and FlexAttention) path.
-        if self.window_size is not None and query.size(0) > self.window_size[0] + 1:
+        # The mask is always generated for SWA layers: attn_mask_type=arbitrary means
+        # FusedScaleMaskSoftmax routes through ScaledSoftmax (no causal masking) when
+        # mask=None, so omitting the mask for short sequences would drop causal masking
+        # entirely. get_swa() encodes causal structure via triu/tril and degenerates to
+        # a pure causal mask when the window fully covers the sequence.
+        if self.window_size is not None:
             swa_mask = get_swa(query.size(0), key.size(0), self.window_size)
             if attention_mask is None:
                 attention_mask = swa_mask.unsqueeze(0).unsqueeze(0)

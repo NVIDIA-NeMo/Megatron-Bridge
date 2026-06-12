@@ -255,15 +255,14 @@ class TestGemma2DotProductAttention:
         Prior to the fix, the gate was:
             if attention_mask is not None and self.window_size is not None:
         which was never True on the pretrain path (MCore passes attention_mask=None).
-        After the fix the gate is:
-            if self.window_size is not None and query.size(0) > self.window_size[0] + 1:
-        We verify this by patching get_swa and confirming it is called from forward()
-        when attention_mask=None is passed to an even-numbered layer whose window is
-        smaller than the sequence length.  window=(2, 0) with seq=4: 4 > 3, so the
-        guard fires and the SWA mask is built and unsqueezed to [1, 1, sq, sk].
+        The gate is now simply:
+            if self.window_size is not None:
+        The mask is always built for SWA layers — omitting it when the window covers the
+        full sequence would drop causal masking entirely because attn_mask_type=arbitrary
+        routes through ScaledSoftmax (plain softmax, no causal mask) when mask=None.
+        get_swa() degenerates to a pure causal mask when the window covers all positions.
         """
         seq, batch, heads, head_dim = 4, 1, 8, 32
-        # window=(2, 0): seq=4 > window+1=3, so the SWA guard fires.
         attn = _make_attention(window_size=(2, 0))
         assert attn.window_size == (2, 0), "even layer must have window_size set"
 
@@ -346,9 +345,7 @@ class TestGemma2DotProductAttention:
         which silently discarded any incoming padding mask. The correct behaviour is:
             attention_mask = swa_mask if attention_mask is None else (swa_mask | attention_mask)
         Both masks use True=masked-out, so logical OR gives the union of blocked positions.
-        window=(2, 0) with seq=4: 4 > 3, so the SWA guard fires.
         """
-        # window=(2, 0): seq=4 > window+1=3, so the SWA guard fires.
         attn = _make_attention(window_size=(2, 0))
 
         seq, batch, heads, head_dim = 4, 2, 8, 32
