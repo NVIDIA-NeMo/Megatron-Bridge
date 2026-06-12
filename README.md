@@ -62,7 +62,7 @@ NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVI
 ![image](Repo-Mbridge.png)
 ### Broad functional support matrix
 
-||Pretrain|SFT|SFT Lora|RL|RL LoRA|Notes|
+||Pretrain|SFT|SFT LoRA|RL|RL LoRA|Notes|
 |-|-|-|-|-|-|-|
 |[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)|Y|Y|Y|N|N|Megatron based *pretraining* library|
 |[AutoModel](https://github.com/NVIDIA-NeMo/Automodel)|Y|Y|Y|N|N| PyT DTensor based *pretraining* library|
