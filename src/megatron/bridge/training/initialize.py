@@ -124,18 +124,18 @@ def initialize_megatron(
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
 
-    # Compile dataset helpers BEFORE torch.distributed initialization.
-    #
-    # The first-time C++ build is slow. Running it pre-init lets the
-    # torch.distributed rendezvous — which tolerates a late joiner via long
-    # store-connect retries — absorb the delay, instead of a rank compiling
-    # between init_process_group and the first NCCL collective. On K8s the NCCL
-    # bootstrap connect budget is short, so a rank compiling there makes its
-    # peers fail the barrier with "connection refused" / "remote process
-    # exited"; Slurm's rendezvous tolerated the old post-init placement, K8s
-    # does not. A prebuilt .so (typical container image) makes this a fast
-    # no-op. Each node's local rank 0 builds (unchanged from before).
-    if get_local_rank_preinit() == 0:
+    # Build the dataset-helpers C++ extension. On a shared filesystem (e.g. a
+    # Kubernetes PVC mounted into every node) all ranks see one datasets dir, so
+    # a per-node compile would have many ranks run g++/ld against the same .so
+    # concurrently — which over NFS fails with "ld: final link failed: Stale
+    # file handle", killing a rank and cascading into a NCCL barrier failure.
+    # (flock is not viable: this NFS has no working lock daemon, so
+    # flock(LOCK_EX) hangs.) Instead, GLOBAL rank 0 builds it once BEFORE
+    # distributed init — a single writer, no race — and doing it pre-init lets
+    # the tolerant rendezvous absorb the one-time build rather than a NCCL
+    # collective. A prebuilt .so (typical container image) makes this a fast
+    # no-op.
+    if get_rank_safe() == 0:
         start_time = time.time()
         print("> compiling dataset index builder ...", flush=True)
         compile_helpers()
@@ -157,6 +157,15 @@ def initialize_megatron(
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
     )
+
+    # Per-node build for non-shared filesystems (e.g. Slurm per-node mounts),
+    # where global rank 0's build above only reached its own node. A no-op on a
+    # shared filesystem (rank 0 already built the .so); on per-node filesystems
+    # each node builds independently, so no two ranks ever write the same .so.
+    if torch.distributed.is_initialized():
+        if get_local_rank_preinit() == 0:
+            compile_helpers()
+        torch.distributed.barrier()
 
     return result
 
