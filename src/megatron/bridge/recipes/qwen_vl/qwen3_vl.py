@@ -29,7 +29,6 @@ from typing_extensions import TypedDict, Unpack
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.utils import DatasetBuildContext
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 from megatron.bridge.peft.base import PEFT
@@ -271,8 +270,9 @@ def qwen3_vl_235b_a22b_pretrain_mock_config(**user_kwargs: Unpack[Qwen3VLCommonK
 class QwenVLEnergonProvider(EnergonProvider):
     """EnergonProvider subclass that exposes task-encoder knobs as CLI-overridable fields.
 
-    The task encoder is constructed eagerly (same as before), but build_datasets
-    syncs these fields onto it after CLI overrides have been applied.
+    The task encoder is constructed eagerly (same as before), but ``finalize`` (called by
+    ``ConfigContainer.validate`` after CLI/YAML overrides are merged) syncs these fields
+    onto it.
     """
 
     min_pixels: int = 200704
@@ -281,7 +281,8 @@ class QwenVLEnergonProvider(EnergonProvider):
     max_num_frames: int | None = 60
     max_visual_tokens: int | None = 16384
 
-    def build_datasets(self, context: DatasetBuildContext):
+    def finalize(self) -> None:
+        super().finalize()
         if self.task_encoder is not None:
             self.task_encoder.seq_len = self.seq_length
             self.task_encoder.seq_length = self.seq_length
@@ -290,7 +291,6 @@ class QwenVLEnergonProvider(EnergonProvider):
             self.task_encoder.max_num_images = self.max_num_images
             self.task_encoder.max_num_frames = self.max_num_frames
             self.task_encoder.max_visual_tokens = self.max_visual_tokens
-        return super().build_datasets(context)
 
 
 def _make_energon_dataset(

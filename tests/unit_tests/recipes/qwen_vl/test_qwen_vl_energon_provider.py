@@ -14,13 +14,12 @@
 
 #
 # Test purpose:
-# - Verify QwenVLEnergonProvider.build_datasets propagates dataset-config knobs
-#   (seq_length, min_pixels, max_pixels, max_num_images, max_num_frames,
-#   max_visual_tokens) onto the task encoder *before* delegating to the parent.
-#   The propagation step is what makes these fields CLI-overridable for users.
+# - Verify QwenVLEnergonProvider.finalize() propagates dataset-config knobs
+#   (seq_length, seq_len, min_pixels, max_pixels, max_num_images, max_num_frames,
+#   max_visual_tokens) onto the eagerly-built task encoder. finalize() is called by
+#   ConfigContainer.validate() after CLI/YAML overrides are merged, which is what makes
+#   these fields overridable.
 #
-
-import pytest
 
 from megatron.bridge.recipes.qwen_vl.qwen3_vl import QwenVLEnergonProvider
 
@@ -54,14 +53,7 @@ def _make_provider(task_encoder, **overrides):
     return QwenVLEnergonProvider(**defaults)
 
 
-@pytest.fixture
-def fake_context():
-    # build_datasets is stubbed before reaching the real parent, so a None-like
-    # context is acceptable; we only need an object the override path won't touch.
-    return object()
-
-
-def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_context):
+def test_finalize_syncs_all_fields_to_task_encoder():
     encoder = _FakeTaskEncoder()
     provider = _make_provider(
         encoder,
@@ -73,25 +65,9 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
         max_visual_tokens=999,
     )
 
-    # Stub the parent so build_datasets returns immediately after the sync block.
-    captured = {}
+    provider.finalize()
 
-    def fake_super_build(self, context):
-        captured["called_with"] = context
-        return "stubbed"
-
-    # Patch the parent's build_datasets in-place; restored automatically by monkeypatch.
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-
-    monkeypatch.setattr(EnergonProvider, "build_datasets", fake_super_build)
-
-    result = provider.build_datasets(fake_context)
-
-    # Parent was invoked (so super().build_datasets ran) and got the right context.
-    assert result == "stubbed"
-    assert captured["called_with"] is fake_context
-
-    # Every overridable field is now reflected on the encoder.
+    # seq_length / seq_len and the Qwen-VL-specific knobs are all synced by finalize().
     assert encoder.seq_len == 2048
     assert encoder.seq_length == 2048
     assert encoder.min_pixels == 12345
@@ -101,16 +77,10 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
     assert encoder.max_visual_tokens == 999
 
 
-def test_build_datasets_no_op_when_task_encoder_is_none(monkeypatch, fake_context):
+def test_finalize_no_op_when_task_encoder_is_none():
     provider = _make_provider(task_encoder=None)
-
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-
-    monkeypatch.setattr(EnergonProvider, "build_datasets", lambda self, context: "stubbed")
-
     # Should not raise even though task_encoder is None.
-    result = provider.build_datasets(fake_context)
-    assert result == "stubbed"
+    provider.finalize()
 
 
 def test_provider_default_field_values():
@@ -136,7 +106,7 @@ def test_provider_accepts_none_for_unbounded_limits():
     assert provider.max_visual_tokens is None
 
 
-def test_build_datasets_propagates_none_limits(monkeypatch, fake_context):
+def test_finalize_propagates_none_limits():
     encoder = _FakeTaskEncoder()
     provider = _make_provider(
         encoder,
@@ -145,11 +115,7 @@ def test_build_datasets_propagates_none_limits(monkeypatch, fake_context):
         max_visual_tokens=None,
     )
 
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-
-    monkeypatch.setattr(EnergonProvider, "build_datasets", lambda self, context: "stubbed")
-
-    provider.build_datasets(fake_context)
+    provider.finalize()
 
     assert encoder.max_num_images is None
     assert encoder.max_num_frames is None
