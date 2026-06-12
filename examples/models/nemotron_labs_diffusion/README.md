@@ -46,7 +46,7 @@ torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
     checkpoint.finetune=true \
-    checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint
+    checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint \
     --data-paths /path/to/dclm/merged_tokenized_text_document
 ```
 
