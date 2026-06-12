@@ -228,6 +228,8 @@ def export_megatron_to_hf(
                 num_layers, pp, mtp
             )
             print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
+    # Capture before finalize() turns the list into a PipelineParallelLayerLayout.
+    resolved_pp_layout = model_provider.pipeline_model_parallel_layout if pp > 1 else None
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
@@ -239,6 +241,10 @@ def export_megatron_to_hf(
         "pipeline_dtype": dtype,
         "params_dtype": dtype,
     }
+    # load_megatron_model rebuilds the provider from the checkpoint's run_config,
+    # which lost the layout the same way — forward the resolved layout explicitly.
+    if isinstance(resolved_pp_layout, list):
+        mp_overrides["pipeline_model_parallel_layout"] = resolved_pp_layout
 
     print_rank_0(f"Loading Megatron checkpoint from: {megatron_path}")
     megatron_model = bridge.load_megatron_model(
