@@ -21,6 +21,7 @@ from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
 from megatron.bridge.data.vlm_processing import (
+    AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
     apply_assistant_labels_to_batch,
     build_assistant_loss_mask,
@@ -72,6 +73,111 @@ class _Processor:
         return output
 
 
+class _NonTokenizingProcessor:
+    class _Tok:
+        pad_token_id = 0
+        eos_token_id = 99
+
+    tokenizer = _Tok()
+
+
+class _GenerationMaskTokenizer(_Tokenizer):
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        assert return_assistant_tokens_mask is True
+        assert conversation[-1]["role"] == "assistant"
+        return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 0, 1, 0]}
+
+
+class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
+    def __init__(self):
+        self.template_kwargs = []
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+        **kwargs,
+    ):
+        self.template_kwargs.append(kwargs)
+        return super().apply_chat_template(
+            conversation,
+            tokenize=tokenize,
+            add_generation_prompt=add_generation_prompt,
+            return_dict=return_dict,
+            return_assistant_tokens_mask=return_assistant_tokens_mask,
+        )
+
+
+class _GenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _GenerationMaskTokenizer()
+
+
+class _ToolsGenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _ToolsGenerationMaskTokenizer()
+
+
+class _ChatMLTokenizer:
+    pad_token_id = 0
+    eos_token_id = 99
+    added_tokens_decoder = {}
+
+    _encoding = {
+        "<|im_start|>": [10],
+        "<|im_end|>": [11],
+        "assistant": [12],
+        "answer": [13],
+        "answer\n": [13, 99],
+        "user": [14],
+        "\n": [15],
+        "question": [16],
+        "\nanswer": [17, 13],
+    }
+    _decoding = {
+        10: "<|im_start|>",
+        11: "<|im_end|>",
+        12: "assistant",
+        13: "answer",
+        14: "user",
+        15: "\n",
+        16: "question",
+        17: "\n\n",
+    }
+
+    def encode(self, text, add_special_tokens=False):
+        return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+    def __call__(self, text, add_special_tokens=False):
+        return {"input_ids": self._encoding.get(text, [42])}
+
+    def decode(self, token_ids, skip_special_tokens=False):
+        return "".join(self._decoding[token_id] for token_id in token_ids)
+
+
+class _ChatMLProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _ChatMLTokenizer()
+
+
 def test_gather_assistant_text_segments_handles_structured_and_string_content():
     example = {
         "conversation": [
@@ -84,21 +190,246 @@ def test_gather_assistant_text_segments_handles_structured_and_string_content():
     assert gather_assistant_text_segments(example) == ["answer", "ok"]
 
 
-def test_build_assistant_loss_mask_uses_current_search_variants_and_skipped_tokens():
+def test_build_assistant_loss_mask_prefers_hf_generation_mask_when_supported():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([1, 2, 3, 4])
+
+    mask = build_assistant_loss_mask(example, input_ids, _GenerationMaskProcessor())
+
+    assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
+
+
+@pytest.mark.parametrize(
+    ("input_ids", "expected_mask"),
+    [
+        (torch.tensor([1, 2, 3, 4, 0, 0]), [0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+        (torch.tensor([0, 0, 1, 2, 3, 4]), [0.0, 0.0, 0.0, 0.0, 1.0, 0.0]),
+    ],
+)
+def test_build_assistant_loss_mask_aligns_hf_generation_mask_to_batch_padding(input_ids, expected_mask):
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+
+    mask = build_assistant_loss_mask(example, input_ids, _GenerationMaskProcessor())
+
+    assert mask.tolist() == expected_mask
+
+
+def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ],
+        "tools": tools,
+    }
+
+    processor = _ToolsGenerationMaskProcessor()
+
+    mask = build_assistant_loss_mask(example, torch.tensor([1, 2, 3, 4]), processor)
+
+    assert mask.tolist() == [0.0, 0.0, 1.0, 0.0]
+    assert processor.tokenizer.template_kwargs == [{"tools": tools}]
+
+
+def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "answer"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor(
+        [
+            10,
+            14,
+            15,
+            13,
+            11,
+            10,
+            12,
+            15,
+            13,
+            11,
+        ]
+    )
+
+    with pytest.raises(ValueError, match="Unable to build assistant loss mask"):
+        build_assistant_loss_mask(example, input_ids, _ChatMLProcessor())
+
+
+def test_build_assistant_loss_mask_handles_non_tokenizing_tokenizer():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([1, 2, 3])
+
+    with pytest.raises(ValueError, match="Unable to build assistant loss mask"):
+        build_assistant_loss_mask(example, input_ids, _NonTokenizingProcessor(), warn_on_all_masked=False)
+
+
+def test_build_assistant_loss_mask_uses_explicit_boundary_config():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "answer"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 4, 101, 102, 3, 4, 103])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"user": [100], "assistant": [102]},
+        role_end_tokens={"user": [101], "assistant": [103]},
+    )
+
+    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_raises_for_incomplete_boundary_config():
+    example = {
+        "conversation": [
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([102, 3, 4, 103])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={},
+    )
+
+    with pytest.raises(ValueError, match="role_start_tokens, role_end_tokens"):
+        build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+
+def test_build_assistant_loss_mask_raises_when_boundary_config_does_not_match():
+    example = {
+        "conversation": [
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([1, 3, 4, 2])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [103]},
+    )
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+
+def test_build_assistant_loss_mask_boundary_config_trains_full_loss_role_content():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 8, 101, 102, 200, 30, 31, 201, 32, 202, 40, 41, 203, 33, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"user": [100], "assistant": [102]},
+        role_end_tokens={"user": [101], "assistant": [101]},
+    )
+
+    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_boundary_config_ignores_tool_like_content_in_non_loss_roles():
+    example = {
+        "conversation": [
+            {"role": "system", "content": "tool schema"},
+            {"role": "assistant", "content": "tool call"},
+        ]
+    }
+    input_ids = torch.tensor([99, 202, 50, 203, 101, 102, 202, 60, 203, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"system": [99], "assistant": [102]},
+        role_end_tokens={"system": [101], "assistant": [101]},
+    )
+
+    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_boundary_config_can_match_omni_whole_assistant_message():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "tool call"},
+        ]
+    }
+    input_ids = torch.tensor([100, 8, 101, 102, 202, 60, 203, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"user": [100], "assistant": [102]},
+        role_end_tokens={"user": [101], "assistant": [101]},
+        loss_roles=("assistant",),
+        include_start_tokens_for_roles=("assistant",),
+    )
+
+    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
+    example = {
+        "conversation": [
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([102, 55, 3, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [101]},
+        trim_leading_token_ids=(55,),
+    )
+
+    mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_applies_skipped_tokens_to_boundary_mask():
     example = {
         "conversation": [
             {"role": "user", "content": [{"type": "text", "text": "question"}]},
             {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
         ]
     }
-    input_ids = torch.tensor([1, 2, 3, 4, 99])
+    input_ids = torch.tensor([100, 1, 2, 101, 102, 3, 4, 103])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"user": [100], "assistant": [102]},
+        role_end_tokens={"user": [101], "assistant": [103]},
+    )
 
-    mask = build_assistant_loss_mask(example, input_ids, _Processor(), skipped_tokens=torch.tensor([4]))
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        _Processor(),
+        skipped_tokens=torch.tensor([4]),
+        boundary_config=boundary_config,
+    )
 
-    assert mask.tolist() == [0.0, 0.0, 1.0, 0.0, 0.0]
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 1.0]
 
 
-def test_build_assistant_loss_mask_require_matches_raises_for_missing_answer():
+def test_build_assistant_loss_mask_raises_without_valid_mask_source():
     example = {
         "conversation": [
             {"role": "user", "content": [{"type": "text", "text": "question"}]},
@@ -107,14 +438,8 @@ def test_build_assistant_loss_mask_require_matches_raises_for_missing_answer():
     }
     input_ids = torch.tensor([1, 2, 3, 4, 99])
 
-    with pytest.raises(AssertionError, match="Not found valid answer"):
-        build_assistant_loss_mask(
-            example,
-            input_ids,
-            _Processor(),
-            require_matches=True,
-            warn_on_all_masked=False,
-        )
+    with pytest.raises(ValueError, match="Unable to build assistant loss mask"):
+        build_assistant_loss_mask(example, input_ids, _Processor(), warn_on_all_masked=False)
 
 
 def test_build_shifted_labels_and_loss_mask_aligns_next_token_labels():
@@ -138,12 +463,12 @@ def test_apply_assistant_labels_to_batch_mutates_batch_with_shared_masking():
             ]
         }
     ]
-    batch = {"input_ids": torch.tensor([[1, 2, 3, 4, 5]])}
+    batch = {"input_ids": torch.tensor([[1, 2, 3, 4]])}
 
-    apply_assistant_labels_to_batch(batch, examples, _Processor(), skipped_tokens=torch.tensor([]))
+    apply_assistant_labels_to_batch(batch, examples, _GenerationMaskProcessor(), skipped_tokens=torch.tensor([]))
 
-    assert batch["loss_mask"].tolist() == [[0.0, 1.0, 1.0, 0.0, 0.0]]
-    assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, IGNORE_INDEX, IGNORE_INDEX]]
+    assert batch["loss_mask"].tolist() == [[0.0, 1.0, 0.0, 0.0]]
+    assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, IGNORE_INDEX, IGNORE_INDEX]]
 
 
 def test_apply_assistant_labels_to_batch_unmask_last_token_affects_shifted_loss_mask():
@@ -155,18 +480,18 @@ def test_apply_assistant_labels_to_batch_unmask_last_token_affects_shifted_loss_
             ]
         }
     ]
-    batch = {"input_ids": torch.tensor([[1, 2, 3, 4, 5]])}
+    batch = {"input_ids": torch.tensor([[1, 2, 3, 4]])}
 
     apply_assistant_labels_to_batch(
         batch,
         examples,
-        _Processor(),
+        _GenerationMaskProcessor(),
         skipped_tokens=torch.tensor([]),
         unmask_last_token=True,
     )
 
-    assert batch["loss_mask"].tolist() == [[0.0, 1.0, 1.0, 1.0, 0.0]]
-    assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, 5, IGNORE_INDEX]]
+    assert batch["loss_mask"].tolist() == [[0.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[IGNORE_INDEX, 3, 4, IGNORE_INDEX]]
 
 
 def test_normalized_vlm_sample_to_hf_example_expands_placeholders_and_threads_media():
