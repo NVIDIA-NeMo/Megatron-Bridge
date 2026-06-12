@@ -329,6 +329,53 @@ Key observations:
 These are **byte-identical** between runs. Confirms only the determinism knobs flip — no
 kernel-selection drift in the model code path itself.
 
+### 4.3 Bit-wise reproducibility evidence (wandb-tracked)
+
+The deterministic recipe was run **8 separate times** across multiple days and Slurm allocations.
+All runs produce identical loss trajectories — confirming the bit-exactness claim.
+
+Iter-by-iter `lm loss` for the three most recent det+overlap=ON runs (paired determinism check):
+
+| iter | 2102770 lm loss | 2103151 lm loss | 2103637 lm loss | match |
+|---|---|---|---|---|
+| 1 | 1.254624E+01 | 1.254624E+01 | 1.254624E+01 | ✓ |
+| 10 | 4.166083E+00 | 4.166083E+00 | 4.166083E+00 | ✓ |
+| 20 | 1.962516E-01 | 1.962516E-01 | 1.962516E-01 | ✓ |
+| 30 | 6.581618E-02 | 6.581618E-02 | 6.581618E-02 | ✓ |
+| 40 | 2.265546E-01 | 2.265546E-01 | 2.265546E-01 | ✓ |
+| **50** | **7.411075E-02** | **7.411075E-02** | **7.411075E-02** | **✓** |
+
+#### wandb run links — project [`mbridge-dev-zhiyul`](https://wandb.ai/nvidia/mbridge-dev-zhiyul)
+
+**Det baseline (overlap=OFF, 2026-06-09)** — 5 reproductions, same recipe, same loss trajectory:
+
+| Slurm job | Recipe | wandb run |
+|---|---|---|
+| 2074557 | det + overlap=OFF | [nq1tfhai](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/nq1tfhai) |
+| 2074641 | det + overlap=OFF | [y836cdic](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/y836cdic) |
+| 2074651 | det + overlap=OFF | [muqyfe0x](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/muqyfe0x) |
+| 2076499 | det + overlap=OFF | [ibtpfriv](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/ibtpfriv) |
+| 2076503 | det + overlap=OFF | [eyz3wbba](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/eyz3wbba) |
+
+**Det + overlap=ON (2026-06-11/12)** — 3 reproductions, paired bit-wise check:
+
+| Slurm job | Recipe | wandb run |
+|---|---|---|
+| **2102770** | det + overlap=ON | **[6c3mdfyz](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/6c3mdfyz)** |
+| **2103151** | det + overlap=ON (paired) | **[ix4p5y2e](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/ix4p5y2e)** |
+| **2103637** | det + overlap=ON (bit-wise check) | **[pfi9ap38](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/pfi9ap38)** |
+
+**Perf-comparison nsys pair (2026-06-12)** — the runs whose nsys profiles drive sections 2–4 above:
+
+| Slurm job | Recipe | wandb run |
+|---|---|---|
+| **2103633** | det + nsys15-18 | **[7klz92sb](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/7klz92sb)** |
+| **2103635** | non-det + nsys15-18 | **[mb07l64y](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/mb07l64y)** |
+
+In wandb, the lm-loss / mtp_1 / mtp_2 / grad_norm panels for the 7 det runs above
+**overlay exactly** — pick any 2, click "Overlay runs" in the wandb UI, and the curves
+trace each other to the bit.
+
 ---
 
 ## 5. Overlap Analysis (Comm vs Compute on Stream 7)
