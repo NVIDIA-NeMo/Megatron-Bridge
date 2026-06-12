@@ -316,6 +316,16 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE = replace(
 )
 
 
+# =============================================================================
+# DeepSeek V3 Pretrain - GBS15360 (GB300 MXFP8, GBS=15*1024)
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_GBS15360 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2,
+    global_batch_size=15360,
+)
+
+
 __all__ = [
     # V1 (original GBS settings)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1",
@@ -371,4 +381,6 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_B200_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_LARGE_SCALE",
+    # GBS15360 (GB300 MXFP8, GBS=15*1024)
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_GBS15360",
 ]
