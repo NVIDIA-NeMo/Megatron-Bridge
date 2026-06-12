@@ -4,6 +4,7 @@
 navigation:
 - page: NeMo Megatron Bridge
   path: ./nightly/pages/index.mdx
+  slug: ""
 - section: Performance
   contents:
   - page: Performance

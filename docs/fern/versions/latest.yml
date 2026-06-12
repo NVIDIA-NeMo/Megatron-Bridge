@@ -4,6 +4,7 @@
 navigation:
 - page: NeMo Megatron Bridge
   path: ./0.4.2/pages/index.mdx
+  slug: ""
 - section: Guides
   contents:
   - page: Parallelisms Guide

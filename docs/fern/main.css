@@ -91,6 +91,25 @@ p {
     display: none;
 }
 
+.readme-badge-row {
+    align-items: center;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin: 16px 0;
+}
+
+.readme-badge-row a {
+    display: inline-flex;
+    line-height: 0;
+}
+
+.readme-badge-row img {
+    display: block;
+    margin: 0;
+}
+
 /* Light theme (default) */
 html:not([data-theme]),html[data-theme=light] {
     --pst-color-background: #fff;
