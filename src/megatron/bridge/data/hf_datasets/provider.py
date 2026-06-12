@@ -88,6 +88,10 @@ class HFConversationDatasetProvider(DatasetProvider):
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     enable_in_batch_packing: bool = False
 
+    # Per-sample padding multiple used by collate-time in-batch packing.
+    # ConfigContainer fills this from model CP/SP constraints when available.
+    in_batch_packing_pad_to_multiple_of: int = 1
+
     def _collate_supports_packing(self, processor: Any) -> bool:
         collate_key = type(processor).__name__ if processor is not None else "default"
         if self.collate_impl is not None:
@@ -126,6 +130,7 @@ class HFConversationDatasetProvider(DatasetProvider):
             processor=processor,
             collate_impl=self.collate_impl,
             pack_sequences=self.enable_in_batch_packing and self._collate_supports_packing(processor),
+            pack_sequences_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def _load_processor_or_tokenizer(self, tokenizer: Any | None = None) -> Any:

@@ -38,6 +38,7 @@ class ConversationDataset(torch.utils.data.Dataset):
         processor: Any,
         collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None,
         pack_sequences: bool = False,
+        pack_sequences_pad_to_multiple_of: int = 1,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
         self._base_examples = base_examples
@@ -65,7 +66,10 @@ class ConversationDataset(torch.utils.data.Dataset):
 
             sig = inspect.signature(selected_impl)
             if "pack_sequences" in sig.parameters:
-                selected_impl = partial(selected_impl, pack_sequences=True)
+                pack_kwargs: dict[str, Any] = {"pack_sequences": True}
+                if "pack_sequences_pad_to_multiple_of" in sig.parameters:
+                    pack_kwargs["pack_sequences_pad_to_multiple_of"] = pack_sequences_pad_to_multiple_of
+                selected_impl = partial(selected_impl, **pack_kwargs)
             else:
                 raise ValueError(
                     f"Collate function {getattr(selected_impl, '__name__', selected_impl)} "

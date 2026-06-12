@@ -163,5 +163,6 @@ def pack_padded_sequences_in_batch(
     batch["cu_seqlens"] = torch.tensor([cu_seqlens], dtype=torch.int32, device=device)
     batch["cu_seqlens_argmin"] = torch.tensor([[len(cu_seqlens)]], dtype=torch.int32)
     batch["max_seqlen"] = torch.tensor([[max(padded_lengths)]], dtype=torch.int32)
-    batch["cu_seqlens_unpadded"] = torch.tensor([cu_seqlens_unpadded], dtype=torch.int32, device=device)
-    batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
+    if cu_seqlens_unpadded != cu_seqlens:
+        batch["cu_seqlens_unpadded"] = torch.tensor([cu_seqlens_unpadded], dtype=torch.int32, device=device)
+        batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)

@@ -143,5 +143,36 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     assert batch["cu_seqlens"].tolist() == [[0, 3, 7]]
     assert batch["cu_seqlens_argmin"].item() == 3
     assert batch["max_seqlen"].tolist() == [[4]]
+    assert "cu_seqlens_unpadded" not in batch
+    assert "cu_seqlens_unpadded_argmin" not in batch
+
+
+def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        },
+        {
+            "messages": [
+                {"role": "user", "content": "later"},
+                {"role": "assistant", "content": "bye"},
+            ]
+        },
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True, pack_sequences_pad_to_multiple_of=4)
+
+    assert batch["tokens"].tolist() == [[11, 21, 22, 0, 11, 12, 21, 22]]
+    assert batch["labels"].tolist() == [[21, 22, -100, -100, -100, 21, 22, -100]]
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 4, 8]]
+    assert batch["cu_seqlens_argmin"].item() == 3
+    assert batch["max_seqlen"].tolist() == [[4]]
     assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3, 7]]
     assert batch["cu_seqlens_unpadded_argmin"].item() == 3

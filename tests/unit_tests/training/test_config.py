@@ -1015,6 +1015,34 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_enable_in_batch_packing_sets_collate_padding_multiple(self, monkeypatch):
+        """Test in-batch packing forwards CP/SP divisibility requirements to collate-time packers."""
+
+        class InBatchPackingDataset:
+            enable_in_batch_packing = True
+            in_batch_packing_pad_to_multiple_of = 1
+
+        gpt_model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = InBatchPackingDataset()
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 8
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_offline_packing_requires_specs(self, monkeypatch):
         """Test validation error when offline packing is enabled without specs."""
         gpt_model_cfg = create_test_gpt_config()

@@ -14,6 +14,7 @@
 
 import json
 import logging
+import math
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -1245,6 +1246,13 @@ class ConfigContainer(Container):
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:
             self.model._enable_in_batch_packing = True
+            if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
+                cp_size = getattr(self.model, "context_parallel_size", 1)
+                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+                has_sp = getattr(self.model, "sequence_parallel", False)
+                cp_multiple = 2 * cp_size if cp_size > 1 else 1
+                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()

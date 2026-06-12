@@ -149,6 +149,7 @@ def text_chat_collate_fn(
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
     pack_sequences: bool = False,
+    pack_sequences_pad_to_multiple_of: int = 1,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
 
@@ -164,6 +165,8 @@ def text_chat_collate_fn(
         ignore_index: Label ignore value for masked targets.
         pack_sequences: If True, flatten the padded microbatch and emit
             packed-sequence metadata for GPT-style training steps.
+        pack_sequences_pad_to_multiple_of: Optional per-sequence length multiple
+            used when ``pack_sequences`` inserts padding for CP/SP constraints.
 
     Returns:
         Batch dictionary with VLM-style ``input_ids`` and GPT-style ``tokens``
@@ -218,5 +221,6 @@ def text_chat_collate_fn(
             batch,
             pad_token_id=int(pad_token_id),
             ignore_index=ignore_index,
+            pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
         )
     return batch
