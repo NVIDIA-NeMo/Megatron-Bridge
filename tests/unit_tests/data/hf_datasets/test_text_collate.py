@@ -115,7 +115,7 @@ def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
     assert batch["token_count"] == [3]
 
 
-def test_text_chat_collate_fn_exposes_padding_mask_for_in_batch_packing():
+def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     tokenizer = _TextChatTokenizer()
     examples = [
         {
@@ -134,4 +134,14 @@ def test_text_chat_collate_fn_exposes_padding_mask_for_in_batch_packing():
 
     batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True)
 
-    assert batch["_padding_mask"].tolist() == batch["attention_mask"].tolist()
+    assert batch["tokens"].tolist() == [[11, 21, 22, 11, 12, 21, 22]]
+    assert batch["input_ids"].data_ptr() == batch["tokens"].data_ptr()
+    assert batch["labels"].tolist() == [[21, 22, -100, -100, 21, 22, -100]]
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 0, 1, 2, 3]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 3, 7]]
+    assert batch["cu_seqlens_argmin"].item() == 3
+    assert batch["max_seqlen"].tolist() == [[4]]
+    assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3, 7]]
+    assert batch["cu_seqlens_unpadded_argmin"].item() == 3

@@ -330,7 +330,11 @@ def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch)
 
     assert train_ds is not None
     batch = train_ds.collate_fn([train_ds[0]])
-    assert batch["_padding_mask"].tolist() == [[1, 1, 1]]
+    assert batch["tokens"].tolist() == [[6, 7, 8]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 3]]
+    assert batch["cu_seqlens_argmin"].item() == 2
+    assert batch["max_seqlen"].tolist() == [[3]]
 
 
 def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypatch):
