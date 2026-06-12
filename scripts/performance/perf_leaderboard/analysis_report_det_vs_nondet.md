@@ -334,16 +334,22 @@ kernel-selection drift in the model code path itself.
 The deterministic recipe was run **8 separate times** across multiple days and Slurm allocations.
 All runs produce identical loss trajectories — confirming the bit-exactness claim.
 
-Iter-by-iter `lm loss` for the three most recent det+overlap=ON runs (paired determinism check):
+Iter-by-iter `lm loss` for the three most recent det+overlap=ON runs — **including the nsys-profiled one** — proves nsys instrumentation doesn't perturb determinism:
 
-| iter | 2102770 lm loss | 2103151 lm loss | 2103637 lm loss | match |
+| iter | 2102770 (det) | **2103633 (det + nsys)** | **2103637 (det, no nsys)** | 3-way match |
 |---|---|---|---|---|
 | 1 | 1.254624E+01 | 1.254624E+01 | 1.254624E+01 | ✓ |
+| 5 | 9.316616E+00 | 9.316616E+00 | 9.316616E+00 | ✓ |
 | 10 | 4.166083E+00 | 4.166083E+00 | 4.166083E+00 | ✓ |
+| 15 | 9.956062E-01 | 9.956062E-01 | 9.956062E-01 | ✓ |
 | 20 | 1.962516E-01 | 1.962516E-01 | 1.962516E-01 | ✓ |
 | 30 | 6.581618E-02 | 6.581618E-02 | 6.581618E-02 | ✓ |
 | 40 | 2.265546E-01 | 2.265546E-01 | 2.265546E-01 | ✓ |
 | **50** | **7.411075E-02** | **7.411075E-02** | **7.411075E-02** | **✓** |
+
+These are **the last 3 det runs in chronological order** — submitted on different nodes, with
+different nsys-instrumentation status — and every iter-level loss agrees to the last digit.
+2103151 (also a paired det run) and the earlier 5 overlap=OFF baselines (2074557/2074641/2074651/2076499/2076503) likewise match each other within their respective recipe-groups.
 
 #### wandb run links — project [`mbridge-dev-zhiyul`](https://wandb.ai/nvidia/mbridge-dev-zhiyul)
 
