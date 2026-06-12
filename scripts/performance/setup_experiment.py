@@ -571,18 +571,22 @@ def main(
     #     KubeflowExecutor.package() rsyncs that checkout into the workdir PVC
     #     under code_dir, and the generated launch.sh symlinks /nemo_run ->
     #     code_dir. Run the synced run_recipe.py from /nemo_run and front-load
-    #     /nemo_run/src on PYTHONPATH so `import megatron.bridge` resolves to the
-    #     synced source (shadowing the image's editable install) while
-    #     megatron.core et al. still come from the image. The run.Script env is
-    #     NOT propagated to the trainer container — only executor.env_vars is,
-    #     via launch.sh — so PYTHONPATH has to go through custom_env_vars here.
+    #     the synced source on PYTHONPATH: /nemo_run/src (megatron.bridge) and
+    #     /nemo_run/3rdparty/Megatron-LM (megatron.core), so both resolve to the
+    #     --mbridge-ref checkout rather than the image's editable installs and
+    #     stay version-matched (mcore JIT-compiles its dataset helpers via make).
+    #     The run.Script env is NOT propagated to the trainer container — only
+    #     executor.env_vars is, via launch.sh — so PYTHONPATH goes through
+    #     custom_env_vars here.
     #   * no code-sync: fall back to the image's /opt/Megatron-Bridge code.
     if kubeflow_namespace:
         if kubeflow_workdir_local_path:
             synced_root = "/nemo_run"
             in_container_script_dir = f"{synced_root}/scripts/performance"
             in_container_script_path = f"{in_container_script_dir}/{script_name}"
-            custom_env_vars["PYTHONPATH"] = f"{synced_root}/src:{in_container_script_dir}"
+            custom_env_vars["PYTHONPATH"] = (
+                f"{synced_root}/src:{synced_root}/3rdparty/Megatron-LM:{in_container_script_dir}"
+            )
         else:
             in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
             in_container_script_path = f"{in_container_script_dir}/{script_name}"
