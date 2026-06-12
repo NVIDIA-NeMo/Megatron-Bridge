@@ -57,7 +57,7 @@ DSv4 currently requires **TP=1** because MLA tensor parallelism is not supported
 | Model | TP | PP | EP | GPUs | GPU | Verified |
 |-------|---:|---:|---:|-----:|-----|----------|
 | DeepSeek-V4-Flash | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
-| DeepSeek-V4-Flash | 1 | 1 | 8 | 8 | H100 80GB | Import, export, inference |
+| DeepSeek-V4-Flash | 1 | 1 | 16 | 16 | H100 80GB | Import, export, inference |
 | DeepSeek-V4-Flash-Base | 1 | 1 | 4 | 4 | GB200 192GB | Import, export, inference |
 | DeepSeek-V4-Pro | 1 | 4 | 8 | 32 | GB200 192GB | Import, export, inference |
 | DeepSeek-V4-Pro | 1 | 16 | 8 | 128 | H100 80GB | Import, export, inference |
