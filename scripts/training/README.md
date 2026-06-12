@@ -71,7 +71,7 @@ Configuration priority:
 2. Recipe defaults (lowest)
 
 Mode is inferred from the recipe name. If your recipe name doesn't include
-`pretrain`, `finetune`, `sft`, or `peft`, pass `--mode` explicitly.
+`pretrain`, `finetune`, `sft`, or `peft`, pass `--dataset` so the launcher can infer the mode from the dataset type.
 
 ## Step Function Selection
 
