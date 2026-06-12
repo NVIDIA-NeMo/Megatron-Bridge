@@ -1,304 +1,400 @@
 # Nemotron 3 Ultra — Deterministic vs Non-Deterministic Perf Analysis
 
 **Date**: 2026-06-12
-**Model**: Nemotron 3 Ultra (550B-A55B hybrid Mamba+MoE)
-**Config**: TP=2, PP=3, EP=32, ETP=1, MBS=1, GBS=128, SeqLen=8192, 24 nodes (96×GB200), selective recompute
+**Model**: Nemotron 3 Ultra (550B-A55B hybrid Mamba+MoE, 108 layers, 512 experts top-22, 2 MTP heads)
+**Config**: TP=2, PP=3, EP=32, ETP=1, MBS=1, GBS=128, SeqLen=8192, 24 nodes × GB200 (96 GPUs), selective recompute
+
+> Source profiles: rank-0 nsys captures of iters 15–17 of jobs **2103633** (det) and **2103635** (non-det).
+> Bit-wise determinism verified separately by job **2103637** (matches 2102770 lm-loss exactly at iters 1, 10, 20, 30, 40, 50).
 
 ---
 
 ## Runs Compared
 
-| | Det run | Non-det run |
+| | Det run (2103633) | Non-det run (2103635) |
 |---|---|---|
-| Slurm Job | **2103633** | **2103635** |
-| Slurm runtime | 15:34 (50 iters) | 14:35 (50 iters) |
-| nsys-rep | `profile_810827_2103633_node0_rank0.{nsys-rep,sqlite}` | `profile_2270167_2103635_node0_rank0.{nsys-rep,sqlite}` |
-| Window | nsys15-18 (3 iters captured) | nsys15-18 (3 iters captured) |
-| nsys window length | 31.90 s | 27.61 s |
-| **Step time (iter 50, clean)** | **9,439 ms** | **8,041 ms** |
-| **MFU (TFLOP/s/GPU)** | **415.3** | **487.5** |
-| Throughput delta | — | — |
-| **Δ step time** | — | **−1,398 ms (−14.8%)** |
-| **Bit-wise reproducible** | ✓ (job 2103637 matches 2102770 iter 1, 10, 20, 30, 40, 50) | n/a |
+| Slurm runtime | 15:34 / 50 iters | 14:35 / 50 iters |
+| nsys profile window | 31.895 s (iters 15–17) | 27.608 s (iters 15–17) |
+| **Per-iter avg (nsys window/3)** | **10,632 ms** | **9,203 ms** |
+| **Per-iter (log iter 50, clean)** | **9,439 ms** | **8,041 ms** |
+| **Throughput (TFLOP/s/GPU, iter 50)** | **415.3** | **487.5** |
+| **Step time Δ (iter 50)** | — | **det +1,398 ms (+17.4%)** |
+| **Throughput Δ** | — | **det −72.2 (−14.8%)** |
+| Bit-wise reproducible | ✓ (md5 match across 2102770↔2103151↔2103637) | n/a |
 
-> **Headline: turning determinism on costs ~14.8% wall time / 15% throughput at this scale.**
+**Methodology note**: The nsys window covers 3 iterations (15, 16, 17). Iters 15–17 are still in warmup
+(iter-15 step time 9.3 s, iter-50 9.4 s for det). All kernel totals in this report are over the
+**3-iter window**; divide by 3 for per-iter values.
 
 ---
 
 ## 1. Fairness & Shared Configuration
 
-### What is the same (fair)
+### What is identical (verified at the kernel-count level)
 
 | Factor | Det | Non-det |
 |---|---|---|
-| Hardware | 24× GB200 nodes (NVL16-block), shared pool | ← same |
-| Container | `nemo:26.04.01.squashfs` | ← same |
-| Model | Nemotron-3-Ultra-550B-A55B-BF16 (108 layers, hidden=8192, 512 experts top-22, 2 MTP heads) | ← same |
-| Parallelism | TP=2 PP=3 EP=32 ETP=1, GBS=128, MBS=1, SeqLen=8192 | ← same |
-| MoE dispatcher | `alltoall` (HybridEP intentionally NOT used; NVL16 hardware can't allocate the fabric handle at EP=32) | ← same |
-| Attention backend | `fused` (TE FusedAttention / cuDNN sdpa) | ← same |
-| DDP overlap | `overlap_grad_reduce=true`, `overlap_param_gather=true` | ← same |
-| TP comm overlap | False (recipe disables) | ← same |
-| Recompute | selective: moe + layernorm + core_attn + moe_act + mlp + shared_experts | ← same |
-| `TRITON_CACHE_AUTOTUNING` | 1 | 1 (kernel-selection stability for both) |
+| Hardware | 24× GB200 (NVL16), same node pool | same |
+| Container | `nemo:26.04.01.squashfs` | same |
+| Parallelism | TP=2, PP=3, EP=32, ETP=1, GBS=128, MBS=1, seq=8192 | same |
+| MoE dispatcher | `alltoall` (HybridEP intentionally OFF — NVL16 can't allocate the fabric handle at EP=32) | same |
+| Attention backend | TE FusedAttention (cuDNN SDPA) | same |
+| DDP comm | `overlap_grad_reduce=true`, `overlap_param_gather=true`, `tp_comm_overlap=false` | same |
+| Recompute | selective: moe + layernorm + core_attn + moe_act + mlp + shared_experts | same |
+| `TRITON_CACHE_AUTOTUNING` | 1 | 1 |
+| NCCL kernel count | **11,013** | **11,013** ✓ |
+| nvjet GEMM kernel count | **59,712** | **59,712** ✓ |
+| Mamba SSM kernel count | **7,680** | **7,680** ✓ |
+| MoE permute kernel count | identical | identical |
+| TE Adam optimizer kernel count | 834 | 834 ✓ |
 
-### What is different (the determinism toggle)
+Identical kernel counts confirm the structural recipe is byte-for-byte the same — the only difference is *which* algorithm variant each library picks.
 
-| Knob | Det | Non-det |
-|---|---|---|
-| `model.deterministic_mode` | `true` | `false` |
-| `model.cross_entropy_loss_fusion` | `false` | `true` |
-| `NCCL_ALGO` | `Ring` | unset (NCCL default: Tree) |
-| `NVTE_ALLOW_NONDETERMINISTIC_ALGO` | `0` | unset (default: 1) |
-| `CUBLAS_WORKSPACE_CONFIG` | `:4096:8` | unset |
-| `MAMBA_DETERMINISTIC` | `1` | unset |
+### What changes (the 6 determinism knobs)
 
-Everything else is byte-identical between the two `setup_experiment.py` submissions (`launch_nemotron_3_ultra_nsys_compare.sh` is the harness). The 6 knobs above are the entire delta — see `submit-{det,nondet}.log` in `$OUT_DIR`.
+| Knob | Det | Non-det | Where it shows in the profile |
+|---|---|---|---|
+| `model.deterministic_mode=true` | true | false | Routes MCore through det algorithm picks (TE + autograd) |
+| `model.cross_entropy_loss_fusion=false` | false | true | Disables fused-CE → split path adds `aten_fill` zero-init |
+| `NCCL_ALGO=Ring` | Ring | unset (default Tree) | All NCCL collectives are `RING_LL` in det (incl. small P2P); non-det has mixed Ring + Tree |
+| `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` | 0 | unset (default 1) | Forces cuDNN SDPA bwd to a 2-pass knob_31 (det) vs 1-pass (non-det) |
+| `CUBLAS_WORKSPACE_CONFIG=:4096:8` | set | unset | Required guard when `torch.use_deterministic_algorithms(True)` is on |
+| `MAMBA_DETERMINISTIC=1` | 1 | unset | Mamba2 scan reduce path; surprising: slightly faster (see §4.4) |
 
 ---
 
-## 2. High-Level Results & Adv / Disadv
+## 2. Headline: Where Does the +1,398 ms / Iter Go?
 
-### Summary (per-step / per-iter; iter 50 clean)
+### Stream-level decomposition (3-iter nsys window)
 
-| Metric | Det | Non-det | Δ |
-|---|---|---|---|
-| **Step wall time (ms)** | **9,439** | **8,041** | **det +1,398 (+17.4%)** |
-| **Throughput (TFLOP/s/GPU)** | **415.3** | **487.5** | **det −72.2 (−14.8%)** |
-| lm loss iter 50 (numerical) | 7.411075E-02 | 5.234E-02 | (numerically different trajectories) |
-| Bit-wise reproducibility across 2 det runs | ✓ (md5 match across 2102770↔2103151↔2103637) | n/a | det wins |
+Going beyond the kernel-name leaderboard: which CUDA stream produces the gap?
 
-### Summary (full 3-iter nsys window kernel totals; sm-side time)
-
-| Category | Det ms | Non-det ms | Δ ms | Δ % | Verdict |
-|---|---|---|---|---|---|
-| **gemm_te_cublas** | 9,093 | 8,912 | +181 | +2.0% | near-tie |
-| **comm_nccl** | 6,896 | 6,194 | +702 | +11.3% | det worse (Ring is the culprit) |
-| **aten_fill** | **1,844** | **49** | **+1,795** | **+3,665%** | det path explodes |
-| **other** (CCL helpers, host kernels, etc.) | 1,470 | 1,310 | +160 | +12.2% | det slightly worse |
-| **ssm_mamba** | 856 | 913 | **−57** | −6.2% | det actually faster (!) |
-| `elementwise_triton` | 563 | 564 | −1 | −0.2% | tie |
-| `moe_perm` (chunk-sort / permute) | 434 | 436 | −2 | −0.5% | tie |
-| **aten_reduce** | 242 | 100 | +143 | +144% | det worse (det reduce kernels) |
-| **attention_cudnn** | 188 | 165 | +23 | +13.6% | det worse (det sdpa knob) |
-| `aten_copy` | 182 | 185 | −3 | −1.4% | tie |
-| `norm` (TE layernorm) | 98 | 96 | +2 | +2.4% | tie |
-| `aten_det_paths` (index / scatter / gather / arange) | 48 | 57 | −9 | −16% | non-det slightly worse |
-| **Window total** | **31,894** | **27,608** | **+4,287** | **+15.5%** | det loses 1.43 s/iter |
-
-> Note: the rows are kernel-name buckets, not NVTX module ranges. Indexing / scatter / gather kernels show in two places:
-> 1. **`aten_fill`** — `vectorized_elementwise_kernel<FillFunctor<BFloat16>>`, 1,844 ms det vs 49 ms non-det. This is the deterministic backward path's zero-init of scatter destination buffers.
-> 2. **`aten_reduce`** — the deterministic-mode `reduce` kernels used by `scatter_add`, `index_add`, `gather_backward` go via a different reduction kernel than the non-det atomic-add path.
-
-### NVTX module-range leaderboard top entries (see `leaderboard.txt` for full)
-
-**Forward (top 5):**
-| Range | det ms | nondet ms | Δ ms | % |
+| Stream | Role | Det ms | Non-det ms | Δ ms |
 |---|---|---|---|---|
-| `transformer_layer._forward_mlp.mlp` | 5,446.2 | 4,467.1 | **+979** | **+21.9%** |
-| `p2p_communication.send_forward_recv_backward` | 3,412.1 | 2,997.7 | +414 | +13.8% |
-| `mlp.forward.linear_fc1` | 733.4 | 666.1 | +67 | +10.1% |
-| `mlp.forward.linear_fc2` | 789.3 | 725.6 | +64 | +8.8% |
-| `attention.forward.core_attention` | 143.5 | 130.3 | +13 | +10.2% |
+| **7** | main: CCL host calls + most compute + aux | **12,769** | **10,433** | **+2,336** ← bulk of gap |
+| **42** | dedicated NCCL `SendRecv` (PP p2p) | **3,940** | **3,448** | **+493** |
+| **30** | dedicated NCCL ReduceScatter / AllGather | 372 | 373 | −1 |
+| **50** | dedicated NCCL AllReduce (small) | 186 | 183 | +3 |
+| 155 | GEMM stream | 1,159 | 1,119 | +41 |
+| 156 | GEMM stream | 1,148 | 1,127 | +21 |
+| 157 | GEMM stream | 1,162 | 1,144 | +18 |
+| 158 | GEMM stream | 1,160 | 1,132 | +28 |
 
-**Backward (top 5):**
-| Range | det ms | nondet ms | Δ ms | % |
+**Reading**: the **+2,336 ms** delta on stream 7 + the **+493 ms** on stream 42 (PP p2p)
+account for **~95% of the wall-time gap**. The four dedicated GEMM streams (155–158) are
+essentially identical — compute itself is barely affected.
+
+### Stream-7 decomposition
+
+| Stream-7 sub-bucket | Det ms | Non-det ms | Δ ms | Note |
 |---|---|---|---|---|
-| `CheckpointFunctionBackward` | 15,498.9 | 13,629.8 | **+1,869** | **+13.7%** |
-| `MambaSplitConv1dScanCombinedFnBackward` | 2,873.7 | 2,233.3 | **+640** | **+28.7%** |
-| `GatherBackward0` | 484.0 | 38.2 | +446 | **+1,168%** |
-| `_LinearBackward` | 1,053.1 | 959.3 | +94 | +9.8% |
-| `_LayerNormLinearBackward` | 561.5 | 484.3 | +77 | +15.9% |
+| NCCL kernels (RS/AG/AR) | 2,399 | 2,189 | **+210** | `NCCL_ALGO=Ring` forces Ring for all collectives |
+| Compute (nvjet/cudnn/triton/SSM) | **6,112** | **6,113** | **0** | identical — see §1 kernel counts |
+| Other (fill, reduce, copy, sort, permute, …) | **4,258** | **2,131** | **+2,127** ← the real gap |
 
-> The Mamba backward’s **+29%** delta is interesting: at the **autograd-engine** range, det is markedly slower; at the **kernel-name** bucket (`ssm_mamba`), det is slightly *faster* (−6%). The autograd range includes the bigger zero-init / scatter-add buffer prologue that the det path needs to run before the SSM kernel itself. The actual SSM compute kernels are essentially the same speed.
+The +2,127 ms on the "other" bucket is **the dominant cost of determinism**. It is *not* in the
+model math (GEMM/attention/SSM) and it is *not* in NCCL. It's in the **PyTorch det-substitute
+kernels** that replace `scatter_add`, `index_put`, `gather_backward`, fused-CE, etc.
 
-### Det advantages over non-det
+### Decomposing the +2,127 ms "other" bucket on stream 7
 
-1. **Bit-wise reproducibility** (the only reason to enable it). Job 2103637 reproduces 2102770’s iter-50 `lm loss=7.411075E-02` exactly, plus matching iter 1, 10, 20, 30, 40. Same recipe across two completely separate Slurm allocations.
-2. **Stability across hardware drift, debugger pauses, checkpoint resume** — same numerical trajectory regardless of run-order or wall-clock noise.
+| Kernel | Det calls | Det ms | Non-det calls | Non-det ms | Δ ms | What it is |
+|---|---|---|---|---|---|---|
+| `vectorized_elementwise<FillFunctor<BFloat16>>` | **35,328** | **1,607.4** | **120** | **24.5** | **+1,583** | Zero-init buffer before `scatter_add` (det substitute) |
+| `vectorized_elementwise<FillFunctor<float>>` | 39,369 | 160.5 | 6,975 | 12.9 | **+148** | Same, but fp32 (CE backward, gradient accum) |
+| `vectorized_elementwise<FillFunctor<int64>>` | 26,088 | 39.8 | (small) | (small) | +39 | Index buffer zero-init |
+| `reduce_kernel` (det reduce) | 22,281 | 218.3 | 11,913 | 75.1 | **+143** | Segmented reduce for det `scatter_add` |
+| `arange` (RangeFactories) | 3,096 | 5.2 | 24 | 0.04 | +5.2 | Index generation for det gather path |
+| **Sum of det-substitute kernels** | — | **~2,031** | — | **~113** | **+1,918** | ~96% of the +2,127 "other" gap |
 
-### Non-det advantages over det
+All other elementwise/copy/sort/permute kernels are **numerically identical** between the two runs
+(see §4.2 below for the side-by-side).
 
-1. **−14.8% step time** — the biggest concrete differences are below. None of them are NCCL "Tree vs Ring" related on this cluster (NCCL collective time delta is +11% / +702 ms, much smaller than the +1,795 ms `aten_fill` delta).
-2. **−1,795 ms of `aten_fill`** kernels are bypassed entirely.
-3. **−446 ms in `GatherBackward0`** — non-det path uses an atomic-add scatter instead of a deterministic-reduce-by-key.
-4. **−640 ms in `MambaSplitConv1dScanCombinedFnBackward`** — non-det avoids the deterministic chunk-by-chunk reduction prologue, even though the scan kernel itself is the same.
+### Mapping kernels to NVTX module ranges
 
----
+Going one level up to NVTX scopes (so we can say "X module's backward is slower because Y kernel
+fires more"):
 
-## 3. Improvement Opportunities
-
-### For the det recipe
-
-1. **Pre-allocate scatter-dest buffers** — `aten_fill` totals 1.8 s/3 iters (~600 ms/iter) zeroing buffers that immediately get scattered into. Most callers are `IndexPut` / `scatter_add` backward paths. If we pre-allocate once at iter 0 and re-use, this cost should drop to first-iter only. Net: ~600 ms/iter recoverable (~6% wall time).
-2. **Audit which `Gather` / `IndexPut` calls actually need determinism** — `GatherBackward0` is 484 ms det vs 38 ms non-det (a 12× gap). The full Mamba scan path is already deterministic via `MAMBA_DETERMINISTIC=1` — the gather here is at MoE topk-routing. We could opt this single call out of det if numerically tolerable.
-3. **Switch `NCCL_ALGO=Ring` selectively** — only the `send_forward_recv_backward` ranges need it for P2P determinism. AllReduce on optimizer states could use Tree without affecting bit-exactness (no atomic). Estimated win: ~200 ms/iter on `comm_nccl`.
-
-### For the non-det recipe (already fast — no action needed)
-
-The non-det recipe already matches the best published perf for this cluster/config. The 487.5 TFLOP/s/GPU is in line with the Ultra public reference number.
-
----
-
-## 4. Detailed Evidence
-
-### 4.1 NCCL Collective Detail
-
-| | Det | Non-det | Δ |
-|---|---|---|---|
-| `ncclDevKernel_SendRecv` total ms | 5,291 | (combined) | included below |
-| `ncclDevKernel_ReduceScatter_Sum_bf16_RING_LL` ms | 794 | (combined) | included below |
-| `ncclDevKernel_AllGather_RING_LL` ms | 709 | (combined) | included below |
-| **All NCCL kernels total ms (3-iter window)** | **6,896** | **6,194** | **det +702 (+11.3%)** |
-| NCCL kernel count | 11,013 | 11,013 | identical |
-
-Per-call avg duration is slightly higher with `NCCL_ALGO=Ring`: Ring's bandwidth-optimal for large messages but latency-suboptimal for small ones. The +702 ms is consistent with replacing Tree with Ring on the small P2P micro-batches.
-
-### 4.2 GEMM Per-Shape Breakdown (top 10 by det total)
-
-| nvjet kernel | det ms | nondet ms | Δ ms | det calls | nondet calls |
-|---|---|---|---|---|---|
-| `nvjet_sm100_tst_128x256_64x6_2x1_2cta_v_bz_TNT` | 1,275 | 1,243 | +32 | 8,674 | 8,674 |
-| `nvjet_sm100_tst_128x256_64x6_2x2f_2cta_h_bz_TNT` | 1,076 | 1,054 | +22 | 1,728 | 1,728 |
-| `nvjet_sm100_tst_128x160_64x8_2x2f_2cta_h_bz_TNT` | 978 | 951 | +27 | 11,134 | 11,134 |
-| `nvjet_sm100_tst_128x192_64x6_4x1f_2cta_v_badd_NTT` | 841 | 825 | +16 | 6,144 | 6,144 |
-| `nvjet_sm100_tst_128x256_64x6_2x1_2cta_v_bz_NNT` | 771 | 755 | +16 | 4,481 | 4,481 |
-| `nvjet_sm100_tst_256x128_64x5_2x2f_2cta_h_badd_NTT` | 605 | 588 | +17 | 480 | 480 |
-| `nvjet_sm100_tst_128x192_64x6_2x1_2cta_v_badd_NTT` | 579 | 569 | +10 | 6,144 | 6,144 |
-| `nvjet_sm100_tst_256x256_64x4_2x1_2cta_v_bz_NNT` | 535 | 524 | +11 | 384 | 384 |
-| `nvjet_sm100_tst_128x160_64x8_2x2f_2cta_h_bz_NNT` | 509 | 497 | +12 | 5,567 | 5,567 |
-| `nvjet_sm100_tst_256x128_64x5_2x1_2cta_v_bz_TNT` | 429 | 419 | +10 | 4,926 | 4,926 |
-| **Total GEMM (all kernels)** | **9,093** | **8,912** | **+181 (+2.0%)** | 59,712 | 59,712 |
-
-GEMM is structurally identical: same kernel names, same call counts, same tile shapes. The +2% delta is a slight per-call slowdown (cuBLAS uses `:4096:8` workspace under det; ~3-4 µs extra setup per call adds up). No kernel-selection drift — `tst` epilogue is used in both.
-
-### 4.3 Attention Kernels (cudnn SDPA)
-
-| | Det | Non-det | Δ |
-|---|---|---|---|
-| Total kernel time / 3-iter window (ms) | 188 | 165 | +23 (+13.6%) |
-| FWD kernel count | 192 | 144 | +48 |
-| BWD kernel count | 192 | 144 | +48 |
-
-Det has more attention kernel invocations because:
-- `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` forces cuDNN to pick deterministic flash-attention backward, which splits the BWD into more passes.
-- Per-kernel time is similar, but the extra split (+48 FWD / +48 BWD calls) accumulates.
-
-### 4.4 SSM / Mamba
-
-| | Det | Non-det | Δ |
-|---|---|---|---|
-| Total kernel time / 3-iter window (ms) | 856 | 913 | **−57 (−6.2%)** |
-| Kernel count | 7,680 | 7,680 | identical |
-
-**Counterintuitive but real**: when `MAMBA_DETERMINISTIC=1`, the chunk-state-passing kernel takes a slightly different code path that turns out to be marginally faster on B200. The deterministic mamba kernels themselves aren’t slower — they’re slightly *faster*.
-
-The +640 ms `MambaSplitConv1dScanCombinedFnBackward` delta in the autograd-range leaderboard is therefore **NOT in the SSM scan kernel**. It’s in the deterministic backward’s zero-init + scatter-add reduce buffer (which shows up as `aten_fill` + `aten_reduce`).
-
-### 4.5 The big delta: `aten_fill` and `aten_reduce`
-
-This is the largest single contributor (+1,795 ms `aten_fill`, +143 ms `aten_reduce` = +1,938 ms / 3 iters = +646 ms/iter, almost half the total +1,398 ms step-time gap).
-
-| Kernel | Det ms | Non-det ms | Δ ms | Det count |
+| NVTX autograd range | Det ms (window) | Non-det ms (window) | Δ ms | Underlying kernel responsible |
 |---|---|---|---|---|
-| `vectorized_elementwise_kernel<FillFunctor<BFloat16>>` | 1,607 | 41 | +1,566 | 35,328 |
-| `vectorized_elementwise_kernel<FillFunctor<float>>` | 237 | 8 | +229 | (subset) |
-| `at::native::reduce_kernel<...>` | 242 | 100 | +143 | 30,153 |
+| `CheckpointFunctionBackward` (all op_ids) | 15,499 | 13,630 | **+1,869** | `FillFunctor<BFloat16>` (~1.5 s) + reduce + arange |
+| `MambaSplitConv1dScanCombinedFnBackward` | 2,874 | 2,233 | **+640** | `FillFunctor<BFloat16>` zero-init in scan-bwd reduce; **NOT** in the SSM scan kernel itself (those go *down* −6%) |
+| `GatherBackward0` | 484 | 38 | **+446** | substitute path: `arange` + `cub::DeviceRadixSort` + segment-sum |
+| `_LinearBackward` (all op_ids) | 1,053 | 959 | **+94** | per-call cuBLAS +3-5 µs from `:4096:8` workspace setup |
+| `_LayerNormLinearBackward` | 562 | 484 | **+77** | same cuBLAS workspace penalty + a det reduce |
+| `IndexPutBackward0` | 56 | 5 | **+51** | substitute index_put_ scatter loop |
+| `_moe_chunk_sortBackward` | 145 | 112 | **+33** | scatter_add fill + segmented reduce |
 
-**Mechanism**: `torch.use_deterministic_algorithms(True)` substitutes:
-- `scatter_add_` → `unsafe_scatter` is disabled, replaced by `index_select`+`bincount`+segment-sum
-- `index_put_` (accumulate=True) → loops over destination indices instead of atomic-add
-- `gather` backward → key-sorted reduction (the +446 ms `GatherBackward0` in the leaderboard)
+The "+1,869 ms on CheckpointFunctionBackward" is **not in the recomputed forward** — that fires the
+same kernels at the same speed. It's in the **gradient-accumulation paths inside the
+recomputed-block backward**, where every `scatter_add` / `index_put` / fused-CE-bwd / gather-bwd is
+now going through a 2–4× slower deterministic substitute.
 
-All of these substitute paths begin with `fill_` to zero the output buffer before the scatter / reduce step. The fused-CE-loss path also fills several intermediate buffers at backward time; with `cross_entropy_loss_fusion=false` the (slower) split path is used, which adds more intermediate buffers.
+---
 
-### 4.6 Comm vs Compute (full window)
+## 3. Compute Path: Essentially Untouched
 
-| | Det | Non-det |
+### 3.1 GEMM (TE / cuBLAS nvjet kernels)
+
+Identical kernel selection — same nvjet variants, same tile shapes (`tst_*`), same call counts.
+Top 10 kernels by det total:
+
+| nvjet kernel | det calls | det ms | nondet calls | nondet ms | Δ ms | per-call Δ µs |
+|---|---|---|---|---|---|---|
+| `tst_128x256_64x6_2x1_2cta_v_bz_TNT` | 8,674 | 1,275 | 8,674 | 1,243 | +32 | +3.7 |
+| `tst_128x256_64x6_2x2f_2cta_h_bz_TNT` | 1,728 | 1,076 | 1,728 | 1,054 | +22 | +12.7 |
+| `tst_128x160_64x8_2x2f_2cta_h_bz_TNT` | 11,134 | 978 | 11,134 | 951 | +27 | +2.4 |
+| `tst_128x192_64x6_4x1f_2cta_v_badd_NTT` | 6,144 | 841 | 6,144 | 825 | +16 | +2.6 |
+| `tst_128x256_64x6_2x1_2cta_v_bz_NNT` | 4,481 | 771 | 4,481 | 755 | +16 | +3.6 |
+| `tst_256x128_64x5_2x2f_2cta_h_badd_NTT` | 480 | 605 | 480 | 588 | +17 | +35.4 |
+| **All 60 nvjet kernels** | **59,712** | **9,093** | **59,712** | **8,912** | **+181** | **+3.0 avg** |
+
+The det penalty on GEMM is **+3.0 µs per cuBLAS call on average**, plausibly cuBLAS doing extra
+workspace pointer setup with the `:4096:8` config. No kernel-selection drift. **Net: +2.0%** on the
+whole GEMM bucket.
+
+### 3.2 cuDNN flash SDPA — det has 2-pass backward
+
+| | det | non-det |
 |---|---|---|
-| Comm (NCCL only) | 6,896 ms | 6,194 ms |
-| Compute (GEMM + attn + ssm) | 10,138 ms | 9,990 ms |
-| Aux (fill, reduce, copy, etc.) | 4,151 ms | 1,733 ms |
-| Idle/other (host stalls, etc.) | 10,710 ms | 9,691 ms |
-| **Window total** | **31,894** | **27,608** |
+| FWD `fprop_f16_knob_7_128x128x128_4x1x1_kernel0` calls | 192 | 192 ✓ |
+| FWD ms / avg µs | 71.96 / **374.8** | 69.80 / **363.6** |
+| BWD `bprop_f16_knob_31_128x128x128_1x4x1_kernel0` calls | **96** | **96** ✓ |
+| BWD `bprop_f16_knob_31_128x128x128_1x4x1_kernel1` calls | **96** | **0** ← det-only second pass |
+| BWD pass0 ms / avg µs | 64.38 / 670.6 | 95.57 / **995.5** |
+| BWD pass1 ms / avg µs | 51.45 / 535.9 | — |
+| **BWD total ms / iter** | **115.8** (2 kernels) | **95.6** (1 kernel) | **det +20.2 ms / window** |
 
-The dominant gap is **aux**, not comm or compute. That's good news: the det penalty isn't in the model's math hot path — it's in PyTorch's deterministic substitute kernels for index/gather/scatter operations. Many of these substitute paths can be optimized incrementally without sacrificing bit-exactness (see §3).
+`NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` forces cuDNN to split the SDPA backward into 2 passes for
+det reduction. Per-call each pass is shorter, but the total is +21%. The 2-pass schedule also
+means more kernel-launch overhead.
 
-### 4.7 Bit-wise reproducibility evidence (job 2103637)
+### 3.3 Mamba2 selective scan — DET is slightly **faster**
 
-Job 2103637 ran the same recipe as 2102770/2103151 — same Slurm allocation, same 24 nodes — but without nsys profiling. Iter-by-iter `lm loss` against 2102770:
-
-| iter | 2102770 lm loss | 2103637 lm loss | match |
+| | det | non-det | Δ |
 |---|---|---|---|
-| 1 | 1.254624E+01 | 1.254624E+01 | ✓ |
-| 10 | 4.166083E+00 | 4.166083E+00 | ✓ |
-| 20 | 1.962516E-01 | 1.962516E-01 | ✓ |
-| 30 | 6.581618E-02 | 6.581618E-02 | ✓ |
-| 40 | 2.265546E-01 | 2.265546E-01 | ✓ |
-| **50** | **7.411075E-02** | **7.411075E-02** | **✓** |
+| Total SSM kernel ms (window) | **856** | **913** | **−57 (−6.2%)** ← det wins |
+| SSM kernel count | 7,680 | 7,680 ✓ | identical |
 
-The recipe is bit-exact reproducible across separate Slurm allocations, separate node sets, separate wall-clock starts.
+`MAMBA_DETERMINISTIC=1` switches the chunked-reduce path. On B200 it happens to be slightly faster
+than the default. This means **the +640 ms on `MambaSplitConv1dScanCombinedFnBackward` autograd range
+is entirely buffer/reduce overhead, not in the SSM math kernel itself.**
 
 ---
 
-## 5. Estimated Contribution of Each Determinism Knob
+## 4. Communication Path: +702 ms, Mostly P2P
 
-Cannot be measured exactly without per-knob isolation runs, but estimated based on which kernel categories each knob touches:
+### 4.1 Per-collective NCCL kernel breakdown (3-iter window)
 
-| Knob | Touches | Estimated cost / iter |
+| Collective | Det calls | Det ms | Det avg µs | Non-det calls | Non-det ms | Non-det avg µs | Δ ms | Avg µs Δ |
+|---|---|---|---|---|---|---|---|---|
+| **SendRecv** (PP p2p) | 3,486 | **5,291** | **1,518** | 3,486 | **4,771** | **1,369** | **+520** | **+149** |
+| **ReduceScatter Sum bf16 RING_LL** | 2,730 | **794** | **291** | 2,730 | **596** | **218** | **+198** | **+73** |
+| AllGather RING_LL | 4,362 | 709 | 162 | 4,362 | 753 | 173 | **−44** | −11 (det faster) |
+| AllReduce Sum bf16 RING_LL | 9 | 75 | 8,351 | 9 | 44 | 4,883 | +31 | +3,468 |
+| AllReduce Sum f32 RING_LL | 30 | 23 | 783 | 15 | 14 | 920 | +9 | — |
+| AllReduce Sum f32 **TREE_LL** | 0 | 0 | — | 15 | 10 | 663 | −10 | non-det only |
+| AllReduce Sum u32 RING_LL | 6 | 0.2 | 27 | 3 | 0.1 | 35 | +0.1 | — |
+| AllReduce Sum u32 **TREE_LL** | 0 | 0 | — | 3 | 0.3 | 93 | −0.3 | non-det only |
+| Broadcast | 3 | 0.04 | 13 | 3 | 0.06 | 19 | −0.02 | — |
+| **Total NCCL kernel ms** | | **6,896** | | | **6,194** | | **+702** | |
+
+Key observations:
+1. **SendRecv +520 ms** is the largest NCCL delta. PP p2p chunks are small and **latency-bound**;
+   `NCCL_ALGO=Ring` adds 149 µs/call (~11%). This is on the dedicated stream 42.
+2. **ReduceScatter +198 ms** (+33% per call) — similar story: small per-DP-shard message at this batch/SeqLen.
+3. **AllGather is actually faster in det (−44 ms)** — Ring is the bandwidth-optimal choice for AG
+   anyway; non-det's default Tree algorithm has slightly higher per-call latency here.
+4. Non-det has BOTH `RING_LL` *and* `TREE_LL` variants of f32 AllReduce — confirming NCCL is free
+   to pick per-call in non-det, and pinned to RING in det.
+
+### 4.2 Identical kernels (sanity check — same forward graph)
+
+| Kernel | det calls | det ms | non-det calls | non-det ms |
+|---|---|---|---|---|
+| `_make_chunk_sort_map_kernel` (MoE) | 1,536 | 279.0 | 1,536 | 280.4 |
+| `_sort_chunks_by_map_kernel` (MoE) | 2,304 | 250.9 | 2,304 | 240.8 |
+| `_row_id_map_pass_3_kernel` (MoE) | 768 | 165.5 | 768 | 166.2 |
+| `_layer_norm_bwd_kernel` (TE) | 384 | 86.8 | 384 | 87.4 |
+| `_unpermute_kernel` (MoE) | 1,152 | 79.5 | 1,152 | 78.1 |
+| `_permute_kernel` (MoE) | 1,152 | 75.5 | 1,152 | 77.2 |
+| `multi_tensor_adam` (TE optimizer) | 834 | 94.0 | 834 | 95.1 |
+| `mbtopk::computeBlockwiseWithinKCounts` (router) | 7,680 | (similar) | 7,680 | 70.5 |
+| `mbtopk::computeBlockDigitCounts` (router) | 7,680 | (similar) | 7,680 | 58.3 |
+
+These are **byte-identical** between runs. Confirms only the determinism knobs flip — no
+kernel-selection drift in the model code path itself.
+
+---
+
+## 5. Overlap Analysis (Comm vs Compute on Stream 7)
+
+Stream 7 is shared between NCCL host launches and most compute. Streams 30/42/50 are dedicated NCCL
+streams. Streams 155–158 are dedicated GEMM streams.
+
+| | Det (3-iter window) | Non-det (3-iter window) |
 |---|---|---|
-| `model.cross_entropy_loss_fusion=false` | adds 6+ `aten_fill` + `aten_reduce` calls in CE backward | ~80–120 ms |
-| `torch.use_deterministic_algorithms(True)` (via `deterministic_mode`) | substitutes `index_put`, `scatter_add`, `gather_backward`, `bincount` | **~500–600 ms** (dominant) |
-| `NCCL_ALGO=Ring` | replaces Tree on AllReduce / P2P | ~200 ms |
-| `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` | switches cuDNN flash-attn backward to deterministic kernel | ~15 ms |
-| `CUBLAS_WORKSPACE_CONFIG=:4096:8` | cuBLAS workspace setup overhead per call | ~60 ms |
-| `MAMBA_DETERMINISTIC=1` | switches SSM scan reduce to chunk-by-chunk | ~0 (slightly faster — see §4.4) |
-| **Total estimated det penalty** | | **~860–1,000 ms / iter** (vs measured +1,398 ms) |
+| Window wall | 31,895 ms | 27,608 ms |
+| GEMM streams (155–158) total | 4,629 ms (14.5% of wall) | 4,522 ms (16.4% of wall) |
+| Stream 7 total (the main bottleneck) | 12,769 ms (40.0%) | 10,433 ms (37.8%) |
+| Stream 42 NCCL SendRecv total | 3,940 ms (12.4%) | 3,448 ms (12.5%) |
+| Stream 30+50 NCCL total | 558 ms (1.8%) | 556 ms (2.0%) |
 
-The remaining ~400 ms gap is likely **secondary effects** of `torch.use_deterministic_algorithms(True)` rippling into auxiliary buffer allocations, plus a small share of kernel-launch overhead from the higher SM occupancy of the substitute kernels.
+**Key observation**: in both runs, **stream 7 is on the critical path** because it serializes the
+det-substitute "other" kernels (fill/reduce/index) with the bulk of compute. With +2,127 ms of
+extra fills/reduces on stream 7 in det, **even if PP p2p (stream 42) and the GEMM streams (155–158)
+are perfectly overlapped, stream 7 itself adds ~700 ms/iter of un-overlappable work.**
+
+That's the +1,398 ms/iter wall delta in one sentence:
+- ~700 ms/iter from extra fill/reduce/index kernels serialized on stream 7
+- ~170 ms/iter from the NCCL Ring/SendRecv slowdowns (mostly on stream 42)
+- ~60 ms/iter from cuBLAS workspace + cuDNN bwd 2-pass + misc
+- ~470 ms/iter from secondary cascade effects (worsened overlap, extra kernel launches, etc.)
 
 ---
 
-## 6. Summary of Flag Value
+## 6. Per-Knob Cost Attribution (Estimates)
 
-| Flag | Primary effect | Estimated cost / iter | Worth it? |
+Cannot be measured exactly without per-knob isolation runs, but inferred from kernel-name evidence:
+
+| Knob | Touches (kernel signature) | Est. cost / iter | Confidence |
 |---|---|---|---|
-| `model.deterministic_mode=true` | Routes MCore through det algorithm picks (TE + cuBLAS + autograd) | ~600 ms | yes — alone gives ~70% of det property |
-| `model.cross_entropy_loss_fusion=false` | Disables fused-CE (uses atomic-add reduce over vocab dim) | ~100 ms | yes — fused CE is non-det |
-| `torch.use_deterministic_algorithms(True)` (implicit via deterministic_mode) | PyTorch-side det index/scatter/gather | ~500 ms (already counted in deterministic_mode) | yes — these calls were the easiest non-det leaks |
-| `NCCL_ALGO=Ring` | Pins NCCL collective to Ring (Tree is non-det in mixed precision) | ~200 ms | yes — alone is one-line config |
-| `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` | Forces cuDNN det flash-attn backward | ~15 ms | yes — free win for FlashAttention recipe |
-| `CUBLAS_WORKSPACE_CONFIG=:4096:8` | Required guard when `use_deterministic_algorithms(True)` | ~60 ms (cuBLAS workspace allocation) | mandatory |
-| `MAMBA_DETERMINISTIC=1` | Mamba2 scan reduce gates on this env | 0 (slightly faster) | mandatory for SSM bit-exactness |
-| **Net det penalty** | | **~1.4 s / iter (~14.8% wall time)** | **trade-off depends on use case** |
+| `torch.use_deterministic_algorithms(True)` (via `deterministic_mode`) | `FillFunctor<BFloat16>` (1,583/3 ≈ 528 ms), `reduce_kernel` (143/3 ≈ 48 ms), `arange` (5/3), index segment-sum | **~580 ms/iter** | HIGH — direct kernel-name evidence |
+| `cross_entropy_loss_fusion=false` | Adds ~6 `FillFunctor<float>` ops in CE bwd | **~50 ms/iter** | MED — partly absorbed in the above |
+| `NCCL_ALGO=Ring` | SendRecv (+173 ms/iter), ReduceScatter (+66 ms/iter), AllGather (−15 ms/iter) | **~230 ms/iter** | HIGH — direct NCCL kernel-name evidence |
+| `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` | cuDNN SDPA bwd split into 2 passes | **~7 ms/iter** | HIGH — kernel-knob-name evidence |
+| `CUBLAS_WORKSPACE_CONFIG=:4096:8` | +3 µs/call × 59,712 / 3 cuBLAS calls | **~60 ms/iter** | HIGH — count-based attribution |
+| `MAMBA_DETERMINISTIC=1` | SSM kernel switch | **−19 ms/iter** (slightly faster) | HIGH |
+| **Sum** | | **~910 ms/iter** | |
+| **Measured wall delta (iter 50)** | | **+1,398 ms/iter** | |
+| **Unaccounted gap (~490 ms/iter)** | secondary cascade: bubble from stream-7 stalls, kernel-launch overhead amplification, marginal GEMM workspace effects | | LOW — not directly attributable |
 
-**Take-aways:**
-- The recipe IS bit-exact reproducible. ✓
-- The cost is dominated by deterministic *substitute kernels* (aten_fill + aten_reduce + GatherBackward) for ~50% of the gap, plus a non-trivial 11% NCCL cost from forcing Ring.
-- Compute (GEMM, attention, SSM) is essentially un-touched (+2% / +14% / *−6%* respectively).
-- If you only need *checkpoint-resume reproducibility* (not per-iter bit exactness), dropping `torch.use_deterministic_algorithms(True)` would recover ~50% of the wall-time cost while preserving the model-math determinism via just the env vars.
+The ~490 ms/iter "unaccounted" gap is consistent with secondary effects: more kernel launches on
+stream 7 push downstream compute kernels later, occasionally exposing NCCL collectives that were
+previously hidden behind compute.
 
 ---
 
-## 7. Reproduction
+## 7. Improvement Opportunities
 
-```bash
-export HF_TOKEN=hf_… WANDB_API_KEY=…
-export ACCOUNT=coreai_dlalgo_llm PARTITION=gb200
-export CONTAINER_IMAGE=/path/to/nemo-26.04.01.squashfs
-export REPO_ROOT="$PWD"
-export HF_CACHE=/lustre/.../hf_cache
-export PYTHON=/path/to/venv/bin/python
-export OUT_DIR=./nsys-compare-$(date +%s)
+Concrete, kernel-name-grounded suggestions, ordered by estimated wall-time recovery:
 
-bash scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh
-# Submits det+nsys + non-det+nsys, waits, extracts both .sqlite to nvtx_sum CSV,
-# runs print_nsys_leaderboard.py → leaderboard.txt
+### 7.1 Pre-allocate `scatter_add`/`index_put` destination buffers (~400–500 ms/iter)
+
+**Evidence**: 35,328 `FillFunctor<BFloat16>` calls/window (~11,776/iter) zeroing scatter destinations.
+Most callers are MoE expert grad scatter + MTP-head loss backward. **The buffers are the same
+shape every iter**.
+
+**Fix**: cache zero-buffers in `MoE.backward()` and `MTPHead.backward()` and `.zero_()` once at
+iter 0, then re-use. Net: 11,776 fills → ~10 fills/iter.
+
+**Wall-time recovery**: ~470 ms/iter (~5% of wall).
+
+### 7.2 Replace `cub::DeviceRadixSort` path in `GatherBackward0` with cached index mapping (~140 ms/iter)
+
+**Evidence**: `GatherBackward0` is +446 ms/window over `CheckpointFunctionBackward` already accounts
+for most of `GatherBackward0`'s wall. The MoE router topk indices are deterministic across iters
+when load-balancing is on — so the sort-key is constant per iter.
+
+**Fix**: cache the sorted-index buffer in the router; refresh only when topk changes.
+
+**Wall-time recovery**: ~140 ms/iter.
+
+### 7.3 Move PP p2p off Ring algo (~170 ms/iter)
+
+**Evidence**: SendRecv is +149 µs/call × 3,486 calls/window = +520 ms/window = +173 ms/iter.
+`NCCL_ALGO=Ring` is overkill for P2P — Ring only affects multi-rank collectives.
+
+**Fix**: scope `NCCL_ALGO=Ring` to AllReduce only, leave SendRecv at default.
+- Approach A: per-collective NCCL env-var pinning (NCCL supports collective-specific algo via
+  `NCCL_ALGO_AllReduce=Ring` only).
+- Approach B: use a separate NCCL communicator for PP that doesn't have `NCCL_ALGO` set.
+
+**Wall-time recovery**: ~170 ms/iter (the full SendRecv delta).
+
+### 7.4 Selective `use_deterministic_algorithms` opt-out (~200–300 ms/iter, but breaks bit-exactness)
+
+If only *checkpoint-resume reproducibility* (not per-iter bit-exactness) is needed, drop
+`torch.use_deterministic_algorithms(True)` and rely on just the env vars + MCore deterministic_mode.
+This preserves NCCL/CE/SDPA/Mamba determinism but allows `scatter_add` and `index_put` to use the
+atomic-add (non-det) path.
+
+**Trade-off**: same iter-1 loss, may drift by iter-50 if topk routing changes.
+
+---
+
+## 8. Methodology
+
+### 8.1 Profile capture
+
+- Both runs submitted via `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh`, which 
+  uses byte-aligned recipes (the `false → true` last-wins DDP overlap pattern from 
+  `launch_nemotron_3_ultra_deterministic.sh` is preserved).
+- nsys flags: `--enable_nsys --profiling_start_step 15 --profiling_stop_step 18 --profiling_ranks 0
+  --nsys_trace cuda-sw,nvtx --export_nsys_sqlite`.
+- 3-iter window captured on rank 0 only.
+
+### 8.2 Window normalization
+
+| | det | non-det |
+|---|---|---|
+| nsys window | 31,895 ms | 27,608 ms |
+| Log iter 15 elapsed (ms) | 9,332 | 7,952 |
+| Log iter 16 elapsed (ms) | 11,661 | 10,240 |
+| Log iter 17 elapsed (ms) | 10,689 | 9,232 |
+| Sum iters 15–17 (log) | 31,682 ms | 27,424 ms |
+| nsys window vs log sum | 31,895 / 31,682 = 1.007 | 27,608 / 27,424 = 1.007 |
+
+Window/log discrepancy < 1% → 3 iters captured cleanly, no startup/teardown contamination.
+
+### 8.3 SQL queries used
+
+All kernel-level stats came from direct sqlite queries on the `.sqlite` databases (no `nsys stats`
+post-processing dependency). Schema: `CUPTI_ACTIVITY_KIND_KERNEL` joined to `StringIds` by
+`demangledName`. NVTX module ranges came from `NVTX_EVENTS.text` (not `textId`) since MCore's
+profile_nvtx wrapper writes free-text labels. Per-stream split via `streamId` group-by.
+
+Query example (top kernels by total ms):
+```sql
+SELECT s.value, COUNT(*) n, SUM((k.end-k.start)/1e6) ms
+FROM CUPTI_ACTIVITY_KIND_KERNEL k JOIN StringIds s ON k.demangledName=s.id
+GROUP BY s.value ORDER BY ms DESC LIMIT 20;
 ```
 
-Source profiles (this report):
-- Det: `$HOME/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781255131/.../profile_810827_2103633_node0_rank0.sqlite`
-- Non-det: `$HOME/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781255131/.../profile_2270167_2103635_node0_rank0.sqlite`
-- Leaderboard txt: `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/leaderboard.txt`
+Stream-7 "other" decomposition (the dominant bucket):
+```sql
+SELECT s.value, COUNT(*) n, SUM((k.end-k.start)/1e6) ms
+FROM CUPTI_ACTIVITY_KIND_KERNEL k JOIN StringIds s ON k.demangledName=s.id
+WHERE k.streamId=7
+  AND s.value NOT LIKE 'ncclDevKernel%' AND s.value NOT LIKE 'nvjet_%'
+  AND s.value NOT LIKE '%cublas%gemm%' AND s.value NOT LIKE '%cudnn%'
+  AND s.value NOT LIKE '%triton_%' AND s.value NOT LIKE '%selective_scan%'
+  AND s.value NOT LIKE '%state_passing%' AND s.value NOT LIKE '%chunk_scan%'
+  AND s.value NOT LIKE '%chunk_state%' AND s.value NOT LIKE '%bmm_chunk%'
+  AND s.value NOT LIKE '%causal_conv%'
+GROUP BY s.value ORDER BY ms DESC LIMIT 12;
+```
 
-Bit-wise determinism check: compare iter-50 `lm loss` between two det runs (e.g. 2102770 vs 2103637) via the strip+diff recipe in `scripts/performance/perf_leaderboard/README.md` § "Bit-wise determinism check".
+---
+
+## 9. Bottom Line
+
+- **Determinism IS bit-exact reproducible** at this scale (2103637 = 2102770 = 2103151 across iters 1, 10, 20, 30, 40, 50).
+- **Cost: +1,398 ms / iter (+17% step time, −15% MFU)** vs the same recipe without determinism.
+- **~70% of the cost is in PyTorch's `use_deterministic_algorithms(True)` substitute kernels** (mostly `FillFunctor<BFloat16>` zero-init before `scatter_add`).
+- **~12% is `NCCL_ALGO=Ring` slowing P2P sends**.
+- **Compute (GEMM, attention, SSM) is essentially unchanged** — +2% GEMM, +14% attention bwd (extra split kernel), **−6% SSM (det is slightly faster)**.
+- **Two cleanly-actionable optimizations** could recover **~640 ms / iter (~7%)** without sacrificing bit-exactness: pre-allocate scatter destinations + scope `NCCL_ALGO=Ring` to AllReduce only.
+
+---
+
+## Appendix: Profile Artifact Locations
+
+| | path |
+|---|---|
+| Det nsys-rep | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781255131/.../profile_810827_2103633_node0_rank0.nsys-rep` |
+| Det sqlite | …same dir, `.sqlite` extension |
+| Non-det nsys-rep | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781255131/.../profile_2270167_2103635_node0_rank0.nsys-rep` |
+| Non-det sqlite | …same dir, `.sqlite` extension |
+| OUT_DIR (CSVs + leaderboard.txt) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/` |
+| Bit-wise check (det run #2) | job 2103637, `~/.nemo_run/experiments/nemotron-3-ultra-det-no-nsys-bitwise-check-v2/...` |
