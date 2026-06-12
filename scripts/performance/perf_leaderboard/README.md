@@ -9,7 +9,7 @@ Nemotron 3 Ultra (550B-A55B) GB200 / 96-GPU recipe.
 |---|---|
 | [`../launch_nemotron_3_ultra_deterministic.sh`](../launch_nemotron_3_ultra_deterministic.sh) | Single-run launcher; the bit-exact-reproduced recipe (jobs 2074557 / 2074641 / 2074651 / 2076499 / 2076503 / 2102770 / 2103151). |
 | [`../launch_nemotron_3_ultra_nsys_compare.sh`](../launch_nemotron_3_ultra_nsys_compare.sh) | End-to-end harness: submits one det + one non-det run with nsys, waits, then renders the leaderboard. Recipe block is byte-aligned with the deterministic launcher. |
-| `print_nsys_leaderboard.py` | Forward / backward / op buckets, ranked by `|det - nondet|`. Copy of upstream PR #5041. |
+| `print_nsys_leaderboard.py` | Forward / backward / op buckets, ranked by `abs(det − nondet)`. Copy of upstream PR #5041. |
 | `extract_nsys_csv.py` | SQLite → `nsys stats -r nvtx_sum --format csv` fallback when `nsys` isn't on PATH. |
 
 ## Quick start
@@ -57,7 +57,7 @@ $OUT_DIR/
 ├── jobid-det.txt       jobid-nondet.txt      (Slurm job ID for each side)
 ├── wdj-det.txt         wdj-nondet.txt        (wandb job names)
 ├── nsys-det.csv        nsys-nondet.csv       (nvtx_sum CSVs, rank 0)
-└── leaderboard.txt     (top-20 by |det - nondet| in 3 buckets: forward / backward / op)
+└── leaderboard.txt     (top-20 by abs(det − nondet) in 3 buckets: forward / backward / op)
 ```
 
 ## Bit-wise determinism check (optional, separate)
