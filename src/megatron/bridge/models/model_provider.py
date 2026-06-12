@@ -519,6 +519,7 @@ class ModelParallelKwargs(TypedDict, total=False):
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
+    pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
 
 
