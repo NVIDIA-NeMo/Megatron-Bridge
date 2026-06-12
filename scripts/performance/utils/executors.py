@@ -310,15 +310,15 @@ def kubeflow_executor(
         # pod_annotations land on the trainer pod template metadata (e.g. GKE
         # networking.gke.io/interfaces to attach the RDMA NICs for gIB).
         pod_annotations=pod_annotations or {},
-        # include_submodules=True: KubeflowExecutor.package() ships the packager
-        # tarball to <workdir_pvc_path>/<user>/code, which the launcher overlays
-        # onto /opt/Megatron-Bridge in the trainer container. The trainer
-        # needs both mbridge AND the pinned 3rdparty/Megatron-LM submodule,
-        # so the tarball must include both. (On SLURM where the host
-        # checkout is bind-mounted directly via CUSTOM_MOUNTS, submodules
-        # come from the host filesystem and the packager output is unused
-        # for the /opt/Megatron-Bridge path — so the extra archive bytes
-        # are harmless cost there.)
+        # NOTE: KubeflowExecutor.package() does NOT consume this packager (the
+        # arg is accepted but unused on the Kubeflow path). Code reaches the
+        # trainer ONLY when the caller sets workdir_local_path: package() rsyncs
+        # that directory into the workdir PVC under code_dir, and the generated
+        # launch.sh symlinks /nemo_run -> code_dir. setup_experiment.py then
+        # points the trainer entrypoint + PYTHONPATH at /nemo_run/... Nothing is
+        # overlaid onto the image's /opt/Megatron-Bridge. The packager below is
+        # only meaningful on the SLURM path (where the host checkout is instead
+        # bind-mounted via CUSTOM_MOUNTS); here it is a harmless default.
         packager=run.GitArchivePackager(include_submodules=True),
     )
     return executor
