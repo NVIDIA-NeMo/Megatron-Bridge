@@ -16,12 +16,14 @@
 Provider that builds conversation datasets from HuggingFace datasets.
 """
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
 from transformers import AutoProcessor
 
+from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
@@ -80,6 +82,13 @@ class HFDatasetConversationProvider(DatasetProvider):
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     pack_sequences_in_batch: bool = False
 
+    def _collate_supports_packing(self, processor: Any) -> bool:
+        collate_key = type(processor).__name__ if processor is not None else "default"
+        selected_impl = self.collate_impl or COLLATE_FNS.get(collate_key)
+        if selected_impl is None:
+            return False
+        return "pack_sequences" in inspect.signature(selected_impl).parameters
+
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
             "make_rdr_dataset": make_rdr_dataset,
@@ -129,7 +138,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
-            pack_sequences=self.pack_sequences_in_batch,
+            pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
