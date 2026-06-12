@@ -1355,3 +1355,64 @@ class TestExportAdapterScript:
         model_chunk.load_state_dict.assert_not_called()
         mock_destroy_mp.assert_called_once()
         mock_destroy_pg.assert_called_once()
+
+    def test_export_adapter_distributed_enables_legacy_shared_expert_adapter_loading(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunk = MagicMock()
+        model_chunk.to.return_value = model_chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [model_chunk]
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+        lora = MagicMock()
+        state_dicts = [{"model": {"new": object()}}, {"model": {"legacy": object()}}]
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=lora),
+            patch(
+                "examples.conversion.adapter.export_adapter._generate_model_state_dict",
+                side_effect=state_dicts,
+            ) as mock_state_dict,
+            patch(
+                "examples.conversion.adapter.export_adapter.apply_peft_adapter_filter_to_state_dict",
+                side_effect=lambda state_dict, _lora: state_dict,
+            ) as mock_filter,
+            patch(
+                "examples.conversion.adapter.export_adapter.enable_legacy_shared_expert_adapter_loading",
+                return_value=True,
+            ) as mock_enable_legacy,
+            patch(
+                "examples.conversion.adapter.export_adapter.dist_checkpointing.load",
+                return_value={"model": {"adapter": "weights"}},
+            ) as mock_load,
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"),
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        assert mock_state_dict.call_count == 2
+        assert mock_filter.call_count == 2
+        mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
+        mock_load.assert_called_once_with(state_dicts[1], str(tmp_path))
+        model_chunk.load_state_dict.assert_called_once_with({"adapter": "weights"}, strict=False)
