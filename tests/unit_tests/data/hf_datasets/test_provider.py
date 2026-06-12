@@ -280,6 +280,106 @@ def test_hf_provider_uses_context_tokenizer_when_processor_path_is_unset(monkeyp
     assert train_ds.collate_fn([train_ds[0]])["tokens"].tolist() == [[6, 7, 8]]
 
 
+def test_hf_provider_unwraps_megatron_hf_tokenizer_for_text_chat_collate(monkeypatch):
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+    from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+
+    class TextTokenizer:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+            if tokenize:
+                return {"input_ids": [6, 7, 8], "assistant_masks": [0, 1, 1]}
+            return "rendered"
+
+        def __call__(self, text, padding=True, truncation=False, return_tensors="pt", **kwargs):
+            return {
+                "input_ids": torch.tensor([[6, 7, 8]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+            }
+
+    class MegatronHFTokenizerWrapper:
+        tokenizer = TextTokenizer()
+
+        def apply_chat_template(self, conversation, chat_template, **kwargs):
+            raise AssertionError("provider should unwrap the raw HF tokenizer")
+
+    class MegatronTokenizerTextWrapper:
+        _tokenizer = MegatronHFTokenizerWrapper()
+
+    def _fake_get_maker(maker_name):
+        assert maker_name == "text_chat"
+        return lambda **kwargs: [
+            {
+                "messages": [
+                    {"role": "user", "content": "ping"},
+                    {"role": "assistant", "content": "pong"},
+                ]
+            }
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path=None,
+        maker_name="text_chat",
+        collate_impl=text_chat_collate_fn,
+    )
+
+    ctx = DatasetBuildContext(
+        train_samples=1,
+        valid_samples=0,
+        test_samples=0,
+        tokenizer=MegatronTokenizerTextWrapper(),
+    )
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    assert train_ds.collate_fn([train_ds[0]])["tokens"].tolist() == [[6, 7, 8]]
+
+
+def test_text_chat_collate_prefers_unwrapped_tokenizer_over_megatron_wrapper():
+    from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+
+    class TextTokenizer:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+            if tokenize:
+                return {"input_ids": [6, 7, 8], "assistant_masks": [0, 1, 1]}
+            return "rendered"
+
+        def __call__(self, text, padding=True, truncation=False, return_tensors="pt", **kwargs):
+            return {
+                "input_ids": torch.tensor([[6, 7, 8]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+            }
+
+    class MegatronHFTokenizerWrapper:
+        tokenizer = TextTokenizer()
+
+        def apply_chat_template(self, conversation, chat_template, **kwargs):
+            raise AssertionError("text_chat_collate_fn should prefer the raw HF tokenizer")
+
+    example = {
+        "messages": [
+            {"role": "user", "content": "ping"},
+            {"role": "assistant", "content": "pong"},
+        ]
+    }
+
+    batch = text_chat_collate_fn([example], MegatronHFTokenizerWrapper())
+
+    assert batch["tokens"].tolist() == [[6, 7, 8]]
+
+
 def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch):
     from megatron.bridge.data.hf_datasets import provider as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn

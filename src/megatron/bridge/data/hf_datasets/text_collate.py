@@ -58,14 +58,21 @@ def _normalize_text_conversation(example: Mapping[str, Any]) -> list[dict[str, A
 
 
 def _render_chat(conversation: list[dict[str, Any]], processor: Any, tokenizer: Any) -> str:
-    for template_owner in (processor, tokenizer):
+    seen: set[int] = set()
+    for template_owner in (tokenizer, processor):
+        if id(template_owner) in seen:
+            continue
+        seen.add(id(template_owner))
         apply_chat_template = getattr(template_owner, "apply_chat_template", None)
         if apply_chat_template is None:
             continue
         try:
             return apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
         except TypeError:
-            return apply_chat_template(conversation, tokenize=False)
+            try:
+                return apply_chat_template(conversation, tokenize=False)
+            except TypeError:
+                continue
     raise ValueError("Text chat collate requires a processor or tokenizer with apply_chat_template.")
 
 
@@ -96,7 +103,11 @@ def _tokenize_texts(
         tokenizer_kwargs["max_length"] = max_length
         tokenizer_kwargs["truncation"] = True
 
-    for tokenizer_or_processor in (processor, tokenizer):
+    seen: set[int] = set()
+    for tokenizer_or_processor in (tokenizer, processor):
+        if id(tokenizer_or_processor) in seen:
+            continue
+        seen.add(id(tokenizer_or_processor))
         try:
             tokenized = _call_tokenizer(tokenizer_or_processor, texts, tokenizer_kwargs)
         except (AttributeError, KeyError, TypeError, ValueError):

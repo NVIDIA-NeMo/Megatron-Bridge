@@ -26,6 +26,7 @@ from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDa
 from megatron.bridge.data.hf_datasets.makers import (
     get_hf_dataset_maker,
 )
+from megatron.bridge.data.vlm_processing import get_processor_tokenizer
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
@@ -137,7 +138,7 @@ class HFConversationDatasetProvider(DatasetProvider):
         if self.hf_processor_path is None:
             if tokenizer is None:
                 raise ValueError("hf_processor_path must be set when no tokenizer is available in build context.")
-            return getattr(tokenizer, "_tokenizer", tokenizer)
+            return get_processor_tokenizer(tokenizer)
 
         trust_remote_code = is_safe_repo(
             trust_remote_code=self.trust_remote_code,
