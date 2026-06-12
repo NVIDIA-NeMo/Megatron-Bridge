@@ -336,7 +336,7 @@ All runs produce identical loss trajectories — confirming the bit-exactness cl
 
 Iter-by-iter `lm loss` for the three most recent det+overlap=ON runs — **including the nsys-profiled one** — proves nsys instrumentation doesn't perturb determinism:
 
-| iter | 2102770 (det) | **2103633 (det + nsys)** | **2103637 (det, no nsys)** | 3-way match |
+| iter | [2102770 (det)](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/6c3mdfyz) | **[2103633 (det + nsys)](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/7klz92sb)** | **[2103637 (det, no nsys)](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/pfi9ap38)** | 3-way match |
 |---|---|---|---|---|
 | 1 | 1.254624E+01 | 1.254624E+01 | 1.254624E+01 | ✓ |
 | 5 | 9.316616E+00 | 9.316616E+00 | 9.316616E+00 | ✓ |
