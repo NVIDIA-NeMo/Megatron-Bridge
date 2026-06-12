@@ -124,6 +124,26 @@ def initialize_megatron(
     # init rerun global state
     init_rerun_state(rerun_state_machine_config)
 
+    # Compile dataset helpers BEFORE torch.distributed initialization.
+    #
+    # The first-time C++ build is slow. Running it pre-init lets the
+    # torch.distributed rendezvous — which tolerates a late joiner via long
+    # store-connect retries — absorb the delay, instead of a rank compiling
+    # between init_process_group and the first NCCL collective. On K8s the NCCL
+    # bootstrap connect budget is short, so a rank compiling there makes its
+    # peers fail the barrier with "connection refused" / "remote process
+    # exited"; Slurm's rendezvous tolerated the old post-init placement, K8s
+    # does not. A prebuilt .so (typical container image) makes this a fast
+    # no-op. Each node's local rank 0 builds (unchanged from before).
+    if get_local_rank_preinit() == 0:
+        start_time = time.time()
+        print("> compiling dataset index builder ...", flush=True)
+        compile_helpers()
+        print(
+            ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(time.time() - start_time),
+            flush=True,
+        )
+
     # torch.distributed initialization
     result = torch_dist_init(
         model_config=model_config,
@@ -137,21 +157,6 @@ def initialize_megatron(
         restart_store=restart_store,
         use_inprocess_restart=use_inprocess_restart,
     )
-
-    # Compile dataset helpers after distributed initialization
-    # Use local rank to ensure each node compiles independently (multi-node without shared filesystem)
-    if torch.distributed.is_initialized():
-        if get_local_rank_preinit() == 0:
-            start_time = time.time()
-            print("> compiling dataset index builder ...")
-            compile_helpers()
-            print(
-                ">>> done with dataset index builder. Compilation time: {:.3f} seconds".format(
-                    time.time() - start_time
-                ),
-                flush=True,
-            )
-        torch.distributed.barrier()
 
     return result
 
