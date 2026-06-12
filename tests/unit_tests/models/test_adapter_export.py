@@ -446,16 +446,22 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
         assert cfg["base_model_name_or_path"] == "test/model"
 
-    def test_save_respects_output_dtype(self, tmp_path):
-        """save_hf_adapter should write adapter tensors using the requested dtype."""
+    def test_save_preserves_adapter_dtype_and_detaches(self, tmp_path):
+        """save_hf_adapter should write detached adapter tensors in their exported dtype."""
         from safetensors.torch import load_file
 
         from megatron.bridge.peft.lora import LoRA
 
         output_dir = tmp_path / "adapter_out_dtype"
         fake_weights = [
-            _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(8, 64)),
-            _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
+            _adapter_export(
+                "model.layers.0.self_attn.q_proj.lora_A.weight",
+                torch.randn(8, 64, dtype=torch.bfloat16).requires_grad_(),
+            ),
+            _adapter_export(
+                "model.layers.0.self_attn.q_proj.lora_B.weight",
+                torch.randn(64, 8, dtype=torch.bfloat16).requires_grad_(),
+            ),
         ]
 
         mock_bridge = MagicMock()
@@ -471,7 +477,6 @@ class TestSaveHfAdapter:
                 path=output_dir,
                 peft_config=LoRA(),
                 base_model_name_or_path="test/model",
-                output_dtype=torch.bfloat16,
             )
 
         state = load_file(str(output_dir / "adapter_model.safetensors"))

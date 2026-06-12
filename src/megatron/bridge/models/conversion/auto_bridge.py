@@ -50,7 +50,6 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
-from megatron.bridge.utils.activation_map import str_to_dtype
 
 
 logger = logging.getLogger(__name__)
@@ -132,23 +131,6 @@ def _drop_readonly_config_properties(
     if not readonly_properties:
         return config_dict
     return {key: value for key, value in config_dict.items() if key not in readonly_properties}
-
-
-_ADAPTER_EXPORT_DTYPES = {torch.float32, torch.float16, torch.bfloat16}
-
-
-def _normalize_adapter_export_dtype(dtype: str | torch.dtype) -> torch.dtype:
-    """Resolve adapter export dtype aliases to ``torch.dtype`` values."""
-    try:
-        normalized_dtype = dtype if isinstance(dtype, torch.dtype) else str_to_dtype(dtype.lower())
-    except ValueError as err:
-        supported = ", ".join(sorted(str(dtype).replace("torch.", "") for dtype in _ADAPTER_EXPORT_DTYPES))
-        raise ValueError(f"Unsupported adapter export dtype '{dtype}'. Supported values: {supported}") from err
-
-    if normalized_dtype not in _ADAPTER_EXPORT_DTYPES:
-        supported = ", ".join(sorted(str(dtype).replace("torch.", "") for dtype in _ADAPTER_EXPORT_DTYPES))
-        raise ValueError(f"Unsupported adapter export dtype: {normalized_dtype}. Supported values: {supported}")
-    return normalized_dtype
 
 
 class AutoBridge(Generic[MegatronModelT]):
@@ -734,7 +716,6 @@ class AutoBridge(Generic[MegatronModelT]):
         peft_config: "PEFT",
         base_model_name_or_path: Optional[str] = None,
         show_progress: bool = True,
-        output_dtype: str | torch.dtype = torch.float32,
         exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> None:
         """Save LoRA adapter weights as a HuggingFace PEFT-compatible directory.
@@ -752,8 +733,6 @@ class AutoBridge(Generic[MegatronModelT]):
                 of the base model this adapter was trained on.  If *None*, the
                 value is inferred from ``hf_pretrained.model_name_or_path``.
             show_progress: Display progress bar during export.
-            output_dtype: Dtype used for tensors written to
-                ``adapter_model.safetensors``.
             exclude_adapter_base_prefixes: Megatron adapter base prefixes to
                 skip before resolving HuggingFace parameter mappings.
 
@@ -789,9 +768,8 @@ class AutoBridge(Generic[MegatronModelT]):
         if dist.is_initialized():
             dist.barrier()
 
-        output_dtype = _normalize_adapter_export_dtype(output_dtype)
         raw_adapter_weights = [
-            HFWeightTuple(exported_weight.param_name, exported_weight.weight.clone().to(output_dtype))
+            HFWeightTuple(exported_weight.param_name, exported_weight.weight.detach().clone())
             for exported_weight in self.export_adapter_weights(
                 model,
                 cpu=True,

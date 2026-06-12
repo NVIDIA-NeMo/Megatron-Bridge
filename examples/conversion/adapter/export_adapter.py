@@ -219,7 +219,6 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
             path=args.output,
             peft_config=lora,
             base_model_name_or_path=args.hf_model_path,
-            output_dtype=args.dtype,
             exclude_adapter_base_prefixes=tuple(args.exclude_adapter_base_prefix),
         )
     finally:
