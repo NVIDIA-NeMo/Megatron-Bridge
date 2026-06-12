@@ -635,6 +635,10 @@ def main(
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
+            # Read directly from env (not via argument_builder): each value is a
+            # shell command with spaces, which the launcher's $(argument_builder)
+            # word-splitting would mangle. JSON list of command strings.
+            setup_commands=json.loads(os.environ.get("KUBEFLOW_SETUP_COMMANDS_JSON") or "[]"),
         )
     else:
         executor = slurm_executor(

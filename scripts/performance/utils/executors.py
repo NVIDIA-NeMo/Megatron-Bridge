@@ -198,6 +198,7 @@ def kubeflow_executor(
     container_kwargs: Optional[Dict[str, Any]] = None,
     labels: Optional[Dict[str, Any]] = None,
     pod_annotations: Optional[Dict[str, Any]] = None,
+    setup_commands: Optional[List[str]] = None,
 ) -> run.KubeflowExecutor:
     """Build a Kubeflow Training Operator executor.
 
@@ -321,4 +322,13 @@ def kubeflow_executor(
         # bind-mounted via CUSTOM_MOUNTS); here it is a harmless default.
         packager=run.GitArchivePackager(include_submodules=True),
     )
+    # setup_commands run once per pod in launch.sh before the job (e.g. install a
+    # dependency missing from the image into the container venv). Only newer
+    # nemo-run supports it; set it post-construction behind a feature check so an
+    # older pinned nemo-run (no such field) does not raise.
+    if setup_commands:
+        if hasattr(executor, "setup_commands"):
+            executor.setup_commands = setup_commands
+        else:
+            logger.warning("nemo-run KubeflowExecutor has no 'setup_commands'; ignoring %s", setup_commands)
     return executor
