@@ -560,15 +560,32 @@ def main(
         logger.error(f"Specified run script not found: {run_script_path}")
         sys.exit(1)
 
-    # Script path + PYTHONPATH as seen INSIDE the execution environment. On
-    # SLURM the launcher's SCRIPT_DIR is bind-mounted into the container (see
-    # custom_mounts below), so the launcher-local path resolves there. On
-    # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
-    # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
-    # /tmp path does not exist in the pod; use the image's script path instead.
+    # Script path + PYTHONPATH as seen INSIDE the execution environment.
+    #
+    # SLURM: the launcher's SCRIPT_DIR is bind-mounted into the container (see
+    # custom_mounts below), so the launcher-local path resolves there.
+    #
+    # Kubeflow: the trainer pod runs the image and custom_mounts do not apply,
+    # so the launcher's /tmp path does not exist in the pod. Two sub-cases:
+    #   * code-sync active (kubeflow_workdir_local_path set): nemo-run's
+    #     KubeflowExecutor.package() rsyncs that checkout into the workdir PVC
+    #     under code_dir, and the generated launch.sh symlinks /nemo_run ->
+    #     code_dir. Run the synced run_recipe.py from /nemo_run and front-load
+    #     /nemo_run/src on PYTHONPATH so `import megatron.bridge` resolves to the
+    #     synced source (shadowing the image's editable install) while
+    #     megatron.core et al. still come from the image. The run.Script env is
+    #     NOT propagated to the trainer container — only executor.env_vars is,
+    #     via launch.sh — so PYTHONPATH has to go through custom_env_vars here.
+    #   * no code-sync: fall back to the image's /opt/Megatron-Bridge code.
     if kubeflow_namespace:
-        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
-        in_container_script_path = f"{in_container_script_dir}/{script_name}"
+        if kubeflow_workdir_local_path:
+            synced_root = "/nemo_run"
+            in_container_script_dir = f"{synced_root}/scripts/performance"
+            in_container_script_path = f"{in_container_script_dir}/{script_name}"
+            custom_env_vars["PYTHONPATH"] = f"{synced_root}/src:{in_container_script_dir}"
+        else:
+            in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+            in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
         in_container_script_dir = str(SCRIPT_DIR)
         in_container_script_path = str(run_script_path)
