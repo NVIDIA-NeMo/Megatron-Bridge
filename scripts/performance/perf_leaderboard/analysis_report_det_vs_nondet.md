@@ -140,11 +140,11 @@ Querying every NVTX range in the profile (NVTX `text` field, not just the leader
 | `aten::arange` | 545 | 3 | **+543** | det only — index generation for sort-based gather backward |
 | `aten::gather_backward` | 482 | 36 | +446 | det substitute via sort+segment-sum |
 | `aten::scatter_add_` | 456 | 15 | +440 | det substitute when `use_deterministic_algorithms=True` |
-| `aten::max` | **368** | **0** | **+368** | **det-only**: used by `torch.bincount` (called by det scatter_add) |
-| `aten::min` | **322** | **0** | **+322** | **det-only**: same |
+| `aten::max` | **368** | **0** | **+368** | **det-only**: MCore's `F.embedding` / `gather` det-substitute branch builds an advanced-indexing key — see §11 |
+| `aten::min` | **322** | **0** | **+322** | **det-only**: same advanced-indexing key build |
 | `aten::clone` | 556 | 253 | +303 | extra copies during det substitute path |
 | `aten::contiguous` | 406 | 131 | +274 | det forces contiguous tensors for index sort |
-| `aten::remainder` | **235** | **0** | **+235** | **det-only**: bincount index hashing |
+| `aten::remainder` | **235** | **0** | **+235** | **det-only**: hash-style index materialization in the same det branch |
 | `aten::scatter` | 33 | 175 | **−142** | non-det uses this; det path swapped to `aten::scatter_add_` |
 | `aten::copy_` | 629 | 764 | **−135** | non-det does *more* copies (FP32 master copies in unfused-CE) |
 
@@ -446,17 +446,19 @@ Cannot be measured exactly without per-knob isolation runs, but inferred from ke
 |---|---|---|---|
 | `torch.use_deterministic_algorithms(True)` (via `deterministic_mode`) | `FillFunctor<BFloat16>` (1,583/3 ≈ 528 ms), `reduce_kernel` (143/3 ≈ 48 ms), `arange` (5/3), index segment-sum | **~580 ms/iter** | HIGH — direct kernel-name evidence |
 | `cross_entropy_loss_fusion=false` | Adds ~6 `FillFunctor<float>` ops in CE bwd | **~50 ms/iter** | MED — partly absorbed in the above |
-| `NCCL_ALGO=Ring` | SendRecv (+173 ms/iter), ReduceScatter (+66 ms/iter), AllGather (−15 ms/iter) | **~230 ms/iter** | HIGH — direct NCCL kernel-name evidence |
+| `NCCL_ALGO=Ring` (genuine algo cost only — see §4.1 / §11) | AR/RS algo overhead; SendRecv and AG are *not* algo-selectable for P2P / unaffected | **~30–80 ms/iter** | MED — separating algo cost from wait-skew requires a 4-way ablation we have not yet run |
 | `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0` | cuDNN SDPA bwd split into 2 passes | **~7 ms/iter** | HIGH — kernel-knob-name evidence |
 | `CUBLAS_WORKSPACE_CONFIG=:4096:8` | +3 µs/call × 59,712 / 3 cuBLAS calls | **~60 ms/iter** | HIGH — count-based attribution |
 | `MAMBA_DETERMINISTIC=1` | SSM kernel switch | **−19 ms/iter** (slightly faster) | HIGH |
-| **Sum** | | **~910 ms/iter** | |
+| **Sum of primary causes** | | **~705–755 ms/iter** | |
 | **Measured wall delta (iter 50)** | | **+1,398 ms/iter** | |
-| **Unaccounted gap (~490 ms/iter)** | secondary cascade: bubble from stream-7 stalls, kernel-launch overhead amplification, marginal GEMM workspace effects | | LOW — not directly attributable |
+| **Cascade / wait-skew (~640–690 ms/iter)** | (a) NCCL wait-time growth from slower stream-7 work (≈150 ms/iter of the +702 ms/window NCCL delta is wait-skew, not algo); (b) bubble between kernels as stream-7 fills push downstream work later; (c) kernel-launch overhead amplification from extra small substitute calls; (d) marginal GEMM workspace effects | | MED — secondary, attributable in §11 |
 
-The ~490 ms/iter "unaccounted" gap is consistent with secondary effects: more kernel launches on
-stream 7 push downstream compute kernels later, occasionally exposing NCCL collectives that were
-previously hidden behind compute.
+The ~640–690 ms/iter "cascade" gap is consistent with the wait-inclusive nature of NCCL kernels
+and the bubble growth between kernels: each extra `FillFunctor` / `index_put` call on stream 7
+delays the next compute kernel, which in turn delays the next NCCL kernel that was supposed to
+rendezvous behind that compute. This is **caused by the primary `use_deterministic_algorithms`
+penalty**, not by an independent factor — the fix is the same one (§7.1).
 
 ---
 
