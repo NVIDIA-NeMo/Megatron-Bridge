@@ -150,8 +150,10 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.model.moe_router_padding_for_fp8 = False
 
-    # Communication overlap
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    # Communication overlap (tp_comm_overlap=True: overlap the TP sequence-parallel reduce-scatter
+    # with the GEMMs / move it off the NCCL RING_LL path, sidestepping the NCCL 2.30 bf16-reduce
+    # regression that hits the inline SP reduce-scatter on the critical compute stream)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
     cfg.model.moe_shared_expert_overlap = True
