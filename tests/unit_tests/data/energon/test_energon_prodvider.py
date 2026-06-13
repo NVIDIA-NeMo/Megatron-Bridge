@@ -18,6 +18,36 @@ from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.utils import DatasetBuildContext
 
 
+class _FakeTaskEncoder:
+    """Minimal task encoder carrying the fields build_datasets() re-applies."""
+
+    def __init__(self):
+        # Sentinels that differ from the provider values so we can confirm assignment.
+        self.seq_length = -1
+        self.pack_sequences = None
+
+
+def _mock_datamodule(mock_datamodule_cls):
+    inst = MagicMock()
+    mock_datamodule_cls.return_value = inst
+    inst.train_dataloader.return_value = iter([])
+    inst.val_dataloader.side_effect = lambda: iter([])
+    return inst
+
+
+def _make_provider(task_encoder, **overrides):
+    params = dict(
+        path="test/path",
+        seq_length=8192,
+        micro_batch_size=1,
+        global_batch_size=8,
+        num_workers=0,
+        task_encoder=task_encoder,
+    )
+    params.update(overrides)
+    return EnergonProvider(**params)
+
+
 class TestEnergonProvider:
     @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
     def test_init_and_build_datasets(self, mock_datamodule_cls):
@@ -81,3 +111,48 @@ class TestEnergonProvider:
         assert list(train_iter) == [1, 2]
         assert list(val_iter) == [3, 4]
         assert list(test_iter) == [3, 4]
+
+    # build_datasets() re-applies provider fields onto the eagerly-built task encoder so a
+    # dataset.seq_length=... override reaches it before data loading.
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_syncs_seq_length(self, mock_datamodule_cls):
+        _mock_datamodule(mock_datamodule_cls)
+        encoder = _FakeTaskEncoder()
+        provider = _make_provider(encoder, seq_length=8192)
+
+        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        assert encoder.seq_length == 8192
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_syncs_pack_sequences_when_enabled(self, mock_datamodule_cls):
+        _mock_datamodule(mock_datamodule_cls)
+        encoder = _FakeTaskEncoder()
+        provider = _make_provider(encoder, pack_sequences_in_batch=True)
+
+        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        assert encoder.pack_sequences is True
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_no_op_when_task_encoder_is_none(self, mock_datamodule_cls):
+        _mock_datamodule(mock_datamodule_cls)
+        provider = _make_provider(task_encoder=None)
+        # Should not raise even though task_encoder is None.
+        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_passes_synced_encoder_for_validation(self, mock_datamodule_cls):
+        # The provider passes a single task_encoder to the datamodule, which reuses it as
+        # validation_task_encoder when no separate one is given, so the validation split also
+        # sees the synced seq_length.
+        _mock_datamodule(mock_datamodule_cls)
+        encoder = _FakeTaskEncoder()
+        provider = _make_provider(encoder, seq_length=8192)
+
+        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        _, kwargs = mock_datamodule_cls.call_args
+        assert kwargs["task_encoder"] is encoder
+        assert kwargs["task_encoder"].seq_length == 8192

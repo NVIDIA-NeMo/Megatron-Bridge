@@ -93,7 +93,6 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
 
     # Every overridable field is now reflected on the encoder.
     assert encoder.seq_len == 2048
-    assert encoder.seq_length == 2048
     assert encoder.min_pixels == 12345
     assert encoder.max_pixels == 67890
     assert encoder.max_num_images == 4

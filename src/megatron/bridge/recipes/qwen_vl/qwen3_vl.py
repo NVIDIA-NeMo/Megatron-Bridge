@@ -284,7 +284,6 @@ class QwenVLEnergonProvider(EnergonProvider):
     def build_datasets(self, context: DatasetBuildContext):
         if self.task_encoder is not None:
             self.task_encoder.seq_len = self.seq_length
-            self.task_encoder.seq_length = self.seq_length
             self.task_encoder.min_pixels = self.min_pixels
             self.task_encoder.max_pixels = self.max_pixels
             self.task_encoder.max_num_images = self.max_num_images
