@@ -114,10 +114,14 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
 
-    # CUDA Graph
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
+    # CUDA Graph — TE-scoped graphs capture the launch-heavy attn / MoE-router /
+    # MoE-preprocess kernels, removing the per-kernel host-launch overhead that the
+    # fine-grained 64-expert MoE is exposed to (the host-overhead wall). This absorbs
+    # the 26.06.rc0 launch-overhead regression. Pattern mirrors nemotronh/nemotron_3_super.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
 
     # Kernel selections (includes MoE-specific kernels)
     cfg.model.attention_backend = None
