@@ -16,6 +16,7 @@ import os
 
 import pytest
 import torch
+from datasets import Dataset, DatasetDict
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -29,6 +30,20 @@ from tests.functional_tests.utils import (
     initialize_distributed,
     verify_checkpoint_files,
 )
+
+
+def _tiny_squad_dataset() -> DatasetDict:
+    examples = [
+        {
+            "id": str(i),
+            "title": "bridge",
+            "context": "Megatron Bridge converts checkpoints and trains models with packed sequence support.",
+            "question": "What supports packed sequences?",
+            "answers": {"text": ["Megatron Bridge"], "answer_start": [0]},
+        }
+        for i in range(16)
+    ]
+    return DatasetDict({"train": Dataset.from_list(examples)})
 
 
 class TestPeftSftExample:
@@ -45,10 +60,12 @@ class TestPeftSftExample:
         shared_dir = broadcast_path(tmp_path)
         checkpoint_dir = os.path.join(shared_dir, "checkpoints")
         tensorboard_dir = os.path.join(shared_dir, "tensorboard")
+        dataset_dir = os.path.join(shared_dir, "dataset")
 
         if torch.distributed.get_rank() == 0:
             os.makedirs(checkpoint_dir, exist_ok=True)
             os.makedirs(tensorboard_dir, exist_ok=True)
+            os.makedirs(dataset_dir, exist_ok=True)
         torch.distributed.barrier()
 
         cfg = llama32_1b_sft_config()
@@ -75,6 +92,8 @@ class TestPeftSftExample:
         # Use a small packed SQuAD dataset to exercise THD/context-parallel slicing
         cfg.dataset = HFDatasetConfig(
             dataset_name="rajpurkar/squad",
+            dataset_dict=_tiny_squad_dataset(),
+            dataset_root=dataset_dir,
             process_example_fn=process_squad_example,
             seq_length=256,
             dataloader_type="batch",
@@ -87,6 +106,7 @@ class TestPeftSftExample:
             packed_sequence_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
+                num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
             rewrite=False,
