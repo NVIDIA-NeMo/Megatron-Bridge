@@ -141,7 +141,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
         params_dtype=torch.bfloat16,
         pipeline_dtype=torch.bfloat16,
         autocast_enabled=False,
-        grad_reduce_in_fp32=False,
+        grad_reduce_in_fp32=True,
     )
     # FP8 settings (commented - enable if using FP8)
     # cfg.mixed_precision.fp8_recipe = "tensorwise"
@@ -162,13 +162,13 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
 
-    # DDP config (DIFFERENT: grad_reduce_in_fp32=False)
+    # DDP config (grad_reduce_in_fp32=True: fp32 grad reduce-scatter sidesteps the NCCL 2.30 bf16-reduce regression)
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
-    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
