@@ -1414,5 +1414,5 @@ class TestExportAdapterScript:
         assert mock_state_dict.call_count == 2
         assert mock_filter.call_count == 2
         mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
-        mock_load.assert_called_once_with(state_dicts[1], str(tmp_path))
+        mock_load.assert_called_once_with(state_dicts[1], str(tmp_path), validate_access_integrity=False)
         model_chunk.load_state_dict.assert_called_once_with({"adapter": "weights"}, strict=False)
