@@ -86,9 +86,9 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # Set pipeline layout
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
 
-    # MoE Token Dispatcher settings
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    # MoE Token Dispatcher settings (HybridEP — recommended for the GB200/GB300 NVL72 target)
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_hybridep_num_sms = 16
 
     # Training config
