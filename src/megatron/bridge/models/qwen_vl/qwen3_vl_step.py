@@ -57,6 +57,11 @@ def get_batch_from_iterator(
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
+    if "cu_seqlens" in batch:
+        raise ValueError(
+            "qwen3_vl_step does not support collate-time in-batch packing. "
+            "Use an unpacked collate batch with this step so it can build Qwen3-VL packed sequence metadata itself."
+        )
 
     required_device_keys = set()
     required_host_keys = set()

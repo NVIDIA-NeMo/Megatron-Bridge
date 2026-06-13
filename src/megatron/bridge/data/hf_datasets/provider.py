@@ -14,7 +14,6 @@
 
 """Provider that builds conversation datasets from HuggingFace datasets."""
 
-import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -78,7 +77,7 @@ class HFConversationDatasetProvider(DatasetProvider):
     do_test: bool = True
 
     # Optional collate override. If None, inferred from processor type.
-    collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None
+    collate_impl: Optional[Callable[..., Dict[str, torch.Tensor]]] = None
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
     skip_getting_attention_mask_from_dataset: bool = True
@@ -98,18 +97,6 @@ class HFConversationDatasetProvider(DatasetProvider):
     # Per-sample padding multiple used by collate-time in-batch packing.
     # ConfigContainer fills this from model CP/SP constraints when available.
     in_batch_packing_pad_to_multiple_of: int = 1
-
-    def _collate_supports_packing(self, processor: Any) -> bool:
-        collate_key = type(processor).__name__ if processor is not None else "default"
-        if self.collate_impl is not None:
-            selected_impl = self.collate_impl
-        else:
-            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
-
-            selected_impl = COLLATE_FNS.get(collate_key)
-        if selected_impl is None:
-            return False
-        return "pack_sequences" in inspect.signature(selected_impl).parameters
 
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         return get_hf_dataset_maker(self.maker_name)
@@ -139,7 +126,7 @@ class HFConversationDatasetProvider(DatasetProvider):
             sequence_length=self.seq_length,
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
-            enable_in_batch_packing=self.enable_in_batch_packing and self._collate_supports_packing(processor),
+            enable_in_batch_packing=self.enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 

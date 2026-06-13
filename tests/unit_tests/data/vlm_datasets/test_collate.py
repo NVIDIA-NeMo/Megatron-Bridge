@@ -361,7 +361,7 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         _PackableProcessor(),
         sequence_length=16,
         pack_sequences=True,
-        pack_sequences_pad_to_multiple_of=4,
+        in_batch_packing_pad_to_multiple_of=4,
     )
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]

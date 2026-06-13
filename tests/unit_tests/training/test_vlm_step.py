@@ -832,34 +832,23 @@ class TestPackBatchSequences:
         assert packed_pos[0, 3].item() == 1  # Second seq, pos 1
         assert packed_pos[0, 4].item() == 2  # Second seq, pos 2
 
-    def test_packing_empty_batch_warning(self, caplog):
-        """Test that all-padding batch returns empty tensors with warning."""
+    def test_packing_empty_batch_raises(self):
+        """Test that all-padding batch fails instead of hiding invalid metadata."""
         tokens = torch.tensor([[0, 0, 0, 0]])  # All padding
         labels = torch.tensor([[-100, -100, -100, -100]])
         loss_mask = torch.zeros(1, 4)
         position_ids = torch.arange(4).unsqueeze(0)
 
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        # No valid sequences found, should return empty tensors
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels.shape == (1, 0)
-        assert packed_loss_mask.shape == (1, 0)
-        assert packed_pos.shape == (1, 0)
-        # cu_seqlens should have just [0] for empty batch
-        assert len(cu_seqlens) == 1
-        assert cu_seqlens[0].item() == 0
-        assert max_seqlen.item() == 0
+        with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
+            pack_batch_sequences(
+                tokens=tokens,
+                labels=labels,
+                loss_mask=loss_mask,
+                attention_mask=None,
+                position_ids=position_ids,
+                pad_token_id=0,
+                pad_to_multiple_of=1,
+            )
 
     def test_packing_different_dtypes(self):
         """Test packing with different tensor dtypes."""

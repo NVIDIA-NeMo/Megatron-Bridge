@@ -41,16 +41,19 @@ except ImportError:
 def qwen2_5_collate_fn(
     examples: list,
     processor,
-    min_pixels: int = 200704,
-    max_pixels: int = 1003520,
+    min_pixels: int | None = 200704,
+    max_pixels: int | None = 1003520,
+    visual_keys: object = None,
     require_assistant_matches: bool = False,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
     pack_sequences: bool = False,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
+    del visual_keys
+
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
@@ -99,9 +102,11 @@ def qwen2_5_collate_fn(
             "text": texts_with,
             "padding": True,
             "return_tensors": "pt",
-            "min_pixels": min_pixels,
-            "max_pixels": max_pixels,
         }
+        if min_pixels is not None:
+            processor_kwargs["min_pixels"] = min_pixels
+        if max_pixels is not None:
+            processor_kwargs["max_pixels"] = max_pixels
         if any(images_with):
             processor_kwargs["images"] = images_with
         if any(videos_with):
@@ -210,7 +215,7 @@ def qwen2_5_collate_fn(
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
         pack_sequences=pack_sequences,
-        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
     )
     return batch

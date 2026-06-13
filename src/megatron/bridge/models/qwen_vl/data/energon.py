@@ -336,7 +336,7 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             pack_sequences=self.enable_in_batch_packing,
-            pack_sequences_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def batch(self, samples: List[QwenVLTaskSample]) -> QwenVLTaskBatch:

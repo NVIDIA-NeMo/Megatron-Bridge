@@ -28,11 +28,14 @@ def nemotron_omni_collate_fn(
     processor,
     start_of_response_token=None,
     *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
     pack_sequences: bool = False,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Omni model (vision + audio + language).
 
@@ -48,6 +51,8 @@ def nemotron_omni_collate_fn(
     mask. ``cu_seqlens_unpadded`` is also emitted when per-sequence padding is
     inserted for CP/SP divisibility.
     """
+    del visual_keys, min_pixels, max_pixels
+
     from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
         compute_mel_features,
         load_audio,
@@ -386,7 +391,7 @@ def nemotron_omni_collate_fn(
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
         pack_sequences=pack_sequences,
-        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
     )
 

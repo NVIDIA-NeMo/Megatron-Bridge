@@ -82,7 +82,7 @@ def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
         batch,
         sequence_length=16,
         pack_sequences=True,
-        pack_sequences_pad_to_multiple_of=4,
+        in_batch_packing_pad_to_multiple_of=4,
     )
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 4, 5, 6, 7, 8, 0, 0, 0]]
@@ -128,7 +128,7 @@ def test_prepare_vlm_batch_for_training_packs_with_legacy_unpadded_aliases_witho
         batch,
         sequence_length=16,
         pack_sequences=True,
-        pack_sequences_pad_to_multiple_of=1,
+        in_batch_packing_pad_to_multiple_of=1,
     )
 
     assert batch["cu_seqlens"].tolist() == [[0, 3, 8]]

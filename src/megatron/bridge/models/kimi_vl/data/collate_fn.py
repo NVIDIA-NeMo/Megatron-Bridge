@@ -138,11 +138,14 @@ def kimi_k25_vl_collate_fn(
     processor,
     max_length: int | None = None,
     *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
     pack_sequences: bool = False,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Kimi K2.5 VL processors with pre-expanded image tokens.
 
@@ -152,6 +155,8 @@ def kimi_k25_vl_collate_fn(
     3. Pads all sequences to fixed max_length
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
+    del visual_keys, min_pixels, max_pixels
+
     skipped_tokens = extract_skipped_token_ids(processor)
 
     # Get media token ID
@@ -310,7 +315,7 @@ def kimi_k25_vl_collate_fn(
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
         pack_sequences=pack_sequences,
-        pack_sequences_pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
     )
     return result

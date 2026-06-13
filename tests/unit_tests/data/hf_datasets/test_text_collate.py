@@ -164,7 +164,7 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
         },
     ]
 
-    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True, pack_sequences_pad_to_multiple_of=4)
+    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True, in_batch_packing_pad_to_multiple_of=4)
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 0, 11, 12, 21, 22]]
     assert batch["labels"].tolist() == [[21, 22, -100, -100, -100, 21, 22, -100]]

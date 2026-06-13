@@ -19,11 +19,24 @@ import warnings
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_processing import gather_assistant_text_segments
 from megatron.bridge.training.utils.visual_inputs import Qwen2AudioInputs
 
 
-def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def qwen2_audio_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2-Audio model.
 
     Uses HF-compatible label construction:
@@ -31,6 +44,8 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
     - Loss mask derived directly from active label positions
     """
+    del visual_keys, min_pixels, max_pixels
+
     texts = []
     audio_inputs = []
     for example in examples:
@@ -120,4 +135,14 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     for key in ("input_features", "feature_attention_mask"):
         batch.pop(key, None)
 
+    prepare_vlm_batch_for_training(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        pad_token_id=int(pad_token_id or 0),
+        ignore_index=IGNORE_INDEX,
+    )
     return batch

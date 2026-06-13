@@ -107,7 +107,7 @@ def prepare_vlm_batch_for_training(
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
     pack_sequences: bool = False,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    in_batch_packing_pad_to_multiple_of: int = 1,
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
 ) -> None:
@@ -125,7 +125,7 @@ def prepare_vlm_batch_for_training(
             ``pad_to_max_length`` is false.
         pack_sequences: If true, flatten the microbatch and emit packed-sequence
             metadata instead of returning a padded attention mask.
-        pack_sequences_pad_to_multiple_of: Per-sequence packed length multiple
+        in_batch_packing_pad_to_multiple_of: Per-sequence packed length multiple
             for CP/SP constraints.
         pad_token_id: Token value for inserted padding.
         ignore_index: Label value for inserted padding.
@@ -147,7 +147,7 @@ def prepare_vlm_batch_for_training(
             batch,
             pad_token_id=pad_token_id,
             ignore_index=ignore_index,
-            pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
             tokens_key=token_key,
         )
         # Legacy VLM packing always carried both padded and unpadded metadata,

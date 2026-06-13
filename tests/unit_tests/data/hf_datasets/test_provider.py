@@ -67,7 +67,24 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
-def _packable_collate(examples, processor, *, pack_sequences=False):
+def _packable_collate(
+    examples,
+    processor,
+    *,
+    sequence_length=None,
+    pad_to_max_length=False,
+    pad_to_multiple_of=128,
+    pack_sequences=False,
+    in_batch_packing_pad_to_multiple_of=1,
+):
+    del (
+        examples,
+        processor,
+        sequence_length,
+        pad_to_max_length,
+        pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of,
+    )
     return {"pack_sequences": pack_sequences}
 
 

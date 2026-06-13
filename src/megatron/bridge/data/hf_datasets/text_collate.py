@@ -156,11 +156,13 @@ def text_chat_collate_fn(
     processor: Any,
     *,
     max_length: int | None = None,
+    sequence_length: int | None = None,
     pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
     pack_sequences: bool = False,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
 
@@ -170,13 +172,16 @@ def text_chat_collate_fn(
         processor: A HF tokenizer or processor. It must expose
             ``apply_chat_template`` directly or through ``processor.tokenizer``.
         max_length: Optional tokenizer truncation length.
+        sequence_length: Optional tokenizer truncation length used by
+            conversation-dataset providers.
         pad_to_max_length: If set with ``max_length``, pad every row to
             ``max_length`` instead of the longest row in the batch.
+        pad_to_multiple_of: Accepted for parity with VLM collate functions.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
         pack_sequences: If True, flatten the padded microbatch and emit
             packed-sequence metadata for GPT-style training steps.
-        pack_sequences_pad_to_multiple_of: Optional per-sequence length multiple
+        in_batch_packing_pad_to_multiple_of: Optional per-sequence length multiple
             used when ``pack_sequences`` inserts padding for CP/SP constraints.
 
     Returns:
@@ -184,6 +189,9 @@ def text_chat_collate_fn(
         aliases, shifted ``labels`` and ``loss_mask``, ``position_ids``, and
         optional tokenizer fields such as ``attention_mask``.
     """
+    del pad_to_multiple_of
+
+    max_length = max_length if max_length is not None else sequence_length
     tokenizer = get_processor_tokenizer(processor)
     conversations = [_normalize_text_conversation(example) for example in examples]
     rendered_texts = [_render_chat(conversation, processor, tokenizer) for conversation in conversations]
@@ -232,6 +240,6 @@ def text_chat_collate_fn(
             batch,
             pad_token_id=int(pad_token_id),
             ignore_index=ignore_index,
-            pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
     return batch

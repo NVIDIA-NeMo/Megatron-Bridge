@@ -16,14 +16,10 @@
 
 from __future__ import annotations
 
-import logging
 from collections.abc import MutableMapping
 from typing import Any
 
 import torch
-
-
-logger = logging.getLogger(__name__)
 
 
 def _sequence_lengths(tokens: torch.Tensor, *, pad_token_id: int, padding_mask: torch.Tensor | None) -> list[int]:
@@ -202,25 +198,11 @@ def pack_batch_sequences(
         "attention_mask": padding_mask,
         "position_ids": position_ids,
     }
-    try:
-        pack_padded_sequences_in_batch(
-            batch,
-            pad_token_id=pad_token_id,
-            pad_to_multiple_of=pad_to_multiple_of,
-        )
-    except ValueError as exc:
-        if str(exc) != "Cannot pack a batch with no non-padding tokens.":
-            raise
-        logger.warning("No valid sequences found in batch, skipping packing")
-        return (
-            tokens[:, :0],
-            labels[:, :0] if labels is not None else None,
-            loss_mask[:, :0] if loss_mask is not None else None,
-            attention_mask,
-            position_ids[:, :0],
-            torch.tensor([0], dtype=torch.int32, device=tokens.device),
-            torch.tensor(0, dtype=torch.int32, device=tokens.device),
-        )
+    pack_padded_sequences_in_batch(
+        batch,
+        pad_token_id=pad_token_id,
+        pad_to_multiple_of=pad_to_multiple_of,
+    )
 
     return (
         batch["input_ids"],

@@ -20,7 +20,6 @@ selected HF VLM collate function.
 """
 
 import dataclasses
-import inspect
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
@@ -100,7 +99,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         visual_keys: Sequence[str] = ("pixel_values",),
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
-        collate_fn: Callable[[list, Any], dict[str, Any]] | None = None,
+        collate_fn: Callable[..., dict[str, Any]] | None = None,
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
@@ -126,31 +125,6 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
                     "Add it to COLLATE_FNS or pass collate_fn explicitly."
                 )
             self._collate_impl = COLLATE_FNS[collate_key]
-
-    def _supported_collate_kwargs(self) -> dict[str, Any]:
-        """Return encoder options accepted by the selected collate function."""
-        try:
-            parameters = inspect.signature(self._collate_impl).parameters
-        except (TypeError, ValueError):
-            return {}
-
-        accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
-        candidates: dict[str, Any] = {
-            "visual_keys": self.visual_keys,
-            "sequence_length": self.seq_length,
-            "pad_to_max_length": self.pad_to_max_length,
-            "pad_to_multiple_of": self.pad_to_multiple_of,
-            "pack_sequences": self.enable_in_batch_packing,
-            "pack_sequences_pad_to_multiple_of": self.in_batch_packing_pad_to_multiple_of,
-        }
-        if self.min_pixels is not None:
-            candidates["min_pixels"] = self.min_pixels
-        if self.max_pixels is not None:
-            candidates["max_pixels"] = self.max_pixels
-
-        if accepts_kwargs:
-            return candidates
-        return {key: value for key, value in candidates.items() if key in parameters}
 
     def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.
@@ -185,7 +159,18 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             The exact batch dictionary returned by the selected HF collate
             function for this processor type.
         """
-        return self._collate_impl(examples, self.processor, **self._supported_collate_kwargs())
+        return self._collate_impl(
+            examples,
+            self.processor,
+            visual_keys=self.visual_keys,
+            min_pixels=self.min_pixels,
+            max_pixels=self.max_pixels,
+            sequence_length=self.seq_length,
+            pad_to_max_length=self.pad_to_max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            pack_sequences=self.enable_in_batch_packing,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+        )
 
     # ------------------------------------------------------------------
     # batch
