@@ -80,15 +80,18 @@ Going beyond the kernel-name leaderboard: which CUDA stream produces the gap?
 | 157 | GEMM stream | 1,162 | 1,144 | +18 |
 | 158 | GEMM stream | 1,160 | 1,132 | +28 |
 
-**Reading**: the **+2,336 ms** delta on stream 7 + the **+493 ms** on stream 42 (PP p2p)
-account for **~95% of the wall-time gap**. The four dedicated GEMM streams (155–158) are
-essentially identical — compute itself is barely affected.
+**Reading**: stream-7 + stream-42 carry **+2,829 ms of busy-time growth**. Against the +4,287 ms
+window-total delta, that is **~66 % of the wall-time gap** (correction from an earlier "95%" — see §11).
+The remaining ~34 % (~1,460 ms) is **idle/bubble growth between kernels**: when stream 7 stays busier
+for longer with det-substitute work, downstream kernels on other streams arrive later and the GPU spends
+more cycles idle. The four dedicated GEMM streams (155–158) are essentially identical — compute itself
+is barely affected.
 
 ### Stream-7 decomposition
 
 | Stream-7 sub-bucket | Det ms | Non-det ms | Δ ms | Note |
 |---|---|---|---|---|
-| NCCL kernels (RS/AG/AR) | 2,399 | 2,189 | **+210** | `NCCL_ALGO=Ring` forces Ring for all collectives |
+| NCCL kernels (RS/AG/AR) | 2,399 | 2,189 | **+210** | mostly skew from slower peer arrival — see §4.1 NCCL caveat |
 | Compute (nvjet/cudnn/triton/SSM) | **6,112** | **6,113** | **0** | identical — see §1 kernel counts |
 | Other (fill, reduce, copy, sort, permute, …) | **4,258** | **2,131** | **+2,127** ← the real gap |
 
@@ -145,16 +148,25 @@ Querying every NVTX range in the profile (NVTX `text` field, not just the leader
 | `aten::scatter` | 33 | 175 | **−142** | non-det uses this; det path swapped to `aten::scatter_add_` |
 | `aten::copy_` | 629 | 764 | **−135** | non-det does *more* copies (FP32 master copies in unfused-CE) |
 
-The smoking gun: `aten::max`, `aten::min`, `aten::remainder` are **zero in non-det** and **>200 ms each in det**. These are `torch.bincount`'s implementation — bincount is in turn called by `scatter_add`'s deterministic substitute. So the chain is:
+The smoking gun: `aten::max`, `aten::min`, `aten::remainder` are **zero in non-det** and
+**>200 ms each in det**. **Source corrected (see §11)** — these are *not* `torch.bincount` internals
+(bincount uses fused aminmax + atomic histogram, not max/min/remainder). They come from MCore's
+own `if torch.are_deterministic_algorithms_enabled(): ...` branches in the MoE/loss code path,
+which substitute high-level ops:
 
 ```
 torch.use_deterministic_algorithms(True)
-    └── scatter_add_ → unsafe_scatter disabled
-        └── falls back to: bincount(indices) + segment_sum
-                            └── max(indices), min(indices), remainder(indices, num_buckets) ← det-only
-                            └── + arange(num_indices)
-                            └── + empty + fill (zero buffers)
-                            └── + scatter into binned buffer
+    └── MCore checks the flag at call sites and switches:
+            scatter           → index_put_ + arange      (hits aten::arange, aten::index_put_)
+            scatter_add       → index_add                 (hits the det index_add path; segmented reduce)
+            F.embedding /     → advanced-indexing build   (hits aten::max, aten::min, aten::remainder
+              gather             (range-bound + bucket-id    for hash-style index materialization)
+                                  computation)
+    └── PyTorch native ops:
+            deterministic index_put_ on CUDA already uses radix-sort + segmented reduce
+              (this is the default for accumulate=True since PyTorch 2.0; not a slow Python loop)
+            aten::empty + aten::fill_ zero the scatter destination before each call
+              — this is intrinsic to the accumulate-into-prezeroed formulation
 ```
 
 **`backward_node` namespace top entries (every `*Backward` node):**
@@ -209,7 +221,7 @@ These match the NCCL `SendRecv` kernel-name analysis: `NCCL_ALGO=Ring` slows P2P
 | `vectorized_elementwise<FillFunctor<int64>>` | 26,088 | 39.8 | (small) | (small) | +39 | Index buffer zero-init |
 | `reduce_kernel` (det reduce) | 22,281 | 218.3 | 11,913 | 75.1 | **+143** | Segmented reduce for det `scatter_add` |
 | `arange` (RangeFactories) | 3,096 | 5.2 | 24 | 0.04 | +5.2 | Index generation for det gather path |
-| **Sum of det-substitute kernels** | — | **~2,031** | — | **~113** | **+1,918** | ~96% of the +2,127 "other" gap |
+| **Sum of det-substitute kernels** | — | **~2,031** | — | **~113** | **+1,918** | **~90 %** of the +2,127 "other" gap (correction in §11) |
 
 All other elementwise/copy/sort/permute kernels are **numerically identical** between the two runs
 (see §4.2 below for the side-by-side).
@@ -303,14 +315,30 @@ is entirely buffer/reduce overhead, not in the SSM math kernel itself.**
 | Broadcast | 3 | 0.04 | 13 | 3 | 0.06 | 19 | −0.02 | — |
 | **Total NCCL kernel ms** | | **6,896** | | | **6,194** | | **+702** | |
 
-Key observations:
-1. **SendRecv +520 ms** is the largest NCCL delta. PP p2p chunks are small and **latency-bound**;
-   `NCCL_ALGO=Ring` adds 149 µs/call (~11%). This is on the dedicated stream 42.
-2. **ReduceScatter +198 ms** (+33% per call) — similar story: small per-DP-shard message at this batch/SeqLen.
-3. **AllGather is actually faster in det (−44 ms)** — Ring is the bandwidth-optimal choice for AG
-   anyway; non-det's default Tree algorithm has slightly higher per-call latency here.
-4. Non-det has BOTH `RING_LL` *and* `TREE_LL` variants of f32 AllReduce — confirming NCCL is free
-   to pick per-call in non-det, and pinned to RING in det.
+Key observations — **with a major caveat (correction in §11)**:
+
+> **Caveat on the NCCL deltas**: NCCL device kernels are *wait-inclusive* — they include
+> peer-wait time as well as data-movement. In a PP workload, when stream-7 / stream-42 work
+> arrives late on the slow peer, the kernel on the fast peer waits longer to rendezvous and
+> records a higher duration. The "Ring algorithm pinning" story for these deltas is largely
+> **wrong**: `NCCL_ALGO` is defined for *collectives* (AR/RS/AG/Broadcast/Reduce) only — P2P
+> SendRecv bypasses Ring/Tree algorithm selection entirely (verified in `nccl/src/enqueue.cc`).
+> ReduceScatter is RING_LL in **both** runs, so the +73 µs/call delta is not an algorithm choice
+> either. These NCCL deltas are mostly the **shadow of det's slower stream-7 work** skewing peer
+> arrival — they are a symptom, not a cause. Fixing NCCL config will not recover them; fixing
+> the fills will.
+
+1. **SendRecv +520 ms** — *not caused by* `NCCL_ALGO=Ring` (P2P bypasses algo selection).
+   This is wait-time growth from peer arrival skew. Cannot be reduced by NCCL tuning.
+2. **ReduceScatter +198 ms** — same kernel (`Sum_bf16_RING_LL`) in both runs; the +73 µs/call
+   delta is wait time, not algorithm. Fixing the stream-7 fills will reduce this organically.
+3. **AllGather is actually faster in det (−44 ms)** — coincidental peer-arrival timing.
+4. **Non-det has both `RING_LL` and `TREE_LL` for f32 AllReduce** — confirms `NCCL_ALGO=Ring`
+   *does* take effect on collectives. AllReduce on FP32 accumulators is the **only** collective
+   where Ring vs Tree could plausibly affect bit-exactness (Tree's reduction order is
+   non-deterministic over float). So pinning AR/RS to Ring is the bit-exact-relevant action;
+   AG/Broadcast/SendRecv carry no floating-point reduction and could be left at default
+   without breaking determinism.
 
 ### 4.2 Identical kernels (sanity check — same forward graph)
 
@@ -436,38 +464,74 @@ previously hidden behind compute.
 
 Concrete, kernel-name-grounded suggestions, ordered by estimated wall-time recovery:
 
-### 7.1 Pre-allocate `scatter_add`/`index_put` destination buffers (~400–500 ms/iter)
+### 7.1 Reduce the cost of `FillFunctor`-zero + `scatter_add`/`index_put` (~400–500 ms/iter)
 
 **Evidence**: 35,328 `FillFunctor<BFloat16>` calls/window (~11,776/iter) zeroing scatter destinations.
-Most callers are MoE expert grad scatter + MTP-head loss backward. **The buffers are the same
-shape every iter**.
+Most callers are MoE expert grad scatter + MTP-head loss backward.
 
-**Fix**: cache zero-buffers in `MoE.backward()` and `MTPHead.backward()` and `.zero_()` once at
-iter 0, then re-use. Net: 11,776 fills → ~10 fills/iter.
+> **Correction (see §11)**: an earlier draft proposed "zero buffers once at iter 0 and re-use".
+> That is **incorrect** for accumulation destinations — `index_put_(accumulate=True)` adds onto
+> existing contents, so the buffer must be re-zeroed every backward or gradients accumulate
+> across iterations. The fills are **intrinsic** to the accumulate-into-prezeroed formulation.
 
-**Wall-time recovery**: ~470 ms/iter (~5% of wall).
+**Legitimate fixes (in order of effort):**
 
-### 7.2 Replace `cub::DeviceRadixSort` path in `GatherBackward0` with cached index mapping (~140 ms/iter)
+| Fix | Mechanism | Bit-exact? | Est. recovery |
+|---|---|---|---|
+| **(a)** Batch the ~11,776 tiny per-expert scatters into a few large ones | One `scatter_add` per layer instead of one per expert. Still re-zeroed each iter, but ~10 large fills instead of ~11,776 tiny ones — drastically lower kernel-launch overhead. | yes | ~300 ms/iter |
+| **(b)** Custom deterministic scatter kernel (Triton or CUDA) that fuses zero-init via write-on-first-touch instead of accumulate | Eliminates the separate `aten::fill_` + `aten::scatter_add_` chain by writing zeros only where data lands. | yes | ~400–500 ms/iter |
+| **(c)** Scoped opt-out for specific MoE/MTP ops via `torch.use_deterministic_algorithms(warn_only=True)` around hot scatters | Preserves determinism elsewhere; sacrifices bit-exactness only for the named ops (with a warning). | **no** (those ops only) | ~500–600 ms/iter |
 
-**Evidence**: `GatherBackward0` is +446 ms/window over `CheckpointFunctionBackward` already accounts
-for most of `GatherBackward0`'s wall. The MoE router topk indices are deterministic across iters
-when load-balancing is on — so the sort-key is constant per iter.
+This is still the largest single lever — just a kernel-engineering project, not a caching one-liner.
 
-**Fix**: cache the sorted-index buffer in the router; refresh only when topk changes.
+### 7.2 Reuse forward's sort/permutation in same-iter activation-recompute backward (~140 ms/iter)
 
-**Wall-time recovery**: ~140 ms/iter.
+> **Correction (see §11)**: an earlier draft proposed caching the sorted-index buffer *across*
+> iterations. That is **invalid** — router top-k indices depend on input data and router weights,
+> both of which change every iteration; cross-iter caching would route tokens with stale
+> assignments. Force-balance does not make the indices stable across iters — `RandomSTE` draws
+> fresh logits every forward.
 
-### 7.3 Move PP p2p off Ring algo (~170 ms/iter)
+**Salvageable narrower win**: under selective recompute, the *recomputed forward* and the
+*backward* both run inside `CheckpointFunctionBackward`, in the **same iteration**. If we
+stash the forward's permutation buffer (cheaply, in the checkpoint context) and reuse it in
+the recompute pass, we avoid recomputing the sort itself — the indices have not changed
+between the original forward and the recompute.
 
-**Evidence**: SendRecv is +149 µs/call × 3,486 calls/window = +520 ms/window = +173 ms/iter.
-`NCCL_ALGO=Ring` is overkill for P2P — Ring only affects multi-rank collectives.
+**Wall-time recovery**: ~140 ms/iter (the cost of the recompute-side
+`cub::DeviceRadixSort` calls).
 
-**Fix**: scope `NCCL_ALGO=Ring` to AllReduce only, leave SendRecv at default.
-- Approach A: per-collective NCCL env-var pinning (NCCL supports collective-specific algo via
-  `NCCL_ALGO_AllReduce=Ring` only).
-- Approach B: use a separate NCCL communicator for PP that doesn't have `NCCL_ALGO` set.
+### 7.3 Scope `NCCL_ALGO=Ring` to AR/RS only (recovery: smaller than initially claimed)
 
-**Wall-time recovery**: ~170 ms/iter (the full SendRecv delta).
+> **Correction (see §11)**: an earlier draft attributed the entire +520 ms SendRecv delta to
+> `NCCL_ALGO=Ring`. That is **wrong** for two reasons:
+> 1. `NCCL_ALGO` only applies to collectives (AllReduce, ReduceScatter, AllGather, Broadcast,
+>    Reduce); **P2P SendRecv bypasses Ring/Tree selection entirely**.
+> 2. NCCL device kernels are wait-inclusive, so the +520 ms is almost entirely peer-arrival
+>    skew driven by det's slower stream-7 work, not algorithm cost.
+>
+> So the "scope NCCL_ALGO" optimization recovers **only** the genuine AR/RS algorithm overhead
+> — and only if Tree is in fact slower than Ring on this cluster for those collectives.
+
+**Salvageable narrower fix**: the only NCCL primitives where Tree's reduction order can
+break bit-exactness are **AllReduce / ReduceScatter / Reduce** (where floats are summed across
+ranks). AllGather, Broadcast, and SendRecv carry **no floating-point reduction** — they can be
+left at NCCL default without breaking determinism. Per-function syntax:
+
+```bash
+# NCCL ≥ 2.24 (verify in the target container; 2.19 does NOT support this)
+export NCCL_ALGO="allreduce:ring;reducescatter:ring;reduce:ring"
+```
+
+**Honest expectations**:
+- Recovers only the *genuine* AR/RS algorithm overhead. From the data, that is roughly the
+  `−15 µs/call × 4,362 AG calls = +66 ms/window` that AG currently sees from being pinned to
+  Ring — recovered if we drop AG from the pin list. AR (combined) and RS contribute additional
+  unknown amounts, but the **wait-inclusive caveat means the kernel-time numbers overstate the
+  algorithm contribution**.
+- The change must be re-validated with a 2-run bitwise check (the existing 3-way comparison
+  framework).
+- Realistic ceiling: ~30–80 ms/iter, not the 170 ms/iter previously claimed.
 
 ### 7.4 Selective `use_deterministic_algorithms` opt-out (~200–300 ms/iter, but breaks bit-exactness)
 
@@ -536,14 +600,139 @@ GROUP BY s.value ORDER BY ms DESC LIMIT 12;
 
 ## 9. Bottom Line
 
-- **Determinism IS bit-exact reproducible** at this scale (2103637 = 2102770 = 2103151 across iters 1, 10, 20, 30, 40, 50).
-- **Cost: +1,398 ms / iter (+17% step time, −15% MFU)** vs the same recipe without determinism.
-- **~93% of the NVTX-visible cost growth lives in `aten::*` operators** (PyTorch's deterministic substitute paths — fill / index_put / arange / scatter_add / bincount-via-max-min-remainder).
-- **`nvte::*` (TransformerEngine) is actually FASTER under det** (−5%), confirming the cost is not in the compute library.
-- **`mcore.fusions` is byte-identical** in NVTX time; `Optimizer.step` is even faster under det (−9%).
-- **`NCCL_ALGO=Ring` slows PP P2P by +492 ms / 3 iters** (visible at both NVTX `mcore.pipeline_parallel` and NCCL kernel level).
-- **Compute kernels (GEMM, attention, SSM) are essentially unchanged at the kernel level** — +2% GEMM (cuBLAS workspace), +14% attention bwd (det splits into 2 passes), **−6% SSM (det path is slightly faster on B200)**.
-- **Two cleanly-actionable optimizations** could recover **~640 ms / iter (~7%)** without sacrificing bit-exactness: pre-allocate scatter destinations + scope `NCCL_ALGO=Ring` to AllReduce only.
+- **Determinism IS bit-exact reproducible** at this scale (2103637 = 2102770 = 2103151 across iters 1, 5, 10, 15, 20, 30, 40, 50 — see §4.3).
+- **Cost: +1,398 ms / iter (+17 % step time, −15 % MFU)** vs the same recipe without determinism.
+- **~93 % of the NVTX-visible cost growth lives in `aten::*` operators** — MCore's own `if torch.are_deterministic_algorithms_enabled():` branches substitute `scatter`, `scatter_add`, `F.embedding`/`gather` with sort-and-segmented-reduce paths (NOT PyTorch internals — see §11 for the corrected mechanism).
+- **`nvte::*` (TransformerEngine) is actually FASTER under det** (−5 %); compute library is not the source.
+- **`mcore.fusions` is byte-identical** in NVTX time; `Optimizer.step#FusedAdam.step` is even *faster* under det (−9 %).
+- **NCCL kernel time grows +702 ms / 3 iters**, but this is **mostly wait-time skew** from slower stream-7 work, not `NCCL_ALGO=Ring`. SendRecv (P2P) is not algo-selectable at all in NCCL; ReduceScatter is `RING_LL` in both runs. Recovery here is bounded.
+- **Compute kernels (GEMM, attention, SSM)** are essentially unchanged at the kernel level: +2 % GEMM (cuBLAS workspace), **+21 % attention BWD alone** (det splits BWD into 2 passes; FWD is +3 %; total attn FWD+BWD is +14 %), **−6 % SSM**.
+- **Realistic recovery without sacrificing bit-exactness**: ~300–500 ms / iter from batching/replacing the MoE scatter-zero-add chain (§7.1) + ~140 ms from same-iter recompute reuse (§7.2) + ~30–80 ms from scoping `NCCL_ALGO=Ring` to AR/RS only (§7.3). **Total: ~500–700 ms / iter (~5–7 %)**, all kernel-engineering or scoping work — none is a one-line cache fix.
+
+---
+
+## 10. Scope & Limitations
+
+This report is grounded in 3 iterations from a single rank, with a benchmarking recipe. Three caveats
+the reader should weigh before drawing scope-wide conclusions:
+
+### 10.1 Single-rank, first-PP-stage visibility
+
+The profile is **rank 0 only**, which on `TP=2 PP=3` lands on the **first pipeline stage**. That
+rank **never sees** the cross-entropy backward or the MTP-head backward (both live on the **last
+PP stage**). The CE-fusion knob (`cross_entropy_loss_fusion=false`) and a chunk of the
+scatter-zero-add cost therefore do **not** show up in our `aten::*` decomposition — they happen
+on the last-stage ranks and get dispatched to rank 0 only through PP P2P (which is what we
+*do* see in `mcore.pipeline_parallel`'s `send_forward_recv_backward` range).
+
+**Recommended follow-up**: profile **3 ranks simultaneously**: first PP stage (current),
+middle PP stage, and last PP stage. Add **one rank on a different node** to expose EP-imbalance
+effects across NVLink islands. The same `print_nsys_leaderboard.py` harness handles multi-CSV
+input by simple concatenation per category.
+
+### 10.2 Mock data + force-balanced routing
+
+The current profile uses **mock data + `moe_router_force_load_balancing=True`** (verified by
+NVTX `RandomSTE` ranges firing 1,152 times / window). This injects two extra ops every router
+forward (`aten::clone` + `aten::normal_` totaling ~90 ms / iter) and forces uniform per-expert
+token counts.
+
+**Is the +1,398 ms / iter det penalty representative of production?** Largely yes, but with
+caveats:
+- MoE permute/scatter buffers are **pre-allocated at max capacity**; `FillFunctor` zeros the
+  full buffer regardless of how many real tokens land. So the dominant `aten::fill_` + `scatter_add`
+  cost is **buffer-shape-bound, not token-distribution-bound**.
+- The det penalty per iter under production-realistic skewed routing would shift by **±1–3 %**
+  from all-to-all bandwidth differences, no more.
+- The fake-balance overhead itself (+90 ms / iter for `RandomSTE` + `aten::normal_`) is
+  *false-presence* — a production run without it would subtract ~90 ms / iter from both det and
+  non-det. That changes neither the absolute det penalty nor the relative %.
+
+**Recommended follow-up**: rerun the matched pair with `moe_router_force_load_balancing=False`
++ a production-skewed dataset; compare iter-50 step times and the same NVTX leaderboard.
+
+### 10.3 Iter-16 anomaly
+
+Both runs show iter 16 at **+25–29 % slower than its neighbors**:
+
+| iter | det elapsed (ms) | non-det elapsed (ms) |
+|---|---|---|
+| 15 | 9,332 | 7,952 |
+| **16** | **11,661 (+25 %)** | **10,240 (+29 %)** |
+| 17 | 10,689 | 9,232 |
+| 18 | 10,726 | 9,318 |
+
+This is unexplained. The 3-iter nsys window happens to start right at iter 15 and capture iter
+16 in the middle, so the anomaly is folded into the per-iter average. Hypotheses worth testing:
+- Python GC pause (we run with `train.manual_gc_interval=100`, so iter 16 shouldn't be a GC iter
+  — but worth verifying)
+- A first-time CUDA graph capture or workspace-allocation lazy-init
+- Slurm I/O hiccup (NVMe checkpoint scan, fs latency spike)
+
+**Recommended follow-up**: extend the nsys window to **iters 15–19 (5 iters)** and profile a
+**later** iter range (e.g. 40–44) to confirm the steady-state per-iter numbers.
+
+---
+
+## 11. Reviewer Feedback Applied
+
+This section records substantive corrections to earlier drafts so reviewers know the chain of
+revisions. Original draft phrasings were wrong; the report bodies above have been edited inline
+to reflect the corrected versions.
+
+### 11.1 NCCL story (§4.1, §7.3) was largely incorrect
+
+| Claim in earlier draft | What's actually true |
+|---|---|
+| "`NCCL_ALGO=Ring` adds 149 µs/call to SendRecv" | **Wrong.** `NCCL_ALGO` only applies to collectives (AR/RS/AG/Broadcast/Reduce); P2P SendRecv bypasses Ring/Tree selection entirely (verified in `nccl/src/enqueue.cc`). The +520 ms SendRecv delta is **wait-time skew** from slower stream-7 work delaying peer arrival — a symptom, not a cause. |
+| "ReduceScatter Ring algo costs +73 µs/call" | **Wrong.** RS is `Sum_bf16_RING_LL` in **both** runs — same algorithm. The delta is wait-time, not algorithm choice. |
+| "Use `NCCL_ALGO_AllReduce=Ring`" | **Wrong syntax.** That variable does not exist. The real per-function form is `NCCL_ALGO="allreduce:ring;reducescatter:ring"`, and it requires **NCCL ≥ 2.24**. Verify the container's NCCL version (2.19 will silently ignore the per-collective form). |
+| "Fixing NCCL config recovers ~170 ms / iter" | **Overstated.** The legitimate recovery is bounded by the *genuine* AR/RS algorithm overhead (~30–80 ms / iter), not the wait-inclusive +173 ms. Fixing the fills recovers more. |
+
+§4.1 caveat and §7.3 rewrite reflect the corrected story.
+
+### 11.2 §7.1 fix mechanism was invalid
+
+The earlier draft proposed "cache the scatter destination buffer at iter 0 and reuse". That
+**does not work** for accumulation destinations: `index_put_(accumulate=True)` adds onto
+existing contents, so the buffer **must** be re-zeroed every backward or gradients
+accumulate across iterations. The fills are intrinsic to the accumulate-into-prezeroed
+formulation. §7.1 rewrite gives three legitimate alternatives (custom fused kernel; batched
+scatter; scoped opt-out).
+
+### 11.3 §7.2 fix was invalid
+
+The earlier draft proposed "cache the topk sorted-index buffer across iterations". That is
+**incorrect** — router top-k indices depend on data and weights, both of which change every
+iter; cross-iter caching would route tokens with stale assignments. `RandomSTE` draws fresh
+logits every forward even under force-balance, so the indices are not iter-stable. §7.2
+rewrite limits the win to **same-iter reuse** between forward and the recompute backward.
+
+### 11.4 Mechanism narrative for `aten::max/min/remainder` was fabricated
+
+The earlier draft said det-only `aten::max` / `aten::min` / `aten::remainder` come from
+`torch.bincount` called by `scatter_add`'s det substitute. Verified against PyTorch source,
+this chain is **wrong**:
+- Deterministic `index_put_` on CUDA is **not** a "Python loop" — it's already radix-sort +
+  segmented reduce, and that path is the **default** for `accumulate=True` on CUDA.
+- Deterministic `scatter_add` does **not** call `bincount`.
+- `bincount` does **not** use `max` / `min` / `remainder`; it uses fused `aminmax` + an atomic
+  histogram.
+
+Since those three ops *are* det-only in the profile, they most likely come from **MCore's own
+explicit `if torch.are_deterministic_algorithms_enabled():` branches** (commonly: `scatter` →
+`index_put_ + arange`, `scatter_add` → `index_add`, `F.embedding` → advanced-indexing build,
+which uses `max`/`min`/`remainder` for hash-style index materialization). §4.5 "Mapping
+kernels..." block has been rewritten to reflect this.
+
+### 11.5 Arithmetic / labeling fixes
+
+| Earlier claim | Correction |
+|---|---|
+| "Streams 7+42 = ~95 % of wall gap" | **66 %**. The +2,829 ms busy-time delta on streams 7+42 is 66 % of the +4,287 ms window-total delta. The other 34 % (~1,460 ms) is idle/bubble growth that §5/§6 already accounts for, and is not double-counted. |
+| "Det substitute kernels = 96 % of the 'other' bucket" | **90 %**. (1,918 ÷ 2,127 = 90.2 %.) |
+| "+14 % attention BWD" | The +14 % figure is FWD+BWD combined. **BWD alone is +21 %**; FWD is +3 %. §3.2 and §9 now state this explicitly. |
+| §1's NCCL kernel count (11,013) vs §4.1 row sum | Now reconcilable: §4.1 totals to 3,486 + 4,362 + 2,730 + 9 + 30 + 384 + 6 + 3 + 3 = **11,013** for both runs (non-det splits 30 → 15 RING + 15 TREE on `f32` AR). |
 
 ---
 
