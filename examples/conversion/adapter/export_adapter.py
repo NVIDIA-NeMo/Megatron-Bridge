@@ -102,7 +102,7 @@ def parse_args() -> argparse.Namespace:
         "--dtype",
         type=_parse_dtype,
         default=torch.float32,
-        help="Dtype used for distributed GPU export materialization and saved adapter tensors.",
+        help="Dtype used to materialize the model for distributed GPU export.",
     )
     parser.add_argument(
         "--exclude-adapter-base-prefix",
