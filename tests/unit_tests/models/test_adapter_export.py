@@ -814,6 +814,10 @@ class TestExportAdapterCkpt:
         with (
             patch("megatron.core.dist_checkpointing.load", return_value=fake_sd) as mock_dist_load,
             patch(
+                "megatron.bridge.peft.utils.enable_legacy_shared_expert_adapter_loading",
+                return_value=False,
+            ),
+            patch(
                 "megatron.bridge.training.checkpointing._generate_model_state_dict",
                 return_value={"model": {}},
             ),
@@ -1338,6 +1342,10 @@ class TestExportAdapterScript:
             patch(
                 "examples.conversion.adapter.export_adapter.apply_peft_adapter_filter_to_state_dict",
                 side_effect=lambda state_dict, _lora: state_dict,
+            ),
+            patch(
+                "examples.conversion.adapter.export_adapter.enable_legacy_shared_expert_adapter_loading",
+                return_value=False,
             ),
             patch(
                 "examples.conversion.adapter.export_adapter.dist_checkpointing.load", return_value={"optimizer": {}}
