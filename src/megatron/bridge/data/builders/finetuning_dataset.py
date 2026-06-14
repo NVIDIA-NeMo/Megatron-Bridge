@@ -177,15 +177,6 @@ class FinetuningDatasetBuilder:
             True if the packed data exists
         """
         path_str = str(path)
-        path_lower = path_str.lower()
-        is_local_single_parquet = (
-            "://" not in path_str
-            and "*" not in path_str
-            and "?" not in path_str
-            and (path_lower.endswith(".parquet") or path_lower.endswith(".pq"))
-        )
-        if is_local_single_parquet:
-            return Path(path_str).is_file()
 
         # For packed parquet specs, check if resolution returns files
         if is_packed_parquet_spec(path_str):

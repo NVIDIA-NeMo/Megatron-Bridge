@@ -16,7 +16,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -47,29 +46,3 @@ def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, m
     monkeypatch.setattr(Path, "mkdir", raise_mkdir)
 
     assert builder.default_pack_path == expected_path
-
-
-def test_packed_path_exists_uses_local_path_for_generated_parquet_when_msc_enabled(tmp_path, monkeypatch):
-    builder = FinetuningDatasetBuilder(
-        dataset_root=tmp_path,
-        tokenizer=MagicMock(),
-        packed_sequence_specs=PackedSequenceSpecs(
-            packed_sequence_size=128,
-            tokenizer_model_name="mock-tokenizer",
-        ),
-    )
-    packed_path = tmp_path / "packed" / "mock-tokenizer_pad_seq_to_mult1" / "training_128.idx.parquet"
-
-    monkeypatch.setattr(MultiStorageClientFeature, "is_enabled", lambda: True)
-
-    def fail_import():
-        raise AssertionError("local generated parquet path should not use MSC resolution")
-
-    monkeypatch.setattr(MultiStorageClientFeature, "import_package", fail_import)
-
-    assert not builder._packed_path_exists(packed_path)
-
-    packed_path.parent.mkdir(parents=True)
-    packed_path.touch()
-
-    assert builder._packed_path_exists(packed_path)
