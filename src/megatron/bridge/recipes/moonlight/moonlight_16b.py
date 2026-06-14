@@ -156,7 +156,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
-    cfg.model.moe_shared_expert_overlap = True
+    cfg.model.moe_shared_expert_overlap = False
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 2000
