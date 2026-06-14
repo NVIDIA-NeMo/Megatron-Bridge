@@ -75,6 +75,25 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
         # Auto-detect checkpoint format: VLM configs nest text params under text_config
         self._is_text_only = not hasattr(hf_config, "text_config")
 
+        # NemotronLabsDiffusionConfig (a trust_remote_code config) does not declare
+        # model-specific fields as dataclass fields.  In transformers 5.x
+        # PretrainedConfig is a dataclass, so MLM's _convert_value_to_dict uses the
+        # dataclass-fields path and silently drops all model-specific attributes
+        # (hidden_size, rope_parameters, etc.).  Adding to_cfg_dict to the class
+        # makes the serializer use PretrainedConfig.to_dict() which captures everything.
+        cfg_cls = type(hf_config)
+        if not hasattr(cfg_cls, "to_cfg_dict") and hasattr(hf_config, "to_dict"):
+
+            def _to_cfg_dict(self):
+                cls = self.__class__
+                return {
+                    "_target_": f"{cls.__module__}.{cls.__qualname__}.from_dict",
+                    "_call_": True,
+                    "config_dict": self.to_dict(),
+                }
+
+            cfg_cls.to_cfg_dict = _to_cfg_dict
+
         return NemotronLabsDiffusionModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
