@@ -114,10 +114,12 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
 
-    # CUDA Graph
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
+    # CUDA Graph (TE-scoped, dropless MoE: capture attn + MoE router/preprocess to cut
+    # per-step host-driver overhead — the rc0 (torch 2.12) framework regression vector)
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
     cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
 
     # Kernel selections (includes MoE-specific kernels)
     cfg.model.attention_backend = None
