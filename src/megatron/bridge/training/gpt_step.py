@@ -158,6 +158,11 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         "cu_seqlens_unpadded_argmin",
         "max_seqlen",
         "token_count",
+        # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
+        # attention_mask is unused here. It is also not sequence-partitionable: it is
+        # either None or a degenerate placeholder without a slice-able seq dim at index 1,
+        # so feeding it to thd_get_partitioned_indices via val.size(1) raises IndexError.
+        "attention_mask",
     }
 
     for key, val in batch.items():

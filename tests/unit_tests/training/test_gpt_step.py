@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
@@ -22,6 +23,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _forward_step_common,
+    _partition_packed_batch_for_cp,
     get_batch,
     get_packed_seq_params,
 )
@@ -544,6 +546,78 @@ class TestGetBatch:
             labels=labels,
             packed_seq_params=sentinel_packed_seq_params,
         )
+
+
+class _FakeTex:
+    """Minimal transformer_engine_torch stand-in for THD CP partitioning.
+
+    Records the per-tensor ``total_seqlen`` values passed to
+    ``thd_get_partitioned_indices`` so tests can assert which batch keys were
+    partitioned, and returns the first ``total_seqlen // cp_size`` indices for the
+    requesting rank.
+    """
+
+    def __init__(self):
+        self.seq_lens_seen = []
+
+    def thd_get_partitioned_indices(self, cu_seqlens, total_seqlen, cp_size, cp_rank):
+        self.seq_lens_seen.append(total_seqlen)
+        return torch.arange(total_seqlen // cp_size, dtype=torch.long)
+
+
+class TestPartitionPackedBatchForCp:
+    """Tests for _partition_packed_batch_for_cp (THD/packed context-parallel slicing)."""
+
+    def _run(self, monkeypatch, batch, cp_size=2):
+        fake_tex = _FakeTex()
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.is_te_min_version", lambda *_: True)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.parallel_state.get_context_parallel_rank", lambda: 0)
+        with patch.dict(sys.modules, {"transformer_engine_torch": fake_tex}):
+            result = _partition_packed_batch_for_cp(batch, cp_size)
+        return result, fake_tex
+
+    def test_skips_attention_mask_and_does_not_crash(self, monkeypatch):
+        """A degenerate attention_mask must be skipped, not fed to val.size(1) (#4228)."""
+        tokens = torch.arange(8, dtype=torch.long).unsqueeze(0)
+        labels = torch.arange(1, 9, dtype=torch.long).unsqueeze(0)
+        loss_mask = torch.ones(1, 8)
+        position_ids = torch.arange(8).unsqueeze(0)
+        # 1-D placeholder mask that finetuning paths can emit; it has no seq dim at index 1,
+        # so the pre-fix code raised IndexError on attention_mask.size(1).
+        attention_mask = torch.tensor([1])
+        cu_seqlens = torch.tensor([[0, 3, 8, -1]], dtype=torch.int32)
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+            "cu_seqlens": cu_seqlens,
+        }
+
+        result, fake_tex = self._run(monkeypatch, batch, cp_size=2)
+
+        # attention_mask is passed through untouched (never partitioned).
+        assert torch.equal(result["attention_mask"], attention_mask)
+        # Only the four sequence-aligned tensors were partitioned along the seq dim.
+        assert fake_tex.seq_lens_seen == [8, 8, 8, 8]
+        for key in ("tokens", "labels", "loss_mask", "position_ids"):
+            assert result[key].size(1) == 4
+
+    def test_none_attention_mask_still_skipped(self, monkeypatch):
+        """A None attention_mask is also left as-is and never partitioned."""
+        tokens = torch.arange(4, dtype=torch.long).unsqueeze(0)
+        batch = {
+            "tokens": tokens,
+            "attention_mask": None,
+            "cu_seqlens": torch.tensor([[0, 4, -1]], dtype=torch.int32),
+        }
+
+        result, fake_tex = self._run(monkeypatch, batch, cp_size=2)
+
+        assert result["attention_mask"] is None
+        assert fake_tex.seq_lens_seen == [4]
+        assert result["tokens"].size(1) == 2
 
 
 class TestGetPackedSeqParams:
