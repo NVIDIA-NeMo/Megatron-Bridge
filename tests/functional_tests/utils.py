@@ -16,6 +16,7 @@ import logging
 import os
 import shutil
 import socket
+import sys
 import time
 from pathlib import Path
 
@@ -106,78 +107,65 @@ def _dist_debug_fields() -> str:
     )
 
 
+def _seqpack_cleanup_diag(message: str) -> None:
+    sys.stderr.write(f"{message}\n")
+    sys.stderr.flush()
+    logger.warning(message)
+
+
 def clear_directories(path: str, debug_label: str | None = None) -> None:
     """Delete a directory on rank 0."""
     if debug_label is not None:
-        logger.warning(
-            "[SEQPACK_CP_DIAG] clear_directories.enter label=%s path=%s exists=%s %s",
-            debug_label,
-            path,
-            os.path.exists(path),
-            _dist_debug_fields(),
+        _seqpack_cleanup_diag(
+            f"[SEQPACK_CP_DIAG] clear_directories.enter label={debug_label} path={path} "
+            f"exists={os.path.exists(path)} {_dist_debug_fields()}"
         )
 
     if not torch.distributed.is_initialized():
         if os.path.exists(path):
             shutil.rmtree(path)
         if debug_label is not None:
-            logger.warning(
-                "[SEQPACK_CP_DIAG] clear_directories.exit_no_dist label=%s path=%s %s",
-                debug_label,
-                path,
-                _dist_debug_fields(),
+            _seqpack_cleanup_diag(
+                f"[SEQPACK_CP_DIAG] clear_directories.exit_no_dist label={debug_label} path={path} "
+                f"{_dist_debug_fields()}"
             )
         return
 
     if torch.distributed.is_initialized():
         if debug_label is not None:
-            logger.warning(
-                "[SEQPACK_CP_DIAG] clear_directories.before_barrier_1 label=%s path=%s %s",
-                debug_label,
-                path,
-                _dist_debug_fields(),
+            _seqpack_cleanup_diag(
+                f"[SEQPACK_CP_DIAG] clear_directories.before_barrier_1 label={debug_label} path={path} "
+                f"{_dist_debug_fields()}"
             )
         torch.distributed.barrier()
         if debug_label is not None:
-            logger.warning(
-                "[SEQPACK_CP_DIAG] clear_directories.after_barrier_1 label=%s path=%s %s",
-                debug_label,
-                path,
-                _dist_debug_fields(),
+            _seqpack_cleanup_diag(
+                f"[SEQPACK_CP_DIAG] clear_directories.after_barrier_1 label={debug_label} path={path} "
+                f"{_dist_debug_fields()}"
             )
         if torch.distributed.get_rank() == 0:
             if debug_label is not None:
-                logger.warning(
-                    "[SEQPACK_CP_DIAG] clear_directories.before_rmtree label=%s path=%s exists=%s %s",
-                    debug_label,
-                    path,
-                    os.path.exists(path),
-                    _dist_debug_fields(),
+                _seqpack_cleanup_diag(
+                    f"[SEQPACK_CP_DIAG] clear_directories.before_rmtree label={debug_label} path={path} "
+                    f"exists={os.path.exists(path)} {_dist_debug_fields()}"
                 )
             if os.path.exists(path):
                 shutil.rmtree(path)
             if debug_label is not None:
-                logger.warning(
-                    "[SEQPACK_CP_DIAG] clear_directories.after_rmtree label=%s path=%s exists=%s %s",
-                    debug_label,
-                    path,
-                    os.path.exists(path),
-                    _dist_debug_fields(),
+                _seqpack_cleanup_diag(
+                    f"[SEQPACK_CP_DIAG] clear_directories.after_rmtree label={debug_label} path={path} "
+                    f"exists={os.path.exists(path)} {_dist_debug_fields()}"
                 )
         if debug_label is not None:
-            logger.warning(
-                "[SEQPACK_CP_DIAG] clear_directories.before_barrier_2 label=%s path=%s %s",
-                debug_label,
-                path,
-                _dist_debug_fields(),
+            _seqpack_cleanup_diag(
+                f"[SEQPACK_CP_DIAG] clear_directories.before_barrier_2 label={debug_label} path={path} "
+                f"{_dist_debug_fields()}"
             )
         torch.distributed.barrier()
         if debug_label is not None:
-            logger.warning(
-                "[SEQPACK_CP_DIAG] clear_directories.after_barrier_2 label=%s path=%s %s",
-                debug_label,
-                path,
-                _dist_debug_fields(),
+            _seqpack_cleanup_diag(
+                f"[SEQPACK_CP_DIAG] clear_directories.after_barrier_2 label={debug_label} path={path} "
+                f"{_dist_debug_fields()}"
             )
 
 

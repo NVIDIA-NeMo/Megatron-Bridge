@@ -18,6 +18,7 @@ import os
 import socket
 import sys
 import time
+import traceback
 
 import pytest
 import torch
@@ -62,7 +63,10 @@ def _diag_fields(**extra: object) -> str:
 
 
 def _diag(event: str, **extra: object) -> None:
-    logger.warning("[SEQPACK_CP_DIAG] %s %s", event, _diag_fields(**extra))
+    message = f"[SEQPACK_CP_DIAG] {event} {_diag_fields(**extra)}\n"
+    sys.stderr.write(message)
+    sys.stderr.flush()
+    logger.warning(message.rstrip())
 
 
 def _diag_env() -> None:
@@ -94,7 +98,9 @@ class TestPeftSftExample:
 
     @pytest.mark.run_only_on("GPU")
     def test_sft_example_runs_with_cp_and_packing(self, tmp_path):
+        caught_exception = None
         shared_dir = None
+        os.environ["MBRIDGE_SEQPACK_CP_DIAG"] = "1"
         faulthandler.dump_traceback_later(180, repeat=True, file=sys.stderr)
         try:
             _diag("test_start", tmp_path=tmp_path)
@@ -202,9 +208,21 @@ class TestPeftSftExample:
                 storage_writers_per_rank=cfg.checkpoint.storage_writers_per_rank,
             )
             _diag("after_verify_checkpoint", checkpoint_dir=checkpoint_dir)
+        except BaseException as exc:
+            caught_exception = exc
+            _diag("caught_exception", exc_type=type(exc).__name__, exc=repr(exc))
+            traceback.print_exc(file=sys.stderr)
+            raise
         finally:
-            _diag("finally_enter", shared_dir=shared_dir)
-            if shared_dir is not None:
+            _diag(
+                "finally_enter",
+                shared_dir=shared_dir,
+                caught_exception=type(caught_exception).__name__ if caught_exception is not None else "none",
+            )
+            if shared_dir is not None and caught_exception is None:
                 clear_directories(shared_dir, debug_label="seqpacking_cp")
+            elif shared_dir is not None:
+                _diag("skip_distributed_cleanup_after_exception", shared_dir=shared_dir)
             _diag("finally_exit", shared_dir=shared_dir)
             faulthandler.cancel_dump_traceback_later()
+            os.environ.pop("MBRIDGE_SEQPACK_CP_DIAG", None)
