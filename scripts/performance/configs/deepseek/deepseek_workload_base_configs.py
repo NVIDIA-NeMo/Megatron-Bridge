@@ -19,6 +19,7 @@ Config naming convention:
 
 V1: GBS=2048 for Blackwell variants, GBS=8192 for H100
 V2: GBS=4096 for Blackwell variants, GBS=16384 for H100
+FSDP: FSDP-based, no PP, GBS=256 for GB300 (64 GPUs)
 
 Use --config_variant to select a variant.
 Use --list_config_variants to see available variants interactively.
@@ -64,8 +65,17 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1 = replace(
     cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     recompute_modules=["moe_act"],
 )
+
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1,
+    micro_batch_size=1,
+    cuda_graph_impl="full_iteration",
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=[],
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1
 
 
@@ -87,7 +97,14 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V1 = replace(
     recompute_modules=["mla_up_proj"],
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    moe_a2a_overlap=True,
+    cutedsl_fused_grouped_mlp=True,
+    recompute_modules=["mla_up_proj"],
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V1
 
 
@@ -175,7 +192,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
     global_batch_size=4096,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
+    global_batch_size=4096,
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2
 
 
@@ -188,7 +208,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V2 = replace(
     global_batch_size=4096,
 )
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
-DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1,
+    global_batch_size=4096,
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2
 
 
@@ -258,6 +281,32 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = replace(
     pp_layout=None,
 )
 
+
+# =============================================================================
+# DeepSeek V3 Pretrain - FSDP (FSDP, no PP, GBS=256 for GB300)
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=64,
+    global_batch_size=256,
+    micro_batch_size=2,
+    pipeline_model_parallel_size=1,
+    expert_model_parallel_size=64,
+    use_megatron_fsdp=True,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
+    cuda_graph_scope=[],
+    recompute_modules=["layernorm", "mla_up_proj", "moe_act"],
+    fine_grained_activation_offloading=True,
+    offload_modules=["core_attn", "attn_proj"],
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
+    outer_dp_sharding_strategy="no_shard",
+    num_distributed_optimizer_instances=1,
+)
 
 # =============================================================================
 # DeepSeek V3 Pretrain - Large Scale Proxy
@@ -344,6 +393,9 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_V2",
+    # FSDP (FSDP, GBS=256 for GB300)
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP",
     # Large Scale Proxy
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",

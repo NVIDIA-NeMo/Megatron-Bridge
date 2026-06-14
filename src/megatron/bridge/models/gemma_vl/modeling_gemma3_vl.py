@@ -91,7 +91,12 @@ class Gemma3VLModel(MegatronModule):
         self.post_process = post_process
         self.vp_stage = vp_stage
         if pre_process:
-            self.vision_tower = AutoModel.from_config(config.vision_config)
+            # Unwrap SiglipVisionModel so vision_tower params stay flat
+            # (vision_tower.embeddings.*), matching HF checkpoint keys.
+            _vc = config.vision_config
+            _vc.vision_use_head = False
+            _raw_vision = AutoModel.from_config(_vc)
+            self.vision_tower = getattr(_raw_vision, "vision_model", _raw_vision)
             self.multi_modal_projector = Gemma3VLMultimodalProjector(config.vision_projector_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)

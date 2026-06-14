@@ -13,7 +13,7 @@ export WORKSPACE=/your/custom/path
 ```
 
 Directory structure:
-- `${WORKSPACE}/models/` - Converted checkpoints
+- `${WORKSPACE}/models/` - Converted checkpoint roots, with iteration directories such as `iter_0000000/`
 - `${WORKSPACE}/results/` - Training outputs and experiment results
 
 ## Checkpoint Conversion
@@ -25,6 +25,8 @@ uv run python examples/conversion/convert_checkpoints.py import \
 --hf-model zai-org/GLM-4.5V \
 --megatron-path /models/GLM-4.5V
 ```
+
+The import writes the Megatron checkpoint under `/models/GLM-4.5V/iter_0000000`. Use that iteration directory for fine-tuning.
 
 ### Export Megatron → HF
 ```bash
@@ -84,13 +86,15 @@ Here's a breakdown of the information presented:
 
 - See: [bridge.recipes.glm_vl](../../../../docs/apidocs/bridge/bridge.recipes.glm_vl.md)
 - Available recipes:
-  - `glm_45v_finetune_config`: Finetuning for GLM-4.5V model with PEFT support
+  - `glm_45v_sft_config`: Full supervised fine-tuning for GLM-4.5V
+  - `glm_45v_peft_config`: Parameter-efficient fine-tuning for GLM-4.5V with LoRA or DoRA
 
 Before training, ensure the following environment variables are set:
-1. `SAVE_DIR`: checkpoint and log saving directory
-2. `HF_TOKEN`: to download models from HF Hub (if required)
-3. `HF_HOME`: (optional) to avoid re-downloading models and datasets
-4. `WANDB_API_KEY`: (optional) to enable WandB logging
+1. `WORKSPACE`: checkpoint and log saving directory
+2. `PRETRAINED_CHECKPOINT`: optional override for the converted iteration checkpoint, for example `${WORKSPACE}/models/GLM-4.5V/iter_0000000`
+3. `HF_TOKEN`: to download models from HF Hub (if required)
+4. `HF_HOME`: (optional) to avoid re-downloading models and datasets
+5. `WANDB_API_KEY`: (optional) to enable WandB logging
 
 ### Pretraining
 

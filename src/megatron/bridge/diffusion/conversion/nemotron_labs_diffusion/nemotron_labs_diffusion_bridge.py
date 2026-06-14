@@ -25,11 +25,12 @@ Supports two HF checkpoint formats (auto-detected from config):
   (vision_tower and multi_modal_projector weights are ignored)
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
-    NemotronLabsDiffusionModelProvider,
-)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, register_bridge_implementation
 from megatron.bridge.models.conversion.param_mapping import (
@@ -38,6 +39,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+        NemotronLabsDiffusionModelProvider,
+    )
 
 
 class NemotronLabsDiffusionBridge(MegatronModelBridge):
@@ -52,12 +59,40 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
 
     _is_text_only: bool = True
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronLabsDiffusionModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "NemotronLabsDiffusionModelProvider":
+        # Imported lazily: the provider pulls in NemotronLabsDiffusionAttention ->
+        # torch.nn.attention.flex_attention. Keeping it out of module scope means
+        # registering this bridge at `import megatron.bridge` stays cheap and doesn't
+        # drag flex_attention into the base import path. The heavy import happens here,
+        # on the first actual conversion.
+        from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+            NemotronLabsDiffusionModelProvider,
+        )
+
         hf_config = hf_pretrained.config
         text_config = getattr(hf_config, "text_config", hf_config)
 
         # Auto-detect checkpoint format: VLM configs nest text params under text_config
         self._is_text_only = not hasattr(hf_config, "text_config")
+
+        # NemotronLabsDiffusionConfig (a trust_remote_code config) does not declare
+        # model-specific fields as dataclass fields.  In transformers 5.x
+        # PretrainedConfig is a dataclass, so MLM's _convert_value_to_dict uses the
+        # dataclass-fields path and silently drops all model-specific attributes
+        # (hidden_size, rope_parameters, etc.).  Adding to_cfg_dict to the class
+        # makes the serializer use PretrainedConfig.to_dict() which captures everything.
+        cfg_cls = type(hf_config)
+        if not hasattr(cfg_cls, "to_cfg_dict") and hasattr(hf_config, "to_dict"):
+
+            def _to_cfg_dict(self):
+                cls = self.__class__
+                return {
+                    "_target_": f"{cls.__module__}.{cls.__qualname__}.from_dict",
+                    "_call_": True,
+                    "config_dict": self.to_dict(),
+                }
+
+            cfg_cls.to_cfg_dict = _to_cfg_dict
 
         return NemotronLabsDiffusionModelProvider(
             hidden_size=text_config.hidden_size,
@@ -141,7 +176,7 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
 
 # Register for the custom HF architecture (available via auto_map, not a standard transformers class)
 register_bridge_implementation(
-    source="MinistralDiffEncoderModel",
+    source="NemotronLabsDiffusionModel",
     target=GPTModel,
     bridge_class=NemotronLabsDiffusionBridge,
 )

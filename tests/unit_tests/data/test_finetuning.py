@@ -19,6 +19,19 @@ import torch
 from megatron.bridge.data.finetuning import prepare_finetuning_batch
 
 
+def test_prepare_finetuning_batch_none_iterator():
+    """Test non-data-loading ranks can pass through a None iterator."""
+    microbatch_iter, seq_len = prepare_finetuning_batch(
+        data_iterator=None,
+        num_microbatches=4,
+        default_seq_length=2048,
+        seq_key="tokens",
+    )
+
+    assert microbatch_iter is None
+    assert seq_len == 2048
+
+
 def test_prepare_finetuning_batch_basic():
     """Test basic microbatch splitting."""
     # Create a global batch: GBS=8, seq_len=128
