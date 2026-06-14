@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+from types import SimpleNamespace
+
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
     NemotronVLModelProvider,
+    get_language_mlp_submodules,
 )
 
 
@@ -61,3 +65,27 @@ class TestNemotronVLModelProvider:
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_vision_projection is True
+
+    def test_language_mlp_submodules_from_object_specs(self):
+        mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
+        language_spec = SimpleNamespace(
+            submodules=SimpleNamespace(
+                mlp_layer=SimpleNamespace(submodules=SimpleNamespace(mlp=SimpleNamespace(submodules=mlp_submodules)))
+            )
+        )
+
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules
+
+    def test_language_mlp_submodules_from_partial_specs(self):
+        mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
+        language_spec = partial(
+            object,
+            submodules=SimpleNamespace(
+                mlp_layer=partial(
+                    object,
+                    submodules=SimpleNamespace(mlp=partial(object, submodules=mlp_submodules)),
+                )
+            ),
+        )
+
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules

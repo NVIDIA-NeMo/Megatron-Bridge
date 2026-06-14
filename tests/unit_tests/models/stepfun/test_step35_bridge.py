@@ -279,6 +279,24 @@ class TestStep35BridgeProviderBridge:
             "kv_channels": 128,
         }
 
+    def test_provider_restores_mtp_layer_types_after_config_validation_split(self):
+        main_layer_types = [
+            "full_attention",
+            "sliding_attention",
+            "sliding_attention",
+            "sliding_attention",
+        ]
+        mtp_layer_types = ["full_attention", "sliding_attention"]
+
+        _, p = self._run(
+            hf_overrides={
+                "layer_types": main_layer_types,
+                "mtp_layer_types": mtp_layer_types,
+            },
+        )
+
+        assert p.layer_types == main_layer_types + mtp_layer_types
+
     def test_rotary_percents_copied_from_partial_rotary_factors(self):
         """``rotary_percents`` is the Megatron-facing rename of HF's
         ``partial_rotary_factors`` and is indexed per layer by

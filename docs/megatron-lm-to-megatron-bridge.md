@@ -55,7 +55,7 @@ uv run python scripts/translate_mlm_to_bridge.py --reverse \
 | `--ffn-hidden-size N` | `model.ffn_hidden_size=N` | |
 | `--num-attention-heads N` | `model.num_attention_heads=N` | |
 | `--num-query-groups N` | `model.num_query_groups=N` | |
-| `--seq-length N` | `model.seq_length=N dataset.sequence_length=N` | Dual mapping |
+| `--seq-length N` | `model.seq_length=N dataset.seq_length=N` | Dual mapping |
 | `--swiglu` | `model.gated_linear_unit=true model.activation_func=silu` | Expanded to two keys |
 | `--squared-relu` | `model.activation_func=squared_relu` | |
 | `--data-path PATH [W PATH...]` | `dataset.data_path=PATH` | Space-separated paths (and optional weights) |
@@ -95,15 +95,17 @@ Flags not present in Bridge (e.g., `--use-mcore-models`, `--use-flash-attn`) are
 
 ## Quick start
 
-Run your example training entrypoint and override config keys directly:
+Run the generic recipe launcher and override config keys directly:
 
 ```bash
-uv run python examples/models/llama/pretrain_llama3_8b.py \
+uv run python scripts/training/run_recipe.py \
+  --recipe llama3_8b_pretrain_config \
+  --dataset llm-pretrain \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \
   model.max_position_embeddings=4096 \
-  dataset.sequence_length=4096 \
+  dataset.seq_length=4096 \
   checkpoint.save=/workspace/ckpts checkpoint.save_interval=1000 \
   logger.wandb_project=my_proj logger.wandb_exp_name=exp1
 ```

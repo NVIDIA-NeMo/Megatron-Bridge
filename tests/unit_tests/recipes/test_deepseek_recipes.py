@@ -28,6 +28,7 @@ import pytest
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
+from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.recipes.deepseek import (
     set_deepseek_v3_pipeline_model_parallel_layout,
     set_deepseek_v4_pipeline_model_parallel_layout,
@@ -45,6 +46,8 @@ _DEEPSEEK_RECIPE_NAMES = frozenset(
         "deepseek_v4_flash_pretrain_config",
         "deepseek_v4_flash_pretrain_mxfp8_config",
         "deepseek_v4_flash_pretrain_muon_config",
+        "deepseek_v4_flash_sft_config",
+        "deepseek_v4_flash_no_mtp_sft_config",
     }
 )
 _DEEPSEEK_EXPORTED_NAMES = set(getattr(_deepseek_module, "__all__", ()))
@@ -78,6 +81,30 @@ class _FakeBridge:
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+class _DSv4ProviderStub(ModelProviderMixin):
+    # Minimal provider to exercise the DSv4 auto-layout in apply_overrides_and_finalize
+    def __init__(
+        self,
+        *,
+        experimental_attention_variant,
+        num_layers=43,
+        mtp_num_layers=1,
+        pipeline_model_parallel_size=1,
+        pipeline_model_parallel_layout=None,
+    ):
+        self.experimental_attention_variant = experimental_attention_variant
+        self.num_layers = num_layers
+        self.mtp_num_layers = mtp_num_layers
+        self.pipeline_model_parallel_size = pipeline_model_parallel_size
+        self.pipeline_model_parallel_layout = pipeline_model_parallel_layout
+
+    def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        return None
+
+    def finalize(self):
+        return None
 
 
 def _assert_basic_config(cfg):
@@ -171,6 +198,63 @@ def test_deepseek_v4_pipeline_layout_disables_layout_for_single_stage():
     set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
 
     assert model_cfg.pipeline_model_parallel_layout is None
+
+
+def test_deepseek_v4_flash_full_model_layout_fits_hash_layers_on_first_stage():
+    # DSv4-Flash full model: 43 decoder layers, 1 MTP layer, PP=4. The first stage
+    # must hold at least the 3 hash-routed MoE layers alongside the embedding.
+    model_cfg = _FakeModelCfg()
+    model_cfg.num_layers = 43
+    model_cfg.mtp_num_layers = 1
+    model_cfg.pipeline_model_parallel_size = 4
+
+    set_deepseek_v4_pipeline_model_parallel_layout(model_cfg)
+
+    layout = model_cfg.pipeline_model_parallel_layout
+    assert layout[0][0] == "embedding"
+    assert layout[0].count("decoder") >= 3
+    assert layout[-1][-2:] == ["mtp", "loss"]
+    assert sum(stage.count("decoder") for stage in layout) == 43
+
+
+def test_dsv4_provider_auto_sets_pipeline_layout_for_pp_gt_1():
+    # The mbridge/verl path builds the provider and calls apply_overrides_and_finalize
+    # directly (no recipe), so the DSv4 layout must be auto-set there for PP > 1.
+    provider = _DSv4ProviderStub(experimental_attention_variant="dsv4_hybrid")
+    provider.apply_overrides_and_finalize(overrides={"pipeline_model_parallel_size": 4})
+
+    layout = provider.pipeline_model_parallel_layout
+    assert layout is not None
+    assert layout[0][0] == "embedding"
+    assert layout[0].count("decoder") >= 3
+    assert layout[-1][-2:] == ["mtp", "loss"]
+    assert sum(stage.count("decoder") for stage in layout) == 43
+
+
+def test_dsv4_provider_keeps_single_stage_layout_unset():
+    provider = _DSv4ProviderStub(experimental_attention_variant="dsv4_hybrid", pipeline_model_parallel_size=1)
+    provider.apply_overrides_and_finalize()
+
+    assert provider.pipeline_model_parallel_layout is None
+
+
+def test_non_dsv4_provider_is_not_auto_laid_out():
+    provider = _DSv4ProviderStub(experimental_attention_variant=None)
+    provider.apply_overrides_and_finalize(overrides={"pipeline_model_parallel_size": 4})
+
+    assert provider.pipeline_model_parallel_layout is None
+
+
+def test_dsv4_provider_preserves_user_supplied_layout():
+    user_layout = [["embedding", "decoder", "loss"]]
+    provider = _DSv4ProviderStub(
+        experimental_attention_variant="dsv4_hybrid",
+        pipeline_model_parallel_size=4,
+        pipeline_model_parallel_layout=user_layout,
+    )
+    provider.apply_overrides_and_finalize()
+
+    assert provider.pipeline_model_parallel_layout is user_layout
 
 
 def test_build_standalone_mtp_layout_rejects_too_few_total_stages():
@@ -309,3 +393,25 @@ def test_deepseek_v4_base_recipe_uses_blackwell_defaults(monkeypatch: pytest.Mon
     assert cfg.model.dsa_indexer_use_sparse_loss is False
     assert cfg.train.global_batch_size == 128
     assert cfg.train.micro_batch_size == 1
+
+
+def test_deepseek_v4_flash_sft_recipe_uses_fused_mhc(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_sft_config", monkeypatch)
+
+    # Fused mHC and fused rope are both enabled (full-model validated on GB300; the
+    # historical rope NaN was the rotary_percent mapping bug fixed in #4271).
+    assert cfg.model.use_fused_mhc is True
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.optimizer.optimizer == "adam"
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+
+
+def test_deepseek_v4_flash_no_mtp_sft_recipe_disables_mtp(monkeypatch: pytest.MonkeyPatch):
+    cfg = _build_deepseek_v4_recipe("deepseek_v4_flash_no_mtp_sft_config", monkeypatch)
+
+    assert cfg.model.use_fused_mhc is True
+    assert cfg.model.mtp_num_layers is None
+    assert cfg.model.mtp_loss_scaling_factor == 0.0

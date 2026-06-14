@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [06/04/2026] [**NVIDIA Nemotron 3 Ultra**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) is now public! Day-0 support for the 550B-A55B hybrid Mamba-Transformer MoE model is available on the [`nemotron_3_ultra`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_ultra) branch, including checkpoint conversion, inference, SFT, PEFT (LoRA), and pretraining examples. Read the [NVIDIA Technical Blog](https://developer.nvidia.com/blog/nvidia-nemotron-3-ultra-powers-faster-more-efficient-reasoning-for-long-running-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_ultra/examples/models/nemotron/nemotron_3/ultra/README.md) for the full walkthrough.
+
 - [05/28/2026] [**Step-3.7-Flash**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37/README.md) for sft training details.
 
 - [05/26/2026] [**DeepSeek V4**](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) FP8 support is now available in Megatron Bridge, including HF↔Megatron conversion, quantized checkpoint export with regenerated scale tensors, and downstream verification with Megatron-backend GRPO.
@@ -19,7 +21,7 @@
 
 - [05/20/2026] [**Nemotron-3 Nano Omni**](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16) day-0 branch support is now merged on **main**! The 30B-A3B MoE multimodal model supports image, video, audio, and text workflows with checkpoint conversion, inference, SFT, and PEFT (LoRA) examples. Read the [NVIDIA Blog](https://blogs.nvidia.com/blog/nemotron-3-nano-omni-multimodal-ai-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md) for the full walkthrough.
 
-- [05/19/2026] [**Nemotron-Labs Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/diffusion/recipes/nemotron_labs_diffusion) is now supported on **main** with autoregressive-to-diffusion conversion, continuous pretraining, checkpoint conversion, and inference workflows. Read the [NVIDIA Research blog](https://research.nvidia.com/publication/2026-05_nemotron-labs-diffusion-tri-mode-language-model-unifying-autoregressive) for the tri-mode language model overview.
+- [05/19/2026] [**Nemotron-Labs Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_labs_diffusion) is now supported on **main** with autoregressive-to-diffusion conversion, continuous pretraining, checkpoint conversion, and inference workflows. Read the [NVIDIA Research blog](https://research.nvidia.com/publication/2026-05_nemotron-labs-diffusion-tri-mode-language-model-unifying-autoregressive) for the tri-mode language model overview.
 
 - [05/06/2026] [**Gemma 4 VL 26B-A4B**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/gemma/gemma4_vl) is now supported! Checkpoint conversion, SFT, and PEFT (LoRA) recipes for Google's MoE vision-language model (26B total / 4B active params, 128 experts top-k=8, dual sliding/global attention with K=V tying on full-attention layers) are available on **main**. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma4_vl/README.md) for the full walkthrough.
 
@@ -58,6 +60,13 @@ On top of the bridge, NeMo Megatron Bridge provides a performant and scalable Py
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) training stack that adopts a PyTorch-native training loop to provide greater flexibility and customizability for developers.
 
 ![image](Repo-Mbridge.png)
+### Broad functional support matrix
+
+||Pretrain|SFT|SFT LoRA|RL|RL LoRA|Notes|
+|-|-|-|-|-|-|-|
+|[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)|Y|Y|Y|N|N|Megatron based *pretraining* library|
+|[AutoModel](https://github.com/NVIDIA-NeMo/Automodel)|Y|Y|Y|N|N| PyT DTensor based *pretraining* library|
+|[NeMo RL](https://github.com/NVIDIA-NeMo/RL)|N|Y|Y|Y|Y| *Post-training* library with both Megatron and Automodel backends|
 
 ## 🔧 Installation
 
@@ -127,13 +136,26 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
 Training quickstart using pre-configured recipes:
 
 ```python
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
+    # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
+    # This is random-init pretraining and does not require a converted Megatron checkpoint.
     cfg = llama32_1b_pretrain_config()
+
+    # The recipe already sets cfg.model internally using this pattern.
+    # Override cfg.model to choose a different Hugging Face model ID as the architecture source.
+    # cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+
+    # Optional: use a local Hugging Face model/config directory instead.
+    # cfg.model = AutoBridge.from_hf_pretrained("/path/to/local/hf_model").to_megatron_provider(load_weights=False)
+
+    # Optional: initialize weights from a converted Megatron checkpoint for SFT/PEFT
+    # or other pretrained-weight workflows.
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/megatron/checkpoint"
 
     # Override training parameters
     cfg.train.train_iters = 10
@@ -149,6 +171,14 @@ You can launch the above script with:
 ```sh
 uv run python -m torch.distributed.run --nproc-per-node=<num devices> /path/to/script.py
 ```
+
+HF → Megatron conversion is workflow-specific. Use it when you need pretrained HF weights as a Megatron checkpoint,
+such as for finetuning from converted weights or for checkpoint round-trip workflows. It is not required for
+random-init pretraining from an HF architecture, where `AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)`
+only reads the architecture configuration.
+
+For runnable recipe, data preparation, and training examples, see the repository
+[`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
 
 More examples:
 

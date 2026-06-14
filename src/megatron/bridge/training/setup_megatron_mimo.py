@@ -29,7 +29,7 @@ from megatron.bridge.training.megatron_mimo_parallel_utils import (
     unwrap_megatron_mimo_model,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 
 
 if TYPE_CHECKING:
@@ -266,9 +266,14 @@ def setup_megatron_mimo(
     # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
     first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
 
-    has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
-    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
-        cfg.checkpoint.pretrained_checkpoint
+    # HF directories are included in load detection only to route to the
+    # targeted checkpoint.load error in checkpointing.
+    has_persistent = cfg.checkpoint.load is not None and (
+        checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+    )
+    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and (
+        checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+        or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
     wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
     should_load = has_persistent or has_pretrained or wants_non_persistent

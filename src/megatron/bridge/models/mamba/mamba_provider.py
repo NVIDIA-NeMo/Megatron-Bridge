@@ -137,7 +137,7 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
     _pg_collection: Optional[ProcessGroupCollection] = None
 
     # MTP
-    mtp_num_layers: int = 0
+    mtp_num_layers: int | None = 0
     mtp_hybrid_override_pattern: Optional[str] = None
     keep_mtp_spec_in_bf16: bool = False
 
@@ -182,9 +182,9 @@ class MambaModelProvider(TransformerConfig, ModelProviderMixin[MCoreMambaModel])
             # Include the pattern at least once so the MTP block (and its weights)
             # are created even when mtp_num_layers=0.
             if self.mtp_use_repeated_layer:
-                num_pattern_copies = max(1, self.mtp_num_layers)
+                num_pattern_copies = max(1, self.mtp_num_layers or 0)
             else:
-                num_pattern_copies = self.mtp_num_layers
+                num_pattern_copies = self.mtp_num_layers or 0
             self.hybrid_layer_pattern = (
                 main_pattern + sep + sep.join([self.mtp_hybrid_override_pattern] * num_pattern_copies)
             )

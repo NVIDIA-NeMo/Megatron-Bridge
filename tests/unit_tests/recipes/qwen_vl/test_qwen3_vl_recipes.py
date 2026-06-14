@@ -567,7 +567,7 @@ def test_qwen3_vl_8b_peft_energon_task_encoder(monkeypatch: pytest.MonkeyPatch):
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
 
-    from megatron.bridge.recipes.qwen_vl.data.energon.task_encoder import QwenVLTaskEncoder
+    from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
     from megatron.bridge.recipes.qwen_vl.qwen3_vl import QwenVLEnergonProvider
 
     assert isinstance(cfg.dataset, QwenVLEnergonProvider)
