@@ -163,8 +163,8 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     # cfg.checkpoint.load = "path/to/load"
 
     # DDP config (DIFFERENT: grad_reduce_in_fp32=False)
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
