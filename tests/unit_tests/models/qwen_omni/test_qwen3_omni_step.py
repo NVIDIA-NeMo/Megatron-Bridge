@@ -21,6 +21,7 @@ from megatron.bridge.models.qwen_omni.qwen3_omni_step import (
     get_batch,
     get_batch_from_iterator,
     pad_batch_sequences_for_context_parallel,
+    pack_or_pad_batch_sequences,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -586,6 +587,72 @@ def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length(
             force_to_seq_length=True,
             seq_length=10,
         )
+
+
+def test_pack_or_pad_batch_sequences_uses_null_safe_parallel_sizes_and_fp8_alignment():
+    pg_collection = type("PG", (), {"tp": None, "cp": None})()
+
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14]])
+    labels = torch.tensor([[2, 3, 4, 5, 6, 7, -100], [9, 10, 11, 12, 13, 14, -100]])
+    loss_mask = torch.ones(2, 7)
+    attention_mask = torch.ones(2, 7, dtype=torch.bool)
+    position_ids = torch.arange(7).unsqueeze(0).expand(2, -1)
+
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
+        tokens,
+        labels,
+        loss_mask,
+        attention_mask,
+        position_ids,
+        pg_collection,
+        use_fp8_padding=True,
+    )
+
+    assert tokens.shape == (2, 16)
+    assert labels.shape == (2, 16)
+    assert loss_mask.shape == (2, 16)
+    assert attention_mask.shape == (2, 16)
+    assert position_ids.shape == (2, 16)
+    assert tokens[0, -1].item() == 0
+    assert labels[0, -1].item() == -100
+    assert loss_mask[0, -1].item() == 0
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_q, torch.IntTensor([0, 16, 32]))
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_kv, torch.IntTensor([0, 16, 32]))
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_q_padded, torch.IntTensor([0, 16, 32]))
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_kv_padded, torch.IntTensor([0, 16, 32]))
+    assert packed_seq_params.max_seqlen_q == 16
+    assert packed_seq_params.max_seqlen_kv == 16
+
+
+def test_pack_or_pad_batch_sequences_can_force_seq_length():
+    class _MockProcessGroup:
+        def __init__(self, size):
+            self._size = size
+
+        def size(self):
+            return self._size
+
+    pg_collection = type("PG", (), {"tp": _MockProcessGroup(1), "cp": _MockProcessGroup(2)})()
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7]])
+
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
+        tokens,
+        labels=None,
+        loss_mask=None,
+        attention_mask=None,
+        position_ids=None,
+        pg_collection=pg_collection,
+        force_to_seq_length=True,
+        seq_length=12,
+    )
+
+    assert tokens.shape == (1, 12)
+    assert labels is None
+    assert loss_mask is None
+    assert attention_mask is None
+    assert position_ids is None
+    torch.testing.assert_close(packed_seq_params.cu_seqlens_q, torch.IntTensor([0, 12]))
+    assert packed_seq_params.max_seqlen_q == 12
 
 
 def test_forward_step_passes_packed_sequence_params_to_model(monkeypatch):
