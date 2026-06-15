@@ -114,7 +114,11 @@ def main() -> None:
         "pretrained_checkpoint": args.pretrained_checkpoint,
     }
     if args.lora_on_language_model or args.lora_on_vision_model:
-        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(**config_kwargs)
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
+            **config_kwargs,
+            lora_on_language_model=args.lora_on_language_model,
+            lora_on_vision_model=args.lora_on_vision_model,
+        )
         logger.info("Loaded base configuration for PEFT")
     else:
         cfg = nemotron_nano_v2_vl_12b_sft_config(**config_kwargs)

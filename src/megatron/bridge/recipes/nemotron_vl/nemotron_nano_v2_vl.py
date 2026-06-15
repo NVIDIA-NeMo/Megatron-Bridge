@@ -28,6 +28,58 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 _DEFAULT_HF_MODEL_PATH = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+_ALL_COMPONENT_LORA_TARGET_MODULES = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+_LANGUAGE_LORA_TARGET_MODULES = [
+    "*language_model*.linear_qkv",
+    "*language_model*.linear_proj",
+    "*language_model*.linear_fc1",
+    "*language_model*.linear_fc2",
+]
+_VISION_LORA_TARGET_MODULES = [
+    "*vision_model*.linear_qkv",
+    "*vision_model*.linear_proj",
+    "*vision_model*.linear_fc1",
+    "*vision_model*.linear_fc2",
+    "*vision_projection*.linear_fc1",
+    "*vision_projection*.linear_fc2",
+]
+
+
+def _nemotron_vl_lora_config(
+    *,
+    dora: bool = False,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
+) -> VLMLoRA:
+    """Build a Nemotron VL LoRA config that respects component selection flags."""
+    if not lora_on_language_model and not lora_on_vision_model:
+        raise ValueError("At least one of lora_on_language_model or lora_on_vision_model must be True.")
+
+    if lora_on_language_model and lora_on_vision_model:
+        return VLMLoRA(
+            target_modules=_ALL_COMPONENT_LORA_TARGET_MODULES.copy(),
+            dim=16,
+            alpha=32,
+            dora=dora,
+        )
+
+    if lora_on_language_model:
+        return VLMLoRA(
+            target_modules=_LANGUAGE_LORA_TARGET_MODULES.copy(),
+            dim=16,
+            alpha=32,
+            dora=dora,
+            freeze_vision_model=False,
+            freeze_vision_projection=False,
+        )
+
+    return VLMLoRA(
+        target_modules=_VISION_LORA_TARGET_MODULES.copy(),
+        dim=16,
+        alpha=32,
+        dora=dora,
+        freeze_language_model=False,
+    )
 
 
 # =============================================================================
@@ -158,6 +210,8 @@ def nemotron_nano_v2_vl_12b_peft_config(
     *,
     hf_model_path: str = _DEFAULT_HF_MODEL_PATH,
     pretrained_checkpoint: str | None = None,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron Nano V2 VL 12B.
 
@@ -171,22 +225,22 @@ def nemotron_nano_v2_vl_12b_peft_config(
             Note: Default uses VLMLoRA targeting all model components.
         hf_model_path: Hugging Face model path used for provider and processor setup.
         pretrained_checkpoint: Optional checkpoint path to load before finetuning.
+        lora_on_language_model: Whether LoRA targets the language model when PEFT is "lora" or "dora".
+        lora_on_vision_model: Whether LoRA targets the vision model when PEFT is "lora" or "dora".
     """
     cfg = _peft_common_vlm()
 
     # PEFT scheme - Nemotron uses VLMLoRA by default
     if isinstance(peft_scheme, str) and peft_scheme.lower() == "lora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
-            dim=16,
-            alpha=32,
+        cfg.peft = _nemotron_vl_lora_config(
+            lora_on_language_model=lora_on_language_model,
+            lora_on_vision_model=lora_on_vision_model,
         )
     elif isinstance(peft_scheme, str) and peft_scheme.lower() == "dora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
-            dim=16,
-            alpha=32,
+        cfg.peft = _nemotron_vl_lora_config(
             dora=True,
+            lora_on_language_model=lora_on_language_model,
+            lora_on_vision_model=lora_on_vision_model,
         )
     else:
         cfg.peft = peft_scheme

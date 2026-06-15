@@ -77,6 +77,13 @@ class _FakeAutoBridge:
         return _FakeModelCfg()
 
 
+@pytest.fixture(autouse=True)
+def _reset_fake_auto_bridge_state():
+    """Reset fake bridge call state between tests."""
+    _FakeAutoBridge.last_hf_path = None
+    _FakeAutoBridge.last_kwargs = None
+
+
 def _assert_basic_config(cfg):
     """Assert that a config has all required components."""
     from megatron.bridge.training.config import ConfigContainer
@@ -213,6 +220,70 @@ def test_nemotron_vl_12b_peft_accepts_finetune_inputs(monkeypatch: pytest.Monkey
     assert cfg.dataset.hf_processor_path == "test/nemotron-nano-v2-vl"
     assert cfg.checkpoint.pretrained_checkpoint == "/checkpoints/nemotron-nano-v2-vl"
     assert cfg.peft is not None
+
+
+def test_nemotron_vl_12b_configs_keep_default_pretrained_checkpoint(monkeypatch: pytest.MonkeyPatch):
+    """Test that default configs do not set a pretrained checkpoint."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    sft_cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
+    peft_cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
+
+    assert sft_cfg.checkpoint.pretrained_checkpoint is None
+    assert peft_cfg.checkpoint.pretrained_checkpoint is None
+
+
+def test_nemotron_vl_12b_peft_language_only_lora(monkeypatch: pytest.MonkeyPatch):
+    """Test that language-only LoRA keeps the existing language adapter scope."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(
+        lora_on_language_model=True,
+        lora_on_vision_model=False,
+    )
+
+    assert cfg.peft.target_modules == [
+        "*language_model*.linear_qkv",
+        "*language_model*.linear_proj",
+        "*language_model*.linear_fc1",
+        "*language_model*.linear_fc2",
+    ]
+    assert cfg.peft.freeze_language_model is True
+    assert cfg.peft.freeze_vision_model is False
+    assert cfg.peft.freeze_vision_projection is False
+
+
+def test_nemotron_vl_12b_peft_vision_only_lora(monkeypatch: pytest.MonkeyPatch):
+    """Test that vision-only LoRA targets vision modules without targeting language modules."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(
+        lora_on_language_model=False,
+        lora_on_vision_model=True,
+    )
+
+    assert cfg.peft.target_modules == [
+        "*vision_model*.linear_qkv",
+        "*vision_model*.linear_proj",
+        "*vision_model*.linear_fc1",
+        "*vision_model*.linear_fc2",
+        "*vision_projection*.linear_fc1",
+        "*vision_projection*.linear_fc2",
+    ]
+    assert cfg.peft.freeze_language_model is False
+    assert cfg.peft.freeze_vision_model is True
+    assert cfg.peft.freeze_vision_projection is True
+
+
+def test_nemotron_vl_12b_peft_requires_lora_target_component(monkeypatch: pytest.MonkeyPatch):
+    """Test that LoRA PEFT must target at least one model component."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    with pytest.raises(ValueError, match="At least one"):
+        _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(
+            lora_on_language_model=False,
+            lora_on_vision_model=False,
+        )
 
 
 def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
