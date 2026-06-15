@@ -16,7 +16,10 @@ import torch
 from megatron.core.quantization.quant_config import RecipeConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    deepseek_v4_supports_blackwell_fused_kernels,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
@@ -56,7 +59,7 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
 
     Recommended Blackwell baseline: TP=1, PP=4, EP=8, CP=1.
     """
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(
         "deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True
@@ -82,8 +85,8 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -156,10 +159,10 @@ def deepseek_v4_flash_pretrain_mxfp8_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -224,10 +227,10 @@ def deepseek_v4_flash_pretrain_muon_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -282,10 +285,11 @@ DEEPSEEK_V4_FLASH_HF_PATH = "deepseek-ai/DeepSeek-V4-Flash"
 
 
 def deepseek_v4_flash_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> ConfigContainer:
-    """DeepSeek-V4-Flash full SFT, MTP enabled, Hopper-safe (unfused mHC, bf16).
+    """DeepSeek-V4-Flash full SFT, MTP enabled, Hopper-safe.
 
-    Runs unchanged on Hopper (H100/H200) and Blackwell (B200/GB200). Full
-    parameter training on unpacked (SBHD) sequences with Adam/bf16. Set
+    Runs unchanged on Hopper (H100/H200) and Blackwell (B200/GB200). Fused mHC
+    is enabled only on Blackwell. Full parameter training on unpacked (SBHD)
+    sequences with Adam/bf16. Set
     ``checkpoint.pretrained_checkpoint`` to the imported Megatron checkpoint to
     fine-tune real weights; ``hf_path`` overrides the HF model id (e.g. a toy
     model in tests).
@@ -305,12 +309,12 @@ def deepseek_v4_flash_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> Co
     cfg.model.params_dtype = torch.bfloat16
     cfg.model.seq_length = 4096
 
-    # --- attention / kernels: fused mHC + fused rope (Blackwell-verified), unfused DSA ---
+    # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.apply_rope_fusion = True
-    cfg.model.use_fused_mhc = True
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -352,7 +356,7 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     """DeepSeek-V4-Flash full SFT with the MTP layer disabled, Hopper-safe.
 
     Same as :func:`deepseek_v4_flash_sft_config` but drops the Multi-Token
-    Prediction layer (unfused mHC, bf16, SBHD; runs on Hopper and Blackwell).
+    Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
     """
     cfg = _sft_common()
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
@@ -369,12 +373,12 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     cfg.model.params_dtype = torch.bfloat16
     cfg.model.seq_length = 4096
 
-    # --- attention / kernels: fused mHC + fused rope (Blackwell-verified), unfused DSA ---
+    # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
     cfg.model.apply_rope_fusion = True
-    cfg.model.use_fused_mhc = True
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -419,11 +423,10 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     return cfg
 
 
-# NOTE: the SFT recipes enable fused mHC and fused rope, matching the pretrain recipes.
+# NOTE: the SFT recipes enable fused mHC on Blackwell and fused rope on all supported GPUs.
 # The historical "fused-kernel SFT NaN" reports are both resolved: fused mHC was a confound,
 # and the fused-rope NaN was a bridge config-mapping bug fixed by rotary_percent=1.0 (#4271);
-# with that fix, full-model SFT with rope fusion matches the unfused control. The fused mHC
-# cuTile kernel is sm_100 (Blackwell); on Hopper set use_fused_mhc=False.
+# with that fix, full-model SFT with rope fusion matches the unfused control.
 #
 # NOTE: there are intentionally no MXFP8 or Muon *SFT* variants either. Both were prototyped
 # (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — MXFP8 NaNs at iter-2
