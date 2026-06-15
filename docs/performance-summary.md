@@ -55,6 +55,7 @@ The performance data includes:
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6352 | 1650 |
+| DGX-GB300 | 256 | MXFP8 | 15360 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6422 | 1670 |
 | DGX-GB200 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 4 | 1 | 4 | 64 | 5008 | 1301 |
 
 #### Model: GPT OSS 120B
