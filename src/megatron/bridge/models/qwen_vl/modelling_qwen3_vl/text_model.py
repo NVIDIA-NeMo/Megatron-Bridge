@@ -18,7 +18,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 3e5a40f2ee42a2c74/mbridge/models/qwen3_vl/gpt_model.py
 """
 
-from copy import deepcopy
+from copy import copy
 from typing import Literal, Optional
 
 import torch
@@ -79,7 +79,7 @@ class Qwen3VLGPTModel(GPTModel):
         # copy, then restore self.config to the original (unpolluted)
         # object before rebuilding the decoder.
         _original_config = config
-        _config_copy = deepcopy(config)
+        _config_copy = copy(config)
 
         super().__init__(
             config=_config_copy,
