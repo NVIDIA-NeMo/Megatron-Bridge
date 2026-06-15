@@ -91,20 +91,24 @@ validated 17-rank layout.
 
 ## 3. Launch 27B non-colocated SFT
 
-In this tutorial, the **standard Megatron-Bridge path** means the non-MIMO path:
-a regular integrated Megatron model where the vision encoder, projector, and
-language model are internal submodules. That path has one declared global
-parallel topology; the encoder work is colocated with the language model's
-first pipeline stage. **MegatronMIMO** represents the VLM as a graph of
-computational modules connected by activation edges, with support for multiple
-encoders per modality. That lets `language` and `images` declare separate
-TP/PP/DP layouts and rank ranges.
+Before launching the run, it helps to separate three terms that are used below:
 
-The run below is **MIMO + non-colocated + heterogeneous**: non-colocated because
-the module rank sets are disjoint, and heterogeneous because the declared
-`language` and `images` layouts differ. By contrast, a homogeneous layout uses
-one declared parallel topology, or equivalent declared topologies across
-components.
+- **Model abstraction.** The standard Qwen3.5-VL training loop already supported
+  in Megatron-Bridge is non-MIMO: a regular integrated Megatron model where the
+  vision encoder, projector, and language model are internal submodules.
+  MegatronMIMO uses the MIMO model abstraction: a graph of computational modules
+  connected by activation edges, with support for multiple encoders per
+  modality.
+- **Placement.** Colocated means module rank sets overlap; non-colocated means
+  module rank sets are disjoint.
+- **Layout.** Homogeneous means there is one declared parallel topology, or
+  equivalent declared component topologies. Heterogeneous means at least two
+  declared component topologies differ.
+
+Using those terms, the standard baseline used for validation is **non-MIMO +
+colocated + homogeneous**. The run below is **MIMO + non-colocated +
+heterogeneous**: `language` and `images` run on disjoint rank sets and declare
+different TP/PP/DP layouts.
 
 The validated 27B layout is:
 
