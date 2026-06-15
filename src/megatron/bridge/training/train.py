@@ -319,6 +319,11 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    # Anchor for interval-average throughput logging: training_log reports the FLOPS
+    # performed over each logging interval as the delta of
+    # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
+    # or the checkpoint value on resume) so the first interval's delta is correct.
+    global_state._flops_at_last_log = global_state.train_state.floating_point_operations_so_far
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
@@ -546,43 +551,18 @@ def train(
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
-        # Read accumulated FLOPS metadata from forward_step micro-batches.
-        # These are per-DP-rank totals; scale by dp_size for global estimate.
-        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
-        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
-        # the FLOPS formula already accounts for ALL layers in the full model.
-        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
-        local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
-        local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
-        num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
-        # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
-        # (not the default), which breaks the numeric comparisons below.
-        if not isinstance(local_seqlen_sum, int):
-            local_seqlen_sum = 0
-        if not isinstance(local_seqlen_sq_sum, int):
-            local_seqlen_sq_sum = 0
-        if not isinstance(num_vision_patches, int):
-            num_vision_patches = 0
-
-        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
-        # once per virtual stage, but FLOPS formula already covers all stages.
-        vp_size = config.model.virtual_pipeline_model_parallel_size
-        if isinstance(vp_size, int) and vp_size > 1:
-            local_seqlen_sum = local_seqlen_sum // vp_size
-            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-            num_vision_patches = num_vision_patches // vp_size
-
-        if local_seqlen_sum > 0:
-            seqlen_sum = local_seqlen_sum * dp_size
-            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
-        else:
-            # Fallback for step functions that don't set accumulators
-            seqlen_sum = None
-            seqlen_squared_sum = None
-
-        # Vision patches: local accumulation * dp_size for global
-        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
-
+        # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
+        # step's FLOPS into the running total. The per-microbatch sub-sequence sums are
+        # accumulated on-device (sync-free) by accumulate_flops_metadata; here we do one
+        # exact SUM all-reduce over the pure DP group (CP ranks share cu_seqlens, so
+        # reducing over DP×CP would double-count) plus one host sync — once per step, at
+        # the existing end-of-step sync boundary alongside the loss all-reduce.
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+            global_state,
+            data_parallel_size=dp_size,
+            vp_size=config.model.virtual_pipeline_model_parallel_size,
+            dp_group=pg_collection.dp,
+        )
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
@@ -632,7 +612,10 @@ def train(
                 model,
                 log_max_attention_logit,
                 loaded_iteration=start_iteration,
-                seq_length=seqlen_sum // batch_size if seqlen_sum else None,
+                # training_log recomputes seqlen/FLOPS from the (log-step) accumulators
+                # itself; pass None so it uses that path (the per-step seqlen_sum is no
+                # longer materialized on the hot path).
+                seq_length=None,
             )
 
         if (
