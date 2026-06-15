@@ -103,11 +103,22 @@ class TestPeftSftExample:
         cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
         cfg.model.calculate_per_token_loss = True
         cfg.ddp.average_in_collective = False
+        cfg.ddp.grad_reduce_in_fp32 = False
+        cfg.ddp.use_distributed_optimizer = False
+        cfg.optimizer.use_distributed_optimizer = False
 
         # Keep the world-size math simple: tp=1, pp=1, cp=2 -> dp derived from env.
         cfg.model.tensor_model_parallel_size = 1
         cfg.model.pipeline_model_parallel_size = 1
         cfg.model.context_parallel_size = 2
+
+        # Keep the L0 test focused on packed SFT + CP plumbing, not full 1B memory coverage.
+        cfg.model.num_layers = 2
+        cfg.model.hidden_size = 128
+        cfg.model.ffn_hidden_size = 512
+        cfg.model.num_attention_heads = 4
+        cfg.model.num_query_groups = 4
+        cfg.model.kv_channels = 32
 
         # Small, fast run
         cfg.train.train_iters = 2
