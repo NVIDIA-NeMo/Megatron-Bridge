@@ -159,6 +159,36 @@ def _legacy_shared_expert_adapter_key(factory: ShardedTensorFactory) -> str | No
     return None
 
 
+def _legacy_shared_expert_adapter_matches(
+    adapters_by_name: Mapping[str, "ParallelLinearAdapter"], adapter_key: str
+) -> list["ParallelLinearAdapter"]:
+    """Return adapter modules matching a legacy shared-expert checkpoint key."""
+
+    adapter = adapters_by_name.get(adapter_key)
+    if adapter is not None:
+        return [adapter]
+
+    adapter_base_key = adapter_key.removesuffix(".adapter")
+    matched_adapters = []
+    for module_name, module in adapters_by_name.items():
+        module_base_key = module_name.removesuffix(".adapter")
+        base_linear_name = module.base_linear_name
+        if (
+            adapter_key.endswith(module_name)
+            or module_name.endswith(adapter_key)
+            or adapter_base_key.endswith(module_base_key)
+            or module_base_key.endswith(adapter_base_key)
+            or adapter_base_key.endswith(base_linear_name)
+            or base_linear_name.endswith(adapter_base_key)
+        ):
+            matched_adapters.append(module)
+
+    if matched_adapters:
+        return matched_adapters
+
+    return list(adapters_by_name.values())
+
+
 def enable_legacy_shared_expert_adapter_loading(
     megatron_model: list[nn.Module] | nn.Module,
     sharded_state_dict: ShardedStateDict,
@@ -194,16 +224,14 @@ def enable_legacy_shared_expert_adapter_loading(
         adapter_key = _legacy_shared_expert_adapter_key(factory)
         if adapter_key is None:
             continue
-        adapter = adapters_by_name.get(adapter_key)
-        if adapter is None:
-            continue
         built = factory.build()
         shards = built if isinstance(built, list) else [built]
         expected_shape = tuple(shards[0].global_shape)
         legacy_shape = expected_shape[1:]
         if _checkpoint_tensor_shape(checkpoint_metadata, factory.key) == legacy_shape:
-            setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
-            enabled = True
+            for adapter in _legacy_shared_expert_adapter_matches(adapters_by_name, adapter_key):
+                setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
+                enabled = True
 
     return enabled
 
