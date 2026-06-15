@@ -102,6 +102,15 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
 }
 
 
+def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
+    """Return whether DSv4 Blackwell-only fused kernels should default on."""
+    if not torch.cuda.is_available():
+        return True
+
+    major, _minor = torch.cuda.get_device_capability()
+    return major >= 10
+
+
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
     """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
 
@@ -370,6 +379,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+        use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -447,10 +457,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
+        provider.apply_dsa_kernel_fusion = use_blackwell_fused_kernels
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True
-        provider.use_fused_mhc = True
+        provider.use_fused_mhc = use_blackwell_fused_kernels
         provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 

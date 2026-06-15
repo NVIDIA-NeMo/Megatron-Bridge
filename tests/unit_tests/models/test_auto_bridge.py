@@ -1235,6 +1235,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             from pathlib import Path
@@ -1259,6 +1260,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             from pathlib import Path
@@ -1298,6 +1300,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         # Create model-parallel overrides
         mp_overrides = {
@@ -1338,6 +1341,29 @@ class TestAutoBridge:
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
+
+    def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
+        """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = True
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
+            with patch("megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix") as mock_register:
+                from pathlib import Path
+
+                with patch.object(Path, "iterdir") as mock_iterdir:
+                    mock_load_megatron_model.return_value = Mock()
+                    mock_iterdir.return_value = []
+
+                    bridge.load_megatron_model("./checkpoint_path")
+
+                    mock_register.assert_called_once_with("transformers_modules.")
 
     @patch("torch.distributed.is_available")
     @patch("torch.distributed.is_initialized")
