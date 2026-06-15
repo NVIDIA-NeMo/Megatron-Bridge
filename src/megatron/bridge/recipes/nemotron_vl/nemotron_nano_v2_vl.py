@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Nano V2 VL finetuning recipes with parameterless API.
+"""Nemotron Nano V2 VL finetuning recipes with parameterless defaults.
 
 This module provides SFT and PEFT configurations for Nemotron Nano V2 VL 12B.
 """
@@ -27,21 +27,31 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.training.config import ConfigContainer
 
 
+_DEFAULT_HF_MODEL_PATH = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+
+
 # =============================================================================
 # Nemotron Nano V2 VL 12B SFT Configuration
 # =============================================================================
-def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
+def nemotron_nano_v2_vl_12b_sft_config(
+    hf_model_path: str = _DEFAULT_HF_MODEL_PATH,
+    pretrained_checkpoint: str | None = None,
+) -> ConfigContainer:
     """Return a full SFT config for Nemotron Nano V2 VL 12B.
 
     Default configuration: 1 node, 8 GPUs
     - TP=4, PP=1
     - LR=1e-5 (finetune default)
     - Sequence length: 4096
+
+    Args:
+        hf_model_path: Hugging Face model path used for provider and processor setup.
+        pretrained_checkpoint: Optional checkpoint path to load before finetuning.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    hf_path = hf_model_path
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -121,6 +131,8 @@ def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
 
     # Checkpoint config - override save_interval from common
     cfg.checkpoint.save_interval = 200
+    if pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = pretrained_checkpoint
 
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"
@@ -141,7 +153,12 @@ def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Nemotron Nano V2 VL 12B PEFT Configuration
 # =============================================================================
-def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def nemotron_nano_v2_vl_12b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+    *,
+    hf_model_path: str = _DEFAULT_HF_MODEL_PATH,
+    pretrained_checkpoint: str | None = None,
+) -> ConfigContainer:
     """Return a PEFT config for Nemotron Nano V2 VL 12B.
 
     Default configuration: 1 node, 8 GPUs
@@ -152,6 +169,8 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
             Note: Default uses VLMLoRA targeting all model components.
+        hf_model_path: Hugging Face model path used for provider and processor setup.
+        pretrained_checkpoint: Optional checkpoint path to load before finetuning.
     """
     cfg = _peft_common_vlm()
 
@@ -173,7 +192,7 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    hf_path = hf_model_path
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -253,6 +272,8 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
 
     # Checkpoint config - override save_interval from common
     cfg.checkpoint.save_interval = 200
+    if pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = pretrained_checkpoint
 
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"

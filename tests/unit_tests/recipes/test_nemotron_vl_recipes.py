@@ -62,10 +62,15 @@ class _FakeModelCfg:
 class _FakeAutoBridge:
     """Fake AutoBridge for testing."""
 
-    @staticmethod
-    def from_hf_pretrained(hf_path: str, **kwargs):
+    last_hf_path = None
+    last_kwargs = None
+
+    @classmethod
+    def from_hf_pretrained(cls, hf_path: str, **kwargs):
         """Mock from_hf_pretrained method."""
-        return _FakeAutoBridge()
+        cls.last_hf_path = hf_path
+        cls.last_kwargs = kwargs
+        return cls()
 
     def to_megatron_provider(self, load_weights: bool = False):
         """Return a fake model config."""
@@ -175,6 +180,38 @@ def test_nemotron_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
 
     # Check PEFT config (uses VLMLoRA)
+    assert cfg.peft is not None
+
+
+def test_nemotron_vl_12b_sft_accepts_finetune_inputs(monkeypatch: pytest.MonkeyPatch):
+    """Test that 12B SFT accepts the finetune example's model and checkpoint inputs."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config(
+        hf_model_path="test/nemotron-nano-v2-vl",
+        pretrained_checkpoint="/checkpoints/nemotron-nano-v2-vl",
+    )
+
+    assert _FakeAutoBridge.last_hf_path == "test/nemotron-nano-v2-vl"
+    assert _FakeAutoBridge.last_kwargs == {"trust_remote_code": True}
+    assert cfg.dataset.hf_processor_path == "test/nemotron-nano-v2-vl"
+    assert cfg.checkpoint.pretrained_checkpoint == "/checkpoints/nemotron-nano-v2-vl"
+    assert cfg.peft is None
+
+
+def test_nemotron_vl_12b_peft_accepts_finetune_inputs(monkeypatch: pytest.MonkeyPatch):
+    """Test that 12B PEFT accepts the finetune example's model and checkpoint inputs."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(
+        hf_model_path="test/nemotron-nano-v2-vl",
+        pretrained_checkpoint="/checkpoints/nemotron-nano-v2-vl",
+    )
+
+    assert _FakeAutoBridge.last_hf_path == "test/nemotron-nano-v2-vl"
+    assert _FakeAutoBridge.last_kwargs == {"trust_remote_code": True}
+    assert cfg.dataset.hf_processor_path == "test/nemotron-nano-v2-vl"
+    assert cfg.checkpoint.pretrained_checkpoint == "/checkpoints/nemotron-nano-v2-vl"
     assert cfg.peft is not None
 
 
