@@ -16,8 +16,12 @@ import torch
 from megatron.core.quantization.quant_config import RecipeConfig
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models import GPTModelProvider
-from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    deepseek_v4_supports_blackwell_fused_kernels,
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
+from megatron.bridge.recipes.common import _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -25,37 +29,6 @@ from megatron.bridge.recipes.utils.optimizer_utils import (
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
-
-
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: GPTModelProvider) -> None:
-    """Set an even DSv4 pipeline layout with MTP and loss on the last stage."""
-    pp_size = model_cfg.pipeline_model_parallel_size or 1
-    if pp_size <= 1:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    num_layers = int(getattr(model_cfg, "num_layers", 0) or 0)
-    if num_layers <= 0:
-        model_cfg.pipeline_model_parallel_layout = None
-        return
-
-    mtp_layers = int(getattr(model_cfg, "mtp_num_layers", 0) or 0)
-    base_layers, extra_layers = divmod(num_layers, pp_size)
-    layout: list[list[str]] = []
-    for pp_rank in range(pp_size):
-        stage: list[str] = []
-        if pp_rank == 0:
-            stage.append("embedding")
-
-        decoder_layers = base_layers + int(pp_rank < extra_layers)
-        stage.extend(["decoder"] * decoder_layers)
-
-        if pp_rank == pp_size - 1:
-            stage.extend(["mtp"] * mtp_layers)
-            stage.append("loss")
-        layout.append(stage)
-
-    model_cfg.pipeline_model_parallel_layout = layout
 
 
 def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
@@ -86,7 +59,7 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
 
     Recommended Blackwell baseline: TP=1, PP=4, EP=8, CP=1.
     """
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(
         "deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True
@@ -112,8 +85,8 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.attention_backend = None
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
 
@@ -186,10 +159,10 @@ def deepseek_v4_flash_pretrain_mxfp8_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -254,10 +227,10 @@ def deepseek_v4_flash_pretrain_muon_config() -> ConfigContainer:
     cfg.train.train_iters = 1_000_000
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
-    use_fused_kernels = True
+    use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg.model.apply_dsa_kernel_fusion = False
-    cfg.model.apply_rope_fusion = use_fused_kernels
-    cfg.model.use_fused_mhc = use_fused_kernels
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = use_fused_mhc
     cfg.model.dsa_indexer_loss_coeff = 0.0
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -302,3 +275,161 @@ def deepseek_v4_flash_pretrain_muon_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
     return cfg
+
+
+# ---------------------------------------------------------------------------
+# Supervised fine-tuning (SFT)
+# ---------------------------------------------------------------------------
+
+DEEPSEEK_V4_FLASH_HF_PATH = "deepseek-ai/DeepSeek-V4-Flash"
+
+
+def deepseek_v4_flash_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> ConfigContainer:
+    """DeepSeek-V4-Flash full SFT, MTP enabled, Hopper-safe.
+
+    Runs unchanged on Hopper (H100/H200) and Blackwell (B200/GB200). Fused mHC
+    is enabled only on Blackwell. Full parameter training on unpacked (SBHD)
+    sequences with Adam/bf16. Set
+    ``checkpoint.pretrained_checkpoint`` to the imported Megatron checkpoint to
+    fine-tune real weights; ``hf_path`` overrides the HF model id (e.g. a toy
+    model in tests).
+    """
+    cfg = _sft_common()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+
+    # --- parallelism (DSv4 hybrid attention requires TP=1) ---
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.params_dtype = torch.bfloat16
+    cfg.model.seq_length = 4096
+
+    # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = None
+    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.dsa_indexer_loss_coeff = 0.0
+    cfg.model.dsa_indexer_use_sparse_loss = False
+
+    # --- MoE ---
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # --- memory (selective recompute, same as pretrain) ---
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.cuda_graph_impl = "none"
+
+    # --- MTP enabled ---
+    if getattr(cfg.model, "mtp_num_layers", None):
+        cfg.model.mtp_loss_scaling_factor = 0.1
+
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+
+    # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
+    cfg.tokenizer.tokenizer_model = hf_path
+    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
+
+    # --- robustness defaults ---
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.dist.enable_megatron_core_experimental = True
+    return cfg
+
+
+def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> ConfigContainer:
+    """DeepSeek-V4-Flash full SFT with the MTP layer disabled, Hopper-safe.
+
+    Same as :func:`deepseek_v4_flash_sft_config` but drops the Multi-Token
+    Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
+    """
+    cfg = _sft_common()
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+
+    # --- parallelism (DSv4 hybrid attention requires TP=1) ---
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.params_dtype = torch.bfloat16
+    cfg.model.seq_length = 4096
+
+    # --- attention / kernels: fused mHC on Blackwell, unfused mHC on Hopper, unfused DSA ---
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = None
+    cfg.model.apply_dsa_kernel_fusion = False
+    cfg.model.apply_rope_fusion = True
+    cfg.model.use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
+    cfg.model.dsa_indexer_loss_coeff = 0.0
+    cfg.model.dsa_indexer_use_sparse_loss = False
+
+    # --- MoE ---
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_aux_loss_coeff = 0.0
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # --- memory (selective recompute, same as pretrain) ---
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.cuda_graph_impl = "none"
+
+    # --- MTP disabled ---
+    cfg.model.mtp_num_layers = None
+    cfg.model.mtp_loss_scaling_factor = 0.0
+    # The bridge appends an MTP-layer entry to csa_compress_ratios based on
+    # num_nextn_predict_layers. With MTP off, len(csa_compress_ratios) must
+    # equal num_layers (transformer_config validates this), so trim it.
+    ratios = getattr(cfg.model, "csa_compress_ratios", None)
+    num_layers = getattr(cfg.model, "num_layers", None)
+    if ratios is not None and num_layers is not None and len(ratios) > num_layers:
+        cfg.model.csa_compress_ratios = list(ratios)[:num_layers]
+
+    set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
+
+    # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
+    cfg.tokenizer.tokenizer_model = hf_path
+    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
+
+    # --- robustness defaults ---
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.dist.enable_megatron_core_experimental = True
+    return cfg
+
+
+# NOTE: the SFT recipes enable fused mHC on Blackwell and fused rope on all supported GPUs.
+# The historical "fused-kernel SFT NaN" reports are both resolved: fused mHC was a confound,
+# and the fused-rope NaN was a bridge config-mapping bug fixed by rotary_percent=1.0 (#4271);
+# with that fix, full-model SFT with rope fusion matches the unfused control.
+#
+# NOTE: there are intentionally no MXFP8 or Muon *SFT* variants either. Both were prototyped
+# (mirroring the pretrain recipes) but fail in full-model DSv4-Flash SFT — MXFP8 NaNs at iter-2
+# (fp8 x hash-MoE / ClampedSwiGLU numerics) and Muon hits an iter-2 assertion (Muon + expert
+# parallelism not yet supported upstream). Both are upstream blockers tracked in README Blockers;
+# the pretrain MXFP8/Muon recipes remain. SFT ships Adam/bf16 (validated).
