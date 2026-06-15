@@ -21,19 +21,22 @@ import pytest
 
 
 _ROOT = Path(__file__).parents[3]
+_MODELS_ROOT = _ROOT / "src/megatron/bridge/models"
 
 pytestmark = pytest.mark.unit
 
-_EXPLICIT_PROCESS_GROUP_SCATTER_FILES = (
-    "src/megatron/bridge/models/gemma_vl/modeling_gemma3_vl.py",
-    "src/megatron/bridge/models/gemma_vl/modeling_gemma4_vl.py",
-    "src/megatron/bridge/models/ministral3/modeling_ministral3.py",
-    "src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/model.py",
-    "src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/text_model.py",
-    "src/megatron/bridge/models/qwen_omni/modeling_qwen25_omni/thinker_model.py",
-    "src/megatron/bridge/models/qwen_omni/modeling_qwen3_omni/thinker_model.py",
-    "src/megatron/bridge/models/qwen3_asr/modeling_qwen3_asr/thinker_model.py",
-)
+# Intentionally-unfixed bare scatter sites go here as
+# "src/megatron/bridge/models/...py:<line>": "short rationale".
+# Keep this empty unless a model has no explicit TP group available at the call site.
+_BARE_SCATTER_EXCLUSIONS: dict[str, str] = {}
+
+
+def _modeling_sources() -> list[Path]:
+    return sorted(
+        path
+        for path in _MODELS_ROOT.rglob("*.py")
+        if any(part.startswith(("modeling", "modelling")) for part in path.relative_to(_MODELS_ROOT).parts)
+    )
 
 
 def _scatter_calls(tree: ast.AST) -> list[ast.Call]:
@@ -51,12 +54,18 @@ def _scatter_calls(tree: ast.AST) -> list[ast.Call]:
 
 def test_explicit_process_group_scatter_sites_pass_group():
     missing_group = []
+    seen_exclusions = set()
 
-    for relative_path in _EXPLICIT_PROCESS_GROUP_SCATTER_FILES:
-        path = _ROOT / relative_path
+    for path in _modeling_sources():
+        relative_path = path.relative_to(_ROOT).as_posix()
         tree = ast.parse(path.read_text(), filename=str(path))
         for call in _scatter_calls(tree):
             if not any(keyword.arg == "group" for keyword in call.keywords):
-                missing_group.append(f"{relative_path}:{call.lineno}")
+                location = f"{relative_path}:{call.lineno}"
+                if location in _BARE_SCATTER_EXCLUSIONS:
+                    seen_exclusions.add(location)
+                else:
+                    missing_group.append(location)
 
     assert missing_group == []
+    assert set(_BARE_SCATTER_EXCLUSIONS) == seen_exclusions
