@@ -453,16 +453,19 @@ class Gemma4SelfAttention(SelfAttention):
         2. Full coverage of the global tensor — fails if only a subset of layers
            fill the group (e.g. 25 sliding layers can't cover a 30-slot group).
 
-        Fix: append '_sliding'/'_global' suffix to create per-type groups AND
-        remap the prepended layer axis in ShardedTensors so global_shape[0],
-        global_offset[0], and axis_fragmentations[0] reflect per-type layer
-        counts rather than the total layer count.
+        Fix: append '_sliding'/'_global' to the checkpoint storage keys to
+        create per-type groups AND remap the prepended layer axis in
+        ShardedTensors so global_shape[0], global_offset[0], and
+        axis_fragmentations[0] reflect per-type layer counts rather than the
+        total layer count.
 
         Example:
-            'decoder.layers.0.self_attention.'
-          → 'decoder.layers.0.self_attention_sliding.'  (or _global)
-        Loading works automatically because the same class produces the same
-        suffixed keys on load.
+            state dict key: 'decoder.layers.0.self_attention.linear_qkv.weight'
+            storage key:    'decoder.layers.0.self_attention_sliding.linear_qkv.weight'
+
+        The returned state dict keys must stay unsuffixed so
+        ``module.load_state_dict`` can load the tensors into the normal module
+        hierarchy.
         """
         import dataclasses as _dataclasses
 
@@ -471,15 +474,18 @@ class Gemma4SelfAttention(SelfAttention):
 
         is_global = not _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
         suffix = "_global" if is_global else "_sliding"
-        # Insert suffix before the trailing dot (prefix always ends with '.')
+        # Insert suffix before the trailing dot (prefix normally ends with '.')
         if prefix.endswith("."):
-            modified_prefix = prefix[:-1] + suffix + "."
+            storage_prefix = prefix[:-1] + suffix + "."
         else:
-            modified_prefix = prefix + suffix
+            storage_prefix = prefix + suffix
 
-        state_dict = super().sharded_state_dict(
-            prefix=modified_prefix, sharded_offsets=sharded_offsets, metadata=metadata
-        )
+        state_dict = super().sharded_state_dict(prefix=prefix, sharded_offsets=sharded_offsets, metadata=metadata)
+
+        def _storage_key(key: str) -> str:
+            if key.startswith(prefix):
+                return storage_prefix + key[len(prefix) :]
+            return key.replace(".self_attention.", f".self_attention{suffix}.", 1)
 
         # Compute per-type layer count and this layer's rank within its type.
         # layer_number is 1-indexed in MCore.
@@ -494,27 +500,31 @@ class Gemma4SelfAttention(SelfAttention):
 
         def _remap(t):
             if isinstance(t, _ST):
+                new_key = _storage_key(t.key)
                 # Only remap the prepended layer axis (axis 0 when prepend_axis_num > 0)
                 if t.prepend_axis_num <= 0 or t.global_shape[0] != total_layers:
-                    return t
+                    return _dataclasses.replace(t, key=new_key)
                 new_global_shape = (type_total,) + t.global_shape[1:]
                 new_global_offset = (type_rank,) + t.global_offset[1:]
                 new_frags = (type_total,) + t.axis_fragmentations[1:] if t.axis_fragmentations is not None else None
                 return _dataclasses.replace(
                     t,
+                    key=new_key,
                     global_shape=new_global_shape,
                     global_offset=new_global_offset,
                     axis_fragmentations=new_frags,
                 )
             if isinstance(t, _SO):
+                new_key = _storage_key(t.key)
                 # ShardedObject (e.g. TE _extra_state): remap first axis if it matches total layers.
                 # These have no prepend_axis_num — their global_shape IS the layer axis directly.
                 if not t.global_shape or t.global_shape[0] != total_layers:
-                    return t
+                    return _dataclasses.replace(t, key=new_key)
                 new_global_shape = (type_total,) + t.global_shape[1:]
                 new_global_offset = (type_rank,) + t.global_offset[1:]
                 return _dataclasses.replace(
                     t,
+                    key=new_key,
                     global_shape=new_global_shape,
                     global_offset=new_global_offset,
                 )

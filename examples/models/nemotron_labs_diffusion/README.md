@@ -45,9 +45,9 @@ The CPT checkpoint from Stage 1 is passed via `checkpoint.pretrained_checkpoint`
 torchrun --nproc_per_node=8 examples/models/nemotron_labs_diffusion/ar_to_dlm.py \
     --model-size 3b \
     --hf-path mistralai/Ministral-3-3B-Base-2512 \
-    --data-paths /path/to/dclm/merged_tokenized_text_document \
     checkpoint.finetune=true \
-    checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint
+    checkpoint.pretrained_checkpoint=/path/to/cpt_checkpoint \
+    --data-paths /path/to/dclm/merged_tokenized_text_document
 ```
 
 
@@ -61,25 +61,24 @@ The script [`inference_nemotron_labs_diffusion.py`](inference_nemotron_labs_diff
 
 ```bash
 torchrun --nproc_per_node=4 examples/models/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \
-    --megatron-path /path/to/checkpoints/ar_to_dlm_8b \
-    --hf-model mistralai/Ministral-3-8B-Base-2512 \
+    --megatron-path /path/to/checkpoints/ar_to_dlm_3b/iter_xxxxxxx \
+    --hf-model mistralai/Ministral-3-3B-Base-2512 \
     --prompts "The capital of France is" \
-    --gen-length 256 --block-length 32 --steps-per-block 32 \
-    --tp 4
+    --gen-length 256 --block-length 32 --steps-per-block 32
 ```
 
 ### AR mode
 
 ```bash
 python examples/models/nemotron_labs_diffusion/inference_nemotron_labs_diffusion.py \
-    --megatron-path /path/to/checkpoints/ar_to_dlm_3b \
+    --megatron-path /path/to/checkpoints/ar_to_dlm_3b/iter_xxxxxxx \
     --hf-model mistralai/Ministral-3-3B-Base-2512 \
     --mode ar \
     --prompts "Once upon a time" \
     --max-new-tokens 128
 ```
 
-The `--tp` argument must match the tensor parallelism degree of the saved checkpoint (e.g. `--tp 4` for 8B checkpoints saved with TP=4). `--hf-model` is used for the tokenizer and model config only — weights are loaded from `--megatron-path`.
+You can pass `--tp` argument, but it must match the tensor parallelism degree of the saved checkpoint (e.g. `--tp 4` for 8B checkpoints saved with TP=4). `--hf-model` is used for the tokenizer and model config only — weights are loaded from `--megatron-path`.
 
 ---
 
@@ -99,14 +98,6 @@ The conversion script is [`convert_checkpoints.py`](convert_checkpoints.py).
 python examples/models/nemotron_labs_diffusion/convert_checkpoints.py import \
     --hf-model nvidia/Nemotron-Labs-Diffusion-3B \
     --megatron-path /path/to/checkpoints/hf_to_mb_3b \
-    --torch-dtype bfloat16
-```
-
-For the 8B model (TP=4):
-```bash
-python examples/models/nemotron_labs_diffusion/convert_checkpoints.py import \
-    --hf-model nvidia/Nemotron-Labs-Diffusion-8B \
-    --megatron-path /path/to/checkpoints/hf_to_mb_8b \
     --torch-dtype bfloat16
 ```
 
