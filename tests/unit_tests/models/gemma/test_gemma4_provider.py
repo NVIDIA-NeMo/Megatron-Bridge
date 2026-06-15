@@ -14,10 +14,14 @@
 
 """Unit tests for Gemma4ModelProvider (text-only LLM provider)."""
 
+from types import SimpleNamespace
+
 import pytest
 import torch
+from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
+from megatron.core.transformer.attention import SelfAttention
 
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider, Gemma4SelfAttention
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -176,3 +180,52 @@ class TestGemma4ModelProviderOverride:
     def test_override_vocab_size(self):
         p = Gemma4ModelProvider(vocab_size=300000)
         assert p.vocab_size == 300000
+
+
+class TestGemma4SelfAttentionShardedStateDict:
+    """Tests for Gemma 4 sliding/global attention checkpoint key handling."""
+
+    def test_global_attention_uses_suffixed_storage_keys_only(self, monkeypatch):
+        prefix = "language_model.decoder.layers.5.self_attention."
+        tensor_key = f"{prefix}linear_qkv.weight"
+        object_key = f"{prefix}linear_qkv._extra_state"
+
+        def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+            assert prefix == "language_model.decoder.layers.5.self_attention."
+            return {
+                tensor_key: ShardedTensor.from_rank_offsets(
+                    tensor_key,
+                    torch.ones(2, 3),
+                    (0, 5, 30),
+                    prepend_axis_num=1,
+                ),
+                "nested": {
+                    object_key: ShardedObject(
+                        object_key,
+                        data={},
+                        global_shape=(30,),
+                        global_offset=(5,),
+                    ),
+                },
+            }
+
+        monkeypatch.setattr(SelfAttention, "sharded_state_dict", fake_sharded_state_dict)
+
+        attention = object.__new__(Gemma4SelfAttention)
+        attention.layer_number = 6
+        attention.config = SimpleNamespace(interleaved_attn_pattern=(5, 1), num_layers=30)
+
+        state_dict = attention.sharded_state_dict(prefix=prefix)
+
+        assert tensor_key in state_dict
+        sharded_tensor = state_dict[tensor_key]
+        assert sharded_tensor.key == "language_model.decoder.layers.5.self_attention_global.linear_qkv.weight"
+        assert sharded_tensor.global_shape == (5, 2, 3)
+        assert sharded_tensor.global_offset == (0, 0, 0)
+        assert sharded_tensor.axis_fragmentations == (5, 1, 1)
+
+        assert object_key in state_dict["nested"]
+        sharded_object = state_dict["nested"][object_key]
+        assert sharded_object.key == "language_model.decoder.layers.5.self_attention_global.linear_qkv._extra_state"
+        assert sharded_object.global_shape == (5,)
+        assert sharded_object.global_offset == (0,)
