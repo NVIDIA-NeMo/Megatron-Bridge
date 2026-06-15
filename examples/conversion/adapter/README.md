@@ -29,14 +29,30 @@ model = PeftModel.from_pretrained(base, "./my_adapter")
 
 ### 1. `export_adapter.py` — Checkpoint Export
 
-Converts a Megatron-Bridge PEFT checkpoint to HuggingFace PEFT format. Runs
-entirely on CPU — no GPU required.
+Converts a Megatron-Bridge PEFT checkpoint to HuggingFace PEFT format. The
+default path runs on CPU. For large hybrid models or sharded checkpoints that
+require CUDA-backed model materialization, launch the distributed GPU path with
+TP/PP/EP settings matching the checkpoint.
 
 ```bash
 uv run python examples/conversion/adapter/export_adapter.py \
     --hf-model-path meta-llama/Llama-3.2-1B \
     --lora-checkpoint /path/to/finetune_ckpt \
-    --output ./my_adapter
+    --output ./my_adapter \
+    --exclude-adapter-base-prefix mtp.layers
+```
+
+```bash
+# Multi-GPU export matching a TP=2, EP=16 checkpoint
+uv run python -m torch.distributed.run --nproc_per_node=16 \
+    examples/conversion/adapter/export_adapter.py \
+    --hf-model-path nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 \
+    --lora-checkpoint /path/to/finetune_ckpt/iter_0000300 \
+    --output ./my_adapter \
+    --trust-remote-code \
+    --dtype bf16 \
+    --exclude-adapter-base-prefix mtp.layers \
+    --tp 2 --pp 1 --ep 16 --sequence-parallel
 ```
 
 | Argument | Description |
@@ -45,6 +61,10 @@ uv run python examples/conversion/adapter/export_adapter.py \
 | `--lora-checkpoint` | Path to the Megatron-Bridge distributed checkpoint containing LoRA adapter weights |
 | `--output` | Output directory (default: `./my_adapter`) |
 | `--trust-remote-code` | Allow custom code from the HuggingFace repository |
+| `--dtype` | Dtype used to materialize the model for distributed GPU export (default: `float32`) |
+| `--exclude-adapter-base-prefix` | Megatron adapter base prefix to skip during export; can be repeated |
+| `--tp`, `--pp`, `--ep`, `--etp` | Distributed GPU export parallelism; use values matching the checkpoint |
+| `--sequence-parallel` | Enable sequence parallelism for distributed GPU export |
 
 **Output structure:**
 
@@ -141,6 +161,7 @@ bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
 bridge.export_adapter_ckpt(
     peft_checkpoint="/path/to/finetune_ckpt",
     output_path="./my_adapter",
+    exclude_adapter_base_prefixes=("mtp.layers",),
 )
 
 # Or, if you already have a model in memory:

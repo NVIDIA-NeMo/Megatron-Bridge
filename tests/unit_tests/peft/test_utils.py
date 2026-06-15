@@ -986,6 +986,54 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_enable_legacy_shared_expert_adapter_loading_tolerates_key_name_mismatch(
+        self, mock_row_linear, mock_col_linear, mock_config, monkeypatch
+    ):
+        """Legacy loading should still work when checkpoint keys and module names differ."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        global_key = "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_in.weight"
+        mock_linear_in.sharded_state_dict.return_value = {
+            global_key: ShardedTensor.from_rank_offsets(global_key, linear_in_weight, replica_id=(0, 0, 0)),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_out.weight",
+                linear_out_weight,
+                replica_id=(0, 0, 0),
+            ),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0, etp_rank=0, edp_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        sharded_state_dict = {
+            "model": adapter.sharded_state_dict(prefix="decoder.layers.8.mlp.experts.linear_fc2.adapter.")
+        }
+        metadata = {global_key: ShardedTensor.from_rank_offsets(global_key, torch.empty(2, 2)).without_data()}
+        monkeypatch.setattr(peft_utils.dist_checkpointing, "load_tensors_metadata", lambda _: metadata)
+
+        enabled = enable_legacy_shared_expert_adapter_loading(
+            [SimpleNamespace(named_modules=lambda: [("decoder.layers.0.mlp.experts.linear_fc2.adapter", adapter)])],
+            sharded_state_dict,
+            "/checkpoint",
+        )
+
+        assert enabled is True
+        assert adapter.use_legacy_shared_expert_adapter_checkpoint is True
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_non_grouped_expert_sharded_state_dict_uses_expert_dp_replica_id(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
