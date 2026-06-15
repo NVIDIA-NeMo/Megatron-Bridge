@@ -216,8 +216,8 @@ def pack_or_pad_batch_sequences(
 ]:
     """Pad Qwen3-Omni batch tensors and construct THD packed sequence metadata."""
 
-    tp_size = pg_collection.tp.size()
-    cp_size = pg_collection.cp.size()
+    tp_size = _parallel_size(pg_collection, "tp")
+    cp_size = _parallel_size(pg_collection, "cp")
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
     target_len = get_padded_sequence_length(
