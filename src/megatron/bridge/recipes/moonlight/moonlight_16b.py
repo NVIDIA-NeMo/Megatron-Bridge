@@ -129,10 +129,10 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading)
-    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
