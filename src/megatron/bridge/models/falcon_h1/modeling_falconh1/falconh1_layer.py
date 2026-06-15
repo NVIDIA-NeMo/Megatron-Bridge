@@ -23,6 +23,28 @@ from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import Fa
 logger = logging.getLogger(__name__)
 
 
+def _run_mamba_mixer_with_static_cache_namespace(
+    mamba_mixer: MambaMixer,
+    hidden_states: torch.Tensor,
+    inference_context: Optional[BaseInferenceContext],
+    *,
+    use_attention: bool,
+) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    """Run Mamba without colliding with attention KV cache keys in static inference."""
+    should_namespace_cache = (
+        inference_context is not None and inference_context.is_static_batching() and use_attention
+    )
+    if not should_namespace_cache:
+        return mamba_mixer(hidden_states, inference_context=inference_context)
+
+    original_layer_number = mamba_mixer.layer_number
+    mamba_mixer.layer_number = ("mamba", original_layer_number)
+    try:
+        return mamba_mixer(hidden_states, inference_context=inference_context)
+    finally:
+        mamba_mixer.layer_number = original_layer_number
+
+
 class FalconH1MambaMixer(MambaMixer):
     """Mamba mixer with Falcon H1 projection multipliers."""
 
@@ -368,9 +390,11 @@ class FalconH1Layer(MegatronModule):
 
         # SSM Forward: MambaMixer
         if self.use_mamba and self.mamba_mixer is not None:
-            mamba_output, mamba_bias = self.mamba_mixer(
+            mamba_output, mamba_bias = _run_mamba_mixer_with_static_cache_namespace(
+                self.mamba_mixer,
                 hidden_states * self.config.ssm_in_multiplier,
-                inference_context=inference_context,
+                inference_context,
+                use_attention=self.use_attention and self.self_attention is not None,
             )
             mamba_output = mamba_output * self.config.ssm_out_multiplier
             outputs.append(mamba_output)
