@@ -14,9 +14,6 @@
 
 import inspect
 import logging
-import os
-import socket
-import sys
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -59,33 +56,6 @@ from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, i
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
-
-
-def _seqpack_cp_diag(event: str, **extra: Any) -> None:
-    if os.getenv("MBRIDGE_SEQPACK_CP_DIAG") != "1":
-        return
-
-    rank = os.getenv("RANK", "unset")
-    local_rank = os.getenv("LOCAL_RANK", "unset")
-    world_size = os.getenv("WORLD_SIZE", "unset")
-    initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
-    if initialized:
-        rank = str(torch.distributed.get_rank())
-        world_size = str(torch.distributed.get_world_size())
-
-    fields = {
-        "event": event,
-        "rank": rank,
-        "local_rank": local_rank,
-        "world_size": world_size,
-        "initialized": initialized,
-        "pid": os.getpid(),
-        "host": socket.gethostname(),
-        "time": f"{time.time():.3f}",
-    }
-    fields.update(extra)
-    sys.stderr.write("[SEQPACK_CP_DIAG] setup " + " ".join(f"{key}={value}" for key, value in fields.items()) + "\n")
-    sys.stderr.flush()
 
 
 class SetupOutput(NamedTuple):
@@ -274,25 +244,10 @@ def setup(
     # so snapshots dumped later in training contain a full timeline + stack context.
     start_memory_history_recording(cfg.profiling)
 
-    _seqpack_cp_diag(
-        "before_build_distributed_model",
-        tp=cfg.model.tensor_model_parallel_size,
-        pp=cfg.model.pipeline_model_parallel_size,
-        cp=cfg.model.context_parallel_size,
-        load=cfg.checkpoint.load,
-        save=cfg.checkpoint.save,
-    )
     model = _build_distributed_model(cfg, pg_collection)
-    _seqpack_cp_diag("after_build_distributed_model", model_chunks=len(model) if isinstance(model, list) else 1)
 
     cfg.model.timers = timers
     cfg.optimizer.timers = timers
-    _seqpack_cp_diag(
-        "before_setup_optimizer",
-        optimizer=cfg.optimizer.optimizer,
-        use_distributed_optimizer=cfg.optimizer.use_distributed_optimizer,
-        ddp_use_distributed_optimizer=cfg.ddp.use_distributed_optimizer,
-    )
     optimizer, scheduler = setup_optimizer(
         optimizer_config=cfg.optimizer,
         scheduler_config=cfg.scheduler,
@@ -303,11 +258,8 @@ def setup(
         pg_collection=pg_collection if cfg.dist.use_decentralized_pg else None,
         optimizer_config_override_provider=cfg.optimizer_config_override_provider,
     )
-    _seqpack_cp_diag("after_setup_optimizer")
     timers("model-and-optimizer-setup").stop()
-    _seqpack_cp_diag("before_model_optimizer_barrier_and_log")
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
-    _seqpack_cp_diag("after_model_optimizer_barrier_and_log")
 
     # Check if a local (non-persistent) checkpoint is available.  Local
     # checkpoints are independent of global ones — they don't write

@@ -13,13 +13,8 @@
 # limitations under the License.
 
 import logging
-import os
-import socket
-import sys
-import time
 from typing import Optional, Union
 
-import torch
 from megatron.core.optimizer import (
     MegatronOptimizer,
     OptimizerConfig,
@@ -42,33 +37,6 @@ from megatron.bridge.training.config import (
 G_LOGGER = logging.getLogger(__name__)
 
 
-def _seqpack_cp_diag(event: str, **extra: object) -> None:
-    if os.getenv("MBRIDGE_SEQPACK_CP_DIAG") != "1":
-        return
-
-    rank = os.getenv("RANK", "unset")
-    local_rank = os.getenv("LOCAL_RANK", "unset")
-    world_size = os.getenv("WORLD_SIZE", "unset")
-    initialized = torch.distributed.is_available() and torch.distributed.is_initialized()
-    if initialized:
-        rank = str(torch.distributed.get_rank())
-        world_size = str(torch.distributed.get_world_size())
-
-    fields = {
-        "event": event,
-        "rank": rank,
-        "local_rank": local_rank,
-        "world_size": world_size,
-        "initialized": initialized,
-        "pid": os.getpid(),
-        "host": socket.gethostname(),
-        "time": f"{time.time():.3f}",
-    }
-    fields.update(extra)
-    sys.stderr.write("[SEQPACK_CP_DIAG] optim " + " ".join(f"{key}={value}" for key, value in fields.items()) + "\n")
-    sys.stderr.flush()
-
-
 def setup_optimizer(
     optimizer_config: OptimizerConfig,
     scheduler_config: SchedulerConfig,
@@ -89,29 +57,18 @@ def setup_optimizer(
     Returns:
         tuple containing the optimizer and scheduler
     """
-    _seqpack_cp_diag(
-        "enter_setup_optimizer",
-        optimizer=optimizer_config.optimizer,
-        use_distributed_optimizer=optimizer_config.use_distributed_optimizer,
-        use_gloo_process_groups=use_gloo_process_groups,
-        has_pg_collection=pg_collection is not None,
-    )
-
     if optimizer_config_override_provider is None:
         optimizer_config_override_provider = OptimizerConfigOverrideProvider()
 
     # Build config overrides for weight decay based on scheduler config and model params
-    _seqpack_cp_diag("before_build_config_overrides")
     config_overrides = optimizer_config_override_provider.build_config_overrides(
         OptimizerConfigOverrideProviderContext(scheduler_config, optimizer_config, model)
     )
-    _seqpack_cp_diag("after_build_config_overrides", has_config_overrides=bool(config_overrides))
 
     # Apply μP optimizer scaling if enabled on the model config.
     model_chunks = model if isinstance(model, list) else [model]
     model_config = get_model_config(model_chunks[0])
     if getattr(model_config, "use_mup", False):
-        _seqpack_cp_diag("before_mup_overrides")
         mup_overrides = get_mup_config_overrides(
             config=optimizer_config,
             mup_width_mult=model_config.mup_width_mult,
@@ -123,19 +80,15 @@ def setup_optimizer(
                 f"μP enabled (width_mult={model_config.mup_width_mult:.4g}): "
                 f"applied {len(mup_overrides)} optimizer param-group override(s)."
             )
-        _seqpack_cp_diag("after_mup_overrides", has_mup_overrides=bool(mup_overrides))
 
     if hasattr(optimizer_config, "provide"):
-        _seqpack_cp_diag("before_optimizer_config_provide")
         optimizer = optimizer_config.provide(
             model_chunks=model,
             config_overrides=config_overrides,
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-        _seqpack_cp_diag("after_optimizer_config_provide")
     elif "muon" not in optimizer_config.optimizer and "soap" not in optimizer_config.optimizer:
-        _seqpack_cp_diag("before_get_megatron_optimizer")
         optimizer = get_megatron_optimizer(
             config=optimizer_config,
             model_chunks=model,
@@ -143,9 +96,7 @@ def setup_optimizer(
             use_gloo_process_groups=use_gloo_process_groups,
             pg_collection=pg_collection,
         )
-        _seqpack_cp_diag("after_get_megatron_optimizer")
     else:
-        _seqpack_cp_diag("before_get_megatron_muon_optimizer")
         optimizer = get_megatron_muon_optimizer(
             config=optimizer_config,
             model_chunks=model,
@@ -154,11 +105,8 @@ def setup_optimizer(
             layer_wise_distributed_optimizer="dist" in optimizer_config.optimizer,
             pg_collection=pg_collection,
         )
-        _seqpack_cp_diag("after_get_megatron_muon_optimizer")
 
-    _seqpack_cp_diag("before_get_scheduler")
     scheduler = _get_scheduler(optimizer_config, scheduler_config, optimizer)
-    _seqpack_cp_diag("after_get_scheduler")
 
     return optimizer, scheduler
 

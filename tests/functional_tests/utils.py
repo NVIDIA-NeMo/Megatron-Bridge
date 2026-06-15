@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 import shutil
-import socket
-import sys
-import time
 from pathlib import Path
 
 import torch
@@ -28,9 +24,6 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_tracker_filename,
     get_checkpoint_train_state_filename,
 )
-
-
-logger = logging.getLogger(__name__)
 
 
 def initialize_distributed() -> None:
@@ -94,79 +87,19 @@ def get_directory_size(path: str) -> int:
     return total_size
 
 
-def _dist_debug_fields() -> str:
-    rank = os.getenv("RANK", "unset")
-    local_rank = os.getenv("LOCAL_RANK", "unset")
-    world_size = os.getenv("WORLD_SIZE", "unset")
-    if torch.distributed.is_available() and torch.distributed.is_initialized():
-        rank = str(torch.distributed.get_rank())
-        world_size = str(torch.distributed.get_world_size())
-    return (
-        f"rank={rank} local_rank={local_rank} world_size={world_size} "
-        f"pid={os.getpid()} host={socket.gethostname()} time={time.time():.3f}"
-    )
-
-
-def _seqpack_cleanup_diag(message: str) -> None:
-    sys.stderr.write(f"{message}\n")
-    sys.stderr.flush()
-    logger.warning(message)
-
-
-def clear_directories(path: str, debug_label: str | None = None) -> None:
+def clear_directories(path: str) -> None:
     """Delete a directory on rank 0."""
-    if debug_label is not None:
-        _seqpack_cleanup_diag(
-            f"[SEQPACK_CP_DIAG] clear_directories.enter label={debug_label} path={path} "
-            f"exists={os.path.exists(path)} {_dist_debug_fields()}"
-        )
-
     if not torch.distributed.is_initialized():
         if os.path.exists(path):
             shutil.rmtree(path)
-        if debug_label is not None:
-            _seqpack_cleanup_diag(
-                f"[SEQPACK_CP_DIAG] clear_directories.exit_no_dist label={debug_label} path={path} "
-                f"{_dist_debug_fields()}"
-            )
         return
 
     if torch.distributed.is_initialized():
-        if debug_label is not None:
-            _seqpack_cleanup_diag(
-                f"[SEQPACK_CP_DIAG] clear_directories.before_barrier_1 label={debug_label} path={path} "
-                f"{_dist_debug_fields()}"
-            )
         torch.distributed.barrier()
-        if debug_label is not None:
-            _seqpack_cleanup_diag(
-                f"[SEQPACK_CP_DIAG] clear_directories.after_barrier_1 label={debug_label} path={path} "
-                f"{_dist_debug_fields()}"
-            )
         if torch.distributed.get_rank() == 0:
-            if debug_label is not None:
-                _seqpack_cleanup_diag(
-                    f"[SEQPACK_CP_DIAG] clear_directories.before_rmtree label={debug_label} path={path} "
-                    f"exists={os.path.exists(path)} {_dist_debug_fields()}"
-                )
             if os.path.exists(path):
                 shutil.rmtree(path)
-            if debug_label is not None:
-                _seqpack_cleanup_diag(
-                    f"[SEQPACK_CP_DIAG] clear_directories.after_rmtree label={debug_label} path={path} "
-                    f"exists={os.path.exists(path)} {_dist_debug_fields()}"
-                )
-        if debug_label is not None:
-            _seqpack_cleanup_diag(
-                f"[SEQPACK_CP_DIAG] clear_directories.before_barrier_2 label={debug_label} path={path} "
-                f"{_dist_debug_fields()}"
-            )
         torch.distributed.barrier()
-        if debug_label is not None:
-            _seqpack_cleanup_diag(
-                f"[SEQPACK_CP_DIAG] clear_directories.after_barrier_2 label={debug_label} path={path} "
-                f"{_dist_debug_fields()}"
-            )
 
 
 def verify_checkpoint_files(
