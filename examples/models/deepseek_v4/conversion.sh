@@ -131,7 +131,7 @@ if [[ "${RUN_COMPARE}" == "1" ]]; then
         --megatron_model_path "${MEGATRON_DIR}" \
         --prompt "Hello, how are you?" \
         --tp ${TP} --pp ${PP} --ep ${EP} \
-        --trust_remote_code
+        --trust-remote-code
 fi
 
 # 3) Export Megatron -> HF (round-trip)
