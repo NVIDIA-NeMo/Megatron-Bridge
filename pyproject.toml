@@ -245,6 +245,8 @@ markers = [
     "docs: mark tests related to documentation (deselect with '-m \"not docs\"')",
     "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
     "pleasefixme: marks tests that are broken and need fixing",
+    "internal: marks tests requiring internal NVIDIA infrastructure or resources",
+    "gpu: marks tests requiring GPU hardware",
 ]
 
 [tool.coverage.run]
