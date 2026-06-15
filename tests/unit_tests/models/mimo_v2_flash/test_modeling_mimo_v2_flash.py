@@ -12,148 +12,172 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for the MiMo-V2-Flash modeling layer.
+"""Unit tests for MiMoV2FlashTEDotProductAttention.attention_value_scale.
 
-These tests target the ``forward`` override on
-:class:`MiMoV2FlashTEDotProductAttention` that applies
-``attention_value_scale`` to the value tensor before the attention kernel.
+Verifies the ``forward`` override that multiplies the value tensor by
+``attention_value_scale`` before calling the parent TE attention kernel.
 
-The override is exercised without instantiating the TransformerEngine-backed
-parent class: we call the unbound method against a mock ``self`` and patch the
-parent's ``forward`` to capture what V actually gets passed in. This keeps the
-tests CPU-only and avoids any dependency on TransformerEngine.
+Tests construct a real ``MiMoV2FlashTEDotProductAttention`` on GPU and
+intercept the value tensor reaching the parent ``TEDotProductAttention.forward``
+to assert the scaling is applied correctly.
 """
-
-from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
+from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.enums import AttnMaskType
 
 from megatron.bridge.models.mimo_v2_flash.modeling_mimo_v2_flash import (
     MiMoV2FlashTEDotProductAttention,
 )
 
+# Sequence / tensor dimensions used across tests.
+_SEQ, _BATCH, _HEADS, _KV_HEADS, _HEAD_DIM = 8, 2, 4, 2, 64
 
-_SUPER_FORWARD_PATH = "megatron.bridge.models.mimo_v2_flash.modeling_mimo_v2_flash.TEDotProductAttention.forward"
+
+def _make_config(attention_value_scale):
+    config = TransformerConfig(
+        num_layers=1,
+        hidden_size=_HEADS * _HEAD_DIM,
+        num_attention_heads=_HEADS,
+        num_query_groups=_KV_HEADS,
+        kv_channels=_HEAD_DIM,
+        use_cpu_initialization=True,
+    )
+    config.window_size = 128
+    config.v_head_dim = _HEAD_DIM
+    config.hybrid_attention_pattern = [1]
+    config.attention_value_scale = attention_value_scale
+    return config
 
 
-def _make_instance(scale):
-    """Build a real ``MiMoV2FlashTEDotProductAttention`` instance without running ``__init__``.
+def _make_attention(scale):
+    """Construct a real MiMoV2FlashTEDotProductAttention on GPU."""
+    config = _make_config(scale)
+    return MiMoV2FlashTEDotProductAttention(
+        config=config,
+        layer_number=1,
+        attn_mask_type=AttnMaskType.causal,
+        attention_type="self",
+    ).cuda()
 
-    The parent ``TEDotProductAttention`` requires a CUDA build of TransformerEngine
-    to initialize, which we don't want to pull into a CPU unit test. ``object.__new__``
-    skips ``__init__`` entirely; we then plant the single attribute the override
-    reads (``_attention_value_scale``) directly on the instance. ``super()`` inside
-    the override still resolves correctly because the instance's class chain is real.
+
+def _make_qkv(device="cuda", dtype=torch.bfloat16):
+    """Return (query, key, value) tensors in sbhd format."""
+    q = torch.randn(_SEQ, _BATCH, _HEADS, _HEAD_DIM, device=device, dtype=dtype)
+    k = torch.randn(_SEQ, _BATCH, _KV_HEADS, _HEAD_DIM, device=device, dtype=dtype)
+    v = torch.randn(_SEQ, _BATCH, _KV_HEADS, _HEAD_DIM, device=device, dtype=dtype)
+    return q, k, v
+
+
+def _capture_parent_value(attn, q, k, v):
+    """Run a forward pass and return the value tensor received by the parent.
+
+    Temporarily replaces ``TEDotProductAttention.forward`` to record the
+    value argument, then restores the original.
     """
-    instance = object.__new__(MiMoV2FlashTEDotProductAttention)
-    instance._attention_value_scale = scale
-    return instance
-
-
-def _invoke_forward(scale, value):
-    """Call the override and return the V (and kwargs) passed to super().
-
-    Patches the parent ``TEDotProductAttention.forward`` so we never hit TE and
-    can inspect exactly what the override forwards upstream.
-    """
-    instance = _make_instance(scale)
-
-    query = torch.zeros_like(value)
-    key = torch.zeros_like(value)
-    attention_mask = None
-    attn_mask_type = MagicMock()
-
+    original_forward = TEDotProductAttention.forward
     captured = {}
 
-    def fake_super_forward(_self, query, key, value, attention_mask, attn_mask_type, **kwargs):
-        captured["value"] = value
-        captured["kwargs"] = kwargs
-        return torch.zeros(1)
+    def _intercept(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+        captured["value"] = value.clone()
+        return original_forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs)
 
-    with patch(_SUPER_FORWARD_PATH, autospec=True, side_effect=fake_super_forward) as mock_super:
-        out = instance.forward(
-            query,
-            key,
-            value,
-            attention_mask,
-            attn_mask_type,
-            extra_kwarg="passthrough",
-        )
+    TEDotProductAttention.forward = _intercept
+    try:
+        attn(q, k, v, None, AttnMaskType.causal)
+    finally:
+        TEDotProductAttention.forward = original_forward
 
-    return captured, mock_super, out
+    return captured["value"]
 
 
+@pytest.mark.run_only_on("GPU")
 class TestAttentionValueScaleForward:
-    """The forward override must multiply V by ``attention_value_scale``.
+    """Regression coverage for the attention_value_scale forward path.
 
-    Regression coverage for the bug where ``_attention_value_scale`` was read
-    from the HF config but silently dropped on the forward path, causing the
-    attention output to be off by ~1/scale relative to the HF reference.
+    The bug: ``_attention_value_scale`` was read from the HF config but
+    silently dropped on the forward path, causing the attention output to
+    diverge from the HF reference by a factor of ~1/scale.
     """
 
     def test_scale_applied_to_value(self):
         scale = 0.707
-        v = torch.randn(2, 4, 8, 64)
-        captured, _, _ = _invoke_forward(scale, v)
-        torch.testing.assert_close(captured["value"], v * scale)
+        attn = _make_attention(scale)
+        q, k, v = _make_qkv()
+        received_v = _capture_parent_value(attn, q, k, v)
+        torch.testing.assert_close(received_v, v * scale)
 
     @pytest.mark.parametrize("scale", [0.5, 1.0, 1.5, 2.0])
     def test_scale_various_values(self, scale):
-        v = torch.randn(1, 2, 4, 16)
-        captured, _, _ = _invoke_forward(scale, v)
-        torch.testing.assert_close(captured["value"], v * scale)
+        attn = _make_attention(scale)
+        q, k, v = _make_qkv()
+        received_v = _capture_parent_value(attn, q, k, v)
+        torch.testing.assert_close(received_v, v * scale)
 
-    def test_none_scale_passes_value_through_unchanged(self):
-        v = torch.randn(2, 4, 8, 64)
-        captured, _, _ = _invoke_forward(None, v)
-        # When scale is None we expect the exact same tensor object — no
-        # allocation, no copy, no scaling. ``is`` is intentional.
+    def test_none_scale_passes_value_unchanged(self):
+        attn = _make_attention(None)
+        q, k, v = _make_qkv()
+
+        original_forward = TEDotProductAttention.forward
+        captured = {}
+
+        def _intercept(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+            captured["value"] = value
+            return original_forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs)
+
+        TEDotProductAttention.forward = _intercept
+        try:
+            attn(q, k, v, None, AttnMaskType.causal)
+        finally:
+            TEDotProductAttention.forward = original_forward
+
         assert captured["value"] is v
 
     def test_value_not_mutated_in_place(self):
-        """Scaling must not mutate the caller's V buffer in place."""
-        v = torch.randn(2, 4, 8, 64)
-        original = v.clone()
-        _invoke_forward(0.5, v)
-        torch.testing.assert_close(v, original)
+        attn = _make_attention(0.5)
+        q, k, v = _make_qkv()
+        v_before = v.clone()
+        attn(q, k, v, None, AttnMaskType.causal)
+        torch.testing.assert_close(v, v_before)
 
-    def test_query_and_key_are_unchanged(self):
-        v = torch.randn(2, 4, 8, 64)
-        instance = _make_instance(0.707)
-        q = torch.randn_like(v)
-        k = torch.randn_like(v)
-        q_ref = q.clone()
-        k_ref = k.clone()
+    def test_query_and_key_unchanged(self):
+        attn = _make_attention(0.707)
+        q, k, v = _make_qkv()
+        q_before, k_before = q.clone(), k.clone()
 
-        seen = {}
+        original_forward = TEDotProductAttention.forward
+        captured = {}
 
-        def fake_super_forward(_self, query, key, value, *_args, **_kwargs):
-            seen["q"] = query
-            seen["k"] = key
-            return torch.zeros(1)
+        def _intercept(self, query, key, value, attention_mask, attn_mask_type, **kwargs):
+            captured["query"] = query
+            captured["key"] = key
+            return original_forward(self, query, key, value, attention_mask, attn_mask_type, **kwargs)
 
-        with patch(_SUPER_FORWARD_PATH, autospec=True, side_effect=fake_super_forward):
-            instance.forward(q, k, v, None, MagicMock())
+        TEDotProductAttention.forward = _intercept
+        try:
+            attn(q, k, v, None, AttnMaskType.causal)
+        finally:
+            TEDotProductAttention.forward = original_forward
 
-        # Q and K must reach super() untouched.
-        assert seen["q"] is q
-        assert seen["k"] is k
-        torch.testing.assert_close(q, q_ref)
-        torch.testing.assert_close(k, k_ref)
+        assert captured["query"] is q
+        assert captured["key"] is k
+        torch.testing.assert_close(q, q_before)
+        torch.testing.assert_close(k, k_before)
 
-    def test_extra_kwargs_forwarded(self):
-        v = torch.randn(1, 2, 4, 16)
-        captured, mock_super, _ = _invoke_forward(0.707, v)
-        assert captured["kwargs"].get("extra_kwarg") == "passthrough"
-        assert mock_super.call_count == 1
+    def test_output_shape(self):
+        attn = _make_attention(0.707)
+        q, k, v = _make_qkv()
+        out = attn(q, k, v, None, AttnMaskType.causal)
+        assert out.shape == (_SEQ, _BATCH, _HEADS * _HEAD_DIM)
 
-    def test_return_value_propagated_from_super(self):
-        v = torch.randn(1, 2, 4, 16)
-        instance = _make_instance(0.707)
-        sentinel = torch.full((3, 3), 42.0)
+    def test_different_scales_produce_different_outputs(self):
+        attn = _make_attention(0.5)
+        q, k, v = _make_qkv()
+        out_half = attn(q, k, v, None, AttnMaskType.causal)
 
-        with patch(_SUPER_FORWARD_PATH, autospec=True, return_value=sentinel):
-            out = instance.forward(torch.zeros_like(v), torch.zeros_like(v), v, None, MagicMock())
+        attn._attention_value_scale = 2.0
+        out_double = attn(q, k, v, None, AttnMaskType.causal)
 
-        assert out is sentinel
+        assert not torch.allclose(out_half, out_double, atol=1e-2)
