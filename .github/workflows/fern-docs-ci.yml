@@ -21,6 +21,7 @@ on:
   pull_request:
     paths:
       - 'docs/**'
+      - 'skills/**'
       - '.github/workflows/fern-docs-ci.yml'
 
 permissions:

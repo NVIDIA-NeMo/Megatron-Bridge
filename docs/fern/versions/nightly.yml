@@ -232,72 +232,72 @@ navigation:
 - section: Agent Skills
   contents:
   - contents:
-    - page: Skill
-      path: ./nightly/pages/skills/build-and-dependency/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/bump-dependency/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/testing/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/cicd/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/review-pr/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-mlm-bridge-training/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-recipe-recommender/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/adding-model-support/SKILL.mdx
+    - page: Build and Dependency
+      path: ../../../skills/build-and-dependency/SKILL.md
+    - page: Bump Dependency
+      path: ../../../skills/bump-dependency/SKILL.md
+    - page: Testing
+      path: ../../../skills/testing/SKILL.md
+    - page: CI/CD
+      path: ../../../skills/cicd/SKILL.md
+    - page: Review PR
+      path: ../../../skills/review-pr/SKILL.md
+    - page: MLM vs Bridge Training
+      path: ../../../skills/nemo-mbridge-mlm-bridge-training/SKILL.md
+    - page: Auto Recipe — Recipe Index & Recommendation
+      path: ../../../skills/nemo-mbridge-recipe-recommender/SKILL.md
+    - page: Adding New Model Support in Megatron-Bridge
+      path: ../../../skills/adding-model-support/SKILL.md
     - page: Llm Patterns
-      path: ./nightly/pages/skills/adding-model-support/llm-patterns.mdx
+      path: ../../../skills/adding-model-support/llm-patterns.md
     - page: Vlm Patterns
-      path: ./nightly/pages/skills/adding-model-support/vlm-patterns.mdx
+      path: ../../../skills/adding-model-support/vlm-patterns.md
     - page: Recipe Patterns
-      path: ./nightly/pages/skills/adding-model-support/recipe-patterns.mdx
+      path: ../../../skills/adding-model-support/recipe-patterns.md
     - page: Tests And Examples
-      path: ./nightly/pages/skills/adding-model-support/tests-and-examples.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/verl-e2e-testing/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-rl-e2e-testing/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-cpu-offloading/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-long-context/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-vlm-training/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-memory-tuning/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-parallelism-strategies/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-cuda-graphs/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-megatron-fsdp/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-sequence-packing/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-perf-activation-recompute/SKILL.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-multi-node-slurm/SKILL.mdx
+      path: ../../../skills/adding-model-support/tests-and-examples.md
+    - page: verl E2E Testing
+      path: ../../../skills/verl-e2e-testing/SKILL.md
+    - page: NeMo-RL E2E Testing
+      path: ../../../skills/nemo-rl-e2e-testing/SKILL.md
+    - page: CPU Offloading
+      path: ../../../skills/nemo-mbridge-perf-cpu-offloading/SKILL.md
+    - page: MoE Long-Context Training
+      path: ../../../skills/nemo-mbridge-perf-moe-long-context/SKILL.md
+    - page: MoE Training Optimization Workflow
+      path: ../../../skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL.md
+    - page: MoE VLM Training
+      path: ../../../skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md
+    - page: Memory Tuning
+      path: ../../../skills/nemo-mbridge-perf-memory-tuning/SKILL.md
+    - page: MoE Dispatcher Selection Guide
+      path: ../../../skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md
+    - page: MoE Hardware Configuration Reference
+      path: ../../../skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md
+    - page: Parallelism Strategy Selection Skill
+      path: ../../../skills/nemo-mbridge-perf-parallelism-strategies/SKILL.md
+    - page: CUDA Graphs
+      path: ../../../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
+    - page: TP / DP / PP Communication Overlap Skill
+      path: ../../../skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL.md
+    - page: Megatron FSDP Skill
+      path: ../../../skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md
+    - page: Sequence Packing Skill
+      path: ../../../skills/nemo-mbridge-perf-sequence-packing/SKILL.md
+    - page: Hierarchical Context Parallel Skill
+      path: ../../../skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md
+    - page: MoE Expert-Parallel Overlap Skill
+      path: ../../../skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL.md
+    - page: MoE Communication Overlap
+      path: ../../../skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md
+    - page: Activation Recompute
+      path: ../../../skills/nemo-mbridge-perf-activation-recompute/SKILL.md
+    - page: Multi-Node Slurm
+      path: ../../../skills/nemo-mbridge-multi-node-slurm/SKILL.md
     - page: Templates
-      path: ./nightly/pages/skills/nemo-mbridge-multi-node-slurm/references/templates.mdx
-    - page: Skill
-      path: ./nightly/pages/skills/nemo-mbridge-resiliency/SKILL.mdx
+      path: ../../../skills/nemo-mbridge-multi-node-slurm/references/templates.md
+    - page: Resiliency
+      path: ../../../skills/nemo-mbridge-resiliency/SKILL.md
     section: Agent Skills Reference
 - section: Directory Readme Files
   contents:

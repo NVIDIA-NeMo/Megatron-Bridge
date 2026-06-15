@@ -146,11 +146,11 @@ navigation:
 - section: Agent Skills
   contents:
   - contents:
-    - page: Skill
+    - page: Developer Guide
       path: ./0.4.2/pages/skills/developer-guide/SKILL.mdx
-    - page: Skill
+    - page: MLM vs Bridge Training
       path: ./0.4.2/pages/skills/mlm-bridge-training/SKILL.mdx
-    - page: Skill
+    - page: Adding New Model Support in Megatron-Bridge
       path: ./0.4.2/pages/skills/adding-model-support/SKILL.mdx
     - page: Llm Patterns
       path: ./0.4.2/pages/skills/adding-model-support/llm-patterns.mdx
@@ -160,25 +160,25 @@ navigation:
       path: ./0.4.2/pages/skills/adding-model-support/recipe-patterns.mdx
     - page: Tests And Examples
       path: ./0.4.2/pages/skills/adding-model-support/tests-and-examples.mdx
-    - page: Skill
+    - page: Parallelism Strategy Selection Skill
       path: ./0.4.2/pages/skills/perf-techniques/parallelism-strategies/SKILL.mdx
-    - page: Skill
+    - page: CUDA Graphs
       path: ./0.4.2/pages/skills/perf-techniques/cuda-graphs/SKILL.mdx
-    - page: Skill
+    - page: TP / DP / PP Communication Overlap Skill
       path: ./0.4.2/pages/skills/perf-techniques/tp-dp-comm-overlap/SKILL.mdx
-    - page: Skill
+    - page: Megatron FSDP Skill
       path: ./0.4.2/pages/skills/perf-techniques/megatron-fsdp/SKILL.mdx
-    - page: Skill
+    - page: Packed Sequences & Long-Context Training
       path: ./0.4.2/pages/skills/perf-techniques/packed-sequences-long-context/SKILL.mdx
-    - page: Skill
+    - page: Sequence Packing Skill
       path: ./0.4.2/pages/skills/perf-techniques/sequence-packing/SKILL.mdx
-    - page: Skill
+    - page: Hybrid / Hierarchical Context Parallel Skill
       path: ./0.4.2/pages/skills/perf-techniques/hybrid-context-parallel/SKILL.mdx
-    - page: Skill
+    - page: MoE Expert-Parallel Overlap Skill
       path: ./0.4.2/pages/skills/perf-techniques/expert-parallel-overlap/SKILL.mdx
-    - page: Skill
+    - page: MoE Communication Overlap
       path: ./0.4.2/pages/skills/perf-techniques/moe-comm-overlap/SKILL.mdx
-    - page: Skill
+    - page: Resiliency
       path: ./0.4.2/pages/skills/resiliency/SKILL.mdx
     section: Agent Skills Reference
 - section: Directory Readme Files
