@@ -2,7 +2,11 @@
 # End-to-end nsys comparison for Nemotron 3 Ultra: submit one det + one non-det
 # run with nsys profiling, then produce the side-by-side leaderboard.
 #
-# Modelled on https://github.com/NVIDIA/Megatron-LM/pull/5041 's
+# Submits THREE jobs and produces both reports:
+#   1. det + nsys    (perf-comparison side A)
+#   2. non-det + nsys (perf-comparison side B)
+#   3. det + NO nsys (bit-wise determinism check)
+# Modelled on https://github.com/NVIDIA/Megatron-LM/pull/5041 run_nsys_breakdown.sh
 # run_nsys_breakdown.sh but adapted for multi-node Slurm + nemo_run.
 #
 # The positional Hydra overrides below MIRROR ``launch_nemotron_3_ultra_deterministic.sh``
@@ -49,16 +53,22 @@ MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 TS=$(date +%s)
 
 submit_run() {
-    local MODE="$1"  # "det" | "nondet"
-    local WDJ="nemotron-3-ultra-${MODE}-nsys${NSYS_START}-${NSYS_STOP}-${TS}"
+    local MODE="$1"  # "det" | "nondet" | "det-bitwise"
+    local WDJ
+    local ENABLE_NSYS=true
+    case "$MODE" in
+        det)         WDJ="nemotron-3-ultra-det-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
+        nondet)      WDJ="nemotron-3-ultra-nondet-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
+        det-bitwise) WDJ="nemotron-3-ultra-det-bitwise-check-${TS}" ; ENABLE_NSYS=false ;;
+    esac
 
     # Determinism delta vs launch_nemotron_3_ultra_deterministic.sh:
-    #   det:    full 4 env vars + deterministic_mode=true  + cross_entropy_loss_fusion=false
-    #   nondet: no det env vars  + deterministic_mode=false + cross_entropy_loss_fusion=true
+    #   det / det-bitwise: full 4 env vars + deterministic_mode=true  + cross_entropy_loss_fusion=false
+    #   nondet:            no det env vars + deterministic_mode=false + cross_entropy_loss_fusion=true
     local DET_ENVS=()
     local DET_MODE="false"
     local CE_FUSION="true"
-    if [ "$MODE" = "det" ]; then
+    if [ "$MODE" != "nondet" ]; then
         DET_ENVS=(
             -E NCCL_ALGO=Ring
             -E NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
@@ -69,10 +79,33 @@ submit_run() {
         CE_FUSION="false"
     fi
 
+    # nsys CLI flags are only added for the two nsys runs; the bit-wise check is a
+    # plain run so its iter-50 lm loss can be diff'd against a non-instrumented baseline.
+    local NSYS_CLI_FLAGS=()
+    local NSYS_HYDRA_OVERRIDES=()
+    if [ "$ENABLE_NSYS" = "true" ]; then
+        NSYS_CLI_FLAGS=(
+            --enable_nsys
+            --profiling_start_step "$NSYS_START"
+            --profiling_stop_step "$NSYS_STOP"
+            --profiling_ranks 0
+            --nsys_trace cuda-sw,nvtx
+            --export_nsys_sqlite
+        )
+        NSYS_HYDRA_OVERRIDES=(
+            profiling.use_nsys_profiler=true
+            profiling.profile_step_start="$NSYS_START"
+            profiling.profile_step_end="$NSYS_STOP"
+            profiling.profile_ranks=[0]
+            profiling.nvtx_ranges=true
+            profiling.record_shapes=false
+        )
+    fi
+
     # --- Positional override block: mirrors launch_nemotron_3_ultra_deterministic.sh ---
     # The two ``false → true`` last-wins DDP overlap toggles and the trailing
     # ``model.moe_flex_dispatcher_backend=hybridep`` field are kept verbatim so
-    # this run is the bit-exact-proven recipe + nsys instrumentation.
+    # this run is the bit-exact-proven recipe + optional nsys instrumentation.
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
@@ -87,8 +120,7 @@ submit_run() {
         -wdp "$WANDB_PROJECT" \
         -wdj "$WDJ" \
         --task pretrain \
-        --enable_nsys --profiling_start_step "$NSYS_START" --profiling_stop_step "$NSYS_STOP" \
-        --profiling_ranks 0 --nsys_trace cuda-sw,nvtx --export_nsys_sqlite \
+        "${NSYS_CLI_FLAGS[@]}" \
         "${DET_ENVS[@]}" \
         -E TRITON_CACHE_AUTOTUNING=1 \
         -E HF_HOME="$HF_CACHE" \
@@ -113,30 +145,32 @@ submit_run() {
         ddp.overlap_param_gather=true \
         train.manual_gc=true \
         train.manual_gc_interval=100 \
-        profiling.use_nsys_profiler=true \
-        profiling.profile_step_start="$NSYS_START" \
-        profiling.profile_step_end="$NSYS_STOP" \
-        profiling.profile_ranks=[0] \
-        profiling.nvtx_ranges=true \
-        profiling.record_shapes=false 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
+        "${NSYS_HYDRA_OVERRIDES[@]}" 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
 
     grep -oE "Job id: [0-9]+" "$OUT_DIR/submit-${MODE}.log" | head -1 | awk '{print $3}' > "$OUT_DIR/jobid-${MODE}.txt"
     echo "$MODE job: $(cat "$OUT_DIR/jobid-${MODE}.txt")  (wandb=$WDJ)"
     echo "$WDJ" > "$OUT_DIR/wdj-${MODE}.txt"
 }
 
+# Three jobs total:
+#   det:         det + nsys                (perf-comparison side A)
+#   nondet:      non-det + nsys            (perf-comparison side B)
+#   det-bitwise: det + NO nsys             (bit-wise determinism check —
+#                                            diffed against existing det baseline)
 submit_run det
 submit_run nondet
+submit_run det-bitwise
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
+JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
 
-# Wait for both to complete.
+# Wait for all three to complete.
 deadline=$(($(date +%s) + WAIT_TIMEOUT_SEC))
 while :; do
-    pending=$(squeue -j "$JOB_DET,$JOB_NONDET" -h 2>/dev/null | wc -l)
+    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE" -h 2>/dev/null | wc -l)
     [ "$pending" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
-        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET" >&2
+        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE" >&2
         exit 124
     fi
     echo "$(date -Iseconds)  waiting for jobs: $pending still in queue"
@@ -166,11 +200,39 @@ generate_csv() {
 generate_csv det
 generate_csv nondet
 
-# Side-by-side leaderboard.
+# Side-by-side leaderboard for the perf comparison (det+nsys vs non-det+nsys).
 "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/print_nsys_leaderboard.py" "$OUT_DIR" \
     | tee "$OUT_DIR/leaderboard.txt"
 
+# --- Bit-wise determinism check ---
+# Diff iter-50 lm-loss of det+nsys (2103633-style) vs det+no-nsys (2103637-style).
+# If they match to the last digit, nsys instrumentation didn't perturb determinism
+# AND the recipe is bit-reproducible across separate Slurm allocations.
 echo ""
-echo "Report written to $OUT_DIR/leaderboard.txt"
+echo "=== Bit-wise determinism check ==="
+DET_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det.txt)" -name "log-*${JOB_DET}*.out" -type f 2>/dev/null | head -1)
+BIT_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise.txt)" -name "log-*${JOB_BITWISE}*.out" -type f 2>/dev/null | head -1)
+STRIP='s/^ \[[^]]+\] //; s/elapsed time per iteration \(ms\): [0-9.]+ \| //; s/throughput per GPU \(TFLOP\/s\/GPU\): [0-9.]+ \| //'
+{
+    echo "det+nsys log:        $DET_LOG"
+    echo "det+no-nsys log:     $BIT_LOG"
+    echo ""
+    printf "%-6s %-22s %-22s %s\n" "iter" "det+nsys lm loss" "det+no-nsys lm loss" "match"
+    printf -- "------ ---------------------- ---------------------- ------\n"
+    match_all=1
+    for it in 1 5 10 20 30 40 50; do
+        l_det=$(grep -E "iteration\s+${it}/" "$DET_LOG" 2>/dev/null | head -1 | grep -oP 'lm loss: \S+' | sed 's/lm loss: //')
+        l_bit=$(grep -E "iteration\s+${it}/" "$BIT_LOG" 2>/dev/null | head -1 | grep -oP 'lm loss: \S+' | sed 's/lm loss: //')
+        m="✗" ; [ -n "$l_det" ] && [ "$l_det" = "$l_bit" ] && m="✓" || match_all=0
+        printf "%-6s %-22s %-22s %s\n" "$it" "${l_det:-?}" "${l_bit:-?}" "$m"
+    done
+    echo ""
+    [ $match_all -eq 1 ] && echo "BIT-WISE DETERMINISTIC ✓ — all iter losses match" || echo "MISMATCH ✗ — recipe is not bit-exact reproducible"
+} | tee "$OUT_DIR/bitwise_check.txt"
+
+echo ""
+echo "Reports written to:"
+echo "  perf leaderboard:    $OUT_DIR/leaderboard.txt"
+echo "  bit-wise check:      $OUT_DIR/bitwise_check.txt"
 echo "CSVs:           $OUT_DIR/nsys-det.csv  $OUT_DIR/nsys-nondet.csv"
-echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET"
+echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE"
