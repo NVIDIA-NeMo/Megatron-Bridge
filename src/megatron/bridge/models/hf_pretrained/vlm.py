@@ -323,7 +323,7 @@ class PreTrainedVLM(PreTrainedBase, Generic[VLMType]):
         return self._model_name_or_path
 
     @property
-    def auto_map_model_class(self) -> Optional[str]:
+    def auto_map_model_class(self) -> str | None:
         """Get the custom model class string from the config's auto_map."""
         config = self.config
         auto_map = getattr(config, "auto_map", None)

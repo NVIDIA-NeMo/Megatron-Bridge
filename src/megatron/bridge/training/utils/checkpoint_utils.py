@@ -207,7 +207,7 @@ def _has_hf_weight_files(path: str) -> bool:
     return False
 
 
-def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
+def is_hf_checkpoint_dir(path: str | None) -> bool:
     """Lightweight check for a local HuggingFace full-model directory.
 
     This is a local directory-shape check used before entering the explicit HF
@@ -232,7 +232,7 @@ def is_hf_checkpoint_dir(path: Optional[str]) -> bool:
     return _has_hf_weight_files(path)
 
 
-def is_checkpoint_iteration_directory(path: Optional[str]) -> bool:
+def is_checkpoint_iteration_directory(path: str | None) -> bool:
     """Check if ``path`` is a specific checkpoint iteration directory.
 
     An iteration directory (e.g. ``/checkpoints/iter_0001000/``) contains the

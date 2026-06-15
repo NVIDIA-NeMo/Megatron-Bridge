@@ -499,11 +499,11 @@ class CometPluginScriptArgs:
     """Arguments for CometPlugin to pass to run.Script."""
 
     project: str
-    workspace: Optional[str]
-    name: Optional[str]
+    workspace: str | None
+    name: str | None
 
 
-def _default_comet_converter(args: CometPluginScriptArgs) -> List[str]:
+def _default_comet_converter(args: CometPluginScriptArgs) -> list[str]:
     """Default converter for CometPlugin that generates CLI overrides."""
     cli_overrides = [f"logger.comet_project={args.project}"]
     if args.workspace:
@@ -532,11 +532,11 @@ class CometPlugin(Plugin):
     """
 
     project: str
-    name: Optional[str] = None
-    workspace: Optional[str] = None
-    script_args_converter_fn: Optional[Callable[[CometPluginScriptArgs], List[str]]] = None
+    name: str | None = None
+    workspace: str | None = None
+    script_args_converter_fn: Callable[[CometPluginScriptArgs], list[str]] | None = None
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+    def setup(self, task: "run.Partial" | "run.Script", executor: "run.Executor"):
         if not HAVE_NEMO_RUN:
             raise ImportError(MISSING_NEMO_RUN_MSG)
 

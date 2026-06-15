@@ -124,7 +124,7 @@ class FinetuningDatasetBuilder:
     def _prepare_packed_split(
         self,
         split_name: str,
-        packed_path: Union[str, Path],
+        packed_path: str | Path,
         input_path: Path,
     ) -> None:
         """Prepare a single packed data split if it doesn't already exist.
@@ -164,7 +164,7 @@ class FinetuningDatasetBuilder:
             num_tokenizer_workers=self._num_tokenizer_workers,
         )
 
-    def _packed_path_exists(self, path: Union[str, Path]) -> bool:
+    def _packed_path_exists(self, path: str | Path) -> bool:
         """Check if a packed data path exists.
 
         For .npy files: check file exists

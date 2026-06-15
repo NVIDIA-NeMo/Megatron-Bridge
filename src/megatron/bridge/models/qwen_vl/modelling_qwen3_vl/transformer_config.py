@@ -54,7 +54,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     vision_dp_when_cp: bool = False
     use_hf_vision_model: bool = False
     # Maximum sequence length for vision encoder CUDA graphs.
-    max_vision_cuda_graph_seq_length: Optional[int] = None
+    max_vision_cuda_graph_seq_length: int | None = None
 
 
 def get_vision_model_config(hf_config, megatron_config=None):

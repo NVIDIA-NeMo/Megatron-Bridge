@@ -143,9 +143,9 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         transformer: TransformerBlock,
         transformer_input: Tensor,
         transformer_config: TransformerConfig,
-        packed_seq_params: Optional[PackedSeqParams] = None,
+        packed_seq_params: PackedSeqParams | None = None,
         *,
-        inference_params: Optional[BaseInferenceContext] = None,
+        inference_params: BaseInferenceContext | None = None,
     ) -> int:
         """Compatibility shim for newer MCore GPT preprocessing.
 

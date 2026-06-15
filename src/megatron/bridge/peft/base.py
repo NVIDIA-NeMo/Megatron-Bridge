@@ -102,9 +102,7 @@ class PEFT(ABC):
             # the model once to record which aliases matched and warn on typos.
             self._init_target_match_state()
 
-            def _validate_only(
-                module: nn.Module, name: Optional[str] = None, prefix: Optional[str] = None
-            ) -> nn.Module:
+            def _validate_only(module: nn.Module, name: str | None = None, prefix: str | None = None) -> nn.Module:
                 self.match(module, name, prefix)
                 return module
 

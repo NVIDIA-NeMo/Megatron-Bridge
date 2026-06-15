@@ -36,14 +36,14 @@ class DistTrainConfig:
     """Distributed training (DistTrain) settings for Qwen3-VL providers."""
 
     use_dist_train: bool = False
-    vision_to_llm_dp_ratio: Optional[int] = None
-    vision_world_size: Optional[int] = None
-    language_world_size: Optional[int] = None
-    vision_tensor_model_parallel_size: Optional[int] = None
-    vision_pipeline_model_parallel_size: Optional[int] = None
-    vision_context_parallel_size: Optional[int] = None
-    vision_expert_tensor_parallel_size: Optional[int] = None
-    vision_expert_model_parallel_size: Optional[int] = None
+    vision_to_llm_dp_ratio: int | None = None
+    vision_world_size: int | None = None
+    language_world_size: int | None = None
+    vision_tensor_model_parallel_size: int | None = None
+    vision_pipeline_model_parallel_size: int | None = None
+    vision_context_parallel_size: int | None = None
+    vision_expert_tensor_parallel_size: int | None = None
+    vision_expert_model_parallel_size: int | None = None
 
 
 @dataclass
@@ -128,10 +128,10 @@ class Qwen3VLModelProvider(GPTModelProvider):
     # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
     vision_cuda_graph_impl: str = "none"
     # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
-    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    vision_cuda_graph_scope: list[str] = field(default_factory=list)
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
     # If None, calculated from num_position_embeddings / spatial_merge_size^2
-    max_vision_cuda_graph_seq_length: Optional[int] = None
+    max_vision_cuda_graph_seq_length: int | None = None
 
     def finalize(self) -> None:
         if (self.context_parallel_size or 1) > 1:
@@ -294,9 +294,9 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     # Set to "transformer_engine" to enable TE CUDA graph for vision encoder
     vision_cuda_graph_impl: str = "none"
     # CUDA graph scope for vision encoder (e.g., ["attn"] for attention only)
-    vision_cuda_graph_scope: List[str] = field(default_factory=list)
+    vision_cuda_graph_scope: list[str] = field(default_factory=list)
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
-    max_vision_cuda_graph_seq_length: Optional[int] = None
+    max_vision_cuda_graph_seq_length: int | None = None
 
     def finalize(self) -> None:
         if (self.context_parallel_size or 1) > 1:

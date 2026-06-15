@@ -17,7 +17,6 @@ import logging
 import select
 import sys
 from dataclasses import dataclass, fields
-from typing import Dict, List, Optional
 
 
 logger = logging.getLogger(__name__)
@@ -49,33 +48,33 @@ class WorkloadBaseConfig:
     global_batch_size: int = 1
     micro_batch_size: int = 1
 
-    use_megatron_fsdp: Optional[bool] = None
-    nccl_ub: Optional[bool] = None
-    cuda_graph_impl: Optional[str] = None
-    cuda_graph_scope: Optional[str] = None
-    cpu_offloading_num_layers: Optional[int] = None
-    recompute_num_layers: Optional[int] = None
-    recompute_modules: Optional[List[str]] = None
+    use_megatron_fsdp: bool | None = None
+    nccl_ub: bool | None = None
+    cuda_graph_impl: str | None = None
+    cuda_graph_scope: str | None = None
+    cpu_offloading_num_layers: int | None = None
+    recompute_num_layers: int | None = None
+    recompute_modules: list[str] | None = None
 
     # Fine-grained activation offloading
-    fine_grained_activation_offloading: Optional[bool] = None
-    offload_modules: Optional[List[str]] = None
+    fine_grained_activation_offloading: bool | None = None
+    offload_modules: list[str] | None = None
 
-    outer_dp_sharding_strategy: Optional[str] = None
-    num_distributed_optimizer_instances: Optional[int] = None
+    outer_dp_sharding_strategy: str | None = None
+    num_distributed_optimizer_instances: int | None = None
 
     # MoE configuration
-    moe_flex_dispatcher_backend: Optional[str] = None
-    moe_a2a_overlap: Optional[bool] = False
-    cutedsl_fused_grouped_mlp: Optional[bool] = False
-    fp8_dot_product_attention: Optional[bool] = None
-    peft: Optional[str] = None
+    moe_flex_dispatcher_backend: str | None = None
+    moe_a2a_overlap: bool | None = False
+    cutedsl_fused_grouped_mlp: bool | None = False
+    fp8_dot_product_attention: bool | None = None
+    peft: str | None = None
 
     # Pipeline parallelism layout
     pp_layout: str | None = None
 
     # TransformerEngine per-module precision overrides
-    te_precision_config_file: Optional[str] = None
+    te_precision_config_file: str | None = None
 
     @property
     def sequence_parallel(self) -> bool:
@@ -95,7 +94,7 @@ def get_workload_base_config(
     compute_dtype: str,
     task: str,
     config_variant: str = "v1",
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Get the workload base config for a given model, size, GPU, compute dtype, and FP8 recipe."""
     module_name = f"configs.{model_family_name}"
     try:
@@ -208,7 +207,7 @@ def list_available_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-) -> List[str]:
+) -> list[str]:
     """List all available config variants for a given model/task/gpu/dtype combination.
 
     Returns:
@@ -250,7 +249,7 @@ def get_perf_optimized_recipe(
     compute_dtype: str,
     mock: bool = True,
     config_variant: str = "v1",
-    optimizer_type: Optional[str] = None,
+    optimizer_type: str | None = None,
 ):
     """Get the performance optimized recipe."""
     module_name = f"configs.{model_family_name}"
@@ -343,7 +342,7 @@ def _display_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-    variants: List[str],
+    variants: list[str],
     timeout: int,
 ) -> None:
     """Display available config variants with their configurations.

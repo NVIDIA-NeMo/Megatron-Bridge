@@ -457,7 +457,7 @@ class SafeTensorsStateSource(StateSource):
     def _ignore_source_key_prefixes(
         key_to_filename_map: Mapping[str, str] | None,
         ignored_source_key_prefixes: Iterable[str] | None,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         if not key_to_filename_map:
             return {}
         if not ignored_source_key_prefixes:
