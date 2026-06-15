@@ -140,9 +140,7 @@ def test_static_mamba_cache_key_is_namespaced_when_layer_uses_attention():
         (False, True, 7),
     ],
 )
-def test_mamba_cache_key_is_not_namespaced_outside_static_attention_layers(
-    is_static, use_attention, expected_key
-):
+def test_mamba_cache_key_is_not_namespaced_outside_static_attention_layers(is_static, use_attention, expected_key):
     context = _FakeInferenceContext(is_static=is_static)
     mixer = _FakeMambaMixer(layer_number=7)
 

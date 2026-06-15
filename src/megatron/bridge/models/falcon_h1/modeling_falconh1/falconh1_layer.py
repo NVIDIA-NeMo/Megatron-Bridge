@@ -31,9 +31,7 @@ def _run_mamba_mixer_with_static_cache_namespace(
     use_attention: bool,
 ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
     """Run Mamba without colliding with attention KV cache keys in static inference."""
-    should_namespace_cache = (
-        inference_context is not None and inference_context.is_static_batching() and use_attention
-    )
+    should_namespace_cache = inference_context is not None and inference_context.is_static_batching() and use_attention
     if not should_namespace_cache:
         return mamba_mixer(hidden_states, inference_context=inference_context)
 
