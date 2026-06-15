@@ -23,6 +23,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
@@ -128,10 +129,10 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     # Memory saving (recompute & offloading)
-    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
@@ -177,6 +178,8 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
 
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
+
+    apply_flex_dispatcher_backend(cfg.model, "deepep")
 
     return cfg
 
