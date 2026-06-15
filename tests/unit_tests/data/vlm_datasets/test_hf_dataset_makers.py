@@ -81,6 +81,23 @@ def test_make_cv17_dataset(monkeypatch):
     _monkeypatch_load_dataset(monkeypatch, rows)
     out = makers.make_cv17_dataset()
     assert out and isinstance(out[0]["audio"], tuple)
+    assert out[0]["conversation"][0]["content"][0]["type"] == "audio"
+    assert out[0]["conversation"][1]["content"][0]["text"] == "hello"
+
+
+def test_make_default_audio_dataset_custom_text_column_keeps_spaces(monkeypatch):
+    rows = [{"audio": {"array": [0.1, 0.2], "sampling_rate": 16000}, "transcription": "hello world"}]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_default_audio_dataset(
+        path_or_dataset="ysdede/commonvoice_17_tr_fixed",
+        split="train",
+        text_column="transcription",
+        remove_text_spaces=False,
+    )
+
+    assert out[0]["conversation"][1]["content"][0]["text"] == "hello world"
+    assert out[0]["audio"] == ([0.1, 0.2], 16000)
 
 
 def test_make_raven_dataset(monkeypatch):
