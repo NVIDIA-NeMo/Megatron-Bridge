@@ -2,7 +2,7 @@
 
 This directory contains example scripts for GLM-4.5V vision-language model.
 
-For model introduction and architecture details, see the [GLM-4.5V documentation](../../../../docs/models/glm/glm-45v.md).
+For model introduction and architecture details, see the [GLM-4.5V documentation](../../../../docs/models/glm/glm-45v.mdx).
 
 ## Workspace Configuration
 
@@ -84,7 +84,7 @@ Here's a breakdown of the information presented:
 
 ## Finetune Recipes
 
-- See: [bridge.recipes.glm_vl](../../../../docs/apidocs/bridge/bridge.recipes.glm_vl.md)
+- See: [bridge.recipes.glm_vl](../../../../docs/reference/api/index.mdx)
 - Available recipes:
   - `glm_45v_sft_config`: Full supervised fine-tuning for GLM-4.5V
   - `glm_45v_peft_config`: Parameter-efficient fine-tuning for GLM-4.5V with LoRA or DoRA

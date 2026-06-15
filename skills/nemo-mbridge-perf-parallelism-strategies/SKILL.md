@@ -9,7 +9,7 @@ when_to_use: Choosing or sizing TP/DP/PP/CP/EP degrees, or tracing an OOM or reg
 
 For stable background on each parallelism type, see:
 
-- @docs/parallelisms.md
+- @docs/training/parallelisms.mdx
 - @skills/nemo-mbridge-perf-parallelism-strategies/card.yaml
 
 ## Decision by Model Size
@@ -217,7 +217,7 @@ total:           ~38    GB per GPU
 
 Parallelism dimensions set in model provider:
 
-```66:81:docs/parallelisms.md
+```66:81:docs/training/parallelisms.mdx
 model_config = GPTModelProvider(
     tensor_model_parallel_size=2,
     # ... other model parameters
@@ -226,7 +226,7 @@ model_config = GPTModelProvider(
 
 DP size calculation:
 
-```424:436:docs/parallelisms.md
+```424:436:docs/training/parallelisms.mdx
 data_parallel_size = world_size / (tensor_model_parallel_size × pipeline_model_parallel_size × context_parallel_size)
 ```
 

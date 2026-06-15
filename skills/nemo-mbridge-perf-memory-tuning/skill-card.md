@@ -19,8 +19,8 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Parallelism Documentation](docs/parallelisms.md) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
+- [Parallelism Documentation](docs/training/parallelisms.mdx) <br>
 - [Activation Recompute Skill](skills/nemo-mbridge-perf-activation-recompute/SKILL.md) <br>
 - [Megatron FSDP Skill](skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md) <br>
 

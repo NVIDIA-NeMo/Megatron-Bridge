@@ -59,10 +59,10 @@ known_limitations:
   - Not every parallelism combination has the same level of in-repo functional test coverage.
   - Memory estimates assume standard Adam optimizer and FP16/BF16 parameters.
 evidence:
-  - docs/parallelisms.md
-  - docs/performance-guide.md
-  - docs/training/communication-overlap.md
-  - docs/training/hierarchical-context-parallel.md
+  - docs/training/parallelisms.mdx
+  - docs/training/performance-tuning.mdx
+  - docs/training/communication-overlap.mdx
+  - docs/training/hierarchical-context-parallel.mdx
   - src/megatron/bridge/training/initialize.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/models/common/unimodal.py

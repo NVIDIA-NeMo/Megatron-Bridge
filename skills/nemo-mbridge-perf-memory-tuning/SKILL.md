@@ -7,7 +7,7 @@ when_to_use: GPU OOM errors, reducing peak memory, or tracing an OOM regression 
 
 # Memory Tuning
 
-Stable docs: @docs/parallelisms.md
+Stable docs: @docs/training/parallelisms.mdx
 Card: @skills/nemo-mbridge-perf-memory-tuning/card.yaml
 
 ## What It Is
@@ -119,7 +119,7 @@ which eliminated memory fragmentation. The VPP=10 run actually used slightly
 **more** peak memory (60.2 GB vs 58.8 GB) but did not OOM because expandable
 segments prevented fragmentation.
 
-VPP should be tuned for pipeline bubble reduction (see @docs/parallelisms.md),
+VPP should be tuned for pipeline bubble reduction (see @docs/training/parallelisms.mdx),
 not as a memory fix.
 
 ## Compatibility and Constraints
@@ -207,7 +207,7 @@ Selective activation recompute with `mlp` saved ~3 GB peak memory but cost
 
 ### Parallelism docs on interleaved pipeline schedule
 
-```116:124:docs/parallelisms.md
+```116:124:docs/training/parallelisms.mdx
 To minimize the pipeline bubble, the computation on each GPU can be divided into multiple subsets of layers (referred to as model chunks), rather than a single contiguous block. Enable this by setting `virtual_pipeline_model_parallel_size`:
 
 model_config = GPTModelProvider(

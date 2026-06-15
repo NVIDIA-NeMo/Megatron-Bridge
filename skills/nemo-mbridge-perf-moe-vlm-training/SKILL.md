@@ -7,7 +7,7 @@ when_to_use: Training MoE VLMs, or investigating a commit that caused MoE VLM tr
 
 # MoE VLM Training
 
-Stable docs: @docs/training/moe-optimization.md
+Stable docs: @docs/training/moe-optimization.mdx
 Card: @skills/nemo-mbridge-perf-moe-vlm-training/card.yaml
 
 ## FSDP vs 3D Parallel

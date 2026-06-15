@@ -1,0 +1,59 @@
+---
+title: "Overview"
+description: "Overview of Megatron Bridge, including core capabilities, target users, and common use cases."
+---
+
+# Megatron Bridge Overview
+
+Megatron Bridge connects Hugging Face Transformers and Megatron Core for scalable model conversion, training, fine-tuning, and checkpoint export. It provides architecture-specific bridges, model providers, training recipes, and performance tooling for language, vision-language, audio, and multimodal models.
+
+Megatron Bridge is designed for ML engineers, researchers, and platform teams that need reproducible large-model workflows across single-node development and multi-node training environments.
+
+## Core Building Blocks
+
+| Building Block | Description |
+| --- | --- |
+| Model bridges | Convert Hugging Face model configs and weights into Megatron-compatible providers and parameter mappings. |
+| Training stack | Runs pretraining, SFT, PEFT, checkpointing, logging, and profiling with a PyTorch-native training loop. |
+| Model recipes | Provides model-family-specific training and fine-tuning configurations. |
+| Model optimization | Integrates ModelOpt workflows for quantization, distillation, and pruning. |
+| Supported model catalog | Documents conversion, inference, and training notes for supported model families. |
+
+## Benefits
+
+- Use high-level conversion APIs while preserving model-parallel checkpoint handling.
+- Configure scalable training with tensor, pipeline, context, expert, and data parallelism.
+- Start from tested recipes for common model families and customize them for production workloads.
+- Export trained Megatron checkpoints back to Hugging Face-compatible artifacts for downstream use.
+
+## Use Cases
+
+| Use Case | Start Here |
+| --- | --- |
+| Convert Hugging Face models to Megatron Core | [Hugging Face Conversion Quickstart](/get-started/quickstart/hugging-face-conversion) |
+| Train or fine-tune supported models | [Training and Customization](/training) |
+| Add a new model family | [Add a New Model](/use-cases/model-development/add-new-model) |
+| Optimize a model for deployment | [Model Optimization](/model-optimization) |
+| Plan an upgrade | [Release Notes](/about/release-notes) |
+
+## Learn More
+
+<Cards>
+
+<Card title="Architecture" href="/about/architecture">
+Review the model conversion architecture and parameter mapping workflow.
+</Card>
+
+<Card title="Get Started" href="/get-started">
+Choose an installation, quickstart, or migration path.
+</Card>
+
+<Card title="Supported Models" href="/models">
+Find model-family-specific conversion and training guidance.
+</Card>
+
+<Card title="Release Notes" href="/about/release-notes">
+Review software versions, release process, changelog links, and known issues.
+</Card>
+
+</Cards>

@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Gemma 3 VL vision-language models.
 
-For model introduction and architecture details, see the [Gemma 3 VL documentation](../../../../docs/models/gemma/gemma3-vl.md).
+For model introduction and architecture details, see the [Gemma 3 VL documentation](../../../../docs/models/gemma/gemma3-vl.mdx).
 
 ## Workspace Configuration
 
@@ -83,7 +83,7 @@ The image is a table comparing the technical specifications of two
 
 ## Finetune Recipes
 
-- See: [bridge.recipes.gemma3_vl](../../../../docs/apidocs/bridge/bridge.recipes.gemma3_vl.md)
+- See: [bridge.recipes.gemma3_vl](../../../../docs/reference/api/index.mdx)
 - Available recipes:
   - `gemma3_vl_4b_finetune_config`: Finetuning for 4B VL model with PEFT support
   - `gemma3_vl_12b_finetune_config`: Finetuning for 12B VL model with PEFT support

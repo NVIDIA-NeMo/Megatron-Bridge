@@ -227,7 +227,7 @@ measured_results:
     memory_at_iter1_reserved_gb: "72-73"
     jobs: "10111518"
 minimal_example:
-  docs_example: docs/training/cuda-graphs.md
+  docs_example: docs/training/cuda-graphs.mdx
   skill_example: skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
   test_path: tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py
   cli_path: scripts/performance/run_script.py
@@ -275,8 +275,8 @@ known_limitations:
   - TE-scoped graphs and packed-sequence finetuning remain a fragile combination across model families.
   - Large-model MoE rollout is memory-headroom-sensitive even when smaller-model TE-scoped graphs work.
 evidence:
-  - docs/training/cuda-graphs.md
-  - docs/performance-guide.md
+  - docs/training/cuda-graphs.mdx
+  - docs/training/performance-tuning.mdx
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/training/train.py
   - src/megatron/bridge/models/gpt_provider.py

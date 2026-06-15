@@ -199,7 +199,7 @@ known_limitations:
   - Optimizer offloading throughput penalty scales linearly with fraction
   - D2H/H2D overlap provides only ~7% improvement
 evidence:
-  - docs/training/cpu-offloading.md
+  - docs/training/cpu-offloading.mdx
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
   - 3rdparty/Megatron-LM/megatron/core/optimizer/optimizer_config.py
   - 3rdparty/Megatron-LM/megatron/core/optimizer/__init__.py

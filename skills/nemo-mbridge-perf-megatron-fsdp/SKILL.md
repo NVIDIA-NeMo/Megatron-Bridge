@@ -9,7 +9,7 @@ when_to_use: Using FSDP-based data parallelism instead of DDP, or tracing an OOM
 
 For stable background and recommendation level, see:
 
-- @docs/training/megatron-fsdp.md
+- @docs/training/megatron-fsdp.mdx
 - @skills/nemo-mbridge-perf-megatron-fsdp/card.yaml
 
 ## Enablement

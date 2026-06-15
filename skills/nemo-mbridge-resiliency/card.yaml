@@ -94,8 +94,8 @@ known_limitations:
   - Not all recipes enable resiliency features by default.
   - Preemption plugin is Slurm-specific.
 evidence:
-  - docs/training/resiliency.md
-  - docs/training/checkpointing.md
+  - docs/training/resiliency.mdx
+  - docs/training/checkpointing.mdx
   - src/megatron/bridge/training/fault_tolerance.py
   - src/megatron/bridge/training/nvrx_straggler.py
   - src/megatron/bridge/training/inprocess_restart.py

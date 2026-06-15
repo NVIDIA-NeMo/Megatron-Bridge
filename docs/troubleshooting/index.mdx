@@ -1,0 +1,37 @@
+---
+title: "Troubleshooting"
+description: "Troubleshooting entry point for Megatron Bridge setup, runtime, and known issue guidance."
+---
+
+# Troubleshooting
+
+Use this section to diagnose setup problems, runtime failures, known release issues, and training performance regressions.
+
+## Quick Checks
+
+1. Confirm that the correct container or Python environment is active.
+2. Confirm that the expected Hugging Face token is available when using gated models.
+3. Confirm that `3rdparty/Megatron-LM` is initialized and on the expected branch.
+4. Review model-family notes for required patches, dependencies, and validated parallelism settings.
+
+## Troubleshooting Topics
+
+<Cards>
+
+<Card title="Known Issues" href="/troubleshooting/known-issues">
+Review known release issues and workarounds.
+</Card>
+
+<Card title="Software Versions" href="/about/release-notes/software-versions">
+Check dependency and container compatibility.
+</Card>
+
+<Card title="Performance Tuning" href="/training/performance-tuning">
+Review common performance issues and tuning guidance.
+</Card>
+
+<Card title="Checkpointing" href="/training/checkpointing">
+Debug checkpoint save, load, format, and resume behavior.
+</Card>
+
+</Cards>

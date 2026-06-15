@@ -7,7 +7,7 @@ when_to_use: Hardware-specific MoE playbooks or throughput estimates; 'MoE on H1
 
 # MoE Hardware Configuration Reference
 
-Stable docs: @docs/training/moe-optimization.md
+Stable docs: @docs/training/moe-optimization.mdx
 Card: @skills/nemo-mbridge-perf-moe-hardware-configs/card.yaml
 
 ## Quick Platform Playbook

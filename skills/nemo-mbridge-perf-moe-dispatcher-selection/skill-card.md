@@ -20,7 +20,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [MoE Dispatcher Selection Skill Definition](skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 

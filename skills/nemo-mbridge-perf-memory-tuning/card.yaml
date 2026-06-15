@@ -164,8 +164,8 @@ known_limitations:
   - parallelism resizing (TP/PP) has significant throughput costs
   - no automatic memory profiling to recommend the optimal strategy
 evidence:
-  - docs/parallelisms.md
-  - docs/performance-guide.md
+  - docs/training/parallelisms.mdx
+  - docs/training/performance-tuning.mdx
   - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
   - 3rdparty/Megatron-LM/megatron/core/transformer/moe/README.md
 follow_up_validation:

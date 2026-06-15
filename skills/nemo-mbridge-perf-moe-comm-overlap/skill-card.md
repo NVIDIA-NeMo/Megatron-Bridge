@@ -19,10 +19,10 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Communication Overlap Guide](docs/training/communication-overlap.md) <br>
+- [Communication Overlap Guide](docs/training/communication-overlap.mdx) <br>
 - [Comm Overlap Validation Source](src/megatron/bridge/training/comm_overlap.py) <br>
 - [Flex Dispatcher Backend Source](src/megatron/bridge/training/flex_dispatcher_backend.py) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 
 
 ## Skill Output: <br>

@@ -7,7 +7,7 @@ when_to_use: Training MoE at long sequence lengths, or investigating a commit th
 
 # MoE Long-Context Training
 
-Stable docs: @docs/training/moe-optimization.md
+Stable docs: @docs/training/moe-optimization.mdx
 Card: @skills/nemo-mbridge-perf-moe-long-context/card.yaml
 
 ## What Changes At Long Context
@@ -117,7 +117,7 @@ For long-context MoE training:
 
 Useful references:
 
-- @docs/training/activation-recomputation.md
+- @docs/training/activation-recomputation.mdx
 - @skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
 
 ## Pitfalls

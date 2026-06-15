@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Ministral 3 vision-language models.
 
-For model introduction and architecture details, see the [Ministral 3 documentation](../../../../docs/models/mistral/ministral3.md).
+For model introduction and architecture details, see the [Ministral 3 documentation](../../../../docs/models/mistral/ministral3.mdx).
 
 ## Workspace Configuration
 
@@ -83,7 +83,7 @@ The current date is {today}.
 
 ## Finetune Recipes
 
-- See: [bridge.recipes.ministral3](../../../../docs/apidocs/bridge/bridge.recipes.ministral3.md)
+- See: [bridge.recipes.ministral3](../../../../docs/reference/api/index.mdx)
 - Available recipes:
   - `ministral3_3b_sft_config`: Finetuning for 3B VL model
   - `ministral3_8b_sft_config`: Finetuning for 8B VL model

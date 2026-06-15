@@ -7,7 +7,7 @@ when_to_use: Choosing a MoE token dispatcher, or tracing a MoE regression or cra
 
 # MoE Dispatcher Selection Guide
 
-Stable docs: @docs/training/moe-optimization.md
+Stable docs: @docs/training/moe-optimization.mdx
 Card: @skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml
 
 ## Quick Decision

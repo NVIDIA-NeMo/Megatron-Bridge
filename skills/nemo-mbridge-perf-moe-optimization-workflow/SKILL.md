@@ -7,7 +7,7 @@ when_to_use: Full MoE throughput tuning sweep, or diagnosing a MoE throughput re
 
 # MoE Training Optimization Workflow
 
-Stable docs: @docs/training/moe-optimization.md
+Stable docs: @docs/training/moe-optimization.mdx
 Card: @skills/nemo-mbridge-perf-moe-optimization-workflow/card.yaml
 Source: [Scalable Training of MoE Models with Megatron Core](https://arxiv.org/abs/2603.07685)
 
@@ -156,8 +156,8 @@ or tightly controlled static-shape experiments.
 Related references:
 
 - @skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
-- @docs/training/cuda-graphs.md
-- @docs/training/activation-recomputation.md
+- @docs/training/cuda-graphs.mdx
+- @docs/training/activation-recomputation.mdx
 
 ## Pitfalls
 

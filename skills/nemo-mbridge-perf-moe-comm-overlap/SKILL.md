@@ -9,7 +9,7 @@ when_to_use: Tuning MoE communication overlap, or tracing a MoE throughput regre
 
 For the higher-level overview, see:
 
-- @docs/training/communication-overlap.md
+- @docs/training/communication-overlap.mdx
 - @skills/nemo-mbridge-perf-moe-comm-overlap/card.yaml
 
 ## Quick Decision

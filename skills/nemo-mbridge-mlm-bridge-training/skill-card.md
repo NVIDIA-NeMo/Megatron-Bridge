@@ -19,7 +19,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron-LM to Megatron Bridge Guide](docs/megatron-lm-to-megatron-bridge.md) <br>
+- [Megatron-LM to Megatron Bridge Guide](docs/get-started/migration/megatron-lm-to-megatron-bridge.mdx) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 

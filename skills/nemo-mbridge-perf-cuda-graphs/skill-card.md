@@ -19,8 +19,8 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [CUDA Graphs Training Documentation](docs/training/cuda-graphs.mdx) <br>
+- [Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 
 
 ## Skill Output: <br>

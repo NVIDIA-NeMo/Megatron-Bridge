@@ -19,7 +19,7 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Megatron Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Performance Tuning Guide](docs/training/performance-tuning.mdx) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 - [NVIDIA-NeMo/Megatron-Bridge Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
