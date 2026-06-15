@@ -383,6 +383,20 @@ def test_nemotron_vl_peft_uses_vlm_lora(monkeypatch: pytest.MonkeyPatch):
     assert isinstance(cfg.peft, VLMLoRA)
 
 
+def test_nemotron_vl_peft_dora_uses_dora_adapter(monkeypatch: pytest.MonkeyPatch):
+    """Test that Nemotron Nano V2 VL uses DoRA when requested."""
+    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(peft_scheme="dora")
+
+    from megatron.bridge.peft.dora import DoRA
+
+    assert isinstance(cfg.peft, DoRA)
+    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+    assert cfg.peft.dim == 16
+    assert cfg.peft.alpha == 32
+
+
 def test_nemotron_vl_sft_training_params(monkeypatch: pytest.MonkeyPatch):
     """Test that training parameters are correctly set for SFT."""
     # Monkeypatch AutoBridge

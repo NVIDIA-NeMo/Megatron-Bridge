@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import VLMLoRA
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -45,39 +46,55 @@ _VISION_LORA_TARGET_MODULES = [
 ]
 
 
-def _nemotron_vl_lora_config(
+def _nemotron_vl_target_modules(
     *,
-    dora: bool = False,
     lora_on_language_model: bool = True,
     lora_on_vision_model: bool = True,
-) -> VLMLoRA:
-    """Build a Nemotron VL LoRA config that respects component selection flags."""
+) -> list[str]:
+    """Return adapter target modules for the selected Nemotron VL components."""
     if not lora_on_language_model and not lora_on_vision_model:
         raise ValueError("At least one of lora_on_language_model or lora_on_vision_model must be True.")
 
     if lora_on_language_model and lora_on_vision_model:
+        return _ALL_COMPONENT_LORA_TARGET_MODULES.copy()
+
+    if lora_on_language_model:
+        return _LANGUAGE_LORA_TARGET_MODULES.copy()
+
+    return _VISION_LORA_TARGET_MODULES.copy()
+
+
+def _nemotron_vl_lora_config(
+    *,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
+) -> VLMLoRA:
+    """Build a Nemotron VL LoRA config that respects component selection flags."""
+    target_modules = _nemotron_vl_target_modules(
+        lora_on_language_model=lora_on_language_model,
+        lora_on_vision_model=lora_on_vision_model,
+    )
+
+    if lora_on_language_model and lora_on_vision_model:
         return VLMLoRA(
-            target_modules=_ALL_COMPONENT_LORA_TARGET_MODULES.copy(),
+            target_modules=target_modules,
             dim=16,
             alpha=32,
-            dora=dora,
         )
 
     if lora_on_language_model:
         return VLMLoRA(
-            target_modules=_LANGUAGE_LORA_TARGET_MODULES.copy(),
+            target_modules=target_modules,
             dim=16,
             alpha=32,
-            dora=dora,
             freeze_vision_model=False,
             freeze_vision_projection=False,
         )
 
     return VLMLoRA(
-        target_modules=_VISION_LORA_TARGET_MODULES.copy(),
+        target_modules=target_modules,
         dim=16,
         alpha=32,
-        dora=dora,
         freeze_language_model=False,
     )
 
@@ -237,10 +254,13 @@ def nemotron_nano_v2_vl_12b_peft_config(
             lora_on_vision_model=lora_on_vision_model,
         )
     elif isinstance(peft_scheme, str) and peft_scheme.lower() == "dora":
-        cfg.peft = _nemotron_vl_lora_config(
-            dora=True,
-            lora_on_language_model=lora_on_language_model,
-            lora_on_vision_model=lora_on_vision_model,
+        cfg.peft = DoRA(
+            target_modules=_nemotron_vl_target_modules(
+                lora_on_language_model=lora_on_language_model,
+                lora_on_vision_model=lora_on_vision_model,
+            ),
+            dim=16,
+            alpha=32,
         )
     else:
         cfg.peft = peft_scheme
