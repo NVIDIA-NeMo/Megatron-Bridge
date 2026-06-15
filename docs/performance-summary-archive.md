@@ -33,7 +33,7 @@ Below are performance benchmarks for various large language models organized by 
 
 The performance data includes:
 
-- **Pre-training Performance**: Throughput metrics for various model sizes and architectures
+- **Pre-training Performance**: Throughput metrics for various model sizes and architectures[^moe-training-note]
 - **System Configurations**: Results across different GPU systems (DGX-GB300, DGX-GB200, DGX-B300, DGX-B200, DGX-H100)
 - **Precision Options**: Performance comparisons between different precision modes (BF16, FP8, MXFP8, NVFP4)
 
@@ -137,6 +137,7 @@ The performance data includes:
 | DGX-B200 | 64 | MXFP8 | 512 | 1 | 8192 | 0 | 1 | 1 | 1 | n/a | 64 | 6400 | 542 |
 | DGX-B200 | 64 | NVFP4 | 512 | 1 | 8192 | 0 | 2 | 1 | 1 | n/a | 64 | 5632 | 475[^nemotron-3-super-b200-nvfp4-note] |
 
+[^moe-training-note]: In MoE training benchmarks, we force-balance the token distribution among experts and all benchmarks are token-dropless.
 [^nemotron-3-super-b200-nvfp4-note]: Mapping used for MXFP8 precision could not fit for  NVFP4 precision for this model. We expect to achieve better performance for NVFP4 precision in future when NVFP4 param gather is supported.
 
 ## 26.04 NeMo Container
