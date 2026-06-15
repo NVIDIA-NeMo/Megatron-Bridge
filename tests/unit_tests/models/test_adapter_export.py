@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
+import argparse
 import json
+import logging
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -444,6 +446,71 @@ class TestSaveHfAdapter:
         assert "target_parameters" not in cfg
         assert cfg["base_model_name_or_path"] == "test/model"
 
+    def test_save_preserves_adapter_dtype_and_detaches(self, tmp_path):
+        """save_hf_adapter should write detached adapter tensors in their exported dtype."""
+        from safetensors.torch import load_file
+
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / "adapter_out_dtype"
+        fake_weights = [
+            _adapter_export(
+                "model.layers.0.self_attn.q_proj.lora_A.weight",
+                torch.randn(8, 64, dtype=torch.bfloat16).requires_grad_(),
+            ),
+            _adapter_export(
+                "model.layers.0.self_attn.q_proj.lora_B.weight",
+                torch.randn(64, 8, dtype=torch.bfloat16).requires_grad_(),
+            ),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+            )
+
+        state = load_file(str(output_dir / "adapter_model.safetensors"))
+        assert state
+        assert {tensor.dtype for tensor in state.values()} == {torch.bfloat16}
+
+    def test_save_passes_exclude_adapter_base_prefixes(self, tmp_path):
+        """save_hf_adapter should pass adapter-base exclusions to adapter streaming."""
+        from megatron.bridge.peft.lora import LoRA
+
+        output_dir = tmp_path / "adapter_out_excluded"
+        fake_weights = [
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_A.weight", torch.randn(8, 64)),
+            _adapter_export("model.layers.0.self_attn.q_proj.lora_B.weight", torch.randn(64, 8)),
+        ]
+
+        mock_bridge = MagicMock()
+        mock_bridge.export_adapter_weights.return_value = iter(fake_weights)
+        mock_bridge.hf_pretrained = _ToyAdapterModel(model_name_or_path="test/model")
+
+        with patch("torch.distributed.is_initialized", return_value=False):
+            from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+
+            AutoBridge.save_hf_adapter(
+                mock_bridge,
+                model=[MagicMock()],
+                path=output_dir,
+                peft_config=LoRA(),
+                base_model_name_or_path="test/model",
+                exclude_adapter_base_prefixes=("mtp.layers",),
+            )
+
+        assert mock_bridge.export_adapter_weights.call_args.kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
+
     def test_save_with_nonzero_dropout_keeps_linear_target_modules(self, tmp_path):
         from megatron.bridge.peft.lora import LoRA
 
@@ -745,10 +812,11 @@ class TestExportAdapterCkpt:
         """Mock out dist_checkpointing, distributed context, and checkpoint helpers."""
         fake_sd = {"model": {}}
         with (
+            patch("megatron.core.dist_checkpointing.load", return_value=fake_sd) as mock_dist_load,
             patch(
-                "megatron.core.dist_checkpointing.load",
-                return_value=fake_sd,
-            ) as self.mock_dist_load,
+                "megatron.bridge.peft.utils.enable_legacy_shared_expert_adapter_loading",
+                return_value=False,
+            ),
             patch(
                 "megatron.bridge.training.checkpointing._generate_model_state_dict",
                 return_value={"model": {}},
@@ -762,6 +830,7 @@ class TestExportAdapterCkpt:
                 return_value=nullcontext(),
             ),
         ):
+            self.mock_dist_load = mock_dist_load
             yield
 
     def test_basic_export_calls_save_hf_adapter(self, bridge, ckpt_dir, tmp_path):
@@ -812,6 +881,32 @@ class TestExportAdapterCkpt:
             bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
         )
         assert isinstance(peft_config, VLMLoRA)
+
+    def test_plain_lora_filters_vlm_only_keys(self, bridge, tmp_path):
+        """VLM-only keys should not be passed into plain LoRA configs."""
+        ckpt = tmp_path / "plain_lora_ckpt"
+        ckpt.mkdir()
+        run_cfg = {
+            "peft": {
+                "_target_": "megatron.bridge.peft.lora.LoRA",
+                "dim": 8,
+                "alpha": 16,
+                "freeze_language_model": False,
+                "freeze_vision_model": False,
+                "freeze_vision_projection": False,
+            }
+        }
+        (ckpt / "run_config.yaml").write_text(yaml.dump(run_cfg))
+
+        bridge.export_adapter_ckpt(str(ckpt), tmp_path / "out")
+
+        peft_config = bridge.save_hf_adapter.call_args.kwargs.get(
+            "peft_config",
+            bridge.save_hf_adapter.call_args.args[2] if len(bridge.save_hf_adapter.call_args.args) > 2 else None,
+        )
+        assert peft_config.dim == 8
+        assert peft_config.alpha == 16
+        assert not hasattr(peft_config, "freeze_language_model")
 
     def test_missing_checkpoint_raises(self, bridge, tmp_path):
         with pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"):
@@ -874,14 +969,32 @@ class TestExportAdapterCkpt:
         assert isinstance(peft_config, LoRA)
         assert peft_config.dim == LoRA().dim
 
-    def test_provider_set_to_float32(self, bridge, ckpt_dir, tmp_path):
-        """Provider dtypes must be forced to float32 for full-precision adapter export."""
+    def test_provider_defaults_to_float32(self, bridge, ckpt_dir, tmp_path):
+        """Provider dtypes default to float32 for full-precision adapter export."""
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
         provider = bridge.to_megatron_provider.return_value
         assert provider.pipeline_dtype == torch.float32
         assert provider.params_dtype == torch.float32
         provider.finalize.assert_called_once()
+
+    def test_export_adapter_ckpt_does_not_pass_output_dtype(self, bridge, ckpt_dir, tmp_path):
+        """CPU checkpoint export should keep full precision and not override saved dtype."""
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        save_kwargs = bridge.save_hf_adapter.call_args.kwargs
+        assert "output_dtype" not in save_kwargs
+
+    def test_exclude_adapter_base_prefixes_passed_to_save(self, bridge, ckpt_dir, tmp_path):
+        """Adapter-base exclusions should be threaded from checkpoint export to save_hf_adapter."""
+        bridge.export_adapter_ckpt(
+            str(ckpt_dir),
+            tmp_path / "out",
+            exclude_adapter_base_prefixes=("mtp.layers",),
+        )
+
+        save_kwargs = bridge.save_hf_adapter.call_args.kwargs
+        assert save_kwargs["exclude_adapter_base_prefixes"] == ("mtp.layers",)
 
     def test_dist_checkpointing_called_with_ckpt_path(self, bridge, ckpt_dir, tmp_path):
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
@@ -915,3 +1028,399 @@ class TestExportAdapterCkpt:
             bridge.export_adapter_ckpt(str(ckpt_dir), output)
 
         bridge.save_hf_adapter.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# examples/conversion/adapter/export_adapter.py
+# ---------------------------------------------------------------------------
+
+
+class TestExportAdapterScript:
+    def test_parse_dtype_uses_shared_dtype_map(self):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._parse_dtype("bf16") == torch.bfloat16
+        assert export_adapter._parse_dtype("torch.float32") == torch.float32
+
+    def test_parse_dtype_rejects_invalid_dtype(self):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(argparse.ArgumentTypeError, match="Unknown dtype"):
+            export_adapter._parse_dtype("float8-ish")
+
+    def test_parse_dtype_rejects_unsupported_export_dtype(self):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(argparse.ArgumentTypeError, match="Unsupported adapter export dtype"):
+            export_adapter._parse_dtype("fp8")
+
+    def test_load_lora_config_falls_back_to_defaults_on_parse_error(self, tmp_path, caplog):
+        from examples.conversion.adapter import export_adapter
+
+        from megatron.bridge.peft.lora import LoRA
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        (ckpt / "run_config.yaml").write_text("not: valid: yaml: [[[")
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.read_run_config", side_effect=ValueError("bad yaml")),
+            caplog.at_level(logging.WARNING),
+        ):
+            lora = export_adapter._load_lora_config(ckpt)
+
+        assert isinstance(lora, LoRA)
+        assert lora.dim == LoRA().dim
+        assert "Using defaults" in caplog.text
+
+    def test_load_lora_config_reads_parent_run_config(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        parent = tmp_path / "run"
+        iter_dir = parent / "iter_0000001"
+        iter_dir.mkdir(parents=True)
+        (parent / "run_config.yaml").write_text(yaml.dump({"peft": {"_target_": "LoRA", "dim": 4, "alpha": 8}}))
+
+        lora = export_adapter._load_lora_config(iter_dir)
+
+        assert lora.dim == 4
+        assert lora.alpha == 8
+
+    def test_load_lora_config_filters_vlm_keys_for_plain_lora(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        (ckpt / "run_config.yaml").write_text(
+            yaml.dump(
+                {
+                    "peft": {
+                        "_target_": "megatron.bridge.peft.lora.LoRA",
+                        "dim": 8,
+                        "alpha": 16,
+                        "freeze_language_model": False,
+                        "freeze_vision_model": False,
+                        "freeze_vision_projection": False,
+                    }
+                }
+            )
+        )
+
+        lora = export_adapter._load_lora_config(ckpt)
+
+        assert lora.dim == 8
+        assert lora.alpha == 16
+        assert not hasattr(lora, "freeze_language_model")
+
+    def test_get_loaded_model_key_prefers_exact_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._get_loaded_model_key({"model": {}, "model0": {}}, tmp_path) == "model"
+
+    def test_get_loaded_model_key_accepts_prefixed_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        assert export_adapter._get_loaded_model_key({"model0": {}}, tmp_path) == "model0"
+
+    def test_get_loaded_model_key_raises_clear_error_when_missing(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        with pytest.raises(RuntimeError, match="has no 'model' key"):
+            export_adapter._get_loaded_model_key({"optimizer": {}}, tmp_path)
+
+    @pytest.mark.parametrize(
+        ("tp", "pp", "ep", "etp", "expected"),
+        [
+            (1, 1, 1, 1, False),
+            (2, 1, 1, 1, True),
+            (1, 2, 1, 1, True),
+            (1, 1, 2, 1, True),
+            (1, 1, 1, 2, True),
+        ],
+    )
+    def test_uses_distributed_export(self, tp, pp, ep, etp, expected):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(tp=tp, pp=pp, ep=ep, etp=etp)
+
+        assert export_adapter._uses_distributed_export(args) is expected
+
+    def test_main_rejects_non_fp32_dtype_for_cpu_export(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.bfloat16,
+            exclude_adapter_base_prefix=[],
+        )
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.parse_args", return_value=args),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_pretrained") as mock_from_hf,
+            pytest.raises(ValueError, match="only supported by distributed GPU export"),
+        ):
+            export_adapter.main()
+
+        mock_from_hf.assert_not_called()
+
+    def test_main_cpu_export_does_not_pass_dtype_to_autobridge(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=1,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=["mtp.layers"],
+        )
+        bridge = MagicMock()
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.parse_args", return_value=args),
+            patch(
+                "examples.conversion.adapter.export_adapter.AutoBridge.from_hf_pretrained",
+                return_value=bridge,
+            ) as mock_from_hf,
+        ):
+            export_adapter.main()
+
+        mock_from_hf.assert_called_once_with("test/model", trust_remote_code=False)
+        bridge.export_adapter_ckpt.assert_called_once_with(
+            peft_checkpoint=str(tmp_path),
+            output_path=tmp_path / "out",
+            exclude_adapter_base_prefixes=("mtp.layers",),
+        )
+
+    def test_configure_cuda_device_requires_cuda(self):
+        from examples.conversion.adapter import export_adapter
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.is_available", return_value=False),
+            pytest.raises(RuntimeError, match="requires CUDA"),
+        ):
+            export_adapter._configure_cuda_device()
+
+    def test_configure_cuda_device_uses_local_rank(self):
+        from examples.conversion.adapter import export_adapter
+
+        with (
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.is_available", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.get_local_rank_preinit", return_value=2),
+            patch("examples.conversion.adapter.export_adapter.torch.cuda.set_device") as mock_set_device,
+        ):
+            device = export_adapter._configure_cuda_device()
+
+        mock_set_device.assert_called_once_with(2)
+        assert device == torch.device("cuda", 2)
+
+    def test_export_adapter_distributed_missing_checkpoint_raises_clear_error(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path / "missing"),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained") as mock_from_pretrained,
+            pytest.raises(FileNotFoundError, match="PEFT checkpoint not found"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        mock_from_pretrained.assert_not_called()
+
+    def test_export_adapter_distributed_rejects_multiple_model_chunks(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        ckpt = tmp_path / "adapter_ckpt"
+        ckpt.mkdir()
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(ckpt),
+            output=tmp_path / "out",
+            tp=2,
+            pp=2,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunks = [MagicMock(), MagicMock()]
+        for chunk in model_chunks:
+            chunk.to.return_value = chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = model_chunks
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter._generate_model_state_dict") as mock_state_dict,
+            patch("examples.conversion.adapter.export_adapter.dist_checkpointing.load") as mock_load,
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch(
+                "examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"
+            ) as mock_destroy_mp,
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group") as mock_destroy_pg,
+            pytest.raises(RuntimeError, match="exactly one local model chunk"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        mock_state_dict.assert_not_called()
+        mock_load.assert_not_called()
+        bridge.save_hf_adapter.assert_not_called()
+        for chunk in model_chunks:
+            chunk.load_state_dict.assert_not_called()
+        mock_destroy_mp.assert_called_once()
+        mock_destroy_pg.assert_called_once()
+
+    def test_export_adapter_distributed_raises_clear_error_for_missing_model_key(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunk = MagicMock()
+        model_chunk.to.return_value = model_chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [model_chunk]
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter._generate_model_state_dict", return_value={"model": {}}),
+            patch(
+                "examples.conversion.adapter.export_adapter.apply_peft_adapter_filter_to_state_dict",
+                side_effect=lambda state_dict, _lora: state_dict,
+            ),
+            patch(
+                "examples.conversion.adapter.export_adapter.enable_legacy_shared_expert_adapter_loading",
+                return_value=False,
+            ),
+            patch(
+                "examples.conversion.adapter.export_adapter.dist_checkpointing.load", return_value={"optimizer": {}}
+            ),
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch(
+                "examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"
+            ) as mock_destroy_mp,
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group") as mock_destroy_pg,
+            pytest.raises(RuntimeError, match="has no 'model' key"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        model_chunk.load_state_dict.assert_not_called()
+        mock_destroy_mp.assert_called_once()
+        mock_destroy_pg.assert_called_once()
+
+    def test_export_adapter_distributed_enables_legacy_shared_expert_adapter_loading(self, tmp_path):
+        from examples.conversion.adapter import export_adapter
+
+        args = SimpleNamespace(
+            hf_model_path="test/model",
+            trust_remote_code=False,
+            lora_checkpoint=str(tmp_path),
+            output=tmp_path / "out",
+            tp=2,
+            pp=1,
+            ep=1,
+            etp=1,
+            sequence_parallel=False,
+            dtype=torch.float32,
+            exclude_adapter_base_prefix=[],
+        )
+        model_chunk = MagicMock()
+        model_chunk.to.return_value = model_chunk
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [model_chunk]
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+        lora = MagicMock()
+        state_dicts = [{"model": {"new": object()}}, {"model": {"legacy": object()}}]
+
+        with (
+            patch(
+                "examples.conversion.adapter.export_adapter._configure_cuda_device", return_value=torch.device("cpu")
+            ),
+            patch("examples.conversion.adapter.export_adapter.AutoConfig.from_pretrained", return_value=MagicMock()),
+            patch("examples.conversion.adapter.export_adapter.AutoBridge.from_hf_config", return_value=bridge),
+            patch("examples.conversion.adapter.export_adapter._load_lora_config", return_value=lora),
+            patch(
+                "examples.conversion.adapter.export_adapter._generate_model_state_dict",
+                side_effect=state_dicts,
+            ) as mock_state_dict,
+            patch(
+                "examples.conversion.adapter.export_adapter.apply_peft_adapter_filter_to_state_dict",
+                side_effect=lambda state_dict, _lora: state_dict,
+            ) as mock_filter,
+            patch(
+                "examples.conversion.adapter.export_adapter.enable_legacy_shared_expert_adapter_loading",
+                return_value=True,
+            ) as mock_enable_legacy,
+            patch(
+                "examples.conversion.adapter.export_adapter.dist_checkpointing.load",
+                return_value={"model": {"adapter": "weights"}},
+            ) as mock_load,
+            patch("examples.conversion.adapter.export_adapter.parallel_state.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.parallel_state.destroy_model_parallel"),
+            patch("examples.conversion.adapter.export_adapter.dist.is_initialized", return_value=True),
+            patch("examples.conversion.adapter.export_adapter.dist.destroy_process_group"),
+        ):
+            export_adapter._export_adapter_distributed(args)
+
+        assert mock_state_dict.call_count == 2
+        assert mock_filter.call_count == 2
+        mock_enable_legacy.assert_called_once_with([model_chunk], state_dicts[0], tmp_path)
+        mock_load.assert_called_once_with(state_dicts[1], str(tmp_path), validate_access_integrity=False)
+        model_chunk.load_state_dict.assert_called_once_with({"adapter": "weights"}, strict=False)

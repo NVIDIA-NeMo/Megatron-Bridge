@@ -650,7 +650,9 @@ class MegatronPeftBridge:
         return linear_in_name, linear_out_name
 
     def build_adapter_conversion_tasks(
-        self, megatron_model: Union[MegatronModel, List[MegatronModel]]
+        self,
+        megatron_model: Union[MegatronModel, List[MegatronModel]],
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> Dict[str, List[AdapterWeightConversionTask]]:
         """Construct adapter merge tasks keyed by their base parameter.
 
@@ -665,6 +667,7 @@ class MegatronPeftBridge:
 
         adapters_info = self._megatron_global_adapters_info_all_pp_ranks(megatron_model)
         tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = defaultdict(list)  # type: ignore[name-defined]
+        excluded_prefixes = tuple(exclude_adapter_base_prefixes or ())
 
         from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 
@@ -685,6 +688,8 @@ class MegatronPeftBridge:
         ) in adapters_info:
             # global_base_name example: decoder.layers.0.mlp.linear_fc1.adapter.adapter_q
             global_base_prefix, _, adapter_suffix = global_base_name.partition(".adapter")
+            if excluded_prefixes and global_base_prefix.startswith(excluded_prefixes):
+                continue
 
             adapter_key = None
             if adapter_suffix:
@@ -840,6 +845,7 @@ class MegatronPeftBridge:
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         cpu: bool = True,
         show_progress: bool = True,
+        exclude_adapter_base_prefixes: Iterable[str] | None = None,
     ) -> Iterable["HFWeightTuple"]:
         """Stream only adapter weights without merging them into base tensors.
 
@@ -853,7 +859,10 @@ class MegatronPeftBridge:
             megatron_model = [megatron_model]
 
         num_moe_experts = megatron_model[0].config.num_moe_experts
-        adapter_tasks_by_base = self.build_adapter_conversion_tasks(megatron_model)
+        adapter_tasks_by_base = self.build_adapter_conversion_tasks(
+            megatron_model,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
+        )
         adapter_tasks = list(itertools.chain.from_iterable(adapter_tasks_by_base.values()))
         if not adapter_tasks:
             return
