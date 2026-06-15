@@ -508,6 +508,7 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
@@ -563,6 +564,7 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
         )
 
     def export_hf_weights_modelopt(
@@ -814,6 +816,7 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -926,6 +929,7 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights=merge_adapter_weights,
             distributed_save=distributed_save,
             save_every_n_ranks=save_every_n_ranks,
+            weight_dtype=weight_dtype,
         )
 
     def save_hf_weights(
@@ -937,6 +941,7 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -989,6 +994,7 @@ class AutoBridge(Generic[MegatronModelT]):
             cpu=True,
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
         )
         model_instance = self._get_model_instance(model)
         quant_tensors = None

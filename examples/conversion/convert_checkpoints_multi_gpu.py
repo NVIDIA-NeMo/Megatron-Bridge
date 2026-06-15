@@ -177,6 +177,7 @@ def export_megatron_to_hf(
     distributed_save: bool = False,
     save_every_n_ranks: int = 1,
     distributed_timeout_minutes: int | None = None,
+    export_weight_dtype: str | None = None,
 ) -> None:
     """Export a distributed Megatron checkpoint to HuggingFace format."""
     _ensure_distributed_initialized(distributed_timeout_minutes)
@@ -262,6 +263,7 @@ def export_megatron_to_hf(
         strict=strict,
         distributed_save=distributed_save,
         save_every_n_ranks=save_every_n_ranks,
+        weight_dtype=_parse_dtype(export_weight_dtype) if export_weight_dtype else None,
     )
     print_rank_0(f"Export complete: {hf_path}")
 
@@ -322,6 +324,16 @@ def main():
         default=1,
         help="Only every N-th rank writes files (reduces I/O, only with --distributed-save)",
     )
+    export_parser.add_argument(
+        "--export-weight-dtype",
+        choices=sorted(DTYPE_MAP),
+        default=None,
+        help=(
+            "Emit plain weights in this dtype instead of re-creating the source repo's "
+            "quantized weight/scale layout (currently honored by the DeepSeek-V4 bridge). "
+            "Use for SFT products that need exact train/inference numerical parity."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.command:
@@ -356,6 +368,7 @@ def main():
             distributed_save=args.distributed_save,
             save_every_n_ranks=args.save_every_n_ranks,
             distributed_timeout_minutes=args.distributed_timeout_minutes,
+            export_weight_dtype=args.export_weight_dtype,
         )
 
 

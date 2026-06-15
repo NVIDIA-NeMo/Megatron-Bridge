@@ -57,7 +57,9 @@ def _by_megatron(registry):
 
 
 def _dummy_task():
-    return SimpleNamespace(param_name="", global_param_name="", mapping=None)
+    from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+
+    return WeightConversionTask(param_name="", global_param_name="", mapping=None)
 
 
 def _deepseek_v4_hf_config():
@@ -436,3 +438,47 @@ class TestDeepSeekV4HardwareDefaults:
 
         assert out.apply_dsa_kernel_fusion is True
         assert out.use_fused_mhc is True
+
+
+class TestDeepSeekV4ExportWeightDtype:
+    def test_weight_dtype_set_emits_plain_weights(self):
+        from dataclasses import replace
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        task = WeightConversionTask(param_name="w", global_param_name="w", mapping=MagicMock())
+        task = replace(task, weight_dtype=torch.bfloat16)  # frozen: must be settable via replace
+        weight = torch.randn(4, 4, dtype=torch.float32)
+        converted = {
+            "model.layers.0.mlp.weight": weight,
+            "model.layers.0.mlp.bias_idx": torch.ones(2, dtype=torch.int32),
+        }
+        hf_state = {"model.layers.0.mlp.weight": weight, "model.layers.0.mlp.scale": torch.ones(1)}
+
+        out = bridge.maybe_modify_converted_hf_weight(task, converted, hf_state)
+
+        assert set(out) == set(converted)
+        assert out["model.layers.0.mlp.weight"].dtype == torch.bfloat16
+        assert out["model.layers.0.mlp.bias_idx"].dtype == torch.int32
+
+    def test_no_weight_dtype_requantizes_by_default(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        task = WeightConversionTask(param_name="w", global_param_name="w", mapping=MagicMock())
+        called = {}
+
+        def fake_requantize(converted, hf_state, *, use_mxfp4=None):
+            called["hit"] = True
+            return {"quantized": torch.zeros(1)}
+
+        monkeypatch.setattr(quantization_utils, "requantize_hf_weight_scale_pairs", fake_requantize)
+        out = bridge.maybe_modify_converted_hf_weight(task, {"a.weight": torch.ones(1)}, {})
+
+        assert called.get("hit") and "quantized" in out

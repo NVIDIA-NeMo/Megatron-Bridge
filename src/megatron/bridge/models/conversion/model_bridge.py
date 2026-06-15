@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import (
     Any,
     Callable,
@@ -120,6 +120,8 @@ class WeightConversionTask(Generic[MappingT]):
             sub-module that owns the parameter (required for loads).
         param_weight (Optional[torch.Tensor]): The actual parameter tensor that will
             receive the converted weight (required for loads).
+        weight_dtype (Optional[torch.dtype]): When set, bridges that re-create a quantized
+            source layout on export emit plain weights in this dtype instead.
 
     """
 
@@ -130,6 +132,7 @@ class WeightConversionTask(Generic[MappingT]):
     vp_stage: Optional[int] = None
     megatron_module: Optional[torch.nn.Module] = None
     param_weight: Optional[torch.Tensor] = None
+    weight_dtype: Optional[torch.dtype] = None
 
 
 class _HFNameSuffixMapping:
@@ -1192,6 +1195,7 @@ class MegatronModelBridge(
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> Iterable[HFWeightTuple]:
         """Export Megatron weights to HuggingFace format.
 
@@ -1251,6 +1255,9 @@ class MegatronModelBridge(
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
+        if weight_dtype is not None:
+            # WeightConversionTask is frozen — rebuild the tasks with the dtype set
+            conversion_tasks = [replace(task, weight_dtype=weight_dtype) for task in conversion_tasks]
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
@@ -1990,6 +1997,7 @@ def stream_weights_megatron_to_hf(
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
     merge_adapter_weights: bool = True,
+    weight_dtype: Optional[torch.dtype] = None,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...

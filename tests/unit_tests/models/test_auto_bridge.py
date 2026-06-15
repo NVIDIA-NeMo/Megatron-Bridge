@@ -686,6 +686,7 @@ class TestAutoBridge:
                     merge_adapter_weights=True,
                     distributed_save=False,
                     save_every_n_ranks=1,
+                    weight_dtype=None,
                 )
 
     @patch("torch.distributed.is_initialized", return_value=False)
@@ -801,6 +802,7 @@ class TestAutoBridge:
                     merge_adapter_weights=True,
                     distributed_save=False,
                     save_every_n_ranks=1,
+                    weight_dtype=None,
                 )
 
     def test_export_hf_weights(self):
@@ -841,6 +843,7 @@ class TestAutoBridge:
                         show_progress=True,
                         conversion_tasks=None,
                         merge_adapter_weights=True,
+                        weight_dtype=None,
                     )
 
     def test_export_adapter_weights(self):
@@ -1500,6 +1503,7 @@ class TestAutoBridge:
                 cpu=True,
                 show_progress=True,
                 merge_adapter_weights=True,
+                weight_dtype=None,
             )
 
             # The quantizer tensor should have been saved via torch.save sidecar
@@ -1556,6 +1560,7 @@ class TestAutoBridge:
                 cpu=True,
                 show_progress=True,
                 merge_adapter_weights=True,
+                weight_dtype=None,
             )
             mock_torch_save.assert_not_called()
 
