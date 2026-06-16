@@ -64,7 +64,7 @@ try:
     _flex_attn_func = torch.compile(_flex_candidate)
     _create_flex_block_mask = _flex_mask_candidate
     _HAVE_FLEX_ATTN = True
-    logger.warning("Gemma2: PyTorch FlexAttention available — softcap+SWA fused via Triton score_mod.")
+    logger.info("Gemma2: PyTorch FlexAttention available — softcap+SWA fused via Triton score_mod.")
     del _flex_candidate, _flex_mask_candidate
 except ImportError:
     pass
