@@ -32,7 +32,9 @@ export UV_CACHE_DIR=${WORKSPACE}/cache/uv
 
 The BF16 Hugging Face cache and imported Megatron checkpoint are each about
 1.1 TB. Reserve at least 2.5 TB for model storage before starting checkpoint
-conversion, plus additional space for training outputs and logs.
+conversion, plus additional space for training outputs and logs. Full-model
+training checkpoints can each require several TB, so set `WORKSPACE` to a
+filesystem with enough quota before running SFT or pretraining.
 
 ## Hardware Starting Points
 
@@ -120,7 +122,9 @@ sbatch slurm_pretrain.sh
 
 Set `DCLM_DATA_DIR` to a preprocessed DCLM directory containing
 `*_text_document.bin` / `*_text_document.idx` files. The script defaults to
-matching `dclm_01_*_text_document.bin`.
+matching `dclm_01_*_text_document.bin`. Async checkpoint saving is enabled by
+the recipe; the script defaults `SAVE_INTERVAL=1000` to save one checkpoint for
+the default 1000-iteration starter run.
 
 ## OpenMath Packed Data
 
