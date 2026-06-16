@@ -59,7 +59,7 @@ def nemotron_3_ultra_pretrain_config(
     cfg.model.init_method_std = 0.014
     cfg.model.use_fused_weighted_squared_relu = True
     cfg.model.calculate_per_token_loss = True
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.cuda_graph_impl = "none"
@@ -147,7 +147,7 @@ def nemotron_3_ultra_sft_openmathinstruct2_packed_config(
     cfg.model.init_method_std = 0.014
     cfg.model.use_fused_weighted_squared_relu = True
     cfg.model.calculate_per_token_loss = True
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.cuda_graph_impl = "none"
@@ -241,7 +241,7 @@ def nemotron_3_ultra_peft_openmathinstruct2_packed_config(
     cfg.model.init_method_std = 0.014
     cfg.model.use_fused_weighted_squared_relu = True
     cfg.model.calculate_per_token_loss = True
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.cuda_graph_impl = "none"

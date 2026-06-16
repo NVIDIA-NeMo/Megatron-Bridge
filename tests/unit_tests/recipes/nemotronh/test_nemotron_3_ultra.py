@@ -59,6 +59,8 @@ def test_pretrain_uses_initial_parallelism_values() -> None:
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 3
     assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.sequence_parallel is True
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.mtp_num_layers == 2
@@ -87,6 +89,8 @@ def test_openmath_sft_uses_initial_parallelism_values() -> None:
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 6
     assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.sequence_parallel is True
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.recompute_granularity == "selective"
@@ -110,6 +114,8 @@ def test_openmath_peft_uses_validated_parallelism_values() -> None:
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.sequence_parallel is True
     assert cfg.model.virtual_pipeline_model_parallel_size is None
     assert cfg.model.recompute_granularity == "selective"
