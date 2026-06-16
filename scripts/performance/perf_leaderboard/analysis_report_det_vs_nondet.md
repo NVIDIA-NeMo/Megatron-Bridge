@@ -864,19 +864,25 @@ In rough order of likelihood:
 
 ## Appendix: Profile Artifact Locations
 
-NVIDIA internal cluster only. All nsys-rep / sqlite / training-log / CSV /
-leaderboard / bitwise-check files for both scales are mirrored to:
+NVIDIA internal cluster only. All paths below resolve under the shared mirror
+(total ≈ 1.2 GB, world-readable):
 
 ```
-/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare/
-├── README.md                                  ← layout + headline
-├── 24n-baseline/processed/{leaderboard.txt, nsys-det.csv, nsys-nondet.csv, submit-*.log, ...}
-├── 24n-baseline/raw/{det,nondet}/profile_*.{nsys-rep,sqlite} + training logs
-├── 24n-baseline/raw/det-bitwise/log-*_2103637_0.out       ← bit-wise check (job 2103637)
-├── 48n-mismatch/processed/{leaderboard.txt, bitwise_check.txt, nsys-det.csv, nsys-nondet.csv, ...}
-├── 48n-mismatch/raw/{det,nondet}/profile_*.{nsys-rep,sqlite} + training logs (jobs 2132936 / 2132937)
-└── 48n-mismatch/raw/det-bitwise/log-*_2132938_0.out      ← bit-wise check (job 2132938)
+SHARE=/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare
 ```
 
-Total ≈ 1.2 GB, world-readable. This is the canonical location — point any
-reproduction, sharing, or re-analysis at this path.
+| | path (relative to `$SHARE`) |
+|---|---|
+| 24-node det nsys-rep (job 2103633) | `24n-baseline/raw/det/profile_810827_2103633_node0_rank0.nsys-rep` |
+| 24-node det sqlite | `24n-baseline/raw/det/profile_810827_2103633_node0_rank0.sqlite` |
+| 24-node nondet nsys-rep (job 2103635) | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.nsys-rep` |
+| 24-node nondet sqlite | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.sqlite` |
+| 24-node OUT_DIR (CSVs + leaderboard) | `24n-baseline/processed/`  *(was `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/`)* |
+| 24-node bit-wise check log (job 2103637) | `24n-baseline/raw/det-bitwise/log-*_2103637_0.out` |
+| 48-node det nsys-rep (job 2132936) | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.nsys-rep` |
+| 48-node det sqlite | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.sqlite` |
+| 48-node nondet nsys-rep (job 2132937) | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.nsys-rep` |
+| 48-node nondet sqlite | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.sqlite` |
+| 48-node OUT_DIR (CSVs + leaderboard + bitwise_check.txt) | `48n-mismatch/processed/`  *(was `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/`)* |
+| 48-node bit-wise check log (job 2132938) | `48n-mismatch/raw/det-bitwise/log-*_2132938_0.out` |
+| Top-level layout + job-to-wandb mapping | `README.md` |
