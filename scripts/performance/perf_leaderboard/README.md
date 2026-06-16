@@ -15,9 +15,7 @@ All nsys-rep / sqlite / CSV / leaderboard / training-log files for the
 └── 48n-mismatch/{processed,raw/{det,nondet,det-bitwise}}/
 ```
 
-Total ≈ 1.2 GB. Use this path when sharing results outside the
-`coreai_dlalgo_llm` group — the source `/lustre/fsw/coreai_dlalgo_llm/zhiyul/`
-parent has `--S---` perms and is unreadable to non-group users.
+Total ≈ 1.2 GB, world-readable. This is the canonical sharing location.
 
 ## Files
 
