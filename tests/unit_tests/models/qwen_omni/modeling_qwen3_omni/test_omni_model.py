@@ -457,6 +457,54 @@ class TestQwen3OmniModel:
         assert rope_calls["attention_mask"] is None
         assert fake_language_model.forward_kwargs["attention_mask"] is attention_mask
 
+    def test_packed_forward_resets_rotary_thd_state(self):
+        class _MockProcessGroup:
+            def size(self):
+                return 1
+
+            def rank(self):
+                return 0
+
+        class _FakeLanguageModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+                self.forward_kwargs = []
+
+            def forward(self, **kwargs):
+                self.forward_kwargs.append(kwargs)
+                return torch.tensor(0.0)
+
+        fake_language_model = _FakeLanguageModel()
+        thinker = SimpleNamespace(
+            pg_collection=SimpleNamespace(cp=_MockProcessGroup(), tp=_MockProcessGroup()),
+            config=SimpleNamespace(sequence_parallel=False),
+            pre_process=False,
+            language_model=fake_language_model,
+        )
+
+        input_ids = torch.tensor([[1, 2, 3, 4]])
+        position_ids = torch.arange(input_ids.size(1)).view(1, 1, -1).expand(3, input_ids.size(0), -1)
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+
+        Qwen3OmniThinkerModel.forward(
+            thinker,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=attention_mask,
+            packed_seq_params=object(),
+        )
+        assert fake_language_model.rotary_pos_emb.is_thd_format is True
+
+        Qwen3OmniThinkerModel.forward(
+            thinker,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=None,
+            packed_seq_params=None,
+        )
+        assert fake_language_model.rotary_pos_emb.is_thd_format is False
+
     def test_audio_forward(self, thinker_config):
         model = self._build_model(thinker_config)
         if torch.cuda.is_available():
