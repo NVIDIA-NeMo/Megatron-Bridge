@@ -71,7 +71,7 @@ def test_pretrain_uses_initial_parallelism_values() -> None:
     assert cfg.scheduler.lr_decay_style == "constant"
     assert cfg.scheduler.lr_warmup_iters == 0
     assert cfg.checkpoint.async_save is True
-    assert cfg.checkpoint.async_strategy == "nvrx"
+    assert cfg.checkpoint.async_strategy == "mcore"
     assert cfg.checkpoint.save_interval == 200
 
     assert cfg.train.global_batch_size == 3072
@@ -97,7 +97,7 @@ def test_openmath_sft_uses_initial_parallelism_values() -> None:
     assert cfg.train.train_iters == 1000
     assert cfg.train.global_batch_size == 128
     assert cfg.checkpoint.async_save is True
-    assert cfg.checkpoint.async_strategy == "nvrx"
+    assert cfg.checkpoint.async_strategy == "mcore"
     assert cfg.dataset.dataset_name == "nvidia/OpenMathInstruct-2"
     assert cfg.dataset.packed_sequence_specs.packed_sequence_size == 4096
     assert cfg.dataset.packed_sequence_specs.tokenizer_model_name == NEMOTRON_3_ULTRA_TOKENIZER_NAME

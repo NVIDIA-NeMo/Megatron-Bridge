@@ -102,7 +102,7 @@ def nemotron_3_ultra_pretrain_config(
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.async_save = True
-    cfg.checkpoint.async_strategy = "nvrx"
+    cfg.checkpoint.async_strategy = "mcore"
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
@@ -191,7 +191,7 @@ def nemotron_3_ultra_sft_openmathinstruct2_packed_config(
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.async_save = True
-    cfg.checkpoint.async_strategy = "nvrx"
+    cfg.checkpoint.async_strategy = "mcore"
 
     cfg.logger.log_interval = 1
     cfg.rng.seed = 5678
