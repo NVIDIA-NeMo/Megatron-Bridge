@@ -38,6 +38,9 @@
 #   NSYS_START/STOP  (default 15/18)
 #   WAIT_TIMEOUT_SEC (default 3600)
 #   PYTHON           (default "python" -- override if interpreter w/ nemo_run is elsewhere)
+#   GRES             (Slurm GPU request, auto-detected per cluster: on oci-hsg-cs-001
+#                    defaults to "gpu:<GN>" since its batch partition won't auto-allocate
+#                    GPUs; empty elsewhere. Set GRES="gpu:N" to override, GRES="" to disable.)
 #   NGPUS            (default 192 -- must be a multiple of TP*PP*EP and GN must divide it)
 #   GN               (default 4 -- GPUs per node, GB200 = 4)
 #                    profiling_ranks is auto-derived as {0, NGPUS/2, NGPUS-1} (start/middle/last
@@ -92,6 +95,22 @@ case "$NGPUS" in
 esac
 PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
 echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
+
+# --- Cluster-aware Slurm GPU request -----------------------------------------
+# Some Slurm partitions (e.g. a generic ``batch`` partition) don't auto-allocate
+# GPUs and reject jobs that don't request them ("Cannot find GPU specification");
+# others (gb200 partitions) allocate GPUs from the partition itself. Auto-detect
+# by Slurm ClusterName; override with GRES=... (GRES="" forces no --gres).
+if [ -z "${GRES+x}" ]; then
+    _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}')
+    case "$_cluster" in
+        oci-hsg-cs-001*) GRES="gpu:${GN}" ;;  # NVL72 batch partition needs an explicit GPU request
+        *)               GRES="" ;;            # default: partition auto-allocates GPUs
+    esac
+    echo "Cluster '${_cluster:-unknown}' -> GRES='${GRES}'"
+fi
+GRES_ARG=()
+[ -n "$GRES" ] && GRES_ARG=(--gres "$GRES")
 
 submit_run() {
     local MODE="$1"  # "det" | "nondet" | "det-bitwise" | "det-bitwise2"
@@ -155,6 +174,7 @@ submit_run() {
         --time_limit 00:30:00 \
         -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
         -ng "$NGPUS" -gn "$GN" \
+        "${GRES_ARG[@]}" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
         -hf "$HF_TOKEN" \
