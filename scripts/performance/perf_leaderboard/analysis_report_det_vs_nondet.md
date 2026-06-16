@@ -738,6 +738,130 @@ kernels..." block has been rewritten to reflect this.
 
 ---
 
+## 12. Scale-up to 48 Nodes — Bit-wise Determinism Breaks
+
+**Headline (direct answer):** the same recipe that is bit-exact at **24 nodes / 96 GPUs**
+is **NOT bit-wise deterministic at 48 nodes / 192 GPUs**. The 24-node proof in §4.3
+does not carry over — see the iter-by-iter loss table below for the exact divergence pattern.
+
+### 12.1 Setup
+
+The 3 jobs were submitted by a single invocation of
+`scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` at commit `a2f6ffce`
+(`-ng 192 -gn 4`). Everything else — env vars, Hydra overrides, container, recipe
+file, seed — is byte-identical to the 24-node run.
+
+| | 24-node baseline (§4.3) | 48-node scale-up (this section) |
+|---|---|---|
+| world_size | 96 | **192** |
+| TP / PP / EP / ETP / CP | 2 / 3 / 32 / 1 / 1 | 2 / 3 / 32 / 1 / 1 (unchanged) |
+| DP_attn (= world_size / TP·PP·CP) | 16 | **32** |
+| DP_expert (= world_size / EP·ETP) | 3 | **6** |
+| GBS / MBS | 128 / 1 | 128 / 1 (unchanged) |
+| Microbatches per pipeline step | 8 | **4** |
+| Det env vars (`NCCL_ALGO=Ring`, `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `MAMBA_DETERMINISTIC=1`) | applied | applied (unchanged) |
+| `model.deterministic_mode` | true | true (unchanged) |
+| `model.cross_entropy_loss_fusion` | false | false (unchanged) |
+
+### 12.2 Iter-by-iter loss divergence
+
+Three jobs at 48 nodes:
+
+| Slurm job | Recipe | wandb (project `mbridge-dev-zhiyul`, search by run name) |
+|---|---|---|
+| **2132936** | det + nsys15-18 | `nemotron-3-ultra-det-nsys15-18-1781575817` |
+| **2132937** | non-det + nsys15-18 | `nemotron-3-ultra-nondet-nsys15-18-1781575817` |
+| **2132938** | det + NO nsys (paired with 2132936) | `nemotron-3-ultra-det-bitwise-check-1781575817` |
+
+`lm loss` of det+nsys (2132936) vs det+no-nsys (2132938), both deterministic, same
+recipe, separate Slurm allocations:
+
+| iter | 2132936 (det+nsys) | 2132938 (det+no-nsys) | match | last-digit delta |
+|---|---|---|---|---|
+| 1 | 1.254853E+01 | 1.254854E+01 | ✗ | 1 ULP (BF16 mantissa edge) |
+| 5 | 9.299143E+00 | 9.298958E+00 | ✗ | ~2·10⁻⁴ |
+| 10 | 4.095631E+00 | 4.092978E+00 | ✗ | ~3·10⁻³ |
+| 20 | 2.212457E-01 | 2.391398E-01 | ✗ | ~2·10⁻² |
+| 30 | 6.335801E-01 | 2.387865E-01 | ✗ | ~4·10⁻¹ |
+| 40 | 2.261086E-02 | 9.668706E-02 | ✗ | ~7·10⁻² |
+| 50 | 4.662910E-01 | 6.824717E-02 | ✗ | ~4·10⁻¹ |
+
+The divergence starts at **iter 1 at 1 ULP** and grows monotonically — the classic
+signature of a non-deterministic op that introduces a tiny perturbation in iter-1
+forward/backward, which is then amplified through the optimizer step and
+subsequent iters.
+
+For comparison, the 24-node 3-way table in §4.3 has identical values **to the last
+digit at every iter** — the bit-exactness held there across 3 separate allocations
+including the nsys-profiled one.
+
+### 12.3 Why does it break at 48 nodes but not at 24?
+
+The recipe parallelism config (TP=2 / PP=3 / EP=32) is **unchanged**, but the data-
+parallel sizes **doubled**:
+
+- `DP_attn`: 16 → 32. The DP-axis all-reduce / reduce-scatter / all-gather for the
+  attention parameters now spans twice as many ranks; NCCL's ring tree has a
+  different reduction order.
+- `DP_expert`: 3 → 6. Same thing for the expert-axis communicator.
+
+Even with `NCCL_ALGO=Ring`, the *order* in which partial sums are summed on a ring
+depends on rank IDs and the ring's stride/topology. In BF16 / FP8, `(a + b) + c`
+and `a + (b + c)` differ at the ULP. That's enough to produce the iter-1 1-ULP
+gap we see, which then grows iter-over-iter.
+
+A second candidate (less likely but worth ruling out): **HybridEP's NVLink-domain
+partitioning at the new EP-group layout**. With `DP_expert=6` the 32-rank
+EP communicator is laid out differently across NVL72 domains than at `DP_expert=3`;
+HybridEP's domain-aware dispatch could land tokens through a different fabric path
+on the two runs.
+
+What's NOT the cause:
+- Seed (rng.seed unchanged, weights init match)
+- Recipe config (byte-identical Hydra overrides)
+- Forward graph (NCCL kernel counts in the leaderboard match between paired runs)
+- nsys instrumentation (it was proven inert at 24 nodes; the gap here exists
+  independent of nsys)
+
+### 12.4 What this means for the §2–§11 analysis
+
+The 24-node analysis above is **unaffected** — the bit-exactness proof for §4.3 stood
+across 8 separate allocations and is still load-bearing for §1's "fairness" claim.
+The 48-node finding is a **scale-dependent** result: the det knobs cover enough of
+the source of non-determinism to give bit-exactness at the smaller world size, but
+not at the larger one.
+
+### 12.5 Action items for restoring 48-node determinism
+
+In rough order of likelihood:
+
+1. **Verify NCCL collective ordering at the new DP sizes.** Run a tiny standalone
+   all-reduce / reduce-scatter benchmark at `DP_expert=6` with `NCCL_ALGO=Ring`
+   across the same job_node_list to see if two back-to-back runs already
+   disagree at the ULP. If so, the deviation is purely in NCCL.
+2. **Sweep `NCCL_ALGO` per-collective** (NCCL ≥ 2.24 syntax from §7.3):
+   `NCCL_ALGO="allreduce:ring;reducescatter:ring;allgather:ring;sendrecv:ring"` —
+   may pick up paths that fell through to Tree at the new scale.
+3. **Try `model.moe_token_dispatcher_type=alltoall` (drop HybridEP)** at 48 nodes
+   to isolate whether the divergence is in the EP fabric path. If alltoall is
+   bit-exact at 48 nodes but HybridEP is not, the root cause is HybridEP's
+   topology-dependent dispatch.
+4. **Check `RandomSTE` invocation count** between the two det runs at 48 nodes
+   — if `moe_router_force_load_balancing=True` is drawing a different number of
+   samples (e.g. due to fewer microbatches per DP), the random stream diverges.
+
+### 12.6 Artifacts
+
+| | path |
+|---|---|
+| OUT_DIR (CSVs + leaderboard.txt + bitwise_check.txt) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/` |
+| det+nsys log (2132936) | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781575817/.../log-…_2132936_0.out` |
+| det+no-nsys log (2132938) | `~/.nemo_run/experiments/nemotron-3-ultra-det-bitwise-check-1781575817/.../log-…_2132938_0.out` |
+| nondet+nsys log (2132937) | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781575817/.../log-…_2132937_0.out` |
+| launch script + commit | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` @ `a2f6ffce` |
+
+---
+
 ## Appendix: Profile Artifact Locations
 
 | | path |
@@ -746,5 +870,6 @@ kernels..." block has been rewritten to reflect this.
 | Det sqlite | …same dir, `.sqlite` extension |
 | Non-det nsys-rep | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781255131/.../profile_2270167_2103635_node0_rank0.nsys-rep` |
 | Non-det sqlite | …same dir, `.sqlite` extension |
-| OUT_DIR (CSVs + leaderboard.txt) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/` |
-| Bit-wise check (det run #2) | job 2103637, `~/.nemo_run/experiments/nemotron-3-ultra-det-no-nsys-bitwise-check-v2/...` |
+| OUT_DIR (CSVs + leaderboard.txt) — 24-node baseline | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/` |
+| Bit-wise check (det run #2) — 24-node baseline | job 2103637, `~/.nemo_run/experiments/nemotron-3-ultra-det-no-nsys-bitwise-check-v2/...` |
+| OUT_DIR + bit-wise check — 48-node scale-up (§12) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/` |
