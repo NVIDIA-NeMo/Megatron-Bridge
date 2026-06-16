@@ -233,7 +233,7 @@ def qwen3_30b_a3b_pretrain_config_gb300(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
@@ -261,7 +261,7 @@ def qwen3_30b_a3b_pretrain_config_gb200(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
@@ -289,7 +289,7 @@ def qwen3_30b_a3b_pretrain_config_vr200(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
@@ -315,7 +315,7 @@ def qwen3_30b_a3b_pretrain_config_b300(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
@@ -343,7 +343,7 @@ def qwen3_30b_a3b_pretrain_config_b200(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
@@ -369,7 +369,7 @@ def qwen3_30b_a3b_pretrain_config_h100(
 
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = precision_config
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=precision != "nvfp4")
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
