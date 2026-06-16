@@ -35,10 +35,10 @@
 #   NSYS_START/STOP  (default 15/18)
 #   WAIT_TIMEOUT_SEC (default 3600)
 #   PYTHON           (default "python" -- override if interpreter w/ nemo_run is elsewhere)
-#   NGPUS            (default 192 -- must be a multiple of TP*PP*EP and PP*GN must divide it)
+#   NGPUS            (default 192 -- must be a multiple of TP*PP*EP and GN must divide it)
 #   GN               (default 4 -- GPUs per node, GB200 = 4)
-#   PP_SIZE          (default 3 -- pipeline_model_parallel_size, used to auto-derive
-#                     profiling_ranks = first/middle/last PP stage)
+#                    profiling_ranks is auto-derived as {0, NGPUS/2, NGPUS-1} (start/middle/last
+#                    world rank), so no PP knowledge is required in this launcher.
 
 set -euo pipefail
 
@@ -62,24 +62,24 @@ OUT_DIR=$(realpath "$OUT_DIR")
 MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 TS=$(date +%s)
 
-# --- Auto-derive profiling_ranks = first / middle / last PP stage ---
-# NGPUS = world_size, GN = GPUs per node, PP_SIZE = recipe pipeline_model_parallel_size.
-# We always profile the first rank of each PP stage, so each stage is represented:
-#   PP=3, NGPUS=192 → ranks 0, 64, 128
-#   PP=3, NGPUS=96  → ranks 0, 32, 64
-#   PP=2, NGPUS=192 → ranks 0, 96
-#   PP=1            → rank 0 only
+# --- Auto-derive profiling_ranks = start / middle / last world rank ---
+# Independent of TP/PP/EP — ranks within the same PP stage execute the same
+# compute graph, so "first rank of stage N" and "any rank of stage N" produce
+# the same forward-graph profile. World-rank spread happens to land in
+# different PP stages anyway at PP ≥ 3, while staying simpler and PP-config-agnostic.
+#   NGPUS=192 → ranks 0, 96, 191
+#   NGPUS=96  → ranks 0, 48, 95
+#   NGPUS=2   → ranks 0, 1     (dedup)
+#   NGPUS=1   → rank 0         (dedup)
 NGPUS="${NGPUS:-192}"
 GN="${GN:-4}"
-PP_SIZE="${PP_SIZE:-3}"
-RANKS_PER_PP=$((NGPUS / PP_SIZE))
-case "$PP_SIZE" in
+case "$NGPUS" in
     1) PROFILE_RANKS_CSV="0" ;;
-    2) PROFILE_RANKS_CSV="0,${RANKS_PER_PP}" ;;
-    *) PROFILE_RANKS_CSV="0,${RANKS_PER_PP},$((RANKS_PER_PP * (PP_SIZE - 1)))" ;;
+    2) PROFILE_RANKS_CSV="0,1" ;;
+    *) PROFILE_RANKS_CSV="0,$((NGPUS / 2)),$((NGPUS - 1))" ;;
 esac
 PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
-echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS}, PP=${PP_SIZE})"
+echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
 
 submit_run() {
     local MODE="$1"  # "det" | "nondet" | "det-bitwise"
