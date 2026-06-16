@@ -278,7 +278,6 @@ class TestAutoBridge:
         (``mtp_num_layers``).
         """
         hf_pretrained = create_mock_pretrained_causal_lm()
-        hf_pretrained.state = SimpleNamespace(source=source)
         # HF config carries layer count but does NOT set any MTP-disable field.
         hf_pretrained.config = SimpleNamespace(num_hidden_layers=47)
         model_instance = SimpleNamespace(config=SimpleNamespace(mtp_num_layers=mtp_num_layers))
@@ -290,6 +289,14 @@ class TestAutoBridge:
         fake_model_bridge.stream_weights_megatron_to_hf.return_value = iter([])
 
         with (
+            # ``state`` is a read-only property on PreTrainedBase, so patch it
+            # rather than assigning to the instance.
+            patch.object(
+                type(hf_pretrained),
+                "state",
+                new_callable=PropertyMock,
+                return_value=SimpleNamespace(source=source),
+            ),
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_bridge,
             patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
             patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
