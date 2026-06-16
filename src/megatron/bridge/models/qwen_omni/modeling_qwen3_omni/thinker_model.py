@@ -65,12 +65,23 @@ def _build_text_only_mrope_position_ids(input_ids: torch.Tensor) -> torch.Tensor
     return torch.stack([base, base, base], dim=0)
 
 
+_AUDIO_ENCODER_CHUNK_SIZE = 100
+_AUDIO_ENCODER_TOKENS_PER_FULL_CHUNK = 13
+
+
 def _get_qwen3_omni_audio_output_lengths(input_lengths: torch.LongTensor) -> torch.LongTensor:
     """Match HF Qwen3-Omni audio encoder forward output lengths."""
 
-    input_lengths_leave = input_lengths % 100
+    # HF Qwen3-Omni audio encoder handles full 100-frame chunks separately.
+    # Each full chunk contributes 13 output tokens; the remainder goes through
+    # two stride-2 convolutions followed by a final stride-2 pooling layer.
+    input_lengths_leave = input_lengths % _AUDIO_ENCODER_CHUNK_SIZE
     feat_lengths = (input_lengths_leave - 1) // 2 + 1
-    return ((feat_lengths - 1) // 2 + 1 - 1) // 2 + 1 + (input_lengths // 100) * 13
+    return (
+        ((feat_lengths - 1) // 2 + 1 - 1) // 2
+        + 1
+        + (input_lengths // _AUDIO_ENCODER_CHUNK_SIZE) * _AUDIO_ENCODER_TOKENS_PER_FULL_CHUNK
+    )
 
 
 def _configure_multimodal_attn_impl(config: object, attn_impl: str | None) -> None:
@@ -618,26 +629,19 @@ class Qwen3OmniThinkerModel(MegatronModule):
             position_ids = torch.nn.functional.pad(position_ids, (0, sp_pad_len), mode="replicate")
 
         if self.config.sequence_parallel or cp_size > 1:
-            if packed_seq_params is None:
-                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
-                    visual_pos_masks,
-                    deepstack_visual_embeds,
-                    tp_size=tp_size,
-                    tp_rank=tp_rank,
-                    cp_size=cp_size,
-                    cp_rank=cp_rank,
-                    sequence_parallel=self.config.sequence_parallel,
-                )
-            elif self.config.sequence_parallel:
-                visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
-                    visual_pos_masks,
-                    deepstack_visual_embeds,
-                    tp_size=tp_size,
-                    tp_rank=tp_rank,
-                    cp_size=1,
-                    cp_rank=0,
-                    sequence_parallel=self.config.sequence_parallel,
-                )
+            # Packed THD tensors are already CP-aware after preprocess_packed_seqs;
+            # only the SP split remains for deepstack embeddings.
+            split_cp_size = 1 if packed_seq_params is not None else cp_size
+            split_cp_rank = 0 if packed_seq_params is not None else cp_rank
+            visual_pos_masks, deepstack_visual_embeds = split_deepstack_embs(
+                visual_pos_masks,
+                deepstack_visual_embeds,
+                tp_size=tp_size,
+                tp_rank=tp_rank,
+                cp_size=split_cp_size,
+                cp_rank=split_cp_rank,
+                sequence_parallel=self.config.sequence_parallel,
+            )
 
         if packed_seq_params is not None and position_ids is not None:
             position_ids = (
@@ -651,16 +655,20 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 .contiguous()
             )
             attention_mask = None
-            self.language_model.rotary_pos_emb.is_thd_format = True
+
+        rotary_pos_emb = getattr(self.language_model, "rotary_pos_emb", None)
+        if rotary_pos_emb is not None:
+            rotary_pos_emb.is_thd_format = packed_seq_params is not None
+
+        if packed_seq_params is not None:
+            language_model_input_ids = lm_input_ids
+        elif combined_embeddings is not None:
+            language_model_input_ids = None
+        else:
+            language_model_input_ids = input_ids
 
         return self.language_model(
-            input_ids=(
-                lm_input_ids
-                if packed_seq_params is not None
-                else None
-                if combined_embeddings is not None
-                else input_ids
-            ),
+            input_ids=language_model_input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
             decoder_input=combined_embeddings,
