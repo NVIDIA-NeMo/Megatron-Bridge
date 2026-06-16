@@ -875,14 +875,24 @@ SHARE=/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare
 |---|---|
 | 24-node det nsys-rep (job 2103633) | `24n-baseline/raw/det/profile_810827_2103633_node0_rank0.nsys-rep` |
 | 24-node det sqlite | `24n-baseline/raw/det/profile_810827_2103633_node0_rank0.sqlite` |
+| 24-node det training log (job 2103633) | `24n-baseline/raw/det/log-*_2103633_0.out` |
 | 24-node nondet nsys-rep (job 2103635) | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.nsys-rep` |
 | 24-node nondet sqlite | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.sqlite` |
-| 24-node OUT_DIR (CSVs + leaderboard) | `24n-baseline/processed/` |
+| 24-node nondet training log (job 2103635) | `24n-baseline/raw/nondet/log-*_2103635_0.out` |
+| 24-node OUT_DIR (CSVs + leaderboard + submit/wdj/jobid logs) | `24n-baseline/processed/` |
 | 24-node bit-wise check log (job 2103637) | `24n-baseline/raw/det-bitwise/log-*_2103637_0.out` |
 | 48-node det nsys-rep (job 2132936) | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.nsys-rep` |
 | 48-node det sqlite | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.sqlite` |
+| 48-node det training log (job 2132936) | `48n-mismatch/raw/det/log-*_2132936_0.out` |
 | 48-node nondet nsys-rep (job 2132937) | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.nsys-rep` |
 | 48-node nondet sqlite | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.sqlite` |
-| 48-node OUT_DIR (CSVs + leaderboard + bitwise_check.txt) | `48n-mismatch/processed/` |
+| 48-node nondet training log (job 2132937) | `48n-mismatch/raw/nondet/log-*_2132937_0.out` |
+| 48-node OUT_DIR (CSVs + leaderboard + bitwise_check.txt + submit/wdj/jobid logs) | `48n-mismatch/processed/` |
 | 48-node bit-wise check log (job 2132938) | `48n-mismatch/raw/det-bitwise/log-*_2132938_0.out` |
 | Top-level layout + job-to-wandb mapping | `README.md` |
+
+Note: 24-node `processed/` does **not** contain a `bitwise_check.txt` because the
+06/12 run used the original 2-job script (no automatic bit-wise diff step) —
+the 24-node bit-exactness evidence is in §4.3's iter-by-iter table and the
+raw `det-bitwise/log-*_2103637_0.out` file. The 48-node `processed/` does have
+`bitwise_check.txt` because it was submitted by the current 3-job launcher.
