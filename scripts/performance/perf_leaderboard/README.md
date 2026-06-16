@@ -3,7 +3,7 @@
 A tiny harness for "what does turning on bit-exact determinism cost?" on the
 Nemotron 3 Ultra (550B-A55B) GB200 recipe.
 
-## Shared artifacts (world-readable)
+## Shared artifacts (NVIDIA internal cluster only)
 
 All nsys-rep / sqlite / CSV / leaderboard / training-log files for the
 24-node (bit-exact) and 48-node (bit-wise mismatch) runs are mirrored to:

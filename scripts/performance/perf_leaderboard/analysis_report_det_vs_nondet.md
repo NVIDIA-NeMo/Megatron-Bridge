@@ -864,7 +864,7 @@ In rough order of likelihood:
 
 ## Appendix: Profile Artifact Locations
 
-### Shared (world-readable, recommended for sharing)
+### Shared (NVIDIA internal cluster only — recommended for sharing)
 
 All nsys-rep / sqlite / training-log / CSV / leaderboard / bitwise-check
 files for both scales are mirrored to:
