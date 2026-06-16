@@ -540,12 +540,56 @@ def parse_cli_args():
     kubeflow_args.add_argument(
         "--csp",
         type=str,
-        choices=["aws", "gcp"],
+        choices=["aws", "gcp", "runai"],
         default=None,
-        help="Cloud provider of the Kubeflow cluster. Selects the CSP fabric plugin "
-        "(aws -> EKSEnvPlugin/EFA, gcp -> GKEEnvPlugin/gIB). Omit on Slurm or when no "
-        "CSP-specific fabric config is needed.",
+        help="Cloud / platform provider of the Kubeflow cluster. Selects the CSP fabric plugin "
+        "(aws -> EKSEnvPlugin/EFA, gcp -> GKEEnvPlugin/gIB, runai -> RunAIPlugin/RoCE). "
+        "Omit on Slurm or when no CSP-specific fabric config is needed.",
         required=False,
+    )
+    kubeflow_args.add_argument(
+        "--runai_extended_resources_json",
+        type=str,
+        help="JSON-encoded dict of Run:ai extended resource requests per pod "
+        '(e.g. \'{"nvidia.com/r0-p0": "1", "nvidia.com/r1-p0": "1"}\').',
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--runai_annotations_json",
+        type=str,
+        help="JSON-encoded dict of pod annotations for Run:ai networking "
+        '(e.g. \'{"k8s.v1.cni.cncf.io/networks": "default/r0-p0,..."}\').',
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--runai_pvc_claim_name",
+        type=str,
+        help="PVC claim name for the shared workspace on Run:ai clusters.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--runai_pvc_mount_path",
+        type=str,
+        help="Container mount path for the Run:ai workspace PVC. Defaults to '/nemo-workspace'.",
+        required=False,
+        default="/nemo-workspace",
+    )
+    kubeflow_args.add_argument(
+        "--runai_large_shm",
+        type=bool_arg,
+        help="Mount a memory-backed /dev/shm for NCCL shared-memory collectives. Defaults to true.",
+        required=False,
+        default=True,
+    )
+    kubeflow_args.add_argument(
+        "--runai_env_json",
+        type=str,
+        help="JSON-encoded dict of additional environment variables for the Run:ai training container.",
+        required=False,
+        default=None,
     )
     kubeflow_args.add_argument(
         "--kubeflow_workdir_pvc",

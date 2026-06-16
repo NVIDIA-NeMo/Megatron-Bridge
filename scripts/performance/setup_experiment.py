@@ -54,9 +54,9 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
 try:
-    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
 except (ImportError, ModuleNotFoundError):
-    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
 
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -88,7 +88,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     """
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
+        return flag in ("--additional_slurm_params", "--csp") or flag.startswith(("--kubeflow_", "--runai_"))
 
     filtered_args = []
     skip_next = False
@@ -459,6 +459,12 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
+    runai_extended_resources_json: Optional[str] = None,
+    runai_annotations_json: Optional[str] = None,
+    runai_pvc_claim_name: Optional[str] = None,
+    runai_pvc_mount_path: str = "/nemo-workspace",
+    runai_large_shm: bool = True,
+    runai_env_json: Optional[str] = None,
     deterministic: bool = False,
     config_variant: str = "v1",
     gres: Optional[str] = None,
@@ -643,12 +649,24 @@ def main(
     plugins = []
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
-    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
+    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB),
+    # runai -> RunAIPlugin (RoCE/SR-IOV). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
     if csp == "aws":
         plugins.append(EKSEnvPlugin())
     elif csp == "gcp":
         plugins.append(GKEEnvPlugin())
+    elif csp == "runai":
+        plugins.append(
+            RunAIPlugin(
+                extended_resources=json.loads(runai_extended_resources_json) if runai_extended_resources_json else {},
+                annotations=json.loads(runai_annotations_json) if runai_annotations_json else {},
+                large_shm=runai_large_shm,
+                pvc_claim_name=runai_pvc_claim_name,
+                pvc_mount_path=runai_pvc_mount_path,
+                env_vars=json.loads(runai_env_json) if runai_env_json else {},
+            )
+        )
 
     if not use_recipes:
         plugins.append(
