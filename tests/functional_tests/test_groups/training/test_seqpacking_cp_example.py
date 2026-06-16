@@ -46,11 +46,11 @@ def _make_functional_test_model_small(model: object) -> None:
     # not the full Llama 3.2 1B model shape.
     for name, value in {
         "num_layers": 2,
-        "hidden_size": 128,
-        "ffn_hidden_size": 512,
+        "hidden_size": 256,
+        "ffn_hidden_size": 1024,
         "num_attention_heads": 4,
         "num_query_groups": 4,
-        "kv_channels": 32,
+        "kv_channels": 64,
         "seq_length": 256,
     }.items():
         _set_existing_attr(model, name, value)
