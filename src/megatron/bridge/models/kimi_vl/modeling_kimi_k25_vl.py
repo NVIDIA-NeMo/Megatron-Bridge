@@ -412,7 +412,8 @@ class KimiK25VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
             input_ids=None,

@@ -193,7 +193,8 @@ class Gemma4VLModel(MegatronModule):
 
         # SP scatter
         if self.config.sequence_parallel and inputs_embeds is not None:
-            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
             input_ids=None,
