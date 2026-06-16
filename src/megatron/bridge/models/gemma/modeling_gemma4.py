@@ -1331,13 +1331,16 @@ class Gemma4SelfAttention(SelfAttention):
         is_global = not _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
         suffix = "_global" if is_global else "_sliding"
         if prefix.endswith("."):
-            modified_prefix = prefix[:-1] + suffix + "."
+            storage_prefix = prefix[:-1] + suffix + "."
         else:
-            modified_prefix = prefix + suffix
+            storage_prefix = prefix + suffix
 
-        state_dict = super().sharded_state_dict(
-            prefix=modified_prefix, sharded_offsets=sharded_offsets, metadata=metadata
-        )
+        state_dict = super().sharded_state_dict(prefix=prefix, sharded_offsets=sharded_offsets, metadata=metadata)
+
+        def _storage_key(key: str) -> str:
+            if key.startswith(prefix):
+                return storage_prefix + key[len(prefix) :]
+            return key.replace(".self_attention.", f".self_attention{suffix}.", 1)
 
         pattern = self.config.interleaved_attn_pattern
         total_layers = self.config.num_layers
@@ -1350,24 +1353,28 @@ class Gemma4SelfAttention(SelfAttention):
 
         def _remap(t):
             if isinstance(t, _ST):
+                new_key = _storage_key(t.key)
                 if t.prepend_axis_num <= 0 or t.global_shape[0] != total_layers:
-                    return t
+                    return _dataclasses.replace(t, key=new_key)
                 new_global_shape = (type_total,) + t.global_shape[1:]
                 new_global_offset = (type_rank,) + t.global_offset[1:]
                 new_frags = (type_total,) + t.axis_fragmentations[1:] if t.axis_fragmentations is not None else None
                 return _dataclasses.replace(
                     t,
+                    key=new_key,
                     global_shape=new_global_shape,
                     global_offset=new_global_offset,
                     axis_fragmentations=new_frags,
                 )
             if isinstance(t, _SO):
+                new_key = _storage_key(t.key)
                 if not t.global_shape or t.global_shape[0] != total_layers:
-                    return t
+                    return _dataclasses.replace(t, key=new_key)
                 new_global_shape = (type_total,) + t.global_shape[1:]
                 new_global_offset = (type_rank,) + t.global_offset[1:]
                 return _dataclasses.replace(
                     t,
+                    key=new_key,
                     global_shape=new_global_shape,
                     global_offset=new_global_offset,
                 )

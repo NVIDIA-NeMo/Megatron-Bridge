@@ -766,6 +766,36 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     assert task.linear_out_task.param_weight.shape == torch.Size([2, 2])
 
 
+def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monkeypatch):
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+
+    adapters_info = [
+        (
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj.adapter",
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj",
+            False,
+            False,
+            False,
+            4,
+            8,
+            0,
+            0,
+        )
+    ]
+
+    monkeypatch.setattr(bridge, "_megatron_global_adapters_info_all_pp_ranks", lambda *_: adapters_info)
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: MegatronMappingRegistry())
+
+    tasks_by_base = bridge.build_adapter_conversion_tasks(
+        [Mock()],
+        exclude_adapter_base_prefixes=("mtp.layers",),
+    )
+
+    assert tasks_by_base == {}
+
+
 def test_materialize_adapter_weights(monkeypatch):
     bridge = DummyBridge()
 
@@ -1022,7 +1052,7 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(
         bridge,
@@ -1087,7 +1117,7 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.self_attn.linear_qkv": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.self_attn.linear_qkv": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1166,7 +1196,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1236,7 +1266,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1_minimax_w13(monkeypatch
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1317,7 +1347,7 @@ def test_stream_adapter_weights_megatron_to_hf_packed_expert_stacks(monkeypatch)
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1377,7 +1407,7 @@ def test_stream_adapter_weights_megatron_to_hf_grouped_expert_exports_per_expert
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1457,7 +1487,7 @@ def test_stream_adapter_weights_megatron_to_hf_shared_outer_fc1_gate_up(monkeypa
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(bridge, "_get_base_hf_param_names_for_adapter", fake_base_names)
@@ -1539,7 +1569,7 @@ def test_stream_adapter_weights_megatron_to_hf_shared_outer_fc2_down(monkeypatch
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(bridge, "_get_base_hf_param_names_for_adapter", fake_base_names)

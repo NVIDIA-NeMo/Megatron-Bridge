@@ -60,6 +60,13 @@ On top of the bridge, NeMo Megatron Bridge provides a performant and scalable Py
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) training stack that adopts a PyTorch-native training loop to provide greater flexibility and customizability for developers.
 
 ![image](Repo-Mbridge.png)
+### Broad functional support matrix
+
+||Pretrain|SFT|SFT LoRA|RL|RL LoRA|Notes|
+|-|-|-|-|-|-|-|
+|[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)|Y|Y|Y|N|N|Megatron based *pretraining* library|
+|[AutoModel](https://github.com/NVIDIA-NeMo/Automodel)|Y|Y|Y|N|N| PyT DTensor based *pretraining* library|
+|[NeMo RL](https://github.com/NVIDIA-NeMo/RL)|N|Y|Y|Y|Y| *Post-training* library with both Megatron and Automodel backends|
 
 ## 🔧 Installation
 

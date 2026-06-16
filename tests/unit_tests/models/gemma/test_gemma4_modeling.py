@@ -552,8 +552,11 @@ class TestGemma4SelfAttention:
     def test_sharded_state_dict_remaps_global_layer_offsets(self, monkeypatch):
         from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
 
+        prefix = "layers.3.self_attention."
+        tensor_key = f"{prefix}linear_qkv.weight"
+        object_key = f"{prefix}linear_qkv._extra_state"
         tensor = ShardedTensor(
-            key="weight",
+            key=tensor_key,
             data=torch.zeros(2),
             dtype=torch.float32,
             local_shape=(2,),
@@ -572,13 +575,13 @@ class TestGemma4SelfAttention:
             axis_fragmentations=(4, 1),
             prepend_axis_num=0,
         )
-        obj = ShardedObject(key="obj", data={"x": 1}, global_shape=(4, 2), global_offset=(3, 0))
+        obj = ShardedObject(key=object_key, data={"x": 1}, global_shape=(4, 2), global_offset=(3, 0))
         calls = []
 
         def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
             del self
             calls.append((prefix, sharded_offsets, metadata))
-            return {"tensor": tensor, "object": obj, "nested": {"untouched": untouched}, "plain": object()}
+            return {tensor_key: tensor, object_key: obj, "nested": {"untouched": untouched}, "plain": object()}
 
         monkeypatch.setattr(
             "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.sharded_state_dict",
@@ -586,21 +589,30 @@ class TestGemma4SelfAttention:
         )
         attn = self._make_attention(layer_number=4)
 
-        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix="layers.3.self_attention.")
+        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix=prefix)
 
-        assert calls[0][0] == "layers.3.self_attention_global."
-        assert out["tensor"].global_shape == (2, 2)
-        assert out["tensor"].global_offset == (1, 0)
-        assert out["tensor"].axis_fragmentations == (2, 1)
-        assert out["object"].global_shape == (2, 2)
-        assert out["object"].global_offset == (1, 0)
-        assert out["nested"]["untouched"] is untouched
+        assert tensor_key in out
+        assert object_key in out
+        assert calls[0][0] == prefix
+        assert out[tensor_key].key == "layers.3.self_attention_global.linear_qkv.weight"
+        assert out[tensor_key].global_shape == (2, 2)
+        assert out[tensor_key].global_offset == (1, 0)
+        assert out[tensor_key].axis_fragmentations == (2, 1)
+        assert out[object_key].key == "layers.3.self_attention_global.linear_qkv._extra_state"
+        assert out[object_key].global_shape == (2, 2)
+        assert out[object_key].global_offset == (1, 0)
+        assert out["nested"]["untouched"].key == "untouched"
+        assert out["nested"]["untouched"].global_shape == (4, 2)
+        assert out["nested"]["untouched"].global_offset == (3, 0)
 
     def test_sharded_state_dict_remaps_sliding_layer_offsets_without_dot_prefix(self, monkeypatch):
         from megatron.core.dist_checkpointing.mapping import ShardedObject, ShardedTensor
 
+        prefix = "self_attention"
+        tensor_key = f"{prefix}.weight"
+        object_key = f"{prefix}.obj"
         tensor = ShardedTensor(
-            key="weight",
+            key=tensor_key,
             data=torch.zeros(2),
             dtype=torch.float32,
             local_shape=(2,),
@@ -609,13 +621,13 @@ class TestGemma4SelfAttention:
             axis_fragmentations=None,
             prepend_axis_num=1,
         )
-        obj = ShardedObject(key="obj", data={"x": 1}, global_shape=(4,), global_offset=(2,))
+        obj = ShardedObject(key=object_key, data={"x": 1}, global_shape=(4,), global_offset=(2,))
         calls = []
 
         def fake_sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
             del self
             calls.append((prefix, sharded_offsets, metadata))
-            return {"tensor": tensor, "object": obj}
+            return {tensor_key: tensor, object_key: obj}
 
         monkeypatch.setattr(
             "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.sharded_state_dict",
@@ -623,14 +635,18 @@ class TestGemma4SelfAttention:
         )
         attn = self._make_attention(layer_number=3)
 
-        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix="self_attention")
+        out = Gemma4SelfAttention.sharded_state_dict(attn, prefix=prefix)
 
-        assert calls[0][0] == "self_attention_sliding"
-        assert out["tensor"].global_shape == (2, 2)
-        assert out["tensor"].global_offset == (1, 0)
-        assert out["tensor"].axis_fragmentations is None
-        assert out["object"].global_shape == (2,)
-        assert out["object"].global_offset == (1,)
+        assert calls[0][0] == prefix
+        assert tensor_key in out
+        assert object_key in out
+        assert out[tensor_key].key == "self_attention_sliding.weight"
+        assert out[tensor_key].global_shape == (2, 2)
+        assert out[tensor_key].global_offset == (1, 0)
+        assert out[tensor_key].axis_fragmentations is None
+        assert out[object_key].key == "self_attention_sliding.obj"
+        assert out[object_key].global_shape == (2,)
+        assert out[object_key].global_offset == (1,)
 
     def test_get_query_key_value_tensors_returns_short_super_result(self, monkeypatch):
         expected = (torch.ones(1), torch.zeros(1))
