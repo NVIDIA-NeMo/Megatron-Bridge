@@ -35,6 +35,10 @@
 #   NSYS_START/STOP  (default 15/18)
 #   WAIT_TIMEOUT_SEC (default 3600)
 #   PYTHON           (default "python" -- override if interpreter w/ nemo_run is elsewhere)
+#   NGPUS            (default 192 -- must be a multiple of TP*PP*EP and PP*GN must divide it)
+#   GN               (default 4 -- GPUs per node, GB200 = 4)
+#   PP_SIZE          (default 3 -- pipeline_model_parallel_size, used to auto-derive
+#                     profiling_ranks = first/middle/last PP stage)
 
 set -euo pipefail
 
@@ -57,6 +61,25 @@ mkdir -p "$OUT_DIR"
 OUT_DIR=$(realpath "$OUT_DIR")
 MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 TS=$(date +%s)
+
+# --- Auto-derive profiling_ranks = first / middle / last PP stage ---
+# NGPUS = world_size, GN = GPUs per node, PP_SIZE = recipe pipeline_model_parallel_size.
+# We always profile the first rank of each PP stage, so each stage is represented:
+#   PP=3, NGPUS=192 → ranks 0, 64, 128
+#   PP=3, NGPUS=96  → ranks 0, 32, 64
+#   PP=2, NGPUS=192 → ranks 0, 96
+#   PP=1            → rank 0 only
+NGPUS="${NGPUS:-192}"
+GN="${GN:-4}"
+PP_SIZE="${PP_SIZE:-3}"
+RANKS_PER_PP=$((NGPUS / PP_SIZE))
+case "$PP_SIZE" in
+    1) PROFILE_RANKS_CSV="0" ;;
+    2) PROFILE_RANKS_CSV="0,${RANKS_PER_PP}" ;;
+    *) PROFILE_RANKS_CSV="0,${RANKS_PER_PP},$((RANKS_PER_PP * (PP_SIZE - 1)))" ;;
+esac
+PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
+echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS}, PP=${PP_SIZE})"
 
 submit_run() {
     local MODE="$1"  # "det" | "nondet" | "det-bitwise"
@@ -94,7 +117,7 @@ submit_run() {
             --enable_nsys
             --profiling_start_step "$NSYS_START"
             --profiling_stop_step "$NSYS_STOP"
-            --profiling_ranks 0
+            --profiling_ranks "$PROFILE_RANKS_CSV"
             --nsys_trace cuda-sw,nvtx
             --export_nsys_sqlite
         )
@@ -102,7 +125,7 @@ submit_run() {
             profiling.use_nsys_profiler=true
             profiling.profile_step_start="$NSYS_START"
             profiling.profile_step_end="$NSYS_STOP"
-            profiling.profile_ranks=[0]
+            "profiling.profile_ranks=$PROFILE_RANKS_HYDRA"
             profiling.nvtx_ranges=true
             profiling.record_shapes=false
         )
@@ -118,7 +141,7 @@ submit_run() {
         --gpu gb200 \
         --time_limit 00:30:00 \
         -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
-        -ng 192 -gn 4 \
+        -ng "$NGPUS" -gn "$GN" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
         -hf "$HF_TOKEN" \
@@ -183,24 +206,43 @@ while :; do
     sleep 30
 done
 
-# Convert .nsys-rep / .sqlite to NVTX nvtx_sum CSV.
+# Convert .nsys-rep / .sqlite to NVTX nvtx_sum CSV — one CSV per profiled rank.
+# Output: nsys-${MODE}-rank<N>.csv for every captured rank, plus a stable
+# symlink nsys-${MODE}.csv → nsys-${MODE}-rank0.csv so print_nsys_leaderboard.py
+# keeps working unchanged.
 generate_csv() {
     local MODE="$1"
     local WDJ
     WDJ=$(cat "$OUT_DIR/wdj-${MODE}.txt")
-    local REP SQLITE
-    REP=$(find "$HOME/.nemo_run/experiments/$WDJ" -name "profile_*.nsys-rep" 2>/dev/null | head -1)
-    SQLITE=$(find "$HOME/.nemo_run/experiments/$WDJ" -name "profile_*.sqlite" 2>/dev/null | head -1)
-    local CSV="$OUT_DIR/nsys-${MODE}.csv"
-    if command -v nsys >/dev/null && [ -n "$REP" ]; then
-        nsys stats --force-export=true --report nvtx_sum --format csv "$REP" > "$CSV"
-    elif [ -n "$SQLITE" ]; then
-        "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/extract_nsys_csv.py" "$SQLITE" "$CSV"
-    else
-        echo "ERROR: no nsys-rep or sqlite found for $MODE under $HOME/.nemo_run/experiments/$WDJ" >&2
+    local exp_dir="$HOME/.nemo_run/experiments/$WDJ"
+    local count=0
+    while IFS= read -r SQLITE; do
+        [ -z "$SQLITE" ] && continue
+        local RANK
+        RANK=$(echo "$SQLITE" | grep -oE 'rank[0-9]+' | head -1)
+        [ -z "$RANK" ] && RANK="rankunknown"
+        local CSV="$OUT_DIR/nsys-${MODE}-${RANK}.csv"
+        local REP="${SQLITE%.sqlite}.nsys-rep"
+        if command -v nsys >/dev/null && [ -f "$REP" ]; then
+            nsys stats --force-export=true --report nvtx_sum --format csv "$REP" > "$CSV"
+        else
+            "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/extract_nsys_csv.py" "$SQLITE" "$CSV"
+        fi
+        echo "wrote $CSV  ($(wc -l < "$CSV") rows)"
+        count=$((count + 1))
+    done < <(find "$exp_dir" -name "profile_*.sqlite" 2>/dev/null | sort)
+    if [ "$count" -eq 0 ]; then
+        echo "ERROR: no sqlite found for $MODE under $exp_dir" >&2
         exit 1
     fi
-    echo "wrote $CSV  ($(wc -l < "$CSV") rows)"
+    # Compat: leaderboard expects nsys-${MODE}.csv → point it at rank 0 (first PP stage).
+    if [ -f "$OUT_DIR/nsys-${MODE}-rank0.csv" ]; then
+        ln -sf "nsys-${MODE}-rank0.csv" "$OUT_DIR/nsys-${MODE}.csv"
+    else
+        local fallback
+        fallback=$(ls "$OUT_DIR"/nsys-${MODE}-rank*.csv 2>/dev/null | head -1)
+        [ -n "$fallback" ] && ln -sf "$(basename "$fallback")" "$OUT_DIR/nsys-${MODE}.csv"
+    fi
 }
 
 generate_csv det
