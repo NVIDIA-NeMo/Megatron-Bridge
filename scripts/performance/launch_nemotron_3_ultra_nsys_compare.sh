@@ -73,6 +73,15 @@ TS=$(date +%s)
 #   NGPUS=1   → rank 0         (dedup)
 NGPUS="${NGPUS:-192}"
 GN="${GN:-4}"
+# Validate + normalize NGPUS (catches non-numeric, leading-zero / octal traps, NGPUS<1).
+[[ "$NGPUS" =~ ^[0-9]+$ ]] || { echo "ERROR: NGPUS must be a non-negative integer, got '$NGPUS'" >&2; exit 2; }
+NGPUS=$((10#$NGPUS))
+[[ "$NGPUS" -ge 1 ]] || { echo "ERROR: NGPUS must be >=1, got '$NGPUS'" >&2; exit 2; }
+# Previous commit (1111af36) briefly supported PP_SIZE; this commit dropped it.
+# Warn loudly so anyone relying on the short-lived knob notices.
+if [ -n "${PP_SIZE:-}" ]; then
+    echo "WARNING: PP_SIZE is no longer used; profiling_ranks is now derived from NGPUS alone." >&2
+fi
 case "$NGPUS" in
     1) PROFILE_RANKS_CSV="0" ;;
     2) PROFILE_RANKS_CSV="0,1" ;;
@@ -210,29 +219,42 @@ done
 # Output: nsys-${MODE}-rank<N>.csv for every captured rank, plus a stable
 # symlink nsys-${MODE}.csv → nsys-${MODE}-rank0.csv so print_nsys_leaderboard.py
 # keeps working unchanged.
+#
+# Iterates over unique profile *stems* (strip .nsys-rep / .sqlite extensions),
+# so the loop also covers runs that emitted only one of the two artifacts.
+# Per-stem preference: .nsys-rep + `nsys` binary, else .sqlite via the Python helper.
 generate_csv() {
     local MODE="$1"
     local WDJ
     WDJ=$(cat "$OUT_DIR/wdj-${MODE}.txt")
     local exp_dir="$HOME/.nemo_run/experiments/$WDJ"
     local count=0
-    while IFS= read -r SQLITE; do
-        [ -z "$SQLITE" ] && continue
-        local RANK
-        RANK=$(echo "$SQLITE" | grep -oE 'rank[0-9]+' | head -1)
+    while IFS= read -r STEM; do
+        [ -z "$STEM" ] && continue
+        local REP="${STEM}.nsys-rep"
+        local SQLITE="${STEM}.sqlite"
+        # Extract rank from the file BASENAME (not the full path) so a parent
+        # directory named e.g. "rank-test" can't poison the rank label.
+        local BASE RANK
+        BASE="${STEM##*/}"
+        RANK=$(echo "$BASE" | grep -oE 'rank[0-9]+' | head -1)
         [ -z "$RANK" ] && RANK="rankunknown"
         local CSV="$OUT_DIR/nsys-${MODE}-${RANK}.csv"
-        local REP="${SQLITE%.sqlite}.nsys-rep"
         if command -v nsys >/dev/null && [ -f "$REP" ]; then
             nsys stats --force-export=true --report nvtx_sum --format csv "$REP" > "$CSV"
-        else
+        elif [ -f "$SQLITE" ]; then
             "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/extract_nsys_csv.py" "$SQLITE" "$CSV"
+        else
+            echo "WARNING: stem $STEM has neither .nsys-rep nor .sqlite, skipping" >&2
+            continue
         fi
         echo "wrote $CSV  ($(wc -l < "$CSV") rows)"
         count=$((count + 1))
-    done < <(find "$exp_dir" -name "profile_*.sqlite" 2>/dev/null | sort)
+    done < <(find "$exp_dir" \( -name "profile_*.nsys-rep" -o -name "profile_*.sqlite" \) 2>/dev/null \
+               | sed -E 's/\.(nsys-rep|sqlite)$//' \
+               | sort -uV)
     if [ "$count" -eq 0 ]; then
-        echo "ERROR: no sqlite found for $MODE under $exp_dir" >&2
+        echo "ERROR: no profile artifacts found for $MODE under $exp_dir" >&2
         exit 1
     fi
     # Compat: leaderboard expects nsys-${MODE}.csv → point it at rank 0 (first PP stage).
@@ -240,7 +262,7 @@ generate_csv() {
         ln -sf "nsys-${MODE}-rank0.csv" "$OUT_DIR/nsys-${MODE}.csv"
     else
         local fallback
-        fallback=$(ls "$OUT_DIR"/nsys-${MODE}-rank*.csv 2>/dev/null | head -1)
+        fallback=$(ls "$OUT_DIR"/nsys-${MODE}-rank*.csv 2>/dev/null | sort -V | head -1)
         [ -n "$fallback" ] && ln -sf "$(basename "$fallback")" "$OUT_DIR/nsys-${MODE}.csv"
     fi
 }
