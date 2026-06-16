@@ -88,6 +88,7 @@ class NemotronOmniTaskBatch(Batch):
     cu_seqlens: Optional[torch.Tensor] = None
     cu_seqlens_unpadded: Optional[torch.Tensor] = None
     cu_seqlens_argmin: Optional[torch.Tensor] = None
+    cu_seqlens_unpadded_argmin: Optional[torch.Tensor] = None
     max_seqlen: Optional[torch.Tensor] = None
 
 
@@ -494,6 +495,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         cu_seqlens_t: Optional[torch.Tensor] = None
         cu_seqlens_unpadded_t: Optional[torch.Tensor] = None
         cu_seqlens_argmin_t: Optional[torch.Tensor] = None
+        cu_seqlens_unpadded_argmin_t: Optional[torch.Tensor] = None
         max_seqlen_t: Optional[torch.Tensor] = None
 
         if self.pack_sequences:
@@ -525,6 +527,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             # pointing at the first sentinel. Here we emit an unpadded cu_seqlens and
             # set argmin = len(cu_seqlens) so the slice is a no-op (keeps every entry).
             cu_seqlens_argmin_t = torch.tensor(len(cu_seqlens), dtype=torch.int32)
+            cu_seqlens_unpadded_argmin_t = torch.tensor(len(cu_seqlens), dtype=torch.int32)
             max_seqlen_t = torch.tensor(max(lengths), dtype=torch.int32)
         else:
             max_seq_len = max(s.input_ids.size(0) for s in samples)
@@ -629,6 +632,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             cu_seqlens=cu_seqlens_t,
             cu_seqlens_unpadded=cu_seqlens_unpadded_t,
             cu_seqlens_argmin=cu_seqlens_argmin_t,
+            cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin_t,
             max_seqlen=max_seqlen_t,
         )
 
@@ -655,6 +659,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             "cu_seqlens": batch.cu_seqlens,
             "cu_seqlens_unpadded": batch.cu_seqlens_unpadded,
             "cu_seqlens_argmin": batch.cu_seqlens_argmin,
+            "cu_seqlens_unpadded_argmin": batch.cu_seqlens_unpadded_argmin,
             "max_seqlen": batch.max_seqlen,
         }
 
