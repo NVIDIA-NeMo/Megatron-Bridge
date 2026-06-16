@@ -145,9 +145,11 @@ class _SuperInitRecorder:
 
     def __init__(self):
         self.captured_config = None
+        self.captured_kwargs = None
 
-    def __call__(self, instance, config, **_):
+    def __call__(self, instance, config, **kwargs):
         self.captured_config = config
+        self.captured_kwargs = kwargs
 
 
 class TestStep35DecoderLayerIsSliding:
@@ -166,6 +168,31 @@ class TestStep35DecoderLayerIsSliding:
         sliding_setting=_UNSET,
         offset_return=0,
         pp_rank=0,
+    ):
+        config, recorder = self._build_with_recorder(
+            layer_number=layer_number,
+            is_mtp_layer=is_mtp_layer,
+            add_layer_offset=add_layer_offset,
+            layer_types=layer_types,
+            attention_other_setting=attention_other_setting,
+            sliding_setting=sliding_setting,
+            offset_return=offset_return,
+            pp_rank=pp_rank,
+        )
+        return config, recorder.captured_config
+
+    def _build_with_recorder(
+        self,
+        *,
+        layer_number,
+        is_mtp_layer=False,
+        add_layer_offset=True,
+        layer_types=None,
+        attention_other_setting=True,
+        sliding_setting=_UNSET,
+        offset_return=0,
+        pp_rank=0,
+        name=_UNSET,
     ):
         layer_types = (
             layer_types
@@ -190,17 +217,20 @@ class TestStep35DecoderLayerIsSliding:
                 return_value=offset_return,
             ),
         ):
-            Step35DecoderLayer(
-                config=config,
-                submodules=None,
-                layer_number=layer_number,
-                pg_collection=SimpleNamespace(pp="dummy"),
-                vp_stage=None,
-                is_mtp_layer=is_mtp_layer,
-                add_layer_offset=add_layer_offset,
-            )
+            layer_kwargs = {
+                "config": config,
+                "submodules": None,
+                "layer_number": layer_number,
+                "pg_collection": SimpleNamespace(pp="dummy"),
+                "vp_stage": None,
+                "is_mtp_layer": is_mtp_layer,
+                "add_layer_offset": add_layer_offset,
+            }
+            if name is not _UNSET:
+                layer_kwargs["name"] = name
+            Step35DecoderLayer(**layer_kwargs)
 
-        return config, recorder.captured_config
+        return config, recorder
 
     def test_full_attention_keeps_original_config(self):
         original, captured = self._build(layer_number=1)  # layer_idx=0 -> full_attention
@@ -231,6 +261,18 @@ class TestStep35DecoderLayerIsSliding:
             pp_rank=2,
         )
         assert captured is original  # full attention
+
+    def test_mtp_layer_forwards_name_to_transformer_layer(self):
+        """MCore's MTP builder passes ``name`` into the nested transformer layer."""
+        name = "decoder.layers.0.mtp_model_layer"
+        original, recorder = self._build_with_recorder(
+            layer_number=1,
+            is_mtp_layer=True,
+            name=name,
+        )
+
+        assert recorder.captured_config is original
+        assert recorder.captured_kwargs["name"] == name
 
     def test_pp_offset_applied_for_main_decoder(self):
         """With ``add_layer_offset=True`` the resolved index is
