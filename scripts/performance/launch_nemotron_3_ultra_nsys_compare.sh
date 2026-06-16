@@ -10,10 +10,16 @@
 # run_nsys_breakdown.sh but adapted for multi-node Slurm + nemo_run.
 #
 # The positional Hydra overrides below MIRROR ``launch_nemotron_3_ultra_deterministic.sh``
-# (the bit-exact-proven recipe — jobs 2074557 / 2074641 / 2074651 / 2076499 / 2076503,
-# reproduced 2102770 / 2103151). Only differences:
+# (bit-exact-proven at 24 nodes / 96 GPUs — jobs 2074557 / 2074641 / 2074651 /
+# 2076499 / 2076503, reproduced 2102770 / 2103151 / 2103633 / 2103637).
+# This script now runs at 48 nodes / 192 GPUs — TP·PP·CP=3 and EP·ETP=8 both
+# still divide 192 (DP_attn=64, DP_expert=24, microbatches/step=48), so the
+# recipe is valid at the new scale, but the bit-wise check below is a FRESH
+# determinism validation at 48 nodes, not a reproduction of the 24-node proof.
+# Only differences vs launch_nemotron_3_ultra_deterministic.sh:
 #   1. determinism toggle on the 4 env vars + 2 model flags (per $MODE)
-#   2. nsys profiling flags added
+#   2. nsys profiling flags added (for det / nondet runs only)
+#   3. job size: 96 GPUs → 192 GPUs (24 → 48 nodes)
 #
 # Output layout (OUT_DIR defaults to ./nsys-compare):
 #   nsys-det.csv      -- NVTX nvtx_sum CSV for det run (rank 0)
@@ -112,7 +118,7 @@ submit_run() {
         --gpu gb200 \
         --time_limit 00:30:00 \
         -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
-        -ng 96 -gn 4 \
+        -ng 192 -gn 4 \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
         -hf "$HF_TOKEN" \
