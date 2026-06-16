@@ -54,12 +54,12 @@ def resolve_global_flops_seqlen_stats(
     over-counting, and reduces them to global totals across the data-parallel
     group.
 
-    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` and
-    vision-patch counts differ across DP ranks, so a single SUM all-reduce over
-    ``dp_group`` is used to get the exact global sum. When no process group is
-    available (single process, ``dp_group is None``, or ``torch.distributed`` not
-    initialized) the values are extrapolated as ``local * data_parallel_size`` —
-    exact only when every DP rank sees an identical sequence-length distribution.
+    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
+    differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
+    to get the exact global sum. Dense BSHD training never requests this reduce:
+    every DP rank contributes the same fixed sequence statistics, so
+    extrapolating ``local * data_parallel_size`` is exact and avoids an
+    unnecessary collective.
 
     Args:
         state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
@@ -90,7 +90,8 @@ def resolve_global_flops_seqlen_stats(
         local_vision_patches //= vp_size
 
     use_all_reduce = (
-        dp_group is not None
+        bool(getattr(state, "_flops_requires_global_reduce", False))
+        and dp_group is not None
         and data_parallel_size > 1
         and torch.distributed.is_available()
         and torch.distributed.is_initialized()
@@ -223,6 +224,7 @@ def accumulate_flops_metadata(
     # (which would force a data-dependent-size sync) is needed.
     sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
     if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+        setattr(state, "_flops_requires_global_reduce", True)
         _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
     else:
         # No cu_seqlens (dense / non-packed) or a degenerate pack with no real

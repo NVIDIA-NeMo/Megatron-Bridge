@@ -445,6 +445,7 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_requires_global_reduce = False
 
         (
             loss_dict,
@@ -552,11 +553,10 @@ def train(
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
         # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
-        # step's FLOPS into the running total. The per-microbatch sub-sequence sums are
-        # accumulated on-device (sync-free) by accumulate_flops_metadata; here we do one
-        # exact SUM all-reduce over the pure DP group (CP ranks share cu_seqlens, so
-        # reducing over DP×CP would double-count) plus one host sync — once per step, at
-        # the existing end-of-step sync boundary alongside the loss all-reduce.
+        # step's FLOPS into the running total. Dense BSHD batches extrapolate exact
+        # fixed-length stats from the local DP rank; THD batches request one exact SUM
+        # all-reduce over the pure DP group because packed sub-sequence lengths can
+        # differ by rank.
         seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
             global_state,
             data_parallel_size=dp_size,

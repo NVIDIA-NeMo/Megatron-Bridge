@@ -2016,6 +2016,7 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens)
         assert state._flops_seqlen_sum == 2 * 512
         assert state._flops_seqlen_sq_sum == 2 * 512**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
 
     def test_mock_state_accumulators_start_at_zero(self):
         state = MagicMock()
@@ -2034,6 +2035,7 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sum == 1 * 4096
         assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+        assert state._flops_requires_global_reduce
 
     def test_thd_padded_cu_seqlens_with_argmin(self):
         # Offline packed SFT pads cu_seqlens for CUDA graphs; the real
@@ -2088,6 +2090,7 @@ class TestAccumulateFlopsMetadata:
         tokens = torch.zeros(1, 64)
         accumulate_flops_metadata(state, tokens, num_vision_patches=32 + 8)
         assert state._flops_vision_patches == 40
+        assert not getattr(state, "_flops_requires_global_reduce", False)
 
     def test_num_vision_patches_tensor_accumulates_across_microbatches(self):
         # A scalar device tensor (no host sync) accumulates correctly.
@@ -2112,6 +2115,7 @@ class TestAccumulateFlopsMetadata:
         cu_seqlens = torch.tensor([0])
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sq_sum == 1 * 256**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
 
     def test_zero_length_subseq_contributes_zero(self):
         # A repeated cu_seqlens value yields a zero-length sub-seq. The Σᵢ sᵢ²
@@ -2224,3 +2228,47 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
         assert seqlen_sum == 40
         assert seqlen_sq_sum == 400
+
+    def test_dense_stats_extrapolate_without_all_reduce_when_distributed_initialized(self, monkeypatch):
+        # Dense BSHD stats are identical across DP ranks, so extrapolation is exact.
+        # The helper should not create a tiny NCCL collective unless THD metadata
+        # explicitly requested exact global reduction.
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        all_reduce = MagicMock()
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+
+        all_reduce.assert_not_called()
+        assert seqlen_sum == 40
+        assert seqlen_sq_sum == 400
+
+    def test_thd_stats_use_all_reduce_when_distributed_initialized(self, monkeypatch):
+        # THD packed samples can differ across DP ranks, so a state marked by
+        # accumulate_flops_metadata must take the exact all-reduce path.
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            stats.mul_(4)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+
+        all_reduce.assert_called_once()
+        assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
