@@ -17,6 +17,7 @@ import os
 
 import pytest
 import torch
+from datasets import Dataset, DatasetDict
 
 from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
@@ -45,14 +46,28 @@ def _make_functional_test_model_small(model: object) -> None:
     # not the full Llama 3.2 1B model shape.
     for name, value in {
         "num_layers": 2,
-        "hidden_size": 256,
-        "ffn_hidden_size": 1024,
+        "hidden_size": 128,
+        "ffn_hidden_size": 512,
         "num_attention_heads": 4,
         "num_query_groups": 4,
-        "kv_channels": 64,
+        "kv_channels": 32,
         "seq_length": 256,
     }.items():
         _set_existing_attr(model, name, value)
+
+
+def _tiny_squad_dataset() -> DatasetDict:
+    examples = [
+        {
+            "id": str(i),
+            "title": "bridge",
+            "context": "Megatron Bridge converts checkpoints and trains models with packed sequence support.",
+            "question": "What supports packed sequences?",
+            "answers": {"text": ["Megatron Bridge"], "answer_start": [0]},
+        }
+        for i in range(16)
+    ]
+    return DatasetDict({"train": Dataset.from_list(examples)})
 
 
 class TestPeftSftExample:
@@ -71,12 +86,14 @@ class TestPeftSftExample:
         pretrain_tensorboard_dir = os.path.join(shared_dir, "pretrain_tensorboard")
         sft_checkpoint_dir = os.path.join(shared_dir, "sft_checkpoints")
         sft_tensorboard_dir = os.path.join(shared_dir, "sft_tensorboard")
+        dataset_dir = os.path.join(shared_dir, "dataset")
 
         if torch.distributed.get_rank() == 0:
             os.makedirs(pretrain_checkpoint_dir, exist_ok=True)
             os.makedirs(pretrain_tensorboard_dir, exist_ok=True)
             os.makedirs(sft_checkpoint_dir, exist_ok=True)
             os.makedirs(sft_tensorboard_dir, exist_ok=True)
+            os.makedirs(dataset_dir, exist_ok=True)
         torch.distributed.barrier()
 
         pretrain_cfg = llama32_1b_pretrain_config()
@@ -112,14 +129,6 @@ class TestPeftSftExample:
         cfg.model.pipeline_model_parallel_size = 1
         cfg.model.context_parallel_size = 2
 
-        # Keep the L0 test focused on packed SFT + CP plumbing, not full 1B memory coverage.
-        cfg.model.num_layers = 2
-        cfg.model.hidden_size = 128
-        cfg.model.ffn_hidden_size = 512
-        cfg.model.num_attention_heads = 4
-        cfg.model.num_query_groups = 4
-        cfg.model.kv_channels = 32
-
         # Small, fast run
         cfg.train.train_iters = 2
         cfg.train.global_batch_size = 2
@@ -133,6 +142,8 @@ class TestPeftSftExample:
         # Use a small packed SQuAD dataset to exercise THD/context-parallel slicing
         cfg.dataset = HFDatasetConfig(
             dataset_name="rajpurkar/squad",
+            dataset_dict=_tiny_squad_dataset(),
+            dataset_root=dataset_dir,
             process_example_fn=process_squad_example,
             seq_length=256,
             dataloader_type="batch",
@@ -145,6 +156,7 @@ class TestPeftSftExample:
             packed_sequence_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
+                num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
             rewrite=False,
