@@ -82,6 +82,8 @@ def _get_softcap_score_mod(softcap: float):
     """
 
     def _score_mod(score, b, h, q_idx, kv_idx):
+        if softcap == 0.0:
+            return score
         return softcap * torch.tanh(score / softcap)
 
     _score_mod.__qualname__ = f"softcap_score_mod_{softcap}"
