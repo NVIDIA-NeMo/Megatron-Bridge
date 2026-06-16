@@ -204,6 +204,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         self,
         hf_pretrained,
         megatron_model,
+        weight_dtype=None,
     ) -> List:
         """Override to synthesize virtual weight keys from INT4 quantized triplets.
 
@@ -227,7 +228,7 @@ class KimiK25VLBridge(MegatronModelBridge):
 
         hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
         try:
-            return super().build_conversion_tasks(hf_pretrained, megatron_model)
+            return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 

@@ -441,7 +441,7 @@ class TestDeepSeekV4HardwareDefaults:
 
 
 class TestDeepSeekV4ExportWeightDtype:
-    def test_weight_dtype_set_emits_plain_weights(self):
+    def test_weight_dtype_set_skips_requantization(self, monkeypatch):
         from dataclasses import replace
         from unittest.mock import MagicMock
 
@@ -451,18 +451,30 @@ class TestDeepSeekV4ExportWeightDtype:
         bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
         task = WeightConversionTask(param_name="w", global_param_name="w", mapping=MagicMock())
         task = replace(task, weight_dtype=torch.bfloat16)  # frozen: must be settable via replace
+
+        def fail_requantize(*args, **kwargs):
+            raise AssertionError("requantize must be skipped when weight_dtype is set")
+
+        monkeypatch.setattr(quantization_utils, "requantize_hf_weight_scale_pairs", fail_requantize)
         weight = torch.randn(4, 4, dtype=torch.float32)
-        converted = {
-            "model.layers.0.mlp.weight": weight,
-            "model.layers.0.mlp.bias_idx": torch.ones(2, dtype=torch.int32),
-        }
+        converted = {"model.layers.0.mlp.weight": weight}
         hf_state = {"model.layers.0.mlp.weight": weight, "model.layers.0.mlp.scale": torch.ones(1)}
 
         out = bridge.maybe_modify_converted_hf_weight(task, converted, hf_state)
 
-        assert set(out) == set(converted)
+        assert out is converted  # returned unchanged; generic path casts the dtype
+
+    def test_generic_export_cast_applies_plain_dtype(self):
+        from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+        weights = {
+            "model.layers.0.mlp.weight": torch.randn(4, 4, dtype=torch.float32),
+            "model.layers.0.mlp.bias_idx": torch.ones(2, dtype=torch.int32),
+        }
+        out = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16)
         assert out["model.layers.0.mlp.weight"].dtype == torch.bfloat16
-        assert out["model.layers.0.mlp.bias_idx"].dtype == torch.int32
+        assert out["model.layers.0.mlp.bias_idx"].dtype == torch.int32  # int preserved
+        assert MegatronModelBridge._cast_export_weight_dtype(weights, None) is weights
 
     def test_no_weight_dtype_requantizes_by_default(self, monkeypatch):
         from unittest.mock import MagicMock

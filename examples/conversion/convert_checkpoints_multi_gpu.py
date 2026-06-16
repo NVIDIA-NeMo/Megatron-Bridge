@@ -329,9 +329,10 @@ def main():
         choices=sorted(DTYPE_MAP),
         default=None,
         help=(
-            "Emit plain weights in this dtype instead of re-creating the source repo's "
-            "quantized weight/scale layout (currently honored by the DeepSeek-V4 bridge). "
-            "Use for SFT products that need exact train/inference numerical parity."
+            "Emit plain weights cast to this dtype. For bridges that recreate a quantized "
+            "source layout on export (e.g. DeepSeek-V4) this also skips the requantization, "
+            "so no *.scale companions are written. Use for SFT products that need exact "
+            "train/inference numerical parity."
         ),
     )
     args = parser.parse_args()

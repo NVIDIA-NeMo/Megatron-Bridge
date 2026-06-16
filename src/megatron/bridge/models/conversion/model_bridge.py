@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -120,8 +120,8 @@ class WeightConversionTask(Generic[MappingT]):
             sub-module that owns the parameter (required for loads).
         param_weight (Optional[torch.Tensor]): The actual parameter tensor that will
             receive the converted weight (required for loads).
-        weight_dtype (Optional[torch.dtype]): When set, bridges that re-create a quantized
-            source layout on export emit plain weights in this dtype instead.
+        weight_dtype (Optional[torch.dtype]): Export only. Cast float weights to this
+            dtype; bridges that requantize on export skip it (no scale companions).
 
     """
 
@@ -899,6 +899,18 @@ class MegatronModelBridge(
         """
         return converted_weights_dict
 
+    @staticmethod
+    def _cast_export_weight_dtype(
+        weights: Dict[str, torch.Tensor], weight_dtype: Optional[torch.dtype]
+    ) -> Dict[str, torch.Tensor]:
+        """Cast float export weights to ``weight_dtype`` (no-op if None; ints untouched)."""
+        if weight_dtype is None:
+            return weights
+        return {
+            name: (weight.to(weight_dtype) if weight.is_floating_point() else weight)
+            for name, weight in weights.items()
+        }
+
     def _accumulate_grouped_export(
         self,
         task: "WeightConversionTask",
@@ -1254,10 +1266,16 @@ class MegatronModelBridge(
         unwrapped_model_list = unwrap_model(megatron_model)
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
-        if weight_dtype is not None:
-            # WeightConversionTask is frozen — rebuild the tasks with the dtype set
-            conversion_tasks = [replace(task, weight_dtype=weight_dtype) for task in conversion_tasks]
+            conversion_tasks = self.build_conversion_tasks(
+                hf_pretrained, unwrapped_model_list, weight_dtype=weight_dtype
+            )
+        elif weight_dtype is not None:
+            # Prebuilt tasks bypass build_conversion_tasks (where weight_dtype is recorded);
+            # fail loudly instead of silently dropping it (this also rejects the fp8-tasks combo).
+            raise ValueError(
+                "weight_dtype is not supported with caller-supplied conversion_tasks; "
+                "omit conversion_tasks so the dtype can be recorded at task-build time."
+            )
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
@@ -1312,6 +1330,7 @@ class MegatronModelBridge(
                     task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
                 )
                 if merged_result is not None:
+                    merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
                         yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
                 continue
@@ -1335,6 +1354,8 @@ class MegatronModelBridge(
                     converted_weights_dict,
                     adapter_weights,
                 )
+
+            converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
             for hf_name, tensor in converted_weights_dict.items():
                 final_tensor = tensor.cpu() if cpu else tensor
@@ -1554,8 +1575,12 @@ class MegatronModelBridge(
         self,
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> List[None | WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
+
+        Args:
+            weight_dtype: Export dtype recorded on each task. Overrides must forward it.
 
         The algorithm walks over every parameter of every destination model,
         asks the :class:`MegatronMappingRegistry` whether it has a mapping for that
@@ -1639,6 +1664,7 @@ class MegatronModelBridge(
                     megatron_module=local_module,
                     param_weight=local_weights,
                     mapping=mapping,
+                    weight_dtype=weight_dtype,
                 )
 
         # Fill the remaining ones for pp communications
@@ -1659,6 +1685,7 @@ class MegatronModelBridge(
                     megatron_module=None,
                     param_weight=None,
                     mapping=mapping,
+                    weight_dtype=weight_dtype,
                 )
 
         return tasks
@@ -1997,7 +2024,6 @@ def stream_weights_megatron_to_hf(
     show_progress: bool = True,
     conversion_tasks: Optional[List[WeightConversionTask]] = None,
     merge_adapter_weights: bool = True,
-    weight_dtype: Optional[torch.dtype] = None,
 ) -> Iterable[HFWeightTuple]:
     """Bridge Megatron model state to HuggingFace format."""
     ...
