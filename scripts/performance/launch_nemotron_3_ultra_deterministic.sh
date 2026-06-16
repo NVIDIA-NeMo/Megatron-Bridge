@@ -38,6 +38,20 @@ set -euo pipefail
 WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"
 WANDB_JOB_NAME="${WANDB_JOB_NAME:-nemotron-3-ultra-deterministic-bf16}"
 
+# --- Cluster-aware Slurm GPU request -----------------------------------------
+# Some partitions (e.g. a generic ``batch`` partition) don't auto-allocate GPUs
+# and reject jobs that don't request them; others (gb200 partitions) do. Auto-
+# detect by Slurm ClusterName; override with GRES=... (GRES="" forces no --gres).
+if [ -z "${GRES+x}" ]; then
+  _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}')
+  case "$_cluster" in
+    oci-hsg-cs-001*) GRES="gpu:4" ;;  # NVL72 batch partition needs an explicit GPU request
+    *)               GRES="" ;;        # default: partition auto-allocates GPUs
+  esac
+fi
+GRES_ARG=()
+[ -n "$GRES" ] && GRES_ARG=(--gres "$GRES")
+
 # Mount the repo on top of the container's /opt/Megatron-Bridge so local edits
 # (e.g. submodule pin) take effect inside the run.
 MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
@@ -49,6 +63,7 @@ python scripts/performance/setup_experiment.py \
   --time_limit 00:30:00 \
   -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
   -ng 96 -gn 4 \
+  "${GRES_ARG[@]}" \
   --container_image "${CONTAINER_IMAGE}" \
   --custom_mounts "${MOUNTS}" \
   -hf "${HF_TOKEN}" \
