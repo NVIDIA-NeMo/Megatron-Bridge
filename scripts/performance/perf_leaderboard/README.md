@@ -1,7 +1,23 @@
 # Nemotron 3 Ultra deterministic perf leaderboard
 
 A tiny harness for "what does turning on bit-exact determinism cost?" on the
-Nemotron 3 Ultra (550B-A55B) GB200 / 96-GPU recipe.
+Nemotron 3 Ultra (550B-A55B) GB200 recipe.
+
+## Shared artifacts (world-readable)
+
+All nsys-rep / sqlite / CSV / leaderboard / training-log files for the
+24-node (bit-exact) and 48-node (bit-wise mismatch) runs are mirrored to:
+
+```
+/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare/
+├── README.md         ← layout + headline summary
+├── 24n-baseline/{processed,raw/{det,nondet,det-bitwise}}/
+└── 48n-mismatch/{processed,raw/{det,nondet,det-bitwise}}/
+```
+
+Total ≈ 1.2 GB. Use this path when sharing results outside the
+`coreai_dlalgo_llm` group — the source `/lustre/fsw/coreai_dlalgo_llm/zhiyul/`
+parent has `--S---` perms and is unreadable to non-group users.
 
 ## Files
 

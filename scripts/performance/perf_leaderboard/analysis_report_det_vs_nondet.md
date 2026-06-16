@@ -864,12 +864,35 @@ In rough order of likelihood:
 
 ## Appendix: Profile Artifact Locations
 
+### Shared (world-readable, recommended for sharing)
+
+All nsys-rep / sqlite / training-log / CSV / leaderboard / bitwise-check
+files for both scales are mirrored to:
+
+```
+/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare/
+├── README.md                                  ← layout + headline
+├── 24n-baseline/processed/{leaderboard.txt, nsys-det.csv, nsys-nondet.csv, submit-*.log, ...}
+├── 24n-baseline/raw/{det,nondet}/profile_*.{nsys-rep,sqlite} + training logs
+├── 24n-baseline/raw/det-bitwise/log-*_2103637_0.out       ← bit-wise check
+├── 48n-mismatch/processed/{leaderboard.txt, bitwise_check.txt, nsys-det.csv, nsys-nondet.csv, ...}
+├── 48n-mismatch/raw/{det,nondet}/profile_*.{nsys-rep,sqlite} + training logs
+└── 48n-mismatch/raw/det-bitwise/log-*_2132938_0.out
+```
+
+Total ≈ 1.2 GB. Use this path when sharing results outside the
+`coreai_dlalgo_llm` group — the source `/lustre/fsw/coreai_dlalgo_llm/zhiyul/`
+parent has `--S---` perms and is unreadable to non-group users.
+
+### Original locations (group-private, group members only)
+
 | | path |
 |---|---|
-| Det nsys-rep | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781255131/.../profile_810827_2103633_node0_rank0.nsys-rep` |
-| Det sqlite | …same dir, `.sqlite` extension |
-| Non-det nsys-rep | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781255131/.../profile_2270167_2103635_node0_rank0.nsys-rep` |
-| Non-det sqlite | …same dir, `.sqlite` extension |
+| Det nsys-rep (24-node) | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781255131/.../profile_810827_2103633_node0_rank0.nsys-rep` |
+| Det sqlite (24-node) | …same dir, `.sqlite` extension |
+| Non-det nsys-rep (24-node) | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781255131/.../profile_2270167_2103635_node0_rank0.nsys-rep` |
+| Non-det sqlite (24-node) | …same dir, `.sqlite` extension |
 | OUT_DIR (CSVs + leaderboard.txt) — 24-node baseline | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/` |
 | Bit-wise check (det run #2) — 24-node baseline | job 2103637, `~/.nemo_run/experiments/nemotron-3-ultra-det-no-nsys-bitwise-check-v2/...` |
 | OUT_DIR + bit-wise check — 48-node scale-up (§12) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/` |
+| Raw nsys + logs — 48-node scale-up | `~/.nemo_run/experiments/nemotron-3-ultra-{det,nondet}-nsys15-18-1781575817/...` (jobs 2132936 / 2132937 / 2132938) |
