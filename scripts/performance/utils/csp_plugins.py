@@ -152,7 +152,10 @@ class RunAIPlugin(Plugin):
             executor.extra_resource_limits = {**executor.extra_resource_limits, **self.extended_resources}
 
         if self.annotations:
-            executor.pod_annotations = {**executor.pod_annotations, **self.annotations}
+            if hasattr(executor, "pod_annotations"):
+                executor.pod_annotations = {**executor.pod_annotations, **self.annotations}
+            else:
+                executor.annotations = {**executor.annotations, **self.annotations}
 
         if self.large_shm and not any(v.get("name") == "dshm" for v in executor.volumes):
             executor.volumes.append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
