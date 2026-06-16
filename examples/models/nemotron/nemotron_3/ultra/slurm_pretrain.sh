@@ -54,18 +54,24 @@ DCLM_PATTERN=${DCLM_PATTERN:-dclm_01_*_text_document.bin}
 DCLM_CACHE="${WORKSPACE}/data_cache/dclm"
 TRAIN_ITERS=${TRAIN_ITERS:-1000}
 SAVE_INTERVAL=${SAVE_INTERVAL:-250}
-TP=${TP:-2}
+TP=${TP:-4}
 PP=${PP:-12}
-EP=${EP:-32}
+EP=${EP:-16}
 ETP=${ETP:-1}
 CP=${CP:-1}
 SP=${SP:-True}
-RECOMPUTE_MODULES=${RECOMPUTE_MODULES:-"[moe,layernorm,core_attn,moe_act,mlp,shared_experts]"}
+RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-full}
+RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-uniform}
+if [ -z "${RECOMPUTE_MODULES+x}" ]; then
+    RECOMPUTE_MODULES=""
+fi
+RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-1}
+RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_full_uniform1}
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
-SAVE_DIR="${WORKSPACE}/results/${MODEL_NAME}_dclm_pretrain_tp${TP}_pp${PP}_ep${EP}_selective_${SLURM_JOB_ID}"
+SAVE_DIR="${WORKSPACE}/results/${MODEL_NAME}_dclm_pretrain_tp${TP}_pp${PP}_ep${EP}_${RECOMPUTE_TAG}_${SLURM_JOB_ID}"
 WANDB_ENTITY=${WANDB_ENTITY:-nvidia-nemo-fw-public}
 WANDB_PROJECT=${WANDB_PROJECT:-megatron-bridge-nemotron-ultra}
-WANDB_EXP_NAME="${MODEL_NAME}_dclm_pretrain_tp${TP}_pp${PP}_ep${EP}_selective_${SLURM_JOB_ID}"
+WANDB_EXP_NAME="${MODEL_NAME}_dclm_pretrain_tp${TP}_pp${PP}_ep${EP}_${RECOMPUTE_TAG}_${SLURM_JOB_ID}"
 WANDB_MODE=${WANDB_MODE:-disabled}
 
 [ -n "${HF_HOME:-}" ] && export HF_HOME
@@ -78,6 +84,7 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1800000}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}ignore:The AccumulateGrad node:UserWarning,ignore:The pad token id in the tokenizer collides:UserWarning"
 
 mkdir -p logs
 
@@ -97,7 +104,8 @@ if [ "$WANDB_MODE" = "online" ] && [ -z "${WANDB_API_KEY:-}" ]; then
 fi
 
 export DCLM_DATA_DIR DCLM_PATTERN DCLM_CACHE EXTRA_OVERRIDES HF_MODEL_PATH RECIPE_NAME SAVE_DIR SEQ_LENGTH
-export TRAIN_ITERS SAVE_INTERVAL TP PP EP ETP CP SP RECOMPUTE_MODULES GPUS_PER_NODE
+export TRAIN_ITERS SAVE_INTERVAL TP PP EP ETP CP SP RECOMPUTE_GRANULARITY RECOMPUTE_METHOD RECOMPUTE_MODULES
+export RECOMPUTE_NUM_LAYERS GPUS_PER_NODE
 export WANDB_ENTITY WANDB_PROJECT WANDB_EXP_NAME WORKDIR WORKSPACE
 
 CMD='
@@ -118,6 +126,17 @@ BLEND_PATHS="${BLEND_PATHS%,}"
 if [ -z "$BLEND_PATHS" ]; then
     echo "ERROR: no DCLM shards matching ${DCLM_DATA_DIR}/${DCLM_PATTERN}"
     exit 4
+fi
+
+OPTIONAL_OVERRIDES=()
+if [ -n "$RECOMPUTE_METHOD" ]; then
+    OPTIONAL_OVERRIDES+=(model.recompute_method="$RECOMPUTE_METHOD")
+fi
+if [ -n "$RECOMPUTE_MODULES" ]; then
+    OPTIONAL_OVERRIDES+=(model.recompute_modules="$RECOMPUTE_MODULES")
+fi
+if [ -n "$RECOMPUTE_NUM_LAYERS" ]; then
+    OPTIONAL_OVERRIDES+=(model.recompute_num_layers="$RECOMPUTE_NUM_LAYERS")
 fi
 
 uv run --no-sync python scripts/training/run_recipe.py \
@@ -146,8 +165,8 @@ uv run --no-sync python scripts/training/run_recipe.py \
     model.context_parallel_size="$CP" \
     model.seq_length="$SEQ_LENGTH" \
     dataset.sequence_length="$SEQ_LENGTH" \
-    model.recompute_granularity=selective \
-    model.recompute_modules=${RECOMPUTE_MODULES} \
+    model.recompute_granularity="$RECOMPUTE_GRANULARITY" \
+    "${OPTIONAL_OVERRIDES[@]}" \
     dist.distributed_timeout_minutes=90 \
     "dataset.blend=[[${BLEND_PATHS}],null]" \
     dataset.split=\"9999,8,2\" \
@@ -170,7 +189,7 @@ echo "Recipe: ${RECIPE_NAME}"
 echo "HF model: ${HF_MODEL_PATH}"
 echo "DCLM data: ${DCLM_DATA_DIR}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
-echo "Recompute: selective ${RECOMPUTE_MODULES}"
+echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"

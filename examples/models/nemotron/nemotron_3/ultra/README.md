@@ -45,8 +45,8 @@ environment variables to the GB200 values in this table.
 | --- | --- | --- |
 | Checkpoint import | 1 node with [conversion.sh](conversion.sh), CPU import path | 6 nodes with [slurm_conversion.sh](slurm_conversion.sh), `TP=1 PP=6 EP=4` |
 | Base inference | 4 nodes, `TP=1 PP=4 EP=8`, `KV_CACHE_BUFFER_SIZE_GB=4` | 3 nodes, `TP=1 PP=3 EP=4` |
-| DCLM pretraining | 48 nodes, `TP=2 PP=12 EP=32` script default; validate on your DCLM mount before long runs | 24 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act+mlp+shared_experts` |
-| OpenMath SFT | 48 nodes, `TP=2 PP=12 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act` | 48 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act` |
+| DCLM pretraining | 48 nodes, `TP=4 PP=12 EP=16`, full uniform recompute with `RECOMPUTE_GRANULARITY=full RECOMPUTE_METHOD=uniform RECOMPUTE_NUM_LAYERS=1 RECOMPUTE_MODULES=""` | 24 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act+mlp+shared_experts` |
+| OpenMath SFT | 48 nodes, `TP=2 PP=12 EP=16`, full uniform recompute with `RECOMPUTE_GRANULARITY=full RECOMPUTE_METHOD=uniform RECOMPUTE_NUM_LAYERS=1 RECOMPUTE_MODULES=""` | 48 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act` |
 | OpenMath PEFT | 4 nodes, `TP=2 PP=4 EP=8`, selective recompute on `moe+layernorm+core_attn+moe_act+mlp+shared_experts` | 4 nodes, `TP=2 PP=1 EP=16`, selective recompute on `moe+layernorm+core_attn+moe_act` |
 
 These are bring-up and convergence starting points, not universal optima.
@@ -111,8 +111,8 @@ Leave it unset to load from the Hugging Face checkpoint path.
 ## DCLM Pretraining
 
 Use [slurm_pretrain.sh](slurm_pretrain.sh) for DCLM pretraining with
-`TP=2 PP=12 EP=32` on 8xH100 nodes. On 4xGB200 nodes, use 24 nodes with
-`TP=2 PP=3 EP=32`.
+`TP=4 PP=12 EP=16` and full uniform recompute on 8xH100 nodes. On
+4xGB200 nodes, use 24 nodes with `TP=2 PP=3 EP=32`.
 
 ```bash
 sbatch slurm_pretrain.sh
@@ -158,9 +158,10 @@ Current OpenMath starting points are:
 
 - PEFT: 4 nodes, `TP=2 PP=4 EP=8`, selective recompute on
   `moe+layernorm+core_attn+moe_act+mlp+shared_experts`.
-- Full SFT: 48 nodes, `TP=2 PP=12 EP=32`, selective recompute on
-  `moe+layernorm+core_attn+moe_act`. This is the current H100 starting point
-  for 4096-token packed OpenMath SFT.
+- Full SFT: 48 nodes, `TP=2 PP=12 EP=16`, full uniform recompute with
+  `RECOMPUTE_GRANULARITY=full RECOMPUTE_METHOD=uniform
+  RECOMPUTE_NUM_LAYERS=1 RECOMPUTE_MODULES=""`. This is the current H100
+  starting point for 4096-token packed OpenMath SFT.
 
 For 4xGB200 nodes:
 

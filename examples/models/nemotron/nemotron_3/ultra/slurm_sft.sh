@@ -63,15 +63,19 @@ LOG_INTERVAL=1
 
 TP=${TP:-2}
 PP=${PP:-12}
-EP=${EP:-32}
+EP=${EP:-16}
 ETP=${ETP:-1}
 CP=${CP:-1}
 SP=${SP:-True}
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
 
-RECOMPUTE_GRANULARITY=selective
-RECOMPUTE_MODULES="[moe,layernorm,core_attn,moe_act]"
-RECOMPUTE_TAG=recompute_selective
+RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-full}
+RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-uniform}
+if [ -z "${RECOMPUTE_MODULES+x}" ]; then
+    RECOMPUTE_MODULES=""
+fi
+RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS:-1}
+RECOMPUTE_TAG=${RECOMPUTE_TAG:-recompute_full_uniform1}
 
 WANDB_ENTITY=${WANDB_ENTITY:-nvidia-nemo-fw-public}
 WANDB_PROJECT=${WANDB_PROJECT:-megatron-bridge-nemotron-ultra}
@@ -79,6 +83,7 @@ WANDB_MODE=${WANDB_MODE:-disabled}
 
 CONTAINER_IMAGE=${CONTAINER_IMAGE:-}
 CONTAINER_MOUNTS=${CONTAINER_MOUNTS:-}
+EXTRA_OVERRIDES=${EXTRA_OVERRIDES:-}
 
 # ==============================================================================
 # Environment Setup
@@ -94,6 +99,7 @@ export NCCL_DEBUG=${NCCL_DEBUG:-WARN}
 export NCCL_TIMEOUT=${NCCL_TIMEOUT:-1800000}
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}ignore:The AccumulateGrad node:UserWarning"
 
 # ==============================================================================
 # Job Execution
@@ -141,8 +147,18 @@ CLI_OVERRIDES="\
     model.context_parallel_size=${CP} \
     model.seq_length=${SEQ_LENGTH} \
     model.recompute_granularity=${RECOMPUTE_GRANULARITY} \
-    model.recompute_modules=${RECOMPUTE_MODULES} \
     dist.distributed_timeout_minutes=90"
+
+if [ -n "$RECOMPUTE_METHOD" ]; then
+    CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_method=${RECOMPUTE_METHOD}"
+fi
+if [ -n "$RECOMPUTE_MODULES" ]; then
+    CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_modules=${RECOMPUTE_MODULES}"
+fi
+if [ -n "$RECOMPUTE_NUM_LAYERS" ]; then
+    CLI_OVERRIDES="${CLI_OVERRIDES} model.recompute_num_layers=${RECOMPUTE_NUM_LAYERS}"
+fi
+CLI_OVERRIDES="${CLI_OVERRIDES} ${EXTRA_OVERRIDES}"
 
 CMD="cd ${WORKDIR} && mkdir -p ${WORKSPACE}/results ${SAVE_DIR}/wandb ${SAVE_DIR}/tb_logs && \
 export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/Megatron-LM:\${PYTHONPATH:-} && \
@@ -163,7 +179,7 @@ echo "Nodes: ${SLURM_JOB_NUM_NODES}"
 echo "GPUs/node: ${GPUS_PER_NODE}"
 echo "Recipe: ${RECIPE_NAME}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
-echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_MODULES}"
+echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"
 echo "======================================"

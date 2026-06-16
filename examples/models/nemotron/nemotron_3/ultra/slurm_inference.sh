@@ -82,28 +82,16 @@ fi
 
 mkdir -p logs
 
-if [ -z "${COORDINATOR_HOST:-}" ]; then
-    if command -v scontrol >/dev/null 2>&1 && [ -n "${SLURM_NODELIST:-}" ]; then
-        COORDINATOR_HOST=$(scontrol show hostnames "$SLURM_NODELIST" | head -n 1)
-    else
-        COORDINATOR_HOST=$(hostname)
-    fi
-fi
-if [ -z "$COORDINATOR_HOST" ]; then
-    echo "ERROR: unable to resolve COORDINATOR_HOST from SLURM_NODELIST=${SLURM_NODELIST:-<unset>}."
-    exit 3
-fi
-
 export HF_MODEL_PATH MEGATRON_MODEL_PATH PROMPT MAX_NEW_TOKENS KV_CACHE_BUFFER_SIZE_GB INFERENCE_MOE_TOKEN_DISPATCHER_TYPE
 export TP PP EP ETP GPUS_PER_NODE WORKDIR
-export COORDINATOR_HOST
+[ -n "${COORDINATOR_HOST:-}" ] && export COORDINATOR_HOST
 
 echo "Nemotron 3 Ultra inference"
 echo "Job ${SLURM_JOB_ID} nodes=${SLURM_JOB_NUM_NODES} GPUs/node=${GPUS_PER_NODE} TP=${TP} PP=${PP} EP=${EP} ETP=${ETP}"
 echo "HF_MODEL_PATH=${HF_MODEL_PATH}"
 echo "MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-<load HF weights directly>}"
 echo "KV_CACHE_BUFFER_SIZE_GB=${KV_CACHE_BUFFER_SIZE_GB}"
-echo "COORDINATOR_HOST=${COORDINATOR_HOST}"
+echo "COORDINATOR_HOST=${COORDINATOR_HOST:-<auto local IP>}"
 
 SRUN_CMD=(srun --mpi=pmix --no-kill --container-image="${CONTAINER_IMAGE}" --no-container-mount-home)
 if [ -n "$CONTAINER_MOUNTS" ]; then
@@ -124,6 +112,17 @@ if [ -n "${MEGATRON_MODEL_PATH:-}" ]; then
     MEGATRON_MODEL_ARGS=(--megatron_model_path "$MEGATRON_MODEL_PATH")
 fi
 
+COORDINATOR_ARGS=()
+if [ -z "${COORDINATOR_HOST:-}" ]; then
+    COORDINATOR_HOST=$(python3 - <<'"'"'PY'"'"'
+import socket
+
+print(socket.gethostbyname(socket.gethostname()))
+PY
+)
+fi
+COORDINATOR_ARGS=(--coordinator-host "$COORDINATOR_HOST")
+
 uv run --no-sync python scripts/inference/text_generation.py \
     --hf_model_path "$HF_MODEL_PATH" \
     "${MEGATRON_MODEL_ARGS[@]}" \
@@ -132,7 +131,7 @@ uv run --no-sync python scripts/inference/text_generation.py \
     --kv_cache_buffer_size_gb "$KV_CACHE_BUFFER_SIZE_GB" \
     --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
     --use-coordinator \
-    --coordinator-host "$COORDINATOR_HOST" \
+    "${COORDINATOR_ARGS[@]}" \
     --inference-moe-token-dispatcher-type "$INFERENCE_MOE_TOKEN_DISPATCHER_TYPE" \
     --distributed-timeout-minutes 90
 '
