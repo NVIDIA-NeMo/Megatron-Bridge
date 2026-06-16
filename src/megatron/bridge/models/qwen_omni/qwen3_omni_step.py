@@ -285,6 +285,7 @@ def forward_step(
             attention_mask,
             position_ids,
             pg_collection,
+            # Keep packed THD lengths TE-friendly even when the recipe toggles FP8 later.
             use_fp8_padding=True,
             force_to_seq_length=_parallel_size(pg_collection, "pp") > 1 or _parallel_size(pg_collection, "ep") > 1,
             seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
