@@ -543,7 +543,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
                     if visual_pos_masks is not None:
                         visual_pos_masks = torch.nn.functional.pad(visual_pos_masks, (0, sp_pad_len), value=False)
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                    combined_embeddings, group=self.pg_collection.tp
+                )
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None
