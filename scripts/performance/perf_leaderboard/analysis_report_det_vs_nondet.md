@@ -740,22 +740,22 @@ kernels..." block has been rewritten to reflect this.
 
 ## 12. Scale-up to 48 Nodes — Observations
 
-**Headline (direct answer, updated 2026-06-16 with the 2134194 rerun):**
+**Headline (updated 2026-06-16 after 7 det runs at 48n):**
 
-- **At 24 nodes / 96 GPUs**: bit-exact across 8 separate allocations including
-  both nsys-profiled and non-profiled runs (§4.3).
-- **At 48 nodes / 192 GPUs**, two observations from the runs we've executed:
-  - Two **det + no-nsys** runs on independent allocations (2132938 and 2134194)
-    match to the last digit through iter 40 and differ by the smallest possible
-    BF16 step (about 1·10⁻⁵, a single change in the last printed digit) at iter
-    50.
-  - A **det + nsys** run (2132936) and a **det + no-nsys** run (2132938)
-    disagree starting at iter 1 and the gap grows iter-over-iter.
+- **At 24 nodes / 96 GPUs** (§4.3): bit-exact across 8 separate allocations
+  including both nsys-profiled and non-profiled runs.
+- **At 48 nodes / 192 GPUs**, the iter-by-iter `lm loss` of 7 deterministic
+  runs across separate allocations gives:
+  - 5 runs that match each other bit-for-bit at every sampled iter 1–50.
+  - 1 run (`a7c0wjgn` / 2134194) that matches the 5 at every earlier
+    sampled iter but differs in the last printed digit at iter 50
+    (6.824705E-02 vs 6.824717E-02, ~1·10⁻⁵).
+  - 1 outlier (`ev765dek` / 2132936) that diverges starting at iter 1 and
+    the gap grows iter-over-iter.
 
-We are not yet attributing a root cause for either 48-node observation; see
-§12.5 for the follow-up tests that would let us. The earlier framing of this
-section ("48-node is not bit-wise deterministic") conflated the two effects
-that turned out to have very different magnitudes.
+We are not attributing a root cause yet for either non-matching observation;
+both may be transient hardware/network events that did not reproduce in the
+5 matching runs spanning two days. The raw datapoints are below.
 
 ### 12.1 Setup
 
@@ -775,61 +775,52 @@ to the 24-node run (verified via diff of the submitted CLIs; see §12.4).
 | `model.deterministic_mode` / `cross_entropy_loss_fusion` | true / false | true / false (unchanged) |
 | `comm_overlap.tp_comm_overlap` | None → effectively False (MCore default) | None → effectively False (unchanged) |
 
-### 12.2 The two effects, separately measured
+### 12.2 Iter-by-iter datapoints across all 48-node det runs
 
-**Four** 48-node det runs across separate allocations (3 from the original
-3-job harness + 1 explicit no-nsys rerun):
+Seven deterministic 48-node runs across separate Slurm allocations and two
+days (2026-06-15 / 2026-06-16). All run the same recipe (`-ng 192 -gn 4`,
+NCCL_ALGO=Ring, NVTE_ALLOW_NONDETERMINISTIC_ALGO=0, CUBLAS_WORKSPACE_CONFIG=:4096:8,
+MAMBA_DETERMINISTIC=1, model.deterministic_mode=true, cross_entropy_loss_fusion=false).
 
-| Slurm job | Nsys? | Allocation | wandb (project `mbridge-dev-zhiyul`) |
+| Slurm job | Nsys? | Date | wandb (project `mbridge-dev-zhiyul`) |
 |---|---|---|---|
-| **2132936** | ON  | lyris[0038-005+] | [`ev765dek`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/ev765dek) |
-| **2132937** | ON (non-det) | lyris[0128-014+] | [`6y8p80ay`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/6y8p80ay) |
-| **2132938** | OFF | lyris[0218-023+] | [`s5r2embd`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/s5r2embd) |
-| **2134194** | OFF (rerun) | lyris[0127-014+,0253-026+,0271-028+] | (no-nsys 48n rerun) |
+| **2132936** | ON  | 2026-06-15 | [`ev765dek`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/ev765dek) |
+| 2132938 | OFF | 2026-06-15 | [`s5r2embd`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/s5r2embd) |
+| 2134194 | OFF | 2026-06-15 | [`a7c0wjgn`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/a7c0wjgn) |
+| 2134509 | ON  | 2026-06-16 | [`wjfja7td`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/wjfja7td) |
+| 2134512 | OFF | 2026-06-16 | [`ce5tbjxn`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/ce5tbjxn) |
+| 2135729 | ON  | 2026-06-16 | [`k69pxc4n`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/k69pxc4n) |
+| 2135731 | OFF | 2026-06-16 | [`xl3wfwv3`](https://wandb.ai/nvidia/mbridge-dev-zhiyul/runs/xl3wfwv3) |
 
-#### 12.2(a) — Dominant effect: nsys-induced race (det+nsys vs det+no-nsys)
+`lm loss` at sampled iterations:
 
-`lm loss` of **2132936 (det+nsys)** vs **2132938 (det+no-nsys)**:
+| iter | s5r2embd | a7c0wjgn | ce5tbjxn | wjfja7td | k69pxc4n | xl3wfwv3 | **ev765dek** |
+|---|---|---|---|---|---|---|---|
+| 1  | 1.254854E+01 | 1.254854E+01 | 1.254854E+01 | 1.254854E+01 | 1.254854E+01 | 1.254854E+01 | **1.254853E+01** |
+| 5  | 9.298958E+00 | 9.298958E+00 | 9.298958E+00 | 9.298958E+00 | 9.298958E+00 | 9.298958E+00 | **9.299143E+00** |
+| 10 | 4.092978E+00 | 4.092978E+00 | 4.092978E+00 | 4.092978E+00 | 4.092978E+00 | 4.092978E+00 | **4.095631E+00** |
+| 20 | 2.391398E-01 | 2.391398E-01 | 2.391398E-01 | 2.391398E-01 | 2.391398E-01 | 2.391398E-01 | **2.212457E-01** |
+| 30 | 2.387865E-01 | 2.387865E-01 | 2.387865E-01 | 2.387865E-01 | 2.387865E-01 | 2.387865E-01 | **6.335801E-01** |
+| 40 | 9.668706E-02 | 9.668706E-02 | 9.668706E-02 | 9.668706E-02 | 9.668706E-02 | 9.668706E-02 | **2.261086E-02** |
+| 50 | 6.824717E-02 | 6.824705E-02 | 6.824717E-02 | 6.824717E-02 | 6.824717E-02 | 6.824717E-02 | **4.662910E-01** |
 
-| iter | 2132936 (nsys ON) | 2132938 (nsys OFF) | match | gap |
-|---|---|---|---|---|
-| 1  | 1.254853E+01 | 1.254854E+01 | ✗ | last printed digit (~1·10⁻⁴) |
-| 5  | 9.299143E+00 | 9.298958E+00 | ✗ | ~2·10⁻⁴ |
-| 10 | 4.095631E+00 | 4.092978E+00 | ✗ | ~3·10⁻³ |
-| 20 | 2.212457E-01 | 2.391398E-01 | ✗ | ~2·10⁻² |
-| 30 | 6.335801E-01 | 2.387865E-01 | ✗ | ~4·10⁻¹ |
-| 40 | 2.261086E-02 | 9.668706E-02 | ✗ | ~7·10⁻² |
-| 50 | 4.662910E-01 | 6.824717E-02 | ✗ | ~4·10⁻¹ |
+What the table shows:
 
-Divergence already at iter 1 → nsys instrumentation perturbs the very first
-forward/backward pass. Critically, at 24 nodes (§4.3) the same paired
-nsys-on vs nsys-off comparison was bit-exact across 50 iters — so this is
-**scale-dependent**: nsys's per-kernel CPU overhead becomes order-changing
-once the collective topology grows enough that one rank running marginally
-slower flips a tie-break in NCCL group setup, expert-dispatch sequencing,
-or stream-event ordering.
+- **5 runs match each other exactly at every sampled iter 1–50**:
+  s5r2embd, ce5tbjxn, wjfja7td, k69pxc4n, xl3wfwv3 — regardless of nsys
+  ON/OFF, across separate allocations and across two days.
+- **1 run (`a7c0wjgn` / 2134194)** matches the 5 above at every earlier
+  sampled iter (1, 5, 10, 20, 30, 40) but diverges by the last printed
+  digit at iter 50 only (6.824705E-02 vs 6.824717E-02). Magnitude ~1·10⁻⁵.
+- **1 run (`ev765dek` / 2132936)** diverges starting at iter 1 and grows
+  iter-over-iter. None of the other 6 runs disagree with each other this
+  way.
 
-#### 12.2(b) — Residual: last-digit drift (det+no-nsys vs det+no-nsys)
-
-`lm loss` of **2134194 (no-nsys rerun)** vs **2132938 (no-nsys original)** —
-two independent det runs at 48 nodes, neither under nsys:
-
-| iter | 2134194 (rerun) | 2132938 (original) | match |
-|---|---|---|---|
-| 1  | 1.254854E+01 | 1.254854E+01 | ✓ |
-| 2  | 1.254648E+01 | 1.254648E+01 | ✓ |
-| 3  | 1.023796E+01 | 1.023796E+01 | ✓ |
-| 5  | 9.298958E+00 | 9.298958E+00 | ✓ |
-| 10 | 4.092978E+00 | 4.092978E+00 | ✓ |
-| 20 | 2.391398E-01 | 2.391398E-01 | ✓ |
-| 30 | 2.387865E-01 | 2.387865E-01 | ✓ |
-| 40 | 9.668706E-02 | 9.668706E-02 | ✓ |
-| **50** | **6.824705E-02** | **6.824717E-02** | **✗ (last printed digit, ~1·10⁻⁵)** |
-
-**Bit-exact for the first 40 iterations** between two independent
-allocations, then a single-last-digit gap at iter 50. The residual is real but ~3
-orders of magnitude smaller than the nsys-induced effect (compare iter-50
-gap of ~10⁻⁵ here vs ~4·10⁻¹ in 12.2(a)).
+Both non-matching observations occurred on runs that share the same code,
+same container, same submitted CLI, and same env vars as the 5 matching
+runs. They are recorded here as raw datapoints; root cause has not been
+identified. Either or both could be transient hardware / network events
+that did not reproduce in the matching cohort.
 
 ### 12.3 What changed between 24n (bit-exact) and 48n (this) — audit
 
