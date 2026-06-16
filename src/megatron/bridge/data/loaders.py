@@ -262,13 +262,13 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
-    keep_partial_final_global_batch = cfg.train.num_epochs is not None and cfg.dataset.dataloader_type == "batch"
+    drop_last = cfg.train.num_epochs is None
 
     # Check that the train dataset has at least one global batch of samples.
     if (
         train_ds is not None
         and cfg.dataset.dataloader_type != "external"
-        and not keep_partial_final_global_batch
+        and drop_last
         and len(train_ds) < cfg.train.global_batch_size
     ):
         raise RuntimeError(
@@ -302,7 +302,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=dp_rank,
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
-        drop_last=not keep_partial_final_global_batch,
+        drop_last=drop_last,
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
