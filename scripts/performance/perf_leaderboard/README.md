@@ -6,16 +6,25 @@ Nemotron 3 Ultra (550B-A55B) GB200 recipe.
 ## Shared artifacts (NVIDIA internal cluster only)
 
 All nsys-rep / sqlite / CSV / leaderboard / training-log files for the
-24-node (bit-exact) and 48-node (bit-wise mismatch) runs are mirrored to:
+24-node and 48-node runs are mirrored to:
 
 ```
 /lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare/
-├── README.md         ← layout + headline summary
+├── README.md         ← layout + headline observations
 ├── 24n-baseline/{processed,raw/{det,nondet,det-bitwise}}/
 └── 48n-mismatch/{processed,raw/{det,nondet,det-bitwise}}/
 ```
 
 Total ≈ 1.2 GB, world-readable. This is the canonical sharing location.
+
+**Observations summary** (see report §12 + the share-dir `README.md` for detail):
+
+| Scale | Bit-exact across allocations? | Nsys inert? |
+|---|---|---|
+| 24n (96 GPUs) | yes — 8-run match, last digit | yes (paired nsys-on / nsys-off bit-exact) |
+| 48n (192 GPUs) | partial — 2 det+no-nsys runs match through iter 40, last-digit difference of about 1e-5 at iter 50 | no — det+nsys diverges from det+no-nsys at iter 1 |
+
+Root cause for the 48-node observations is not yet attributed.
 
 ## Files
 
