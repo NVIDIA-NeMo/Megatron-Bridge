@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # End-to-end nsys comparison for Nemotron 3 Ultra: submit one det + one non-det
-# run with nsys profiling, then produce the side-by-side leaderboard.
+# run with nsys profiling, plus TWO det runs without nsys, then produce the
+# side-by-side leaderboard and two paired bit-wise diffs.
 #
-# Submits THREE jobs and produces both reports:
-#   1. det + nsys    (perf-comparison side A)
-#   2. non-det + nsys (perf-comparison side B)
-#   3. det + NO nsys (bit-wise determinism check)
+# Submits FOUR jobs and produces both reports:
+#   1. det + nsys      (perf-comparison side A)
+#   2. non-det + nsys  (perf-comparison side B)
+#   3. det + NO nsys   (bit-wise check #1 — paired vs job 1 for nsys-on/off effect,
+#                        and vs job 4 for no-nsys cross-allocation reproducibility)
+#   4. det + NO nsys   (bit-wise check #2 — second independent allocation, no nsys)
 # Modelled on https://github.com/NVIDIA/Megatron-LM/pull/5041 run_nsys_breakdown.sh
 # run_nsys_breakdown.sh but adapted for multi-node Slurm + nemo_run.
 #
@@ -91,18 +94,19 @@ PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
 echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
 
 submit_run() {
-    local MODE="$1"  # "det" | "nondet" | "det-bitwise"
+    local MODE="$1"  # "det" | "nondet" | "det-bitwise" | "det-bitwise2"
     local WDJ
     local ENABLE_NSYS=true
     case "$MODE" in
-        det)         WDJ="nemotron-3-ultra-det-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
-        nondet)      WDJ="nemotron-3-ultra-nondet-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
-        det-bitwise) WDJ="nemotron-3-ultra-det-bitwise-check-${TS}" ; ENABLE_NSYS=false ;;
+        det)          WDJ="nemotron-3-ultra-det-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
+        nondet)       WDJ="nemotron-3-ultra-nondet-nsys${NSYS_START}-${NSYS_STOP}-${TS}" ;;
+        det-bitwise)  WDJ="nemotron-3-ultra-det-bitwise-check-${TS}" ; ENABLE_NSYS=false ;;
+        det-bitwise2) WDJ="nemotron-3-ultra-det-bitwise-check2-${TS}" ; ENABLE_NSYS=false ;;
     esac
 
     # Determinism delta vs launch_nemotron_3_ultra_deterministic.sh:
-    #   det / det-bitwise: full 4 env vars + deterministic_mode=true  + cross_entropy_loss_fusion=false
-    #   nondet:            no det env vars + deterministic_mode=false + cross_entropy_loss_fusion=true
+    #   det / det-bitwise / det-bitwise2: full 4 env vars + deterministic_mode=true  + cross_entropy_loss_fusion=false
+    #   nondet:                            no det env vars + deterministic_mode=false + cross_entropy_loss_fusion=true
     local DET_ENVS=()
     local DET_MODE="false"
     local CE_FUSION="true"
@@ -190,25 +194,31 @@ submit_run() {
     echo "$WDJ" > "$OUT_DIR/wdj-${MODE}.txt"
 }
 
-# Three jobs total:
-#   det:         det + nsys                (perf-comparison side A)
-#   nondet:      non-det + nsys            (perf-comparison side B)
-#   det-bitwise: det + NO nsys             (bit-wise determinism check —
-#                                            diffed against existing det baseline)
+# Four jobs total:
+#   det:          det + nsys                (perf-comparison side A)
+#   nondet:       non-det + nsys            (perf-comparison side B)
+#   det-bitwise:  det + NO nsys             (no-nsys bit-wise check #1 —
+#                                             paired against det for nsys-on/off comparison
+#                                             AND against det-bitwise2 for no-nsys reproducibility)
+#   det-bitwise2: det + NO nsys             (no-nsys bit-wise check #2 — second independent
+#                                             allocation; diffed against det-bitwise to measure
+#                                             scale-induced residual without nsys confound)
 submit_run det
 submit_run nondet
 submit_run det-bitwise
+submit_run det-bitwise2
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
 JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
+JOB_BITWISE2=$(cat "$OUT_DIR/jobid-det-bitwise2.txt")
 
-# Wait for all three to complete.
+# Wait for all four to complete.
 deadline=$(($(date +%s) + WAIT_TIMEOUT_SEC))
 while :; do
-    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE" -h 2>/dev/null | wc -l)
+    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE,$JOB_BITWISE2" -h 2>/dev/null | wc -l)
     [ "$pending" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
-        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE" >&2
+        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE / $JOB_BITWISE2" >&2
         exit 124
     fi
     echo "$(date -Iseconds)  waiting for jobs: $pending still in queue"
@@ -274,30 +284,44 @@ generate_csv nondet
 "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/print_nsys_leaderboard.py" "$OUT_DIR" \
     | tee "$OUT_DIR/leaderboard.txt"
 
-# --- Bit-wise determinism check ---
-# Diff iter-50 lm-loss of det+nsys (2103633-style) vs det+no-nsys (2103637-style).
-# If they match to the last digit, nsys instrumentation didn't perturb determinism
-# AND the recipe is bit-reproducible across separate Slurm allocations.
+# --- Bit-wise determinism check: TWO paired diffs ---
+# (1) nsys-on vs nsys-off (det vs det-bitwise) — measures nsys instrumentation effect
+# (2) no-nsys vs no-nsys  (det-bitwise vs det-bitwise2) — measures pure
+#     cross-allocation reproducibility without nsys
 echo ""
 echo "=== Bit-wise determinism check ==="
 DET_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det.txt)" -name "log-*${JOB_DET}*.out" -type f 2>/dev/null | head -1)
 BIT_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise.txt)" -name "log-*${JOB_BITWISE}*.out" -type f 2>/dev/null | head -1)
-STRIP='s/^ \[[^]]+\] //; s/elapsed time per iteration \(ms\): [0-9.]+ \| //; s/throughput per GPU \(TFLOP\/s\/GPU\): [0-9.]+ \| //'
-{
-    echo "det+nsys log:        $DET_LOG"
-    echo "det+no-nsys log:     $BIT_LOG"
+BIT2_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise2.txt)" -name "log-*${JOB_BITWISE2}*.out" -type f 2>/dev/null | head -1)
+
+extract_loss() {
+    local LOG="$1" it="$2"
+    grep -E "iteration\s+${it}/" "$LOG" 2>/dev/null | head -1 | grep -oP 'lm loss: \S+' | sed 's/lm loss: //'
+}
+diff_table() {
+    local LABEL_L="$1" LABEL_R="$2" LOG_L="$3" LOG_R="$4"
     echo ""
-    printf "%-6s %-22s %-22s %s\n" "iter" "det+nsys lm loss" "det+no-nsys lm loss" "match"
-    printf -- "------ ---------------------- ---------------------- ------\n"
-    match_all=1
-    for it in 1 5 10 20 30 40 50; do
-        l_det=$(grep -E "iteration\s+${it}/" "$DET_LOG" 2>/dev/null | head -1 | grep -oP 'lm loss: \S+' | sed 's/lm loss: //')
-        l_bit=$(grep -E "iteration\s+${it}/" "$BIT_LOG" 2>/dev/null | head -1 | grep -oP 'lm loss: \S+' | sed 's/lm loss: //')
-        m="✗" ; [ -n "$l_det" ] && [ "$l_det" = "$l_bit" ] && m="✓" || match_all=0
-        printf "%-6s %-22s %-22s %s\n" "$it" "${l_det:-?}" "${l_bit:-?}" "$m"
+    echo "--- $LABEL_L  vs  $LABEL_R ---"
+    echo "  left  log: $LOG_L"
+    echo "  right log: $LOG_R"
+    echo ""
+    printf "  %-6s %-22s %-22s %s\n" "iter" "$LABEL_L lm loss" "$LABEL_R lm loss" "match"
+    printf -- "  ------ ---------------------- ---------------------- ------\n"
+    local match_all=1
+    for it in 1 2 3 5 10 20 30 40 50; do
+        local l r m
+        l=$(extract_loss "$LOG_L" "$it")
+        r=$(extract_loss "$LOG_R" "$it")
+        m="✗" ; [ -n "$l" ] && [ "$l" = "$r" ] && m="✓" || match_all=0
+        printf "  %-6s %-22s %-22s %s\n" "$it" "${l:-?}" "${r:-?}" "$m"
     done
     echo ""
-    [ $match_all -eq 1 ] && echo "BIT-WISE DETERMINISTIC ✓ — all iter losses match" || echo "MISMATCH ✗ — recipe is not bit-exact reproducible"
+    [ "$match_all" -eq 1 ] && echo "  → all sampled iters match exactly" \
+                            || echo "  → at least one sampled iter disagrees"
+}
+{
+    diff_table "det+nsys"    "det+no-nsys"  "$DET_LOG"  "$BIT_LOG"
+    diff_table "det+no-nsys" "det+no-nsys2" "$BIT_LOG"  "$BIT2_LOG"
 } | tee "$OUT_DIR/bitwise_check.txt"
 
 echo ""
@@ -305,4 +329,4 @@ echo "Reports written to:"
 echo "  perf leaderboard:    $OUT_DIR/leaderboard.txt"
 echo "  bit-wise check:      $OUT_DIR/bitwise_check.txt"
 echo "CSVs:           $OUT_DIR/nsys-det.csv  $OUT_DIR/nsys-nondet.csv"
-echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE"
+echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE  det-bitwise2=$JOB_BITWISE2"
