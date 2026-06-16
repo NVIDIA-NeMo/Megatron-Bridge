@@ -748,6 +748,131 @@ def test_forward_step_passes_packed_sequence_params_to_model(monkeypatch):
     assert model.kwargs["loss_mask"].shape == (1, 16)
 
 
+def test_forward_step_supports_packed_sequence_with_context_parallel(monkeypatch):
+    class _MockProcessGroup:
+        def __init__(self, size=1, rank=0):
+            self._size = size
+            self._rank = rank
+
+        def rank(self):
+            return self._rank
+
+        def size(self):
+            return self._size
+
+    class _MockPGCollection:
+        def __init__(self):
+            self.tp = _MockProcessGroup()
+            self.pp = _MockProcessGroup()
+            self.cp = _MockProcessGroup(size=2, rank=0)
+            self.ep = _MockProcessGroup()
+
+    class _Model:
+        def __init__(self):
+            self.config = type("Cfg", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": True})()
+            self.kwargs = None
+
+        def __call__(self, **kwargs):
+            self.kwargs = kwargs
+            return torch.tensor(0.0)
+
+    class _Timer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def start(self):
+            return self
+
+        def stop(self):
+            return self
+
+    class _Strag:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):  # noqa: ARG002
+            return False
+
+    state = type("State", (), {})()
+    state.cfg = type(
+        "Cfg",
+        (),
+        {
+            "dataset": type(
+                "D",
+                (),
+                {"skip_getting_attention_mask_from_dataset": False, "pack_sequences_in_batch": True},
+            )(),
+            "model": type("M", (), {"pipeline_model_parallel_size": 1, "seq_length": 8})(),
+            "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),
+        },
+    )()
+    state.timers = _Timer()
+    state.straggler_timer = _Strag()
+
+    tokens = torch.tensor([[1, 2, 3, 4]])
+    local_labels = torch.tensor([[10, 11, 12, 13, 14, 15, 16, 17]])
+    local_loss_mask = torch.tensor([[1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]])
+    slice_calls = []
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_pg_collection",
+        lambda model: _MockPGCollection(),
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_model_config",
+        lambda model: model.config,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_batch",
+        lambda data_iterator, cfg, use_mtp, pg_collection: (
+            tokens,
+            torch.tensor([[2, 3, 4, -100]]),
+            torch.ones(1, 4),
+            torch.ones(1, 4, dtype=torch.bool),
+            torch.arange(4).unsqueeze(0),
+            {},
+        ),
+    )
+
+    def _mock_get_batch_on_this_cp_rank(batch, cp_group):
+        slice_calls.append((batch, cp_group))
+        assert cp_group.size() == 2
+        assert batch["input_ids"].shape == (1, 16)
+        assert "attention_mask" not in batch
+        assert batch["_attention_mask_2d"].shape == (1, 16)
+        return {
+            "input_ids": batch["input_ids"][:, :8],
+            "position_ids": batch["position_ids"][:, :8],
+            "_attention_mask_2d": batch["_attention_mask_2d"][:, :8],
+            "labels": local_labels,
+            "loss_mask": local_loss_mask,
+        }
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_batch_on_this_cp_rank",
+        _mock_get_batch_on_this_cp_rank,
+    )
+
+    model = _Model()
+    output, loss_fn = forward_step(state, iter([{}]), model)
+
+    assert isinstance(output, torch.Tensor)
+    assert callable(loss_fn)
+    assert model.kwargs is not None
+    assert model.kwargs["packed_seq_params"] is not None
+    assert model.kwargs["input_ids"].shape == (1, 16)
+    assert model.kwargs["input_ids"][0, :4].tolist() == tokens[0].tolist()
+    assert model.kwargs["position_ids"] is None
+    assert model.kwargs["attention_mask"].shape == (1, 16)
+    assert torch.equal(model.kwargs["labels"], local_labels.reshape(1, -1))
+    assert torch.equal(model.kwargs["loss_mask"], local_loss_mask.reshape(1, -1))
+    assert len(slice_calls) == 1
+
+
 def test_get_batch_pads_2d_attention_mask_for_pipeline_parallel():
     batch = _make_batch()
     for key, value in list(batch.items()):
