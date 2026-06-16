@@ -29,6 +29,10 @@ from typing import Tuple
 import torch
 from omegaconf import OmegaConf
 
+from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import (
+    nemotron_nano_v2_vl_12b_peft_config,
+    nemotron_nano_v2_vl_12b_sft_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.llava_step import forward_step
@@ -105,16 +109,20 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import nemotron_nano_v2_vl_12b_finetune_config
-
-    cfg: ConfigContainer = nemotron_nano_v2_vl_12b_finetune_config(
-        hf_model_path=args.hf_model_path,
-        pretrained_checkpoint=args.pretrained_checkpoint,
-        lora_on_language_model=args.lora_on_language_model,
-        lora_on_vision_model=args.lora_on_vision_model,
-    )
-
-    logger.info("Loaded base configuration for finetuning")
+    config_kwargs = {
+        "hf_model_path": args.hf_model_path,
+        "pretrained_checkpoint": args.pretrained_checkpoint,
+    }
+    if args.lora_on_language_model or args.lora_on_vision_model:
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
+            **config_kwargs,
+            lora_on_language_model=args.lora_on_language_model,
+            lora_on_vision_model=args.lora_on_vision_model,
+        )
+        logger.info("Loaded base configuration for PEFT")
+    else:
+        cfg = nemotron_nano_v2_vl_12b_sft_config(**config_kwargs)
+        logger.info("Loaded base configuration for SFT")
 
     if get_rank_safe() == 0:
         cfg.print_yaml()
