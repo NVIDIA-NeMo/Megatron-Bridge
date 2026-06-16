@@ -98,7 +98,7 @@ config = ConfigContainer(
 
 ## NVFP4 Training
 
-NVFP4 is a 4-bit floating-point training mode for Blackwell-generation GPUs, implemented through Transformer Engine. In Megatron Bridge it is configured through the `fp4` fields on {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig`, not through the FP8 fields.
+NVFP4 is a 4-bit floating-point training mode for Blackwell-generation GPUs, implemented through Transformer Engine. In Megatron Bridge it is configured through the `fp4` fields on `bridge.training.mixed_precision.MixedPrecisionConfig`, not through the FP8 fields.
 
 NVFP4 and FP8 are mutually exclusive. If `fp4` and `fp8` are both set, configuration finalization raises an error. NVFP4 also requires a Transformer Engine build with NVFP4 block-scaling support.
 
