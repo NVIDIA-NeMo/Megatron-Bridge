@@ -852,13 +852,13 @@ In rough order of likelihood:
 
 ### 12.6 Artifacts
 
-| | path |
+| | path (under `$SHARE = /lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare`) |
 |---|---|
-| OUT_DIR (CSVs + leaderboard.txt + bitwise_check.txt) | `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/` |
-| det+nsys log (2132936) | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1781575817/.../log-…_2132936_0.out` |
-| det+no-nsys log (2132938) | `~/.nemo_run/experiments/nemotron-3-ultra-det-bitwise-check-1781575817/.../log-…_2132938_0.out` |
-| nondet+nsys log (2132937) | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1781575817/.../log-…_2132937_0.out` |
-| launch script + commit | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` @ `a2f6ffce` |
+| OUT_DIR (CSVs + leaderboard.txt + bitwise_check.txt) | `48n-mismatch/processed/` |
+| det+nsys log (2132936) | `48n-mismatch/raw/det/log-*_2132936_0.out` |
+| det+no-nsys log (2132938) | `48n-mismatch/raw/det-bitwise/log-*_2132938_0.out` |
+| nondet+nsys log (2132937) | `48n-mismatch/raw/nondet/log-*_2132937_0.out` |
+| launch script + commit | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` @ `a2f6ffce` (repo-relative) |
 
 ---
 
@@ -877,12 +877,12 @@ SHARE=/lustre/share/coreai_dlalgo_llm/zhiyul/nemotron-3-ultra-nsys-compare
 | 24-node det sqlite | `24n-baseline/raw/det/profile_810827_2103633_node0_rank0.sqlite` |
 | 24-node nondet nsys-rep (job 2103635) | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.nsys-rep` |
 | 24-node nondet sqlite | `24n-baseline/raw/nondet/profile_2270167_2103635_node0_rank0.sqlite` |
-| 24-node OUT_DIR (CSVs + leaderboard) | `24n-baseline/processed/`  *(was `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-20260612-0205/`)* |
+| 24-node OUT_DIR (CSVs + leaderboard) | `24n-baseline/processed/` |
 | 24-node bit-wise check log (job 2103637) | `24n-baseline/raw/det-bitwise/log-*_2103637_0.out` |
 | 48-node det nsys-rep (job 2132936) | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.nsys-rep` |
 | 48-node det sqlite | `48n-mismatch/raw/det/profile_2352489_2132936_node0_rank0.sqlite` |
 | 48-node nondet nsys-rep (job 2132937) | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.nsys-rep` |
 | 48-node nondet sqlite | `48n-mismatch/raw/nondet/profile_967690_2132937_node0_rank0.sqlite` |
-| 48-node OUT_DIR (CSVs + leaderboard + bitwise_check.txt) | `48n-mismatch/processed/`  *(was `/lustre/fsw/coreai_dlalgo_llm/zhiyul/nsys-compare-48n-20260615-1746/`)* |
+| 48-node OUT_DIR (CSVs + leaderboard + bitwise_check.txt) | `48n-mismatch/processed/` |
 | 48-node bit-wise check log (job 2132938) | `48n-mismatch/raw/det-bitwise/log-*_2132938_0.out` |
 | Top-level layout + job-to-wandb mapping | `README.md` |
