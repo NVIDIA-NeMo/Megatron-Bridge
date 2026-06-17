@@ -359,10 +359,7 @@ def nemotron_omni_collate_fn(
         # which makes pin_memory raise "more than one element refers to a single memory
         # location" once batch_size > 1 (e.g. MBS>1 after the per-row image-token fix).
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device)
-            .unsqueeze(0)
-            .expand(batch_size, -1)
-            .contiguous()
+            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1).contiguous()
         )
 
     key = "pixel_values_videos" if is_video else "pixel_values"
