@@ -291,12 +291,55 @@ def nemotron_omni_collate_fn(
             num_tiles_for_adjust = torch.ones(n_imgs, dtype=torch.long)
         else:
             num_tiles_for_adjust = batch.get("num_patches", torch.zeros(len(examples), dtype=torch.long))
-        adjusted_batch = adjust_image_tokens(
-            {"input_ids": batch["input_ids"], "loss_mask": loss_mask},
-            num_tiles_for_adjust,
-            img_start_token_id,
-            img_end_token_id,
-        )
+        bsz = batch["input_ids"].shape[0]
+        if is_dynamic_res_processor and not is_video and bsz > 1:
+            # adjust_image_tokens is a SINGLE-SEQUENCE helper (see note above), so run
+            # it PER ROW — each with that row's own image count (its slice of the flat
+            # per-image num_tiles) — then re-pad to a rectangular (B, new_max) batch so
+            # the samples stay independent. `num_tiles_for_adjust` is per-image and
+            # ordered to match the flattened image list, so we walk it with a cursor.
+            imgs_per_row = [len(images_per_ex[b]) for b in range(len(examples))]
+            pad_for_ids = processor.tokenizer.pad_token_id
+            if pad_for_ids is None:
+                pad_for_ids = processor.tokenizer.eos_token_id or 0
+            adj_ids: list[torch.Tensor] = []
+            adj_lm: list[torch.Tensor] = []
+            cursor = 0
+            for b in range(bsz):
+                n_b = imgs_per_row[b]
+                row_tiles = num_tiles_for_adjust[cursor : cursor + n_b].tolist()
+                cursor += n_b
+                # Slice off the cross-example right-padding BEFORE adjusting. `padded_ids`
+                # was padded to the longest RAW row, whose length is inflated by the
+                # un-trimmed <image> tokens of the largest image; if we adjust the padded
+                # row, that padding is carried through and inflates new_max (so every row
+                # ends up padded). `ids_list` holds the true per-example unpadded lengths
+                # from the per-example processor calls. (Can't strip by value: pad == eos.)
+                real_len = ids_list[b].shape[0] if b < len(ids_list) else batch["input_ids"].shape[1]
+                row = {
+                    "input_ids": batch["input_ids"][b : b + 1, :real_len],
+                    "loss_mask": loss_mask[b : b + 1, :real_len],
+                }
+                if n_b > 0 and bool((row["input_ids"] == img_start_token_id).any()):
+                    row = adjust_image_tokens(row, row_tiles, img_start_token_id, img_end_token_id)
+                adj_ids.append(row["input_ids"])
+                adj_lm.append(row["loss_mask"])
+            new_max = max(r.shape[1] for r in adj_ids)
+            ids_out = torch.full((bsz, new_max), pad_for_ids, dtype=adj_ids[0].dtype)
+            lm_out = torch.zeros((bsz, new_max), dtype=adj_lm[0].dtype)
+            for b in range(bsz):
+                row_len = adj_ids[b].shape[1]
+                ids_out[b, :row_len] = adj_ids[b][0]
+                lm_out[b, :row_len] = adj_lm[b][0]
+            adjusted_batch = {"input_ids": ids_out, "loss_mask": lm_out}
+        else:
+            # B == 1 (incl. the single-example video path): the single-sequence call is correct.
+            adjusted_batch = adjust_image_tokens(
+                {"input_ids": batch["input_ids"], "loss_mask": loss_mask},
+                num_tiles_for_adjust,
+                img_start_token_id,
+                img_end_token_id,
+            )
     else:
         adjusted_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
 
@@ -312,8 +355,14 @@ def nemotron_omni_collate_fn(
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape
+        # .contiguous() is required: .expand() gives all rows stride-0 (shared storage),
+        # which makes pin_memory raise "more than one element refers to a single memory
+        # location" once batch_size > 1 (e.g. MBS>1 after the per-row image-token fix).
         batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+            torch.arange(seq_len, device=batch["input_ids"].device)
+            .unsqueeze(0)
+            .expand(batch_size, -1)
+            .contiguous()
         )
 
     key = "pixel_values_videos" if is_video else "pixel_values"
