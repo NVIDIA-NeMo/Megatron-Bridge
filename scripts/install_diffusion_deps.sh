@@ -22,6 +22,10 @@
 # Install them directly with `uv pip install --no-config`: --no-config ignores the
 # project's [tool.uv] config, so the `sys_platform == 'never'` override does not
 # neutralize the install.
+#
+# `easydict` is also installed here: it is a runtime import in the WAN inference
+# example (examples/models/wan/inference_wan.py) but is not a shipped dependency,
+# so it must be added to the environment alongside the codecs.
 set -euo pipefail
 
-uv pip install --no-config imageio imageio-ffmpeg av
+uv pip install --no-config imageio imageio-ffmpeg av easydict

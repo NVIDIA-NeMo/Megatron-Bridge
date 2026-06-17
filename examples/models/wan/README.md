@@ -186,6 +186,23 @@ For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/w
 
 The script [inference_wan.py](inference_wan.py) runs text-to-video generation with a Megatron-format WAN checkpoint. Set `--checkpoint_step` to use a specific checkpoint iteration, `--sizes` and `--frame_nums` to specify video shape, and `--sample_steps` (default 50) for the number of noise diffusion steps.
 
+**Prerequisites**: Inference and video saving rely on a few packages that are **not** shipped in the container (the codecs `imageio`, `imageio-ffmpeg`, and `av` carry CVEs and are excluded; `easydict` is an example-only import). Install them into the active environment before running:
+
+```bash
+bash scripts/install_diffusion_deps.sh
+# or directly:
+uv pip install --no-config easydict imageio imageio-ffmpeg av
+```
+
+Without `easydict`, the script fails immediately at import with `ModuleNotFoundError: No module named 'easydict'`.
+
+The DiT transformer weights are loaded from the Megatron `--checkpoint_dir`. The remaining diffusers components (UMT5 text encoder, tokenizer, VAE, and scheduler) are loaded separately. By default they are resolved from the Hugging Face hub model id matching `--task` (`Wan-AI/Wan2.1-T2V-1.3B-Diffusers` for `t2v-1.3B`, `Wan-AI/Wan2.1-T2V-14B-Diffusers` for `t2v-14B`), which requires outbound internet access. To run **fully offline** (e.g. on an air-gapped node), download the diffusers model locally and point the script at it:
+
+- `--t5_checkpoint_dir`: local directory containing the `text_encoder/`, `tokenizer/`, and `scheduler/` subfolders (falls back to the hub model id if omitted).
+- `--vae_checkpoint_dir`: local directory containing the `vae/` subfolder (falls back to the hub model id if omitted).
+
+Both can point at the same downloaded diffusers directory (e.g. `${WORKSPACE}/checkpoints/wan_hf/wan2.1`). Set `HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1` to guarantee no hub access is attempted.
+
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 \
   examples/models/wan/inference_wan.py \
@@ -194,6 +211,23 @@ uv run python -m torch.distributed.run --nproc_per_node=1 \
   --sizes 480*832 \
   --checkpoint_dir ${WORKSPACE}/checkpoints/wan/wan2.1 \
   --checkpoint_step 10000 \
+  --prompts "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage." \
+  --sample_steps 50
+```
+
+### Offline inference (air-gapped node)
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+uv run python -m torch.distributed.run --nproc_per_node=1 \
+  examples/models/wan/inference_wan.py \
+  --task t2v-1.3B \
+  --frame_nums 81 \
+  --sizes 480*832 \
+  --checkpoint_dir ${WORKSPACE}/checkpoints/wan/wan2.1 \
+  --checkpoint_step 10000 \
+  --t5_checkpoint_dir ${WORKSPACE}/checkpoints/wan_hf/wan2.1 \
+  --vae_checkpoint_dir ${WORKSPACE}/checkpoints/wan_hf/wan2.1 \
   --prompts "Two anthropomorphic cats in comfy boxing gear and bright gloves fight intensely on a spotlighted stage." \
   --sample_steps 50
 ```
