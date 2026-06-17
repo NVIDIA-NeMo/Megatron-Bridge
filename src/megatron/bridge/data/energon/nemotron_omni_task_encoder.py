@@ -531,7 +531,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             position_ids_flat = torch.cat([torch.arange(L, dtype=torch.long) for L in lengths], dim=0)
 
             tokens = tokens_flat.unsqueeze(0)
-            tokens[tokens == pad_id] = 0
+            # NOTE: do NOT remap `tokens == pad_id` to 0. pad_id == eos == <|im_end|>
+            # for this tokenizer, and in the packed branch there is no padding at all
+            # (sequences are concatenated), so a value-match would only destroy real
+            # in-sequence turn-end/eos markers. The HF collate keeps them; match it.
             labels = labels_flat.unsqueeze(0)
             loss_mask_t = loss_mask_flat.unsqueeze(0)
             position_ids = position_ids_flat.unsqueeze(0)
@@ -558,7 +561,11 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 loss_mask_mat[i, :seq_len] = s.loss_mask.numpy()[:seq_len]
 
             tokens = torch.from_numpy(input_ids_mat)
-            tokens[tokens == pad_id] = 0
+            # NOTE: do NOT remap `tokens == pad_id` to 0. pad_id == eos == <|im_end|>
+            # for this tokenizer, so a value-match zeroes every real in-sequence
+            # turn-end/eos token, not just the trailing padding. Trailing pad is
+            # harmless regardless of its value (labels=IGNORE, loss_mask=0, causal
+            # attention never reads it), and the HF collate keeps pad_id — match it.
             labels = torch.from_numpy(labels_mat)
             loss_mask_t = torch.from_numpy(loss_mask_mat)
 
