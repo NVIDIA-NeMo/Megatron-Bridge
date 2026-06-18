@@ -394,6 +394,23 @@ DEEPSEEK_V4_PRO_PROXY_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
 )
 DEEPSEEK_V4_PRO_PROXY_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = DEEPSEEK_V4_PRO_PROXY_PRETRAIN_CONFIG_GB200_FP8_MX_V1
 
+# Multi-stage proxy (PP2/VPP4 + MTP) for reproducing the full-Pro scaling-mode crash
+# at small scale. 15 transformer layers over 8 virtual stages (PP2*VPP4); last stage =
+# "tmL" (1 layer + MTP + loss), leaner for perf. EP64 mimics full Pro, so this needs
+# PP2*EP64 = 128 GPUs.
+DEEPSEEK_V4_PRO_PROXY_PP2_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
+    BASE_DEEPSEEK_V4_PRO_CONFIG,
+    num_gpus=128,
+    micro_batch_size=1,
+    global_batch_size=2048,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=2,
+    expert_model_parallel_size=64,
+    pp_layout="Et*4|t*4|t*4|tmL",
+    recompute_modules=[],
+)
+DEEPSEEK_V4_PRO_PROXY_PP2_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = DEEPSEEK_V4_PRO_PROXY_PP2_PRETRAIN_CONFIG_GB200_FP8_MX_V1
+
 
 __all__ = [
     # DeepSeek V4 Pro (MXFP8)
@@ -401,6 +418,8 @@ __all__ = [
     "DEEPSEEK_V4_PRO_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
     "DEEPSEEK_V4_PRO_PROXY_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
     "DEEPSEEK_V4_PRO_PROXY_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
+    "DEEPSEEK_V4_PRO_PROXY_PP2_PRETRAIN_CONFIG_GB200_FP8_MX_V1",
+    "DEEPSEEK_V4_PRO_PROXY_PP2_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
     # V1 (original GBS settings)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1",

@@ -1236,6 +1236,15 @@ def training_log(
                 # Make sure the memory after the second iteration is reported
                 # to include optimizer state memory.
                 report_memory_flag = False
+        if logger_config.log_memory_interval is not None and iteration % logger_config.log_memory_interval == 0:
+            # Per-interval memory report (mirrors mcore's --log-memory-interval),
+            # independent of report_memory_flag, so steady-state memory is logged
+            # beyond the first two iterations (the flag-gated block stops after iter 2).
+            memory_string = f"(after {iteration} iterations) memory (GB)"
+            for metric, value in report_memory(logger_config.memory_keys).items():
+                memory_string += f" | {metric}: {value}"
+            if torch.distributed.get_rank(group=pg_collection.dp) == 0:
+                print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag

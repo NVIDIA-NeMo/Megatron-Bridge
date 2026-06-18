@@ -14,6 +14,7 @@
 
 import logging
 
+import torch
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
@@ -324,6 +325,41 @@ def set_deepseek_v4_pro_common_configs(cfg: ConfigContainer) -> None:
     # cuteDSL fused grouped-MLP interleave (clamped SwiGLU fusion path).
     cfg.model.moe_mlp_glu_interleave_size = 32
 
+    # Native global MXFP8 (matching the MLM reference), overriding the lib mxfp8 config's
+    # eval-oriented choices. The lib bundles a per-layer "kitchen" quant_recipe
+    # (TEQuantizationParams, MXFP8-train/BF16-eval) with fp8_param_gather=False; that exists
+    # only for DSv4 MTP/validation BF16 eval, which a perf benchmark (eval_iters=0) doesn't
+    # use. Perf wants standard TE MXFP8 with fp8 param gather ON (perf-optimal, = MLM).
+    cfg.model.quant_recipe = None
+    cfg.mixed_precision.fp8_param_gather = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
+
+    # Train the DSA/CSA indexer, matching the MLM reference. The lib's DSv4-Flash
+    # recipe zeroes the indexer auxiliary loss (eval-leaning, same commit as the
+    # kitchen quant_recipe above), which leaves the sparse-token selector without a
+    # direct training signal. A faithful pretraining mirror keeps it on.
+    cfg.model.dsa_indexer_loss_coeff = 0.01
+    cfg.model.dsa_indexer_use_sparse_loss = True
+
+    # No CPU (pinned host) paged-stash spill buffer, matching the MLM reference
+    # (cpu factor 0.0; cuda factor stays 1.2). set_full_iter_cg_configs defaults
+    # this to 1.0, which mirrors the multi-tens-of-GB stash working set into
+    # page-locked host RAM per rank -- with 4 ranks/GB300 node that blows the
+    # host cgroup (OOM-killed at iter 2). The 1.2x HBM buffer holds the stash alone.
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
+
+    # Log GPU memory every log_interval steps (mirrors MLM's --log-memory-interval),
+    # so steady-state peak memory is captured. MBridge's flag-gated report otherwise
+    # stops after iter 2, which under full-iter CG undercounts the post-capture peak.
+    cfg.logger.log_memory_interval = cfg.logger.log_interval
+
+    # BF16 precision-aware optimizer master gradients, matching the MLM reference.
+    # The lib forces main_grads_dtype=fp32 (deepseek_v4.py); MLM uses bf16. With the
+    # precision-aware optimizer (enabled here) bf16 master grads are valid and halve
+    # the master-grad buffer. grad_reduce_in_fp32 (the DDP reduce path) is already
+    # False above -- this is the separate optimizer-side knob.
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+
     # MCore's TransformerConfig.__post_init__ does set(self.offload_modules);
     # keep it an empty list (not None) when fine-grained offloading is off. The
     # full-Pro builder overrides this with the real offload module list.
@@ -429,3 +465,63 @@ def deepseek_v4_pro_proxy_pretrain_config_gb300(
     return _deepseek_v4_pro_pretrain_config(
         gpu="gb300", precision=precision, config_variant=config_variant, proxy=True
     )
+
+
+# Multi-stage debug proxy: PP2/VPP4 + MTP, 15 layers. Used to reproduce the full-Pro
+# scaling-mode crash at small scale (the PP1 proxy with MTP runs fine, so the trigger
+# needs a multi-stage pipeline + interleaved schedule + MTP on a non-first stage).
+_DEEPSEEK_V4_PRO_PROXY_PP2_NUM_LAYERS = 13
+
+
+def deepseek_v4_pro_proxy_pp2_pretrain_config_gb200(
+    precision: str = "fp8_mx", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """GB200, 15-layer DeepSeek-V4-Pro proxy with PP2/VPP4 + MTP (MXFP8, 128 GPUs).
+
+    Multi-stage debug variant: mimics the full Pro's pipeline + interleaved schedule +
+    MTP-on-last-stage at small scale. EP64 (like full Pro) -> PP2*EP64 = 128 GPUs.
+    15 transformer layers over 8 virtual stages (PP2*VPP4); last stage = "tmL" (1 layer
+    + MTP + loss). num_layers / CSA ratios / MTP / pp_layout are set HERE in Python (not
+    via Hydra overrides, which mis-parse the layout DSL into a single element).
+    """
+    if precision != "fp8_mx":
+        raise NotImplementedError(
+            "DeepSeek-V4-Pro performance configs currently support precision='fp8_mx' "
+            f"(MXFP8) only; got {precision!r}."
+        )
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v4_pro_proxy_pp2",
+        gpu="gb200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+
+    cfg = deepseek_v4_pro_pretrain_mxfp8_config()
+
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.expert_model_parallel_size = base_cfg.expert_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    # 15 layers, KEEP MTP=1 (mimic full Pro). Truncate the bridge-derived per-layer lists:
+    # csa_compress_ratios -> first 15 (real) + [0] (MTP slot) = 16 == num_layers + mtp;
+    # moe_layer_freq -> first 15 (all-MoE).
+    n = _DEEPSEEK_V4_PRO_PROXY_PP2_NUM_LAYERS
+    cfg.model.num_layers = n
+    cfg.model.mtp_num_layers = 1
+    cfg.model.csa_compress_ratios = list(cfg.model.csa_compress_ratios)[:n] + [0]
+    if isinstance(cfg.model.moe_layer_freq, list):
+        cfg.model.moe_layer_freq = cfg.model.moe_layer_freq[:n]
+
+    # pp_layout string from the workload base config, set in Python (mcore parses the DSL).
+    cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+    set_deepseek_v4_pro_common_configs(cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+    return cfg
