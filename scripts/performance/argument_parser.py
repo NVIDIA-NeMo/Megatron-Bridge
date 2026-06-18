@@ -538,6 +538,17 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_api_version",
+        type=str,
+        choices=["v1", "v2"],
+        default="v2",
+        help="Kubeflow Training-Operator API to submit against. 'v2' (default) uses the "
+        "TrainJob (trainer.kubeflow.org) via KubeflowExecutor. 'v1' uses the PyTorchJob "
+        "(kubeflow.org/v1) via PyTorchJobExecutor — required for clusters running the v1 "
+        "operator, notably NVIDIA Run:ai. Only applies when --kubeflow_namespace is set.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
         "--csp",
         type=str,
         choices=["aws", "gcp", "runai"],
@@ -588,6 +599,24 @@ def parse_cli_args():
         "--runai_env_json",
         type=str,
         help="JSON-encoded dict of additional environment variables for the Run:ai training container.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--runai_scheduler_name",
+        type=str,
+        help="Kubernetes scheduler to pin Run:ai workload pods to (spec.schedulerName), "
+        "e.g. 'runai-scheduler'. Required for raw PyTorchJob/TrainJob submissions (not via "
+        "the runai CLI) so Run:ai gang-scheduling and quota apply. Omit to use the default scheduler.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--runai_labels_json",
+        type=str,
+        help="JSON-encoded dict of extra pod labels for Run:ai project/queue membership "
+        '(e.g. \'{"project": "bench"}\' or \'{"kai.scheduler/queue": "bench"}\'); the exact '
+        "key depends on your Run:ai version.",
         required=False,
         default=None,
     )

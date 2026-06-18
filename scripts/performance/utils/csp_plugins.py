@@ -133,6 +133,17 @@ class RunAIPlugin(Plugin):
         pvc_mount_path: Container mount path for the PVC.
         env_vars: Additional environment variables injected into the training
             container (e.g. ``TRANSFORMERS_OFFLINE``, ``HF_HOME``).
+        scheduler_name: If set, pin the workload pods to this Kubernetes
+            scheduler (``spec.schedulerName``). Run:ai gang-schedules through its
+            own scheduler — typically ``"runai-scheduler"`` — so raw
+            PyTorchJob/TrainJob submissions (i.e. not via the ``runai`` CLI) must
+            name it explicitly or the default scheduler will place the pods and
+            bypass Run:ai quota/fair-share. Left unset (default) so non-Run:ai
+            paths are unaffected.
+        labels: Extra pod labels merged onto the workload pods. Run:ai expresses
+            project/queue membership through a pod label whose key varies by
+            version (e.g. ``project`` or ``kai.scheduler/queue``); pass the
+            key/value your cluster expects here rather than hardcoding one.
     """
 
     extended_resources: Dict[str, str] = field(default_factory=dict)
@@ -141,11 +152,27 @@ class RunAIPlugin(Plugin):
     pvc_claim_name: Optional[str] = None
     pvc_mount_path: str = "/nemo-workspace"
     env_vars: Dict[str, str] = field(default_factory=dict)
+    scheduler_name: Optional[str] = None
+    labels: Dict[str, str] = field(default_factory=dict)
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor") -> None:
         """Layer the Run:ai RoCE/SR-IOV fabric onto a Kubeflow executor."""
         if not isinstance(executor, KubeflowExecutor):
             return
+
+        if self.scheduler_name:
+            # pod_spec_overrides merges into the (v2 TrainJob) podTemplateOverrides
+            # spec and the (v1 PyTorchJob) replica pod spec alike.
+            executor.pod_spec_overrides = {
+                **executor.pod_spec_overrides,
+                "schedulerName": self.scheduler_name,
+            }
+
+        if self.labels:
+            if hasattr(executor, "pod_labels"):
+                executor.pod_labels = {**executor.pod_labels, **self.labels}
+            else:
+                executor.labels = {**executor.labels, **self.labels}
 
         if self.extended_resources:
             executor.extra_resource_requests = {**executor.extra_resource_requests, **self.extended_resources}

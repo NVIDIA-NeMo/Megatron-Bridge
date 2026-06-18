@@ -382,6 +382,43 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
+def build_csp_plugin(
+    csp: Optional[str],
+    *,
+    runai_extended_resources_json: Optional[str] = None,
+    runai_annotations_json: Optional[str] = None,
+    runai_pvc_claim_name: Optional[str] = None,
+    runai_pvc_mount_path: str = "/nemo-workspace",
+    runai_large_shm: bool = True,
+    runai_env_json: Optional[str] = None,
+    runai_scheduler_name: Optional[str] = None,
+    runai_labels_json: Optional[str] = None,
+):
+    """Map ``--csp`` (+ its ``--runai_*`` args) to a single CSP fabric plugin.
+
+    Returns the plugin instance for the selected CSP, or ``None`` when no CSP is
+    selected. Kept as a small pure function (no executor/cluster state) so the
+    args -> plugin wiring is unit-testable without a live cluster — see
+    ``tests/.../test_setup_experiment_csp.py``.
+    """
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    if csp == "runai":
+        return RunAIPlugin(
+            extended_resources=json.loads(runai_extended_resources_json) if runai_extended_resources_json else {},
+            annotations=json.loads(runai_annotations_json) if runai_annotations_json else {},
+            large_shm=runai_large_shm,
+            pvc_claim_name=runai_pvc_claim_name,
+            pvc_mount_path=runai_pvc_mount_path,
+            env_vars=json.loads(runai_env_json) if runai_env_json else {},
+            scheduler_name=runai_scheduler_name,
+            labels=json.loads(runai_labels_json) if runai_labels_json else {},
+        )
+    return None
+
+
 def main(
     use_recipes: bool,
     model_family_name: str,
@@ -459,12 +496,15 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
+    kubeflow_api_version: str = "v2",
     runai_extended_resources_json: Optional[str] = None,
     runai_annotations_json: Optional[str] = None,
     runai_pvc_claim_name: Optional[str] = None,
     runai_pvc_mount_path: str = "/nemo-workspace",
     runai_large_shm: bool = True,
     runai_env_json: Optional[str] = None,
+    runai_scheduler_name: Optional[str] = None,
+    runai_labels_json: Optional[str] = None,
     deterministic: bool = False,
     config_variant: str = "v1",
     gres: Optional[str] = None,
@@ -621,6 +661,7 @@ def main(
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
+            api_version=kubeflow_api_version,
         )
     else:
         executor = slurm_executor(
@@ -652,21 +693,19 @@ def main(
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB),
     # runai -> RunAIPlugin (RoCE/SR-IOV). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
-    if csp == "aws":
-        plugins.append(EKSEnvPlugin())
-    elif csp == "gcp":
-        plugins.append(GKEEnvPlugin())
-    elif csp == "runai":
-        plugins.append(
-            RunAIPlugin(
-                extended_resources=json.loads(runai_extended_resources_json) if runai_extended_resources_json else {},
-                annotations=json.loads(runai_annotations_json) if runai_annotations_json else {},
-                large_shm=runai_large_shm,
-                pvc_claim_name=runai_pvc_claim_name,
-                pvc_mount_path=runai_pvc_mount_path,
-                env_vars=json.loads(runai_env_json) if runai_env_json else {},
-            )
-        )
+    csp_plugin = build_csp_plugin(
+        csp,
+        runai_extended_resources_json=runai_extended_resources_json,
+        runai_annotations_json=runai_annotations_json,
+        runai_pvc_claim_name=runai_pvc_claim_name,
+        runai_pvc_mount_path=runai_pvc_mount_path,
+        runai_large_shm=runai_large_shm,
+        runai_env_json=runai_env_json,
+        runai_scheduler_name=runai_scheduler_name,
+        runai_labels_json=runai_labels_json,
+    )
+    if csp_plugin is not None:
+        plugins.append(csp_plugin)
 
     if not use_recipes:
         plugins.append(
@@ -1048,6 +1087,15 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
+        kubeflow_api_version=args.kubeflow_api_version,
+        runai_extended_resources_json=args.runai_extended_resources_json,
+        runai_annotations_json=args.runai_annotations_json,
+        runai_pvc_claim_name=args.runai_pvc_claim_name,
+        runai_pvc_mount_path=args.runai_pvc_mount_path,
+        runai_large_shm=args.runai_large_shm,
+        runai_env_json=args.runai_env_json,
+        runai_scheduler_name=args.runai_scheduler_name,
+        runai_labels_json=args.runai_labels_json,
         deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
