@@ -129,9 +129,7 @@ def test_select_samples_to_pack_deterministic(monkeypatch):
     _patch_worker_config(monkeypatch)
 
     encoder = ConcreteDiffusionTaskEncoder(seq_length=20)
-    samples = [
-        create_diffusion_sample(f"s{i}", seq_len=length) for i, length in enumerate([8, 12, 5, 7, 3])
-    ]
+    samples = [create_diffusion_sample(f"s{i}", seq_len=length) for i, length in enumerate([8, 12, 5, 7, 3])]
 
     result1 = encoder.select_samples_to_pack(samples)
     result2 = encoder.select_samples_to_pack(samples)
