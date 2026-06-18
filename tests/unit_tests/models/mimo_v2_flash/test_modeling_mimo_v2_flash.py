@@ -32,6 +32,7 @@ from megatron.bridge.models.mimo_v2_flash.modeling_mimo_v2_flash import (
     MiMoV2FlashTEDotProductAttention,
 )
 
+
 # Sequence / tensor dimensions used across tests.
 _SEQ, _BATCH, _HEADS, _KV_HEADS, _HEAD_DIM = 8, 2, 4, 2, 64
 
