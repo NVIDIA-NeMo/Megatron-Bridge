@@ -340,7 +340,9 @@ class Gemma4Bridge(MegatronModelBridge):
         return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        if getattr(self, "_is_dense", False):
+        if getattr(self, "_is_dense", False) or (
+            hasattr(self, "hf_config") and not getattr(self.hf_config, "enable_moe_block", False)
+        ):
             return self._dense_mapping_registry()
         return self._moe_mapping_registry()
 
