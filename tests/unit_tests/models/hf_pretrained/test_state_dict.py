@@ -427,6 +427,127 @@ class TestStateDictConvenienceMethods:
 class TestSafeTensorsStateSourceSave:
     """Test streaming safetensors save behavior."""
 
+    def test_save_generator_supports_nested_relative_shard_paths(self, tmp_path):
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "source"
+        source_shard_dir = source_dir / "nested"
+        output_dir = tmp_path / "output"
+        source_shard_dir.mkdir(parents=True)
+        save_file({"model.weight": torch.ones(1)}, source_shard_dir / "model-00001-of-00001.safetensors")
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {"model.weight": "nested/model-00001-of-00001.safetensors"},
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(iter([("model.weight", torch.zeros(1))]), output_dir)
+
+        assert (output_dir / "nested" / "model-00001-of-00001.safetensors").exists()
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "nested/model-00001-of-00001.safetensors"}
+
+    def test_save_generator_accepts_source_shard_symlink_outside_source_dir(self, tmp_path):
+        from safetensors.torch import save_file
+
+        source_dir = tmp_path / "snapshots" / "revision"
+        blob_dir = tmp_path / "blobs"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir(parents=True)
+        blob_dir.mkdir()
+        save_file({"model.weight": torch.ones(1)}, blob_dir / "shard")
+        (source_dir / "model-00001-of-00001.safetensors").symlink_to(Path("..") / ".." / "blobs" / "shard")
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {"model.weight": "model-00001-of-00001.safetensors"},
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(iter([("model.weight", torch.zeros(1))]), output_dir)
+
+        assert (output_dir / "model-00001-of-00001.safetensors").exists()
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
+
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "../evil.safetensors",
+            "..\\evil.safetensors",
+            "../../site-packages/evil.pth",
+            "/tmp/evil.safetensors",
+            "C:\\tmp\\evil.safetensors",
+            "model.bin",
+            "model.safetensors\0.pth",
+        ],
+    )
+    def test_save_generator_rejects_invalid_shard_paths(self, tmp_path, filename):
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {"model.weight": filename},
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+
+        with pytest.raises(ValueError, match="Invalid safetensors shard filename"):
+            source.save_generator(iter([("model.weight", torch.zeros(1))]), output_dir)
+
+        assert not (tmp_path / "evil.safetensors").exists()
+        assert not (tmp_path / "site-packages" / "evil.pth").exists()
+
+    def test_save_generator_rejects_non_string_shard_path(self, tmp_path):
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {"model.weight": 123},
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+
+        with pytest.raises(ValueError, match="Invalid safetensors shard filename"):
+            source.save_generator(iter([("model.weight", torch.zeros(1))]), output_dir)
+
+    def test_distributed_save_generator_rejects_invalid_shard_paths_without_initialized_dist(self, tmp_path):
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {"model.weight": "../evil.safetensors"},
+                },
+                f,
+            )
+
+        source = SafeTensorsStateSource(source_dir)
+
+        with pytest.raises(ValueError, match="Invalid safetensors shard filename"):
+            source.save_generator(iter([("model.weight", torch.zeros(1))]), output_dir, distributed_save=True)
+
     def test_save_generator_ignores_source_key_prefixes(self, tmp_path, capsys):
         from safetensors.torch import save_file
 

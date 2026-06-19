@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import (
     Dict,
     Iterable,
@@ -476,6 +476,52 @@ class SafeTensorsStateSource(StateSource):
         prefixes = tuple(ignored_source_key_prefixes)
         return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
 
+    @staticmethod
+    def _validate_safetensors_filename(filename: str, tensor_key: str) -> Path:
+        if "\0" in filename or "\\" in filename:
+            raise ValueError(f"Invalid safetensors shard filename for tensor '{tensor_key}': {filename!r}")
+
+        filename_path = Path(filename)
+        windows_filename_path = PureWindowsPath(filename)
+        if filename_path.is_absolute() or windows_filename_path.is_absolute() or windows_filename_path.drive:
+            raise ValueError(f"Invalid safetensors shard filename for tensor '{tensor_key}': {filename!r}")
+        if filename_path.suffix != ".safetensors":
+            raise ValueError(f"Invalid safetensors shard filename for tensor '{tensor_key}': {filename!r}")
+        if ".." in filename_path.parts:
+            raise ValueError(f"Invalid safetensors shard filename for tensor '{tensor_key}': {filename!r}")
+        return filename_path
+
+    @staticmethod
+    def _resolve_validated_safetensors_output_path(base_path: Path, filename: str, tensor_key: str) -> Path:
+        filename_path = SafeTensorsStateSource._validate_safetensors_filename(filename, tensor_key)
+        resolved_base_path = base_path.resolve()
+        resolved_file_path = (resolved_base_path / filename_path).resolve()
+        if resolved_file_path != resolved_base_path and resolved_base_path not in resolved_file_path.parents:
+            raise ValueError(f"Invalid safetensors shard filename for tensor '{tensor_key}': {filename!r}")
+        return resolved_file_path
+
+    @staticmethod
+    def _validate_key_to_filename_map(
+        key_to_filename_map: Mapping[object, object],
+    ) -> Dict[str, str]:
+        validated_map = {}
+        for key, filename in key_to_filename_map.items():
+            if not isinstance(key, str):
+                raise ValueError(f"Invalid safetensors index tensor key: {key!r}")
+            if not isinstance(filename, str):
+                raise ValueError(f"Invalid safetensors shard filename for tensor '{key}': {filename!r}")
+            SafeTensorsStateSource._validate_safetensors_filename(filename, key)
+            validated_map[key] = filename
+        return validated_map
+
+    @staticmethod
+    def _prepare_safetensors_output_path(output_path: Path, filename: str, tensor_key: str) -> Path:
+        output_file_path = SafeTensorsStateSource._resolve_validated_safetensors_output_path(
+            output_path, filename, tensor_key
+        )
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        return output_file_path
+
     @property
     def path(self) -> Path:
         """
@@ -803,7 +849,9 @@ class SafeTensorsStateSource(StateSource):
                     # This shard is complete, save it.
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
 
-                    output_file_path = output_path / filename
+                    output_file_path = self._prepare_safetensors_output_path(
+                        output_path, filename, next(iter(keys_for_file))
+                    )
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
@@ -834,7 +882,9 @@ class SafeTensorsStateSource(StateSource):
                 for filename in list(files_to_save.keys()):
                     keys_for_file = files_to_save[filename]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
-                    output_file_path = output_path / filename
+                    output_file_path = self._prepare_safetensors_output_path(
+                        output_path, filename, next(iter(keys_for_file))
+                    )
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
@@ -902,7 +952,7 @@ class SafeTensorsStateSource(StateSource):
                 try:
                     index_data = json.load(f)
                     if "weight_map" in index_data and isinstance(index_data["weight_map"], dict):
-                        return index_data["weight_map"]
+                        return SafeTensorsStateSource._validate_key_to_filename_map(index_data["weight_map"])
                 except json.JSONDecodeError:
                     return None
         return None
@@ -1018,7 +1068,10 @@ class SafeTensorsStateSource(StateSource):
                 tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
                 if not tensors_to_save:
                     continue
-                save_file(tensors_to_save, output_path / fname)
+                output_file_path = self._prepare_safetensors_output_path(
+                    output_path, fname, next(iter(keys_for_file))
+                )
+                save_file(tensors_to_save, output_file_path)
                 actually_saved_keys.update(tensors_to_save.keys())
 
         # Rank 0 builds the index from the files that were actually written.
@@ -1032,7 +1085,9 @@ class SafeTensorsStateSource(StateSource):
 
                 all_saved_keys_aggregated = set()
                 for fname in all_filenames:
-                    file_path = output_path / fname
+                    file_path = self._resolve_validated_safetensors_output_path(
+                        output_path, fname, next(iter(filename_to_keys_map[fname]))
+                    )
                     if not file_path.exists():
                         continue
                     with safe_open(file_path, framework="pt", device="cpu") as f:
