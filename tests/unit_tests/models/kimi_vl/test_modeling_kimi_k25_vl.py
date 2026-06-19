@@ -368,6 +368,7 @@ class TestKimiK25VLModelInit:
         """Create mock config for model init."""
         config = Mock()
         config.hf_model_path = "/path/to/model"
+        config.trust_remote_code = True
         config.share_embeddings_and_output_weights = False
         config.sequence_parallel = False
         config.media_placeholder_token_id = IMAGE_TOKEN_ID
@@ -399,7 +400,8 @@ class TestKimiK25VLModelInit:
         mock_vit = Mock()
         mock_projector = Mock()
 
-        def side_effect(name, path):
+        def side_effect(name, path, trust_remote_code=False):
+            assert trust_remote_code is True
             if "MoonViT3dPretrainedModel" in name:
                 cls = Mock(return_value=mock_vit)
                 cls.__module__ = "test_module"
@@ -426,6 +428,20 @@ class TestKimiK25VLModelInit:
         assert hasattr(model, "vision_tower")
         assert hasattr(model, "mm_projector")
         assert hasattr(model, "language_model")
+        mock_safe_load.assert_called_once_with("/path/to/model", trust_remote_code=True)
+
+    @patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.get_class_from_dynamic_module")
+    def test_init_with_pre_process_rejects_untrusted_remote_code(self, mock_get_class):
+        """Test pre_process=True fails before dynamic imports when remote code is not trusted."""
+        config = self._make_mock_config()
+        config.trust_remote_code = False
+
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+        with pytest.raises(ValueError, match="trust_remote_code=True"):
+            KimiK25VLModel(config=config, pre_process=True, post_process=True)
+
+        mock_get_class.assert_not_called()
 
     def test_init_without_pre_process(self):
         """Test initialization with pre_process=False skips vision components."""

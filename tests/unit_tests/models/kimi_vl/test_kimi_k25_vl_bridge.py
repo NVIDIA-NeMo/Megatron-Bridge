@@ -122,6 +122,7 @@ def mock_hf_pretrained(mock_hf_config):
     pretrained = Mock(spec=PreTrainedVLM)
     pretrained.config = mock_hf_config
     pretrained._model_name_or_path = "/path/to/kimi_k25_vl"
+    pretrained.trust_remote_code = True
     pretrained.generation_config = None
     return pretrained
 
@@ -206,6 +207,27 @@ class TestKimiK25VLBridgeProviderBridge:
         """Test HF model path is stored on provider."""
         provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
         assert provider.hf_model_path == "/path/to/kimi_k25_vl"
+
+    def test_provider_bridge_trust_remote_code(self, kimi_bridge, mock_hf_pretrained):
+        """Test remote-code trust setting is stored on provider."""
+        mock_hf_pretrained.trust_remote_code = True
+        provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
+        assert provider.trust_remote_code is True
+
+        mock_hf_pretrained.trust_remote_code = False
+        provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
+        assert provider.trust_remote_code is False
+
+    @patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.get_class_from_dynamic_module")
+    def test_untrusted_provider_rejects_before_dynamic_import(self, mock_get_class, kimi_bridge, mock_hf_pretrained):
+        """Test untrusted Kimi provider cannot load custom HF code during model construction."""
+        mock_hf_pretrained.trust_remote_code = False
+        provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
+
+        with pytest.raises(ValueError, match="trust_remote_code=True"):
+            provider.provide(pre_process=True, post_process=True)
+
+        mock_get_class.assert_not_called()
 
     def test_provider_bridge_different_hidden_sizes(self, kimi_bridge, mock_hf_pretrained):
         """Test provider_bridge with different hidden sizes."""

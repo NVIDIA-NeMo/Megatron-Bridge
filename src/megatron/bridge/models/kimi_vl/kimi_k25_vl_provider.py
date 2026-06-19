@@ -47,6 +47,7 @@ class KimiK25VLModelProvider(MLAModelProvider):
     # Path to HuggingFace model directory (required for dynamic module loading
     # of MoonViT3d, PatchMergerMLP, and other custom model classes).
     hf_model_path: Optional[str] = None
+    trust_remote_code: bool = False
 
     # Token IDs (from Kimi K2.5 config.json)
     bos_token_id: int = 163584
