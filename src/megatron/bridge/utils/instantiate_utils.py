@@ -57,6 +57,12 @@ _TARGET_ALLOWLIST_MUTATORS: tuple[str, ...] = (
     "enable",
 )
 
+_ALLOWED_PRIVATE_TARGETS: set[str] = {
+    # PyTorch exposes torch.nn.functional.gelu as this C-extension symbol, and
+    # the YAML function representer serializes it with its underlying module.
+    "torch._C._nn.gelu",
+}
+
 _DISALLOWED_TARGETS: set[str] = {
     "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
@@ -107,7 +113,7 @@ def _validate_target_prefix(*, target: str, full_key: str) -> None:
             + (f"\nfull_key: {full_key}" if full_key else "")
         )
     private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
-    if private_segments:
+    if private_segments and target not in _ALLOWED_PRIVATE_TARGETS:
         raise InstantiationException(
             f"Instantiation of '{target}' is not allowed because private target path segments are not supported: "
             f"{private_segments}." + (f"\nfull_key: {full_key}" if full_key else "")

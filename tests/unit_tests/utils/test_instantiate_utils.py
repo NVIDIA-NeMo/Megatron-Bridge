@@ -18,6 +18,7 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from megatron.bridge.utils.instantiate_utils import (
@@ -651,6 +652,7 @@ class TestTargetPrefixValidation:
         """Test that targets with allowed prefixes pass validation."""
         _validate_target_prefix(target="megatron.bridge.Foo", full_key="key")
         _validate_target_prefix(target="torch.nn.Module", full_key="key")
+        _validate_target_prefix(target="torch._C._nn.gelu", full_key="key")
         _validate_target_prefix(target="transformers.AutoModel", full_key="key")
         _validate_target_prefix(target="numpy.array", full_key="key")
         _validate_target_prefix(target="nvidia.dali.Pipeline", full_key="key")
@@ -728,6 +730,17 @@ class TestTargetPrefixValidation:
             "_target_": "megatron.bridge.utils.instantiate_utils._ALLOWED_TARGET_PREFIXES.add",
             "_args_": ["os."],
         }
+        with pytest.raises(InstantiationException, match="private target path segments"):
+            instantiate(config)
+
+    def test_instantiate_allows_known_torch_private_activation_target(self):
+        """Test that serialized torch.nn.functional.gelu can be resolved."""
+        config = {"_target_": "torch._C._nn.gelu", "_call_": False}
+        assert instantiate(config) is F.gelu
+
+    def test_instantiate_rejects_unknown_torch_private_target_segments(self):
+        """Test that only exact known private torch targets are allowed."""
+        config = {"_target_": "torch._C._nn._unsafe_private_symbol"}
         with pytest.raises(InstantiationException, match="private target path segments"):
             instantiate(config)
 
