@@ -30,14 +30,14 @@ from megatron.training.config.instantiate_utils import (
     _Keys,  # noqa: F401  (re-exported for tests / external callers)
     _locate,  # noqa: F401  (re-exported for tests / external callers)
     _prepare_input_dict_or_list,  # noqa: F401  (re-exported for tests / external callers)
-    _resolve_target,  # noqa: F401  (re-exported for tests / external callers)
     instantiate,  # noqa: F401  (re-exported for tests / external callers)
     instantiate_node,  # noqa: F401  (re-exported for tests / external callers)
     target_allowlist,
 )
+from megatron.training.config.instantiate_utils import (
+    _resolve_target as _mcore_resolve_target,
+)
 
-
-_mcore_resolve_target = _resolve_target
 
 _ALLOWED_TARGET_PREFIXES: set[str] = {
     "megatron.",
