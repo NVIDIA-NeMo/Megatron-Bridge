@@ -781,6 +781,67 @@ class TestTargetPrefixValidation:
 
         assert not target_allowlist.is_allowed("os.system")
 
+    def test_instantiate_rejects_upstream_target_allowlist_mutation(self):
+        """Test that configs cannot mutate the upstream target allowlist singleton."""
+        _remove_allowed_prefix("os.")
+        config = {
+            "_target_": "megatron.training.config.instantiate_utils.target_allowlist.add_prefix",
+            "_args_": ["os."],
+        }
+
+        with pytest.raises(InstantiationException, match="modify the target allowlist"):
+            instantiate(config)
+
+        assert not target_allowlist.is_allowed("os.system")
+
+    def test_instantiate_rejects_upstream_target_allowlist_disable(self):
+        """Test that configs cannot disable the upstream target allowlist singleton."""
+        config = {"_target_": "megatron.training.config.instantiate_utils.target_allowlist.disable"}
+
+        with pytest.raises(InstantiationException, match="modify the target allowlist"):
+            instantiate(config)
+
+        assert target_allowlist.enabled
+
+    def test_instantiate_rejects_disallowed_target_inside_args(self):
+        """Test that preflight validates nested target configs carried inside _args_."""
+        _remove_allowed_prefix("os.")
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.test_function",
+            "_args_": [
+                {
+                    "_target_": "os.system",
+                    "_args_": [""],
+                }
+            ],
+        }
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                instantiate(config)
+
+        mock_system.assert_not_called()
+
+    def test_instantiate_rejects_disallowed_target_inside_list(self):
+        """Test that preflight validates target configs nested inside lists."""
+        _remove_allowed_prefix("os.")
+        config = {
+            "_target_": "tests.unit_tests.utils.test_instantiate_utils.test_function",
+            "arg1": [
+                "safe",
+                {
+                    "_target_": "os.system",
+                    "_args_": [""],
+                },
+            ],
+        }
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                instantiate(config)
+
+        mock_system.assert_not_called()
+
     def test_programmatic_prefix_registration_still_allows_target(self):
         """Test that trusted Python code can still register a prefix before instantiation."""
         _remove_allowed_prefix("collections.")
