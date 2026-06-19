@@ -842,6 +842,39 @@ class TestTargetPrefixValidation:
 
         mock_system.assert_not_called()
 
+    def test_instantiate_rejects_disallowed_target_in_kwargs(self):
+        """Test that preflight validates target configs passed through kwargs."""
+        _remove_allowed_prefix("os.")
+        config = {"_target_": "tests.unit_tests.utils.test_instantiate_utils.test_function"}
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                instantiate(
+                    config,
+                    arg1={
+                        "_target_": "os.system",
+                        "_args_": [""],
+                    },
+                )
+
+        mock_system.assert_not_called()
+
+    def test_instantiate_node_rejects_disallowed_target(self):
+        """Test that instantiate_node preflights targets before delegating."""
+        _remove_allowed_prefix("os.")
+        node = OmegaConf.create(
+            {
+                "_target_": "os.system",
+                "_args_": [""],
+            }
+        )
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                instantiate_node(node)
+
+        mock_system.assert_not_called()
+
     def test_programmatic_prefix_registration_still_allows_target(self):
         """Test that trusted Python code can still register a prefix before instantiation."""
         _remove_allowed_prefix("collections.")
