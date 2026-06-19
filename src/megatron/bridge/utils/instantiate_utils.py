@@ -136,7 +136,12 @@ def _validate_target_for_instantiate(target: Any, full_key: str, snapshot: _Targ
         _raise_disallowed_target(target, full_key, snapshot)
 
 
-def _preflight_targets(node: Any, snapshot: _TargetAllowlistSnapshot, full_key: str = "") -> None:
+def _preflight_targets(
+    node: Any,
+    snapshot: _TargetAllowlistSnapshot,
+    full_key: str = "",
+    target_keys: tuple[str, ...] = (_Keys.TARGET.value,),
+) -> None:
     """Validate every target in a config tree against the same allowlist snapshot."""
     if node is None:
         return
@@ -148,17 +153,31 @@ def _preflight_targets(node: Any, snapshot: _TargetAllowlistSnapshot, full_key: 
         node = OmegaConf.structured(node, flags={"allow_objects": True})
 
     if OmegaConf.is_dict(node):
-        if _Keys.TARGET in node:
-            _validate_target_for_instantiate(node.get(_Keys.TARGET), full_key, snapshot)
+        for target_key in target_keys:
+            if target_key in node:
+                target_full_key = target_key if not full_key else f"{full_key}.{target_key}"
+                _validate_target_for_instantiate(node.get(target_key), target_full_key, snapshot)
         for key in node.keys():
-            if key in (_Keys.TARGET, _Keys.PARTIAL, _Keys.CALL, _Keys.NAME):
+            if key in (*target_keys, _Keys.PARTIAL, _Keys.CALL, _Keys.NAME):
                 continue
             child_key = str(key) if not full_key else f"{full_key}.{key}"
-            _preflight_targets(node[key], snapshot, child_key)
+            _preflight_targets(node[key], snapshot, child_key, target_keys)
     elif OmegaConf.is_list(node):
         for idx, value in enumerate(node._iter_ex(resolve=True)):
             child_key = f"{full_key}[{idx}]" if full_key else f"[{idx}]"
-            _preflight_targets(value, snapshot, child_key)
+            _preflight_targets(value, snapshot, child_key, target_keys)
+
+
+def validate_config_targets(config: Any, target_keys: tuple[str, ...] = (_Keys.TARGET.value,)) -> None:
+    """Validate code-selection fields in config metadata without importing them.
+
+    Args:
+        config: Config tree to validate.
+        target_keys: Dictionary keys whose string values select Python objects.
+            Checkpoint metadata uses both ``_target_`` and ``_builder_``.
+    """
+    snapshot = _snapshot_allowlist()
+    _preflight_targets(config, snapshot, target_keys=target_keys)
 
 
 def instantiate(

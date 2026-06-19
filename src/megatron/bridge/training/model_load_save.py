@@ -235,7 +235,7 @@ def load_model_config(
         read_run_config,
     )
     from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
-    from megatron.bridge.utils.instantiate_utils import instantiate
+    from megatron.bridge.utils.instantiate_utils import instantiate, validate_config_targets
 
     run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
 
@@ -259,6 +259,7 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
+            validate_config_targets(run_config["model"], target_keys=("_target_", "_builder_"))
             model_cfg = ModelConfig.from_dict(run_config["model"])
         else:
             model_cfg = instantiate(run_config["model"])

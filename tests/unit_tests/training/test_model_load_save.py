@@ -28,12 +28,14 @@ from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
     load_megatron_model,
+    load_model_config,
     load_tokenizer,
     megatron_cpu_init_context,
     save_megatron_model,
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class TestTorchDtypeFromMcoreConfig:
@@ -270,7 +272,10 @@ class TestLoadMegatronModel:
         mock_dist.is_initialized.return_value = False
 
         mock_run_cfg_dict = {
-            "model": {"tensor_model_parallel_size": 1, "_builder_": "import.path.to.SomeModelBuilder"}
+            "model": {
+                "tensor_model_parallel_size": 1,
+                "_builder_": "megatron.bridge.models.gpt.gpt_builder.GPTModelBuilder",
+            }
         }
         mock_run_config.return_value = mock_run_cfg_dict
 
@@ -322,6 +327,63 @@ class TestLoadMegatronModel:
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_model_config_rejects_untrusted_nested_builder_metadata_target(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+    ):
+        """Test that _builder_ checkpoint metadata cannot import untrusted nested targets."""
+        mock_run_config.return_value = {
+            "model": {
+                "_target_": "megatron.bridge.models.gpt.gpt_builder.GPTModelConfig",
+                "_builder_": "megatron.bridge.models.gpt.gpt_builder.GPTModelBuilder",
+                "transformer_layer_spec": {
+                    "_target_": "llama3_ckpt_interactive.iter_0000001.payload.ShellConfig",
+                },
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            mock_run_config_fname.return_value = str(config_file)
+
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                load_model_config(ckpt_path)
+
+        mock_from_dict.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    @patch("megatron.bridge.training.checkpointing.get_checkpoint_run_config_filename")
+    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    def test_load_model_config_rejects_untrusted_builder_metadata_builder(
+        self,
+        mock_from_dict,
+        mock_run_config_fname,
+        mock_run_config,
+    ):
+        """Test that _builder_ checkpoint metadata cannot select an untrusted builder class."""
+        mock_run_config.return_value = {
+            "model": {
+                "_target_": "megatron.bridge.models.gpt.gpt_builder.GPTModelConfig",
+                "_builder_": "llama3_ckpt_interactive.iter_0000001.payload.ShellBuilder",
+            }
+        }
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            mock_run_config_fname.return_value = str(config_file)
+
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                load_model_config(ckpt_path)
+
+        mock_from_dict.assert_not_called()
 
     @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
