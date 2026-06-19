@@ -78,6 +78,14 @@ def test_function(arg1=None, arg2=None, **kwargs):
     return {"arg1": arg1, "arg2": arg2, "kwargs": kwargs}
 
 
+def _remove_allowed_prefix(prefix: str) -> None:
+    _ALLOWED_TARGET_PREFIXES.discard(prefix)
+    try:
+        target_allowlist.remove_prefix(prefix)
+    except ValueError:
+        pass
+
+
 class TestInstantiationException:
     """Test InstantiationException class."""
 
@@ -713,3 +721,77 @@ class TestTargetPrefixValidation:
         config = {"_target_": "os.system", "command": "echo hello"}
         with pytest.raises(InstantiationException, match="not in the allowlist"):
             instantiate(config)
+
+    def test_instantiate_rejects_allowlist_self_modification_poc(self):
+        """Test that nested configs cannot extend the allowlist before a later sibling target."""
+        _remove_allowed_prefix("os.")
+        config = {
+            "_target_": "torch.nn.Identity",
+            "aaa_register": {
+                "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+                "_args_": ["os."],
+            },
+            "bbb_payload": {
+                "_target_": "os.system",
+                "_args_": [""],
+            },
+        }
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="modify the target allowlist"):
+                instantiate(config)
+
+        mock_system.assert_not_called()
+        assert not target_allowlist.is_allowed("os.system")
+
+    def test_instantiate_rejects_allowlist_self_modification_poc_omegaconf(self):
+        """Test that OmegaConf inputs get the same stable allowlist validation."""
+        _remove_allowed_prefix("os.")
+        config = OmegaConf.create(
+            {
+                "_target_": "torch.nn.Identity",
+                "aaa_register": {
+                    "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+                    "_args_": ["os."],
+                },
+                "bbb_payload": {
+                    "_target_": "os.system",
+                    "_args_": [""],
+                },
+            }
+        )
+
+        with patch("os.system", return_value=0) as mock_system:
+            with pytest.raises(InstantiationException, match="modify the target allowlist"):
+                instantiate(config)
+
+        mock_system.assert_not_called()
+        assert not target_allowlist.is_allowed("os.system")
+
+    def test_instantiate_rejects_direct_target_allowlist_mutation(self):
+        """Test that configs cannot call the target_allowlist mutator methods directly."""
+        _remove_allowed_prefix("os.")
+        config = {
+            "_target_": "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
+            "_args_": ["os."],
+        }
+
+        with pytest.raises(InstantiationException, match="modify the target allowlist"):
+            instantiate(config)
+
+        assert not target_allowlist.is_allowed("os.system")
+
+    def test_programmatic_prefix_registration_still_allows_target(self):
+        """Test that trusted Python code can still register a prefix before instantiation."""
+        _remove_allowed_prefix("collections.")
+        try:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                instantiate({"_target_": "collections.Counter", "_args_": [["a", "b", "a"]]})
+
+            register_allowed_target_prefix("collections.")
+            result = instantiate({"_target_": "collections.Counter", "_args_": [["a", "b", "a"]]})
+
+            assert result["a"] == 2
+            assert result["b"] == 1
+        finally:
+            _remove_allowed_prefix("collections.")
