@@ -1014,7 +1014,7 @@ dependencies = [
 
 [[package]]
 name = "fastapi"
-version = "0.137.2"
+version = "0.138.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "annotated-doc" },
@@ -1023,9 +1023,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "typing-inspection" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e2/29/cc5819dc24d3daa80cdaa1aec023bf8652a70dd7fd1c96b0b225c99a7690/fastapi-0.137.2.tar.gz", hash = "sha256:b9d893bebc97dcfbdcb1917e88a292d062844ea19445a5fa4f7eb28c4baea9e3", size = 410332, upload-time = "2026-06-18T06:58:24.434Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/58/ff455d9fe47c60abadb34b9e05a304b1f05f5ab8000ac01565156b6f5e43/fastapi-0.138.0.tar.gz", hash = "sha256:d445a4877636ad191e7053e08c9bf98cb921a6756776848400bb773d1740c061", size = 419240, upload-time = "2026-06-20T01:18:05.259Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2f/ed/0c6b644e99fb5697d8bdcd36cdb47c52e77a63fc7a1514b1f03a6ecab955/fastapi-0.137.2-py3-none-any.whl", hash = "sha256:791d36261e916a98b25ac85ee591bc3db159394070f6d3d096d94fb378f60ce2", size = 122252, upload-time = "2026-06-18T06:58:26.074Z" },
+    { url = "https://files.pythonhosted.org/packages/6c/ff/8496d9847a5fedae775eb49460722d3efaa80487854273e9647ae876218c/fastapi-0.138.0-py3-none-any.whl", hash = "sha256:b6f54fd1bd72c80b0f899f172c61a600f6f7af9b43d4d772a018f35624048cb0", size = 126779, upload-time = "2026-06-20T01:18:03.483Z" },
 ]
 
 [[package]]
@@ -2984,7 +2984,7 @@ wheels = [
 
 [[package]]
 name = "onnxscript"
-version = "0.7.1.dev20260615"
+version = "0.7.1.dev20260620"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "ml-dtypes" },
@@ -2994,9 +2994,9 @@ dependencies = [
     { name = "packaging" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c5/11/1cd4fb28d406e498cab393f0652bce468714ef5aa4590cbed0393fade87b/onnxscript-0.7.1.dev20260615.tar.gz", hash = "sha256:69de538675a237f06d7af8e0e609cd376cfe7a8c057376106379640bd253d475", size = 617651, upload-time = "2026-06-15T07:25:55.449Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/74/93/2a3239d2159d7d14faaf1269dc09e880a10489f779a631626830cffbabad/onnxscript-0.7.1.dev20260620.tar.gz", hash = "sha256:20aa5d56d5176de4ef298711e3aa14ce2fd9dc28d5d3742ed5640e45a8e20835", size = 618339, upload-time = "2026-06-20T07:19:12.96Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/76/d0ed62d8ecf6230f2a783ef13c3cef078953afd897356cbd72924081f79d/onnxscript-0.7.1.dev20260615-py3-none-any.whl", hash = "sha256:f7b3457af892bfa8c401aa6181da90c78fd7ca7056d1902bdabd57efd8d4d069", size = 721153, upload-time = "2026-06-15T07:25:57.481Z" },
+    { url = "https://files.pythonhosted.org/packages/da/ae/a5f10f3ee4ac40ae08ca183299c8fee13715821f66cf4a9e8d3c44fd47f3/onnxscript-0.7.1.dev20260620-py3-none-any.whl", hash = "sha256:a1d70b17c18bacfb171bcaef6e03a34ef95c728c166436f1f510d1b9d52d35bc", size = 721866, upload-time = "2026-06-20T07:19:15.146Z" },
 ]
 
 [[package]]
@@ -3720,7 +3720,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "9.1.0"
+version = "9.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -3729,9 +3729,9 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/84/0e/b5858858d74958632c49b72cb25a3976ff9f632397626715be71c89d3971/pytest-9.1.0.tar.gz", hash = "sha256:41dd9148c08072446394cefd3d79701701335a9f4cae69ba92e39f6c7f5c061c", size = 1634181, upload-time = "2026-06-13T18:52:45.983Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e4/47/b9efed96c114afcfa3c9d3fe98a76a1d14c74a9e266d397cf6eb64be5e01/pytest-9.1.1.tar.gz", hash = "sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313", size = 1636369, upload-time = "2026-06-19T10:58:32.857Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/5a/ba30a81239b909821b3153e303e7def45178bf353da4f72380e6c5e8793b/pytest-9.1.0-py3-none-any.whl", hash = "sha256:8ebb0e7888bdf2bdfc602ec51f8f62d50200af37356c74e503c79a94f5c81f32", size = 386453, upload-time = "2026-06-13T18:52:44.045Z" },
+    { url = "https://files.pythonhosted.org/packages/24/25/1de2678b631f5a49215c6c96fff41ba892b0a34df68d6d80292b1b48aa7f/pytest-9.1.1-py3-none-any.whl", hash = "sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c", size = 386536, upload-time = "2026-06-19T10:58:31.347Z" },
 ]
 
 [[package]]
@@ -3858,7 +3858,7 @@ wheels = [
 
 [[package]]
 name = "quack-kernels"
-version = "0.5.0"
+version = "0.5.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi" },
@@ -3867,9 +3867,9 @@ dependencies = [
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torch-c-dlpack-ext" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/94/ee76e3a3dc74d986b7b24c5928f1d14b01bd5152375688c2ede369f6d19b/quack_kernels-0.5.0.tar.gz", hash = "sha256:c7c7338b67243397b6ca166e648bba161076e99f3858b532e1c877dcc6eaa03d", size = 366426, upload-time = "2026-05-29T05:00:25.985Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/88/04/3b839340b05037c54a80505fd1fe68e971d511ed828d96334c9abe801f43/quack_kernels-0.5.2.tar.gz", hash = "sha256:9b4f1a8fc3dc9081dcbbe2b9b2ddaa07f53315e68f097877ca80bd1ea83c3059", size = 370268, upload-time = "2026-06-20T09:17:57.761Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/2d/2b/a8f171d5e172880885571bf89e93204aaf231a0e92c4c84714eaf18c271a/quack_kernels-0.5.0-py3-none-any.whl", hash = "sha256:08821ebfb8e638cc20308d5c59410c6dbb3b637ccc7b07bd57c7a9261a06af74", size = 327709, upload-time = "2026-05-29T05:00:24.679Z" },
+    { url = "https://files.pythonhosted.org/packages/8f/22/e31fe90cbda903da06f94f0d7635134f15b3d6a31114ee8bd089a5b0af1d/quack_kernels-0.5.2-py3-none-any.whl", hash = "sha256:978bbd76dfb277be4118a76da8f5d3788852c3c56e1eab75ee1e27dbb723d961", size = 338683, upload-time = "2026-06-20T09:17:56.304Z" },
 ]
 
 [[package]]
