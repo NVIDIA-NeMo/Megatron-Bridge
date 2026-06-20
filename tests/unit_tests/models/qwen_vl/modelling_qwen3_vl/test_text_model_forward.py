@@ -14,6 +14,8 @@
 
 """Unit tests for Qwen3VL text model forward behavior."""
 
+from types import SimpleNamespace
+
 import torch
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
@@ -74,3 +76,51 @@ def test_forward_accepts_extra_preprocess_output():
     assert dummy.decoder.called_with["sequence_len_offset"] is preproc[4]
     assert not any(value is preproc[5] for value in dummy.decoder.called_with.values())
     assert dummy.postprocess_args["decoder_input"] is preproc[0]
+
+
+def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
+    """The MTP embedding wrapper must not fall back to global tensor-parallel state."""
+    expected_group = object()
+    calls = {"group": None}
+
+    def _identity_scatter(x, *, group=None):
+        calls["group"] = group
+        return x
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model.tensor_parallel.scatter_to_sequence_parallel_region",
+        _identity_scatter,
+    )
+
+    class _DummyEmbedding:
+        word_embeddings = object()
+
+        def __call__(self, *, input_ids, position_ids):  # noqa: ARG002
+            return torch.ones(1, 1, 1)
+
+    class _DummyMTPModel(_DummyModel):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sequence_parallel=True)
+            self.embedding = _DummyEmbedding()
+            self.mtp_process = True
+            self.pg_collection = SimpleNamespace(tp=expected_group)
+
+        def _postprocess(self, **kwargs):
+            self.embedding(input_ids=kwargs["input_ids"], position_ids=kwargs["position_ids"])
+            return "ok"
+
+    dummy = _DummyMTPModel()
+    input_ids = torch.zeros((1, 4), dtype=torch.long)
+    position_ids = torch.zeros((1, 4), dtype=torch.long)
+    attention_mask = torch.ones((1, 4), dtype=torch.long)
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=input_ids,
+        position_ids=position_ids,
+        attention_mask=attention_mask,
+    )
+
+    assert output == "ok"
+    assert calls["group"] is expected_group

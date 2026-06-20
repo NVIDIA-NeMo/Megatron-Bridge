@@ -354,6 +354,12 @@ class Qwen3ASRThinkerConfig(PretrainedConfig):
         self.text_config = text_config
         self.audio_token_id = audio_token_id
 
+    def to_cfg_dict(self) -> dict[str, object]:
+        """Return an instantiable config dictionary for Megatron Bridge run_config.yaml."""
+        config = self.to_dict()
+        config["_target_"] = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
+        return config
+
 
 class Qwen3ASRConfig(PretrainedConfig):
     """
