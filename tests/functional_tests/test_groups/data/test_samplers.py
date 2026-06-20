@@ -15,11 +15,10 @@
 from collections import OrderedDict
 from types import SimpleNamespace
 
+from megatron.training.datasets.data_loaders import build_pretraining_data_loader
+from megatron.training.datasets.data_samplers import RandomSeedDataset
+
 from megatron.bridge.data.loaders import build_train_valid_test_datasets
-from megatron.bridge.data.samplers import (
-    RandomSeedDataset,
-    build_pretraining_data_loader,
-)
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.recipes.llama.llama3 import llama3_8b_pretrain_config as pretrain_config
 
@@ -180,14 +179,14 @@ class TestDataSamplers:
         assert dataloader == dataset
 
 
-class TestMegatronPretrainingBatchSampler:
-    """Test suite for MegatronPretrainingBatchSampler."""
+class TestMegatronGlobalBatchSampler:
+    """Test suite for MegatronGlobalBatchSampler."""
 
     def test_batch_sampler_initialization(self):
         """Test basic initialization of batch sampler."""
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=100,
             consumed_samples=0,
             micro_batch_size=4,
@@ -209,11 +208,11 @@ class TestMegatronPretrainingBatchSampler:
         Batch sampler now yields full global batches, not individual microbatches.
         Length = number of global batches.
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
         # With drop_last=True
         # num_global_batches = 100 // 16 = 6
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=100,
             consumed_samples=0,
             micro_batch_size=4,
@@ -226,7 +225,7 @@ class TestMegatronPretrainingBatchSampler:
 
         # With drop_last=False
         # num_global_batches = ceil(100 / 16) = 7
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=100,
             consumed_samples=0,
             micro_batch_size=4,
@@ -244,10 +243,10 @@ class TestMegatronPretrainingBatchSampler:
         - global_batch_size=8, micro_batch_size=4, dp_size=2
         - Each rank gets global_batch_size // dp_size = 4 samples per yield
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
         # Simulate rank 0
-        sampler_rank0 = MegatronPretrainingBatchSampler(
+        sampler_rank0 = MegatronGlobalBatchSampler(
             total_samples=16,
             consumed_samples=0,
             micro_batch_size=4,
@@ -258,7 +257,7 @@ class TestMegatronPretrainingBatchSampler:
         )
 
         # Simulate rank 1
-        sampler_rank1 = MegatronPretrainingBatchSampler(
+        sampler_rank1 = MegatronGlobalBatchSampler(
             total_samples=16,
             consumed_samples=0,
             micro_batch_size=4,
@@ -286,9 +285,9 @@ class TestMegatronPretrainingBatchSampler:
 
     def test_batch_sampler_consumed_samples(self):
         """Test resumption from consumed_samples."""
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=32,
             consumed_samples=16,  # Start from sample 16
             micro_batch_size=4,
@@ -309,9 +308,9 @@ class TestMegatronPretrainingBatchSampler:
         - 1 global batch (16 samples) yields once with 8 samples (for rank 0, dp_size=2)
         - Last 4 samples dropped
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=20,  # Not divisible by global_batch_size=16
             consumed_samples=0,
             micro_batch_size=4,
@@ -334,9 +333,9 @@ class TestMegatronPretrainingBatchSampler:
         - Second global batch (4 samples) → yields 2 samples for this rank (partial)
         Total: 2 yields
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=20,  # 16 + 4 remaining
             consumed_samples=0,
             micro_batch_size=4,
@@ -361,9 +360,9 @@ class TestMegatronPretrainingBatchSampler:
         - Second global batch (4 samples, padded to 8 for this rank) → yields 8 with padding
         Total: 2 yields
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
-        sampler = MegatronPretrainingBatchSampler(
+        sampler = MegatronGlobalBatchSampler(
             total_samples=20,  # 16 + 4 remaining
             consumed_samples=0,
             micro_batch_size=4,
@@ -385,12 +384,11 @@ class TestMegatronPretrainingBatchSampler:
     def test_batch_sampler_global_batch_size_validation(self):
         """Test that invalid global_batch_size raises error."""
         import pytest
-
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
         with pytest.raises(RuntimeError, match="not divisible"):
             # global_batch_size=15 not divisible by micro_batch_size=4 * data_parallel_size=2 = 8
-            MegatronPretrainingBatchSampler(
+            MegatronGlobalBatchSampler(
                 total_samples=100,
                 consumed_samples=0,
                 micro_batch_size=4,
@@ -407,7 +405,7 @@ class TestMegatronPretrainingBatchSampler:
         Each rank gets global_batch_size // dp_size samples per yield.
         All indices should appear exactly once across all ranks.
         """
-        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+        from megatron.training.datasets.data_samplers import MegatronGlobalBatchSampler
 
         dp_size = 4
         global_batch_size = 16
@@ -417,7 +415,7 @@ class TestMegatronPretrainingBatchSampler:
         # Each rank gets 16 // 4 = 4 samples per global batch
         # 2 global batches (32 / 16) = 2 yields per rank
         for rank in range(dp_size):
-            sampler = MegatronPretrainingBatchSampler(
+            sampler = MegatronGlobalBatchSampler(
                 total_samples=32,
                 consumed_samples=0,
                 micro_batch_size=4,

@@ -241,7 +241,7 @@ cfg.checkpoint.non_persistent_local_ckpt_algo = "fully_parallel"
 
 ### Preemption
 - Plugin: `src/megatron/bridge/recipes/run_plugins.py` — `PreemptionPlugin`
-- Signal handler: `src/megatron/bridge/training/utils/sig_utils.py`
+- Signal handler: `DistributedSignalHandler` from Megatron-LM (`megatron.training.dist_signal_handler`); used by `src/megatron/bridge/training/state.py`
 - Tests: `tests/unit_tests/recipes/test_run_plugins.py`
 
 ### Re-run state machine

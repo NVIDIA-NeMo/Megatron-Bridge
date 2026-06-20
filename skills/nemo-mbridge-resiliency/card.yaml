@@ -101,7 +101,7 @@ evidence:
   - src/megatron/bridge/training/inprocess_restart.py
   - src/megatron/bridge/training/checkpointing.py
   - src/megatron/bridge/training/config.py
-  - src/megatron/bridge/training/utils/sig_utils.py
+  - src/megatron/bridge/training/state.py
   - src/megatron/bridge/recipes/run_plugins.py
   - scripts/performance/nemo-mbridge-resiliency_plugins.py
   - tests/unit_tests/training/test_fault_tolerance.py
