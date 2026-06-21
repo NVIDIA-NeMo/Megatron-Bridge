@@ -103,10 +103,18 @@ class KimiK25VLModel(MegatronModule):
             raise ValueError("hf_model_path must be set.")
 
         if pre_process:
+            trust_remote_code = bool(getattr(config, "trust_remote_code", False))
+            if not trust_remote_code:
+                raise ValueError(
+                    "Kimi K2.5 VL vision components require loading custom HuggingFace model code. "
+                    "Pass trust_remote_code=True only for trusted model repositories."
+                )
+
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
             import importlib
@@ -126,21 +134,24 @@ class KimiK25VLModel(MegatronModule):
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             ProjectorConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.ProjectorConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             VisionTowerConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.VisionTowerConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
 
             # load vision config from hf model path
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
             config.vision_config = safe_load_config_with_retry(
-                config.hf_model_path, trust_remote_code=True
+                config.hf_model_path, trust_remote_code=trust_remote_code
             ).vision_config
 
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
@@ -152,6 +163,7 @@ class KimiK25VLModel(MegatronModule):
             MoonViT3dEncoder = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dEncoder",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
                 MoonViT3dEncoder.use_deterministic_attn = False
@@ -412,7 +424,8 @@ class KimiK25VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
             input_ids=None,

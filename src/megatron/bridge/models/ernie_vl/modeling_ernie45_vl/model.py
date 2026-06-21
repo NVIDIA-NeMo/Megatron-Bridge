@@ -495,7 +495,8 @@ class Ernie45VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0)
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute 3D MRoPE position IDs on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator

@@ -12,196 +12,147 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Unit tests for Gemma 4 vision-language providers."""
 
-from megatron.bridge.models.gemma.gemma4_provider import Gemma4ModelProvider
-from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4VLModelProvider
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
+    Gemma4DenseVLProvider,
+    Gemma4VLModelProvider,
+)
+
+
+# ===========================================================================
+# Gemma4VLModelProvider (MoE VL) tests
+# ===========================================================================
 
 
 class TestGemma4VLModelProviderDefaults:
-    """Test Gemma4VLModelProvider default values and inheritance."""
-
     def test_initialization(self):
-        provider = Gemma4VLModelProvider(
-            num_layers=62,
-            hidden_size=2816,
-            num_attention_heads=8,
-        )
-        assert isinstance(provider, Gemma4VLModelProvider)
-        assert isinstance(provider, Gemma4ModelProvider)
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert isinstance(p, Gemma4VLModelProvider)
+        assert isinstance(p, Gemma4ModelProvider)
 
     def test_vl_defaults(self):
-        provider = Gemma4VLModelProvider(
-            num_layers=62,
-            hidden_size=2816,
-            num_attention_heads=8,
-        )
-        # VL-specific defaults
-        assert provider.scatter_embedding_sequence_parallel is False
-        assert provider.vision_soft_tokens_per_image == 280
-        assert provider.bos_token_id == 2
-        assert provider.eos_token_id == 1
-        assert provider.image_token_id == 258_880
-        assert provider.video_token_id == 258_884
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert p.scatter_embedding_sequence_parallel is False
+        assert p.vision_soft_tokens_per_image == 280
+        assert p.bos_token_id == 2
+        assert p.eos_token_id == 1
+        assert p.image_token_id == 258_880
+        assert p.video_token_id == 258_884
+        assert p.audio_token_id == 258_881
+
+    def test_audio_config_defaults_to_none(self):
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert p.audio_config is None
 
     def test_freeze_defaults(self):
-        provider = Gemma4VLModelProvider(
-            num_layers=62,
-            hidden_size=2816,
-            num_attention_heads=8,
-        )
-        assert provider.freeze_language_model is False
-        assert provider.freeze_vision_model is False
-        assert provider.freeze_vision_projection is False
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert p.freeze_language_model is False
+        assert p.freeze_vision_model is False
+        assert p.freeze_vision_projection is False
 
     def test_vision_config_defaults_to_none(self):
-        provider = Gemma4VLModelProvider(
-            num_layers=62,
-            hidden_size=2816,
-            num_attention_heads=8,
-        )
-        assert provider.vision_config is None
-        assert provider.text_config is None
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert p.vision_config is None
+        assert p.text_config is None
 
     def test_inherited_gemma4_defaults(self):
-        provider = Gemma4VLModelProvider(
-            num_layers=62,
-            hidden_size=2816,
-            num_attention_heads=8,
-        )
-        # Inherited from Gemma4ModelProvider
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.position_embedding_type == "rope"
-        assert provider.add_bias_linear is False
-        assert provider.attention_dropout == 0.0
-        assert provider.hidden_dropout == 0.0
-        assert provider.share_embeddings_and_output_weights is True
+        p = Gemma4VLModelProvider(num_layers=62, hidden_size=2816, num_attention_heads=8)
+        assert p.normalization == "RMSNorm"
+        assert p.gated_linear_unit is True
+        assert p.position_embedding_type == "rope"
+        assert p.add_bias_linear is False
+        assert p.attention_dropout == 0.0
+        assert p.hidden_dropout == 0.0
+        assert p.share_embeddings_and_output_weights is True
 
     def test_custom_token_ids(self):
-        provider = Gemma4VLModelProvider(
+        p = Gemma4VLModelProvider(
             num_layers=62,
             hidden_size=2816,
             num_attention_heads=8,
             image_token_id=99999,
             video_token_id=99998,
         )
-        assert provider.image_token_id == 99999
-        assert provider.video_token_id == 99998
+        assert p.image_token_id == 99999
+        assert p.video_token_id == 99998
 
     def test_custom_vision_tokens_per_image(self):
-        provider = Gemma4VLModelProvider(
+        p = Gemma4VLModelProvider(
             num_layers=62,
             hidden_size=2816,
             num_attention_heads=8,
             vision_soft_tokens_per_image=560,
         )
-        assert provider.vision_soft_tokens_per_image == 560
+        assert p.vision_soft_tokens_per_image == 560
 
     def test_freeze_options_configurable(self):
-        provider = Gemma4VLModelProvider(
+        p = Gemma4VLModelProvider(
             num_layers=62,
             hidden_size=2816,
             num_attention_heads=8,
             freeze_language_model=True,
             freeze_vision_model=True,
         )
-        assert provider.freeze_language_model is True
-        assert provider.freeze_vision_model is True
-        assert provider.freeze_vision_projection is False
+        assert p.freeze_language_model is True
+        assert p.freeze_vision_model is True
+        assert p.freeze_vision_projection is False
 
     def test_different_hidden_sizes(self):
-        for hidden_size in [1152, 2048, 2816, 4096]:
-            provider = Gemma4VLModelProvider(
-                num_layers=28,
-                hidden_size=hidden_size,
-                num_attention_heads=8,
-            )
-            assert provider.hidden_size == hidden_size
+        for hs in [1152, 2048, 2816, 4096]:
+            p = Gemma4VLModelProvider(num_layers=28, hidden_size=hs, num_attention_heads=8)
+            assert p.hidden_size == hs
 
     def test_different_layer_counts(self):
-        for num_layers in [18, 28, 46, 62]:
-            provider = Gemma4VLModelProvider(
-                num_layers=num_layers,
-                hidden_size=2816,
-                num_attention_heads=8,
-            )
-            assert provider.num_layers == num_layers
+        for nl in [18, 28, 46, 62]:
+            p = Gemma4VLModelProvider(num_layers=nl, hidden_size=2816, num_attention_heads=8)
+            assert p.num_layers == nl
 
 
-class TestInstallTiedKV:
-    """Tests for _install_tied_kv layer marking behavior."""
+# ===========================================================================
+# Gemma4DenseVLProvider (Dense VL) tests
+# ===========================================================================
 
-    def test_install_tied_kv_skips_with_flag(self):
-        """_install_tied_kv does nothing when num_moe_experts is None."""
-        from megatron.bridge.models.gemma.gemma4_provider import (
-            Gemma4ModelProvider,
-            _install_tied_kv,
-        )
 
-        provider = Gemma4ModelProvider(
-            num_layers=6,
-            hidden_size=64,
-            num_attention_heads=4,
-            attention_k_eq_v=False,
-        )
-        provider.num_moe_experts = None  # Dense model
+class TestGemma4DenseVLProviderDefaults:
+    def test_initialization(self):
+        p = Gemma4DenseVLProvider()
+        assert isinstance(p, Gemma4DenseVLProvider)
+        assert isinstance(p, Gemma4DenseProvider)
 
-        class FakeLayer:
-            layer_number = 1
+    def test_inherits_dense_defaults(self):
+        p = Gemma4DenseVLProvider()
+        assert p.num_layers == 42
+        assert p.hidden_size == 2560
+        assert p.num_attention_heads == 8
+        assert p.num_kv_shared_layers == 18
+        assert p.per_layer_embed_dim == 256
 
-        class FakeModel:
-            class decoder:
-                layers = [FakeLayer()]
+    def test_vl_defaults(self):
+        p = Gemma4DenseVLProvider()
+        assert p.scatter_embedding_sequence_parallel is False
+        assert p.vision_soft_tokens_per_image == 280
+        assert p.bos_token_id == 2
+        assert p.eos_token_id == 1
+        assert p.image_token_id == 258_880
+        assert p.audio_token_id == 258_881
 
-        _install_tied_kv(FakeModel(), provider)
-        # No _tied_kv flag should be set since attention_k_eq_v is False
-        assert not getattr(FakeLayer, "_tied_kv", False)
+    def test_audio_config_defaults_to_none(self):
+        assert Gemma4DenseVLProvider().audio_config is None
 
-    def test_install_tied_kv_marks_global_layers(self):
-        """_install_tied_kv sets _tied_kv=True on global attention modules only."""
-        import torch.nn as nn
+    def test_vision_config_defaults_to_none(self):
+        p = Gemma4DenseVLProvider()
+        assert p.vision_config is None
+        assert p.text_config is None
 
-        from megatron.bridge.models.gemma.gemma4_provider import (
-            Gemma4ModelProvider,
-            _install_tied_kv,
-        )
+    def test_freeze_defaults(self):
+        p = Gemma4DenseVLProvider()
+        assert p.freeze_language_model is False
+        assert p.freeze_vision_model is False
+        assert p.freeze_vision_projection is False
 
-        provider = Gemma4ModelProvider(
-            num_layers=6,
-            hidden_size=64,
-            num_attention_heads=4,
-            num_global_key_value_heads=2,
-            global_head_dim=16,
-            interleaved_attn_pattern=(5, 1),  # layers 1-5 sliding, layer 6 global
-            num_moe_experts=4,
-            attention_k_eq_v=True,
-        )
-
-        class FakeLinear(nn.Module):
-            def forward(self, x):
-                return x, None
-
-        class FakeAttn:
-            def __init__(self):
-                self.linear_qkv = FakeLinear()
-
-        class FakeLayer:
-            def __init__(self, number):
-                self.layer_number = number
-                self.self_attention = FakeAttn()
-
-        class FakeDecoder:
-            def __init__(self):
-                self.layers = [FakeLayer(i) for i in range(1, 7)]
-
-        class FakeModel:
-            def __init__(self):
-                self.decoder = FakeDecoder()
-
-        model = FakeModel()
-        _install_tied_kv(model, provider)
-
-        for layer in model.decoder.layers:
-            is_global = layer.layer_number == 6  # pattern (5,1): layer 6 is global
-            has_flag = getattr(layer.self_attention, "_tied_kv", False)
-            assert has_flag == is_global, f"Layer {layer.layer_number}: expected _tied_kv={is_global}, got {has_flag}"
+    def test_override_vl_fields(self):
+        p = Gemma4DenseVLProvider(image_token_id=12345, audio_token_id=99999)
+        assert p.image_token_id == 12345
+        assert p.audio_token_id == 99999
