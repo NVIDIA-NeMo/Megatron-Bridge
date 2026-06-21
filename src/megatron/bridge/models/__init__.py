@@ -40,6 +40,9 @@ from megatron.bridge.models.ernie_vl import (
     Ernie45VLModel,
     Ernie45VLModelProvider,
 )
+from megatron.bridge.models.exaone import (
+    Exaone4Bridge,
+)
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
     FalconH1ModelProvider,
@@ -191,6 +194,7 @@ __all__ = [
     "Ernie45VLBridge",
     "Ernie45VLModel",
     "Ernie45VLModelProvider",
+    "Exaone4Bridge",
     "FalconH1Bridge",
     "FalconH1ModelProvider",
     "Gemma3ModelProvider",

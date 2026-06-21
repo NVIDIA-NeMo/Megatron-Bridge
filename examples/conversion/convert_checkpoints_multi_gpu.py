@@ -252,7 +252,6 @@ def export_megatron_to_hf(
         mp_overrides=mp_overrides,
         wrap_with_ddp=False,
     )
-    megatron_model = [m.cuda() for m in megatron_model]
 
     print_rank_0(f"Saving HuggingFace model to: {hf_path}")
     bridge.save_hf_pretrained(

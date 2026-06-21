@@ -293,6 +293,15 @@ def parse_cli_args():
         "--seq_length",
         type=int,
     )
+    training_args.add_argument(
+        "--distributed_timeout_minutes",
+        type=int,
+        help=(
+            "Process-group init timeout in minutes (dist.distributed_timeout_minutes). "
+            "Widen above the 10-minute default when a one-time dataset index build on rank 0 "
+            "can outlast the NCCL collective watchdog while other ranks wait at the setup barrier."
+        ),
+    )
 
     # Optimizer
     optimizer_args = parser.add_argument_group("Optimizer arguments")

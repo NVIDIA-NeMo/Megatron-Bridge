@@ -851,7 +851,8 @@ def compare_models_one_step(args) -> None:
             torch.distributed.broadcast(megatron_next_token, get_last_rank())
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    """Build the CLI parser."""
     parser = argparse.ArgumentParser(description="Compare HuggingFace and Megatron models")
     parser.add_argument(
         "--hf_model_path",
@@ -898,9 +899,18 @@ if __name__ == "__main__":
         default=None,
         help="Directory where the exported HF model will be saved during round-trip. Defaults to current directory.",
     )
-    parser.add_argument("--trust_remote_code", action="store_true", help="if trust_remote_code")
+    parser.add_argument(
+        "--trust_remote_code",
+        "--trust-remote-code",
+        dest="trust_remote_code",
+        action="store_true",
+        help="Allow custom model code execution.",
+    )
+    return parser
 
-    args = parser.parse_args()
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
 
     compare_models_one_step(args)
 
