@@ -77,6 +77,7 @@ class DiffusionTaskEncoderWithSequencePacking(DefaultTaskEncoder, ABC):  # noqa:
     def encode_sample(self, sample: dict) -> dict:
         raise NotImplementedError
 
+    @stateless(restore_seeds=True)
     def select_samples_to_pack(self, samples: List[DiffusionSample]) -> List[List[DiffusionSample]]:
         """
         Selects sequences to pack for mixed image-video training.

@@ -128,6 +128,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         # VL-specific overrides
         provider.vision_config = vision_config
         provider.hf_model_path = hf_pretrained._model_name_or_path
+        provider.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
         provider.generation_config = hf_pretrained.generation_config
 
         # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
