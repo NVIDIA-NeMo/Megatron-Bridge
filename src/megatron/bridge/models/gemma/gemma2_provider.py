@@ -388,11 +388,11 @@ class Gemma2FlexDotProductAttention(Gemma2DotProductAttention):
             v = value.permute(1, 2, 0, 3)
             cache_key = (sq, key.size(0))
             if cache_key not in self._flex_block_mask_cache:
-                self._flex_block_mask_cache[cache_key] = self._build_flex_block_mask(
-                    *cache_key, query.device
-                )
+                self._flex_block_mask_cache[cache_key] = self._build_flex_block_mask(*cache_key, query.device)
             out = _flex_attn_func(
-                q, k, v,
+                q,
+                k,
+                v,
                 score_mod=self._flex_score_mod,
                 block_mask=self._flex_block_mask_cache[cache_key],
                 scale=self.softmax_scale,
