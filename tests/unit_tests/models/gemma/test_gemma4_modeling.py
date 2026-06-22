@@ -1471,10 +1471,12 @@ class TestGemma4PLEHelpers:
             pg_collection=SimpleNamespace(tp=None),
         )
         per_layer_inputs = torch.tensor([[[[10.0], [20.0], [30.0]]]])
+        input_ids = torch.tensor([1])
 
         hidden_states, intermediates = _gemma4_checkpointed_forward(
             block,
             torch.tensor(0.0),
+            input_ids=input_ids,
             attention_mask="mask",
             context="context",
             context_mask="context_mask",
@@ -1493,10 +1495,13 @@ class TestGemma4PLEHelpers:
         torch.testing.assert_close(
             block.layers[0].calls[0]["per_layer_input"], per_layer_inputs[:, :, 0, :].transpose(0, 1)
         )
+        assert block.layers[0].calls[0]["input_ids"] is input_ids
         assert block.layers[1].calls[0]["attention_mask"] == "mask"
+        assert block.layers[1].calls[0]["input_ids"] is input_ids
         torch.testing.assert_close(
             block.layers[2].calls[0]["per_layer_input"], per_layer_inputs[:, :, 2, :].transpose(0, 1)
         )
+        assert block.layers[2].calls[0]["input_ids"] is input_ids
 
     def test_gemma4_checkpointed_forward_block_recompute_extracts_start_layers(self, monkeypatch):
         from megatron.core import tensor_parallel
