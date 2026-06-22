@@ -255,7 +255,7 @@ class NemotronHBridge(MegatronModelBridge):
         super().__init__()
         self._mtp_layers_per_block: Optional[int] = None
 
-    def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model):
+    def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model, weight_dtype=None):
         # Cache MTP block depth (len of mtp_hybrid_override_pattern) so mapping_registry()
         # can compute the flattened HF layer indices deterministically.
         mtp_pattern = getattr(getattr(hf_pretrained, "config", None), "mtp_hybrid_override_pattern", None)
@@ -264,7 +264,7 @@ class NemotronHBridge(MegatronModelBridge):
         else:
             self._mtp_layers_per_block = 0
 
-        return super().build_conversion_tasks(hf_pretrained, megatron_model)
+        return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaModelProvider:
         """Convert HuggingFace Nemotron-H config to MambaModelProvider."""
