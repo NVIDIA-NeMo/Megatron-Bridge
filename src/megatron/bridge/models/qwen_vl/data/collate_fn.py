@@ -18,12 +18,12 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
+from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
-    infer_assistant_mask_boundary_config,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -32,6 +32,8 @@ MISSING_QWEN_VL_UTILS_MSG = (
     "qwen_vl_utils is required for Qwen2.5 VL processing. Please `pip install qwen-vl-utils` or"
     " provide compatible vision preprocessing."
 )
+CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
+CHATML_TURN_END = "<|im_end|>"
 
 try:
     from qwen_vl_utils import process_vision_info
@@ -53,7 +55,11 @@ def qwen2_5_collate_fn(
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
     skipped_tokens = extract_skipped_token_ids(processor)
-    boundary_config = infer_assistant_mask_boundary_config(processor)
+    boundary_config = assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=CHATML_ASSISTANT_START,
+        assistant_end=CHATML_TURN_END,
+    )
 
     texts = [
         processor.apply_chat_template(

@@ -460,6 +460,35 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
     return None
 
 
+def assistant_mask_boundary_config_from_markers(
+    processor: Any,
+    *,
+    assistant_start: str,
+    assistant_end: str,
+    loss_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
+    include_start_tokens_for_roles: Sequence[str] = (),
+    include_end_tokens_for_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
+    trim_leading_token_ids: Sequence[int] = (),
+) -> AssistantMaskBoundaryConfig:
+    """Build explicit assistant boundary config from model-declared marker strings."""
+    tokenizer = get_processor_tokenizer(processor)
+    start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
+    end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
+    if not start_tokens or not end_tokens:
+        raise ValueError(
+            "Unable to tokenize assistant loss-mask boundary markers. "
+            "Check the model collator's assistant_start and assistant_end markers."
+        )
+    return AssistantMaskBoundaryConfig(
+        role_start_tokens={CHATML_ASSISTANT_ROLE: start_tokens},
+        role_end_tokens={CHATML_ASSISTANT_ROLE: end_tokens},
+        loss_roles=loss_roles,
+        include_start_tokens_for_roles=include_start_tokens_for_roles,
+        include_end_tokens_for_roles=include_end_tokens_for_roles,
+        trim_leading_token_ids=trim_leading_token_ids,
+    )
+
+
 def _apply_skipped_tokens(mask: torch.Tensor, ids: Sequence[int], skipped_tokens: torch.Tensor | None) -> None:
     if skipped_tokens is None or skipped_tokens.numel() == 0:
         return

@@ -301,7 +301,7 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]
 
 
-def test_qwen2_5_collate_fn_uses_inferred_boundary_config_without_generation_template(monkeypatch):
+def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generation_template(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
     monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
 
