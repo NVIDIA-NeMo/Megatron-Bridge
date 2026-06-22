@@ -191,6 +191,18 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1,
     global_batch_size=4096,
 )
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_SMOKE72 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V2,
+    num_gpus=72,
+    global_batch_size=1152,
+    micro_batch_size=1,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=3,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=8,
+    expert_tensor_parallel_size=1,
+    pp_layout="Et*2|(t*2|)*10t*2mL",
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
@@ -371,6 +383,7 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V1",
     # V2 (GBS=4096 for Blackwell, GBS=16384 for H100)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V2",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_SMOKE72",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2",

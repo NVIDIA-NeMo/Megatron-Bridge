@@ -61,6 +61,18 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
 
+def apply_deepseek_v3_smoke_configs(cfg: ConfigContainer, config_variant: str) -> None:
+    """Reduce DeepSeek-V3 model dimensions for GB300 smoke coverage."""
+    if config_variant.lower() != "smoke72":
+        return
+
+    num_layers = 24
+    first_dense_layers = 3
+    cfg.model.num_layers = num_layers
+    cfg.model.num_moe_experts = 32
+    cfg.model.moe_layer_freq = [0] * first_dense_layers + [1] * (num_layers - first_dense_layers)
+
+
 def deepseek_v3_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -93,6 +105,7 @@ def deepseek_v3_pretrain_config_gb300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    apply_deepseek_v3_smoke_configs(cfg, config_variant)
     if is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
