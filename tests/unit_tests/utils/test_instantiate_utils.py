@@ -720,6 +720,19 @@ class TestTargetPrefixValidation:
             instantiate(config)
 
     @pytest.mark.parametrize(
+        "target,args",
+        [
+            ("megatron.bridge.utils.import_utils.safe_import", ["attacker_pkg.payload"]),
+            ("megatron.bridge.utils.import_utils.safe_import_from", ["attacker_pkg.payload", "SomeSymbol"]),
+        ],
+    )
+    def test_instantiate_rejects_safe_import_targets(self, target, args):
+        """Test that configs cannot import attacker-controlled modules through Bridge import helpers."""
+        config = {"_target_": target, "_args_": args}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
         "target",
         [
             "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",

@@ -64,6 +64,8 @@ _ALLOWED_PRIVATE_TARGETS: set[str] = {
 }
 
 _DISALLOWED_TARGETS: set[str] = {
+    "megatron.bridge.utils.import_utils.safe_import",
+    "megatron.bridge.utils.import_utils.safe_import_from",
     "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
     "transformers.utils.import_utils.direct_transformers_import",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
