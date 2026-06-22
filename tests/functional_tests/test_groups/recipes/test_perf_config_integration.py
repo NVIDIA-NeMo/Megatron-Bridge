@@ -24,6 +24,8 @@ These tests verify that:
 import sys
 from pathlib import Path
 
+import pytest
+
 
 # Add the performance scripts to the path for testing.
 # parents: [0]=recipes  [1]=test_groups  [2]=functional_tests  [3]=tests  [4]=repo root
@@ -214,3 +216,90 @@ class TestPerfConfigIntegration:
 
         assert cfg.train.train_iters == 100
         assert cfg.train.global_batch_size == 16
+
+
+class TestQwen3_30bNvfp4PerfConfigs:
+    """Tests for the NVFP4 WBC presets added to Qwen3 30B A3B perf configs."""
+
+    @pytest.mark.parametrize(
+        "config_func_name,gpu",
+        [
+            ("qwen3_30b_a3b_pretrain_config_gb300", "gb300"),
+            ("qwen3_30b_a3b_pretrain_config_gb200", "gb200"),
+            ("qwen3_30b_a3b_pretrain_config_vr200", "vr200"),
+            ("qwen3_30b_a3b_pretrain_config_b300", "b300"),
+            ("qwen3_30b_a3b_pretrain_config_b200", "b200"),
+            ("qwen3_30b_a3b_pretrain_config_h100", "h100"),
+        ],
+    )
+    def test_nvfp4_disables_tp_comm_overlap(self, config_func_name, gpu):
+        """NVFP4 must disable tp_comm_overlap on every GPU target."""
+        import importlib
+
+        mod = importlib.import_module("configs.qwen.qwen3_llm_pretrain")
+        config_func = getattr(mod, config_func_name)
+        cfg = config_func(precision="nvfp4", mock=True)
+
+        assert cfg is not None
+        assert cfg.model is not None
+        assert cfg.comm_overlap is not None
+        assert cfg.mixed_precision is not None
+        assert cfg.comm_overlap.tp_comm_overlap is False, (
+            f"{gpu}: expected tp_comm_overlap=False for nvfp4, got {cfg.comm_overlap.tp_comm_overlap}"
+        )
+
+    @pytest.mark.parametrize("precision", ["bf16", "fp8_cs"])
+    def test_non_nvfp4_preserves_tp_comm_overlap(self, precision):
+        """Regression: non-nvfp4 precisions must still enable tp_comm_overlap."""
+        from configs.qwen.qwen3_llm_pretrain import qwen3_30b_a3b_pretrain_config_gb300
+
+        cfg = qwen3_30b_a3b_pretrain_config_gb300(precision=precision, mock=True)
+
+        assert cfg.comm_overlap.tp_comm_overlap is True, (
+            f"precision={precision}: expected tp_comm_overlap=True, got {cfg.comm_overlap.tp_comm_overlap}"
+        )
+
+    def test_nvfp4_does_not_trigger_full_iter_cg_configs(self):
+        """NVFP4 must not trigger the fp8_mx full-iteration CUDA graph branch."""
+        from configs.qwen.qwen3_llm_pretrain import qwen3_30b_a3b_pretrain_config_gb300
+
+        cfg = qwen3_30b_a3b_pretrain_config_gb300(precision="nvfp4", mock=True)
+
+        # full-iteration CUDA graph is set only for fp8_mx; nvfp4 shares the FP8_CS base
+        # config (transformer_engine scope), so this must not be "full_iteration"
+        assert cfg.model.cuda_graph_impl != "full_iteration"
+
+    def test_nvfp4_base_config_constants_importable(self):
+        """All five new NVFP4 WBC base config constants must be importable and non-None."""
+        from configs.qwen.qwen3_workload_base_configs import (
+            QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_NVFP4_V1,
+            QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_NVFP4_V1,
+            QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_NVFP4_V1,
+            QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_NVFP4_V1,
+            QWEN3_30B_A3B_PRETRAIN_CONFIG_VR200_NVFP4_V1,
+        )
+
+        for name, const in [
+            ("GB300", QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_NVFP4_V1),
+            ("GB200", QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_NVFP4_V1),
+            ("VR200", QWEN3_30B_A3B_PRETRAIN_CONFIG_VR200_NVFP4_V1),
+            ("B300", QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_NVFP4_V1),
+            ("B200", QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_NVFP4_V1),
+        ]:
+            assert const is not None, f"{name} NVFP4 constant is None"
+            assert const.num_gpus >= 1, f"{name} NVFP4 constant has invalid num_gpus"
+
+    def test_nvfp4_constants_exported_in_qwen_all(self):
+        """All five NVFP4 constants must appear in configs.qwen.__all__."""
+        import configs.qwen as qwen_pkg
+
+        all_names = getattr(qwen_pkg, "__all__", [])
+        expected = [
+            "QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_NVFP4_V1",
+            "QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_NVFP4_V1",
+            "QWEN3_30B_A3B_PRETRAIN_CONFIG_VR200_NVFP4_V1",
+            "QWEN3_30B_A3B_PRETRAIN_CONFIG_B300_NVFP4_V1",
+            "QWEN3_30B_A3B_PRETRAIN_CONFIG_B200_NVFP4_V1",
+        ]
+        for name in expected:
+            assert name in all_names, f"{name} not found in configs.qwen.__all__"
