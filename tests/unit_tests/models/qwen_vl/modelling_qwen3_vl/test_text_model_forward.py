@@ -119,10 +119,11 @@ def test_forward_accepts_extra_preprocess_output():
 
 def test_mtp_embedding_wrapper_applies_cp_shard_before_sp_scatter(monkeypatch):
     """MTP embedding path should mirror main path ordering: CP shard, then SP scatter."""
+    expected_group = object()
     dummy = _DummyModel()
     dummy.mtp_process = True
     dummy.config.sequence_parallel = True
-    dummy.pg_collection = SimpleNamespace(cp=_DummyCP(size=2, rank=1))
+    dummy.pg_collection = SimpleNamespace(cp=_DummyCP(size=2, rank=1), tp=expected_group)
     dummy.call_embedding_in_postprocess = True
     calls = []
 
@@ -130,8 +131,8 @@ def test_mtp_embedding_wrapper_applies_cp_shard_before_sp_scatter(monkeypatch):
         calls.append(("cp", tensor.clone(), cp_size, seq_dim, cp_rank))
         return tensor[:4] + 100
 
-    def fake_scatter_to_sequence_parallel_region(tensor):
-        calls.append(("sp", tensor.clone()))
+    def fake_scatter_to_sequence_parallel_region(tensor, *, group=None):
+        calls.append(("sp", tensor.clone(), group))
         return tensor[::2] + 1000
 
     monkeypatch.setattr(text_model_mod, "split_data_cp_rank", fake_split_data_cp_rank)
@@ -140,7 +141,6 @@ def test_mtp_embedding_wrapper_applies_cp_shard_before_sp_scatter(monkeypatch):
         "scatter_to_sequence_parallel_region",
         fake_scatter_to_sequence_parallel_region,
     )
-
     input_ids = torch.zeros((1, 4), dtype=torch.long)
     position_ids = torch.zeros((1, 4), dtype=torch.long)
     attention_mask = torch.ones((1, 4), dtype=torch.long)
@@ -155,6 +155,7 @@ def test_mtp_embedding_wrapper_applies_cp_shard_before_sp_scatter(monkeypatch):
     assert output == "ok"
     assert [call[0] for call in calls] == ["cp", "sp"]
     assert calls[0][2:] == (2, 0, 1)
+    assert calls[1][2] is expected_group
     torch.testing.assert_close(calls[0][1], dummy._embedding.output)
     torch.testing.assert_close(calls[1][1], dummy._embedding.output[:4] + 100)
     torch.testing.assert_close(dummy.mtp_embedding_output, (dummy._embedding.output[:4] + 100)[::2] + 1000)
@@ -198,18 +199,19 @@ def test_mtp_embedding_wrapper_runs_for_context_parallel_without_sequence_parall
 
 def test_mtp_embedding_wrapper_skips_cp_shard_for_packed_sequence_params(monkeypatch):
     """Packed/THD paths handle CP separately, matching the guard in model.py."""
+    expected_group = object()
     dummy = _DummyModel()
     dummy.mtp_process = True
     dummy.config.sequence_parallel = True
-    dummy.pg_collection = SimpleNamespace(cp=_DummyCP(size=2, rank=0))
+    dummy.pg_collection = SimpleNamespace(cp=_DummyCP(size=2, rank=0), tp=expected_group)
     dummy.call_embedding_in_postprocess = True
     calls = []
 
     def fake_split_data_cp_rank(*_):
         raise AssertionError("CP shard should not run for packed sequence params")
 
-    def fake_scatter_to_sequence_parallel_region(tensor):
-        calls.append("sp")
+    def fake_scatter_to_sequence_parallel_region(tensor, *, group=None):
+        calls.append(("sp", group))
         return tensor + 1000
 
     monkeypatch.setattr(text_model_mod, "split_data_cp_rank", fake_split_data_cp_rank)
@@ -227,5 +229,50 @@ def test_mtp_embedding_wrapper_skips_cp_shard_for_packed_sequence_params(monkeyp
         packed_seq_params=object(),
     )
 
-    assert calls == ["sp"]
+    assert calls == [("sp", expected_group)]
     torch.testing.assert_close(dummy.mtp_embedding_output, dummy._embedding.output + 1000)
+
+
+def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
+    """The MTP embedding wrapper must not fall back to global tensor-parallel state."""
+    expected_group = object()
+    calls = {"group": None}
+
+    def _identity_scatter(x, *, group=None):
+        calls["group"] = group
+        return x
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model.tensor_parallel.scatter_to_sequence_parallel_region",
+        _identity_scatter,
+    )
+
+    class _DummyEmbedding:
+        word_embeddings = object()
+
+        def __call__(self, *, input_ids, position_ids):  # noqa: ARG002
+            return torch.ones(1, 1, 1)
+
+    class _DummyMTPModel(_DummyModel):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sequence_parallel=True)
+            self._embedding = _DummyEmbedding()
+            self.mtp_process = True
+            self.pg_collection = SimpleNamespace(cp=_DummyCP(), tp=expected_group)
+
+        def _postprocess(self, **kwargs):
+            self.embedding(input_ids=kwargs["input_ids"], position_ids=kwargs["position_ids"])
+            return "ok"
+
+    dummy = _DummyMTPModel()
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=torch.zeros((1, 4), dtype=torch.long),
+        position_ids=torch.zeros((1, 4), dtype=torch.long),
+        attention_mask=torch.ones((1, 4), dtype=torch.long),
+    )
+
+    assert output == "ok"
+    assert calls["group"] is expected_group

@@ -200,7 +200,7 @@ class Qwen3VLGPTModel(GPTModel):
                     # split_data_cp_rank call in model.py for the combined embeddings.
                     out = split_data_cp_rank(out, cp_size, 0, _cp_rank)
                 if _apply_sp_scatter:
-                    out = tensor_parallel.scatter_to_sequence_parallel_region(out)
+                    out = tensor_parallel.scatter_to_sequence_parallel_region(out, group=self.pg_collection.tp)
                 return out
 
             _sp_scatter_embedding.word_embeddings = _original_embedding.word_embeddings
