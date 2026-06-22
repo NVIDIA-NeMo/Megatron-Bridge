@@ -297,6 +297,50 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]
 
 
+def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generation_template(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _ChatMLProcessor:
+        chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+
+        class _Tok:
+            pad_token_id = 0
+            pad_token = "<pad>"
+            added_tokens_decoder = {}
+            chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+
+            def __call__(self, text, add_special_tokens=False):
+                mapping = {
+                    "<|im_start|>assistant\n": [102],
+                    "<|im_end|>": [103],
+                }
+                return {"input_ids": mapping.get(text, [42])}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "rendered"
+
+        def __call__(self, text=None, padding=True, return_tensors="pt", **kwargs):
+            return {"input_ids": torch.tensor([[100, 7, 101, 102, 3, 4, 103]])}
+
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, _ChatMLProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
+
+
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     image_token_id = 163605
     input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
