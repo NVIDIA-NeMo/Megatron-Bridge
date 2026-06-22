@@ -266,29 +266,28 @@ class TestGemma2DotProductAttention:
 
         # Use a real bool tensor so the unsqueeze chain produces a verifiable result.
         swa_tensor = torch.zeros(seq, seq, dtype=torch.bool)
-        with patch(
-            "megatron.bridge.models.gemma.gemma2_provider.get_swa",
-            return_value=swa_tensor,
-        ) as mock_get_swa:
-            # scale_mask_softmax is called with the mask; stub it so forward() completes.
-            attn.scale_mask_softmax = Mock(return_value=torch.zeros(1, 8, 4, 4))
-            attn.attention_dropout = torch.nn.Identity()
-            q = torch.zeros(seq, batch, heads, head_dim)
-            k = torch.zeros(seq, batch, heads, head_dim)
-            v = torch.zeros(seq, batch, heads, head_dim)
-            with (
-                patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
-                patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
-            ):
-                buf = torch.zeros(batch * heads, seq, seq)
-                mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
-                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
-                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
-                attn.forward(query=q, key=k, value=v, attention_mask=None)
+        # scale_mask_softmax is a registered nn.Module submodule; patch its forward method
+        # rather than replacing the whole module (which PyTorch rejects with TypeError).
+        attn.attention_dropout = torch.nn.Identity()
+        mock_softmax_fwd = Mock(return_value=torch.zeros(1, 8, 4, 4))
+        q = torch.zeros(seq, batch, heads, head_dim)
+        k = torch.zeros(seq, batch, heads, head_dim)
+        v = torch.zeros(seq, batch, heads, head_dim)
+        buf = torch.zeros(batch * heads, seq, seq)
+        with (
+            patch("megatron.bridge.models.gemma.gemma2_provider.get_swa", return_value=swa_tensor) as mock_get_swa,
+            patch.object(attn.scale_mask_softmax, "forward", mock_softmax_fwd),
+            patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
+            patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
+        ):
+            mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
+            mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
+            mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
+            attn.forward(query=q, key=k, value=v, attention_mask=None)
 
         mock_get_swa.assert_called_once_with(seq, seq, (2, 0))
         # The SWA mask is unsqueezed to [1, 1, sq, sk] before being passed to scale_mask_softmax.
-        call_args = attn.scale_mask_softmax.call_args
+        call_args = mock_softmax_fwd.call_args
         expected_mask = swa_tensor.unsqueeze(0).unsqueeze(0)
         assert torch.equal(call_args[0][1], expected_mask), (
             "scale_mask_softmax must receive the SWA mask unsqueezed to [1, 1, sq, sk]"
@@ -359,28 +358,27 @@ class TestGemma2DotProductAttention:
 
         captured: dict = {}
 
-        def fake_softmax(scores, mask):
+        def fake_forward(scores, mask):
             captured["mask"] = mask
             return torch.zeros(batch, heads, seq, seq)
 
-        with patch(
-            "megatron.bridge.models.gemma.gemma2_provider.get_swa",
-            return_value=swa_mask_val,
-        ) as mock_get_swa:
-            attn.scale_mask_softmax = fake_softmax
-            attn.attention_dropout = torch.nn.Identity()
-            q = torch.zeros(seq, batch, heads, head_dim)
-            k = torch.zeros(seq, batch, heads, head_dim)
-            v = torch.zeros(seq, batch, heads, head_dim)
-            with (
-                patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
-                patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
-            ):
-                buf = torch.zeros(batch * heads, seq, seq)
-                mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
-                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
-                mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
-                attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
+        # scale_mask_softmax is a registered nn.Module submodule; patch its forward method
+        # rather than replacing the whole module (which PyTorch rejects with TypeError).
+        attn.attention_dropout = torch.nn.Identity()
+        q = torch.zeros(seq, batch, heads, head_dim)
+        k = torch.zeros(seq, batch, heads, head_dim)
+        v = torch.zeros(seq, batch, heads, head_dim)
+        buf = torch.zeros(batch * heads, seq, seq)
+        with (
+            patch("megatron.bridge.models.gemma.gemma2_provider.get_swa", return_value=swa_mask_val) as mock_get_swa,
+            patch.object(attn.scale_mask_softmax, "forward", side_effect=fake_forward),
+            patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
+            patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
+        ):
+            mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
+            mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
+            mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__exit__ = Mock(return_value=False)
+            attn.forward(query=q, key=k, value=v, attention_mask=padding_mask)
 
         mock_get_swa.assert_called_once_with(seq, seq, (2, 0))
         expected = swa_mask_val | padding_mask  # [sq, sk] | [b, 1, sq, sk] → [b, 1, sq, sk]
