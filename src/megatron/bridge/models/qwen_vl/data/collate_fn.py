@@ -20,7 +20,11 @@ import torch.nn.functional as F
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
+from megatron.bridge.data.vlm_processing import (
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+    infer_assistant_mask_boundary_config,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -49,6 +53,7 @@ def qwen2_5_collate_fn(
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     texts = [
         processor.apply_chat_template(
@@ -176,6 +181,7 @@ def qwen2_5_collate_fn(
                 input_ids,
                 processor,
                 skipped_tokens,
+                boundary_config=boundary_config,
                 warn_on_all_masked=not require_assistant_matches,
             )
             for example, input_ids in zip(examples, batch["input_ids"])

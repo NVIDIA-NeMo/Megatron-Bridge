@@ -19,7 +19,7 @@ import torch
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -33,6 +33,7 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     :class:`GenericVisualInputs` so they flow through ``vlm_step.py`` to the model.
     """
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
@@ -55,7 +56,13 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)

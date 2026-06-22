@@ -22,7 +22,7 @@ import torch
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS, THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 from megatron.bridge.models.ministral3.data.collate_fn import ministral3_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -37,6 +37,7 @@ def gemma3_vl_collate_fn(
 ) -> dict[str, torch.Tensor]:
     """Collate function for Gemma3 VL models."""
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     # If pad_token remains unset after the eos_token fallback, disable padding to
     # avoid a ValueError from apply_chat_template.
@@ -78,7 +79,13 @@ def gemma3_vl_collate_fn(
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)

@@ -21,7 +21,11 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
+from megatron.bridge.data.vlm_processing import (
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+    infer_assistant_mask_boundary_config,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -146,6 +150,7 @@ def kimi_k25_vl_collate_fn(
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     # Get media token ID
     media_token_id = getattr(processor, "media_placeholder_token_id", None)
@@ -197,7 +202,13 @@ def kimi_k25_vl_collate_fn(
 
         input_ids = sample_batch["input_ids"][0]
         attention_mask = sample_batch["attention_mask"][0]
-        loss_mask = build_assistant_loss_mask(examples[i], input_ids, processor, skipped_tokens)
+        loss_mask = build_assistant_loss_mask(
+            examples[i],
+            input_ids,
+            processor,
+            skipped_tokens,
+            boundary_config=boundary_config,
+        )
 
         # Pre-expand image tokens if we have grid_thws
         if "grid_thws" in sample_batch and sample_batch["grid_thws"] is not None:
