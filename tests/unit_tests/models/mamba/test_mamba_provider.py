@@ -32,6 +32,8 @@ class TestMambaModelProviderCompatibility:
         with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
             provider.provide(pre_process=True, post_process=True)
 
+        assert provider.hybrid_stack_spec is module_spec
+        assert provider.mamba_stack_spec is None
         assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
 
     def test_rejects_hybrid_and_mamba_stack_spec_together(self):
@@ -45,3 +47,17 @@ class TestMambaModelProviderCompatibility:
                 hybrid_stack_spec=module_spec,
                 mamba_stack_spec=module_spec,
             )
+
+    def test_serialized_mamba_provider_uses_hybrid_stack_spec(self):
+        module_spec = ModuleSpec(module=object)
+        provider = MambaModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            mamba_stack_spec=module_spec,
+        )
+
+        data = provider.to_cfg_dict()
+
+        assert data["hybrid_stack_spec"] is module_spec
+        assert "mamba_stack_spec" not in data

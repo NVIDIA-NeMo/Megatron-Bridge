@@ -28,20 +28,18 @@ class TestHybridModelProvider:
         assert provider.mamba_num_groups == 8
         assert provider.hybrid_layer_pattern is None
         assert provider.hybrid_stack_spec is None
-        assert provider.mamba_stack_spec is None
         assert provider.seq_length == 8192
         assert provider.position_embedding_type == "none"
         assert provider.vocab_size is None
 
-    def test_rejects_hybrid_and_mamba_stack_spec_together(self):
+    def test_rejects_mamba_stack_spec_argument(self):
         module_spec = ModuleSpec(module=object)
 
-        with pytest.raises(ValueError, match="Cannot specify both hybrid_stack_spec and mamba_stack_spec"):
+        with pytest.raises(TypeError, match="mamba_stack_spec"):
             HybridModelProvider(
                 num_layers=2,
                 hidden_size=128,
                 num_attention_heads=1,
-                hybrid_stack_spec=module_spec,
                 mamba_stack_spec=module_spec,
             )
 
@@ -128,23 +126,6 @@ class TestHybridModelProvider:
         spec_call_kwarg = mock_model.call_args.kwargs["hybrid_stack_spec"]
         assert isinstance(spec_call_kwarg, Mock)
         assert spec_call_kwarg.info == "custom spec"
-
-    def test_mamba_stack_spec_alias(self):
-        module_spec = ModuleSpec(module=object)
-        provider = HybridModelProvider(
-            num_layers=2,
-            hidden_size=128,
-            num_attention_heads=1,
-            vocab_size=1000,
-            tensor_model_parallel_size=1,
-            mamba_stack_spec=module_spec,
-        )
-        provider._pg_collection = type("PG", (), {"pp": object()})()
-
-        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
-            provider.provide(pre_process=True, post_process=True)
-
-        assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
 
     def test_finalize_uses_compatible_hybrid_layer_count(self):
         provider = HybridModelProvider(

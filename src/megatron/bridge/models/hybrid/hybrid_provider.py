@@ -134,10 +134,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hybrid_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["HybridModelProvider"], ModuleSpec] | None = (
         None
     )
-    # Backward-compatible input for old MambaModelProvider callers.
-    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["HybridModelProvider"], ModuleSpec] | None = (
-        None
-    )
     vocab_size: int | None = None
     should_pad_vocab: bool = False
     hf_model_id: str | None = None
@@ -152,14 +148,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
 
     # If True, restore modelopt_state that contains quantization, sparsity, and speculative decoding state.
     restore_modelopt_state: bool = False
-
-    def __post_init__(self) -> None:
-        """Validate deprecated stack-spec aliases after dataclass construction."""
-        if self.hybrid_stack_spec is not None and self.mamba_stack_spec is not None:
-            raise ValueError(
-                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
-                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
-            )
 
     def finalize(self) -> None:
         """Finalize the Hybrid model provider.
@@ -242,14 +230,8 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         super().finalize()
 
     def _resolve_hybrid_stack_spec(self) -> ModuleSpec:
-        """Resolve the configured Hybrid stack spec, including deprecated aliases."""
-        if self.hybrid_stack_spec is not None and self.mamba_stack_spec is not None:
-            raise ValueError(
-                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
-                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
-            )
-
-        hybrid_stack_spec = self.hybrid_stack_spec if self.hybrid_stack_spec is not None else self.mamba_stack_spec
+        """Resolve the configured Hybrid stack spec."""
+        hybrid_stack_spec = self.hybrid_stack_spec
         if hybrid_stack_spec is None:
             return get_default_hybrid_stack_spec(self)
         if not isinstance(hybrid_stack_spec, ModuleSpec):

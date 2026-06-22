@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, fields
+from typing import Any, Callable
+
 from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.hybrid.hybrid_provider import (
@@ -22,8 +25,35 @@ from megatron.bridge.models.hybrid.hybrid_provider import (
 )
 
 
+@dataclass
 class MambaModelProvider(HybridModelProvider):
     """Backward-compatible wrapper around :class:`HybridModelProvider`."""
+
+    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["MambaModelProvider"], ModuleSpec] | None = (
+        None
+    )
+
+    def __post_init__(self) -> None:
+        """Normalize the deprecated Mamba stack-spec field to the Hybrid field."""
+        if self.hybrid_stack_spec is not None and self.mamba_stack_spec is not None:
+            raise ValueError(
+                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
+                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
+            )
+        if self.mamba_stack_spec is not None:
+            self.hybrid_stack_spec = self.mamba_stack_spec
+            self.mamba_stack_spec = None
+
+    def to_cfg_dict(self) -> dict[str, Any]:
+        """Serialize without the deprecated ``mamba_stack_spec`` field."""
+        from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+
+        result = {"_target_": f"{self.__class__.__module__}.{self.__class__.__qualname__}"}
+        for field in fields(self):
+            if field.name.startswith("_") or field.name == "mamba_stack_spec":
+                continue
+            result[field.name] = _ConfigContainerBase._convert_value_to_dict(getattr(self, field.name))
+        return result
 
 
 def modelopt_mamba_stack_spec(config: "MambaModelProvider | None" = None) -> ModuleSpec:
