@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass, field
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import GlmMoeDsaForCausalLM
@@ -26,9 +27,124 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
+from megatron.bridge.peft.lora import LoRA
 
 
 logger = logging.getLogger(__name__)
+
+GLM5_MLA_LORA_TARGET_MODULES = [
+    "linear_q_down_proj",
+    "linear_q_up_proj",
+    "linear_kv_down_proj",
+    "linear_kv_up_proj",
+    "linear_proj",
+]
+GLM5_MLP_LORA_TARGET_MODULES = ["linear_fc1", "linear_fc2"]
+GLM5_DSA_INDEXER_LORA_TARGET_MODULES = [
+    "linear_wq_b",
+    "linear_wk",
+    "linear_weights_proj",
+]
+GLM5_ROUTER_LORA_TARGET_MODULES = ["router"]
+
+_GLM5_LORA_TARGET_MODULE_ALIASES = {
+    # Hugging Face / SGLang names -> Megatron-Core module names.
+    "q_a_proj": "linear_q_down_proj",
+    "q_b_proj": "linear_q_up_proj",
+    "kv_a_proj_with_mqa": "linear_kv_down_proj",
+    "kv_b_proj": "linear_kv_up_proj",
+    "o_proj": "linear_proj",
+    "gate_proj": "linear_fc1",
+    "up_proj": "linear_fc1",
+    "down_proj": "linear_fc2",
+    "indexer.wq_b": "indexer.linear_wq_b",
+    "wq_b": "linear_wq_b",
+    "indexer.wk": "indexer.linear_wk",
+    "wk": "linear_wk",
+    "indexer.weights_proj": "indexer.linear_weights_proj",
+    "weights_proj": "linear_weights_proj",
+}
+
+
+def glm5_lora_target_modules(
+    *,
+    include_mla: bool = True,
+    include_mlp: bool = True,
+    include_indexer: bool = True,
+    include_router: bool = False,
+) -> list[str]:
+    """Return Megatron-Core module names for GLM5 LoRA targeting.
+
+    Args:
+        include_mla: Include GLM5 MLA attention projection linears.
+        include_mlp: Include dense MLP, shared expert, and routed expert linears.
+        include_indexer: Include the DSA Indexer linears. The Indexer norm is
+            intentionally excluded because LoRA targets linear/router modules.
+        include_router: Include MoE router modules. Off by default to avoid
+            changing router behavior unless requested explicitly.
+
+    Returns:
+        Ordered list of Megatron-Core module names for ``LoRA.target_modules``.
+    """
+
+    target_modules: list[str] = []
+    if include_mla:
+        target_modules.extend(GLM5_MLA_LORA_TARGET_MODULES)
+    if include_mlp:
+        target_modules.extend(GLM5_MLP_LORA_TARGET_MODULES)
+    if include_indexer:
+        target_modules.extend(GLM5_DSA_INDEXER_LORA_TARGET_MODULES)
+    if include_router:
+        target_modules.extend(GLM5_ROUTER_LORA_TARGET_MODULES)
+    return target_modules
+
+
+def _glm5_lora_target_to_megatron(target: str) -> str:
+    """Translate GLM5 HF/SGLang target suffixes to Megatron-Core names."""
+
+    for alias, megatron_name in sorted(_GLM5_LORA_TARGET_MODULE_ALIASES.items(), key=lambda item: -len(item[0])):
+        if target == alias:
+            if "." in alias:
+                return f"*.{megatron_name}"
+            return megatron_name
+        if target.endswith(f".{alias}"):
+            return f"{target[: -len(alias)]}{megatron_name}"
+    return target
+
+
+@dataclass
+class GLM5LoRA(LoRA):
+    """LoRA preset for GLM5 / GLM5.1 / GLM5.2 MLA, MoE, and DSA Indexer modules.
+
+    The default target set follows the GLM5 architecture instead of Bridge's
+    generic QKV/MLP defaults. It also accepts Hugging Face and SGLang-style
+    suffixes such as ``wq_b``, ``wk``, and ``weights_proj`` by translating them
+    to Megatron-Core's ``linear_*`` module names before matching.
+    """
+
+    target_modules: list[str] = field(default_factory=glm5_lora_target_modules)
+
+    def __post_init__(self) -> None:
+        """Eagerly build alias mappings for callers that inspect them before use."""
+
+        self._init_target_match_state()
+
+    def _init_target_match_state(self) -> None:
+        """Build GLM5 target aliases from the current ``target_modules``."""
+
+        if not self.target_modules:
+            super()._init_target_match_state()
+            return
+
+        self.canonical_mapping.clear()
+        self._pattern_to_alias.clear()
+        self._alias_to_pattern.clear()
+        self._alias_matches.clear()
+
+        for target in self.target_modules:
+            megatron_target = _glm5_lora_target_to_megatron(target)
+            self.register_target_alias(target, megatron_target)
+            self.canonical_mapping[megatron_target].add(target)
 
 
 @MegatronModelBridge.register_bridge(
