@@ -2018,6 +2018,17 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sq_sum == 2 * 512**2
         assert not getattr(state, "_flops_requires_global_reduce", False)
 
+    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self):
+        # Dense GPT batches are sliced along sequence dimension before the
+        # forward step under context parallelism. FLOPS should still be based on
+        # the full model sequence length, not the CP-local token length.
+        state = _State()
+        tokens = torch.zeros(1, 2048)
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096)
+        assert state._flops_seqlen_sum == 4096
+        assert state._flops_seqlen_sq_sum == 4096**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
+
     def test_mock_state_accumulators_start_at_zero(self):
         state = MagicMock()
         tokens = torch.zeros(1, 8)
@@ -2035,6 +2046,18 @@ class TestAccumulateFlopsMetadata:
         accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
         assert state._flops_seqlen_sum == 1 * 4096
         assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+        assert state._flops_requires_global_reduce
+
+    def test_config_seq_len_does_not_override_thd_cu_seqlens(self):
+        # config_seq_len is only a dense/non-packed fallback. THD still uses
+        # the actual packed tensor length for linear terms and cu_seqlens for
+        # attention work.
+        state = _State()
+        tokens = torch.zeros(1, 2048)
+        cu_seqlens = torch.tensor([0, 512, 2048])
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sum == 2048
+        assert state._flops_seqlen_sq_sum == 512**2 + 1536**2
         assert state._flops_requires_global_reduce
 
     def test_thd_padded_cu_seqlens_with_argmin(self):
