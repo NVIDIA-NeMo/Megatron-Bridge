@@ -17,13 +17,13 @@ Functional tests for Qwen3 VL HF to Megatron generation.
 
 Example run commands:
     # Run all generation tests
-    pytest tests/functional_tests/models/qwen_vl/test_qwen3_vl_generation.py
+    pytest tests/functional_tests/test_groups/models/qwen_vl/test_qwen3_vl_generation.py
 
     # Run specific test (dense model)
-    pytest tests/functional_tests/models/qwen_vl/test_qwen3_vl_generation.py::TestQwen3VLGeneration::test_qwen3_vl_8b_image_generation
+    pytest tests/functional_tests/test_groups/models/qwen_vl/test_qwen3_vl_generation.py::TestQwen3VLGeneration::test_qwen3_vl_8b_image_generation
 
     # Run specific test (MOE model)
-    pytest tests/functional_tests/models/qwen_vl/test_qwen3_vl_generation.py::TestQwen3VLGeneration::test_qwen3_vl_30b_a3b_moe_image_generation
+    pytest tests/functional_tests/test_groups/models/qwen_vl/test_qwen3_vl_generation.py::TestQwen3VLGeneration::test_qwen3_vl_30b_a3b_moe_image_generation
 
 Note: These tests use small proxy/toy models for fast generation testing.
 """

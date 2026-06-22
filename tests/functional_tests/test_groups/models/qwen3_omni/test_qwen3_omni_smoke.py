@@ -28,7 +28,7 @@ from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers import Qwen3OmniMoeForConditionalGeneration
 
-from tests.functional_tests.models.qwen_omni.utils import (
+from tests.functional_tests.test_groups.models.qwen3_omni.utils import (
     SMOKE_MODEL_CACHE_PATH,
     build_real_sample_inputs,
     create_qwen3_omni_smoke_model,
@@ -96,7 +96,7 @@ class TestQwen3OmniSmoke:
     @staticmethod
     def _run_megatron_smoke_subprocess(qwen3_omni_smoke_model_path: str) -> None:
         """Run the Megatron smoke path in a subprocess to isolate NCCL state from pytest."""
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = Path(__file__).resolve().parents[5]
         script = """
 import datetime
 import os
@@ -106,8 +106,8 @@ from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from tests.functional_tests.models.qwen_omni.test_qwen3_omni_smoke import TestQwen3OmniSmoke
-from tests.functional_tests.models.qwen_omni.utils import (
+from tests.functional_tests.test_groups.models.qwen3_omni.test_qwen3_omni_smoke import TestQwen3OmniSmoke
+from tests.functional_tests.test_groups.models.qwen3_omni.utils import (
     SMOKE_LOCK_DIR,
     build_real_sample_inputs,
     move_inputs_to_device,
