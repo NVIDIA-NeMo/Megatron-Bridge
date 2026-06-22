@@ -31,12 +31,22 @@ set -euo pipefail
 : "${WANDB_API_KEY:?set WANDB_API_KEY}"
 : "${ACCOUNT:?set ACCOUNT}"
 : "${PARTITION:?set PARTITION}"
-: "${CONTAINER_IMAGE:?set CONTAINER_IMAGE}"
+# Path to a local enroot squashfs. For many-rank runs, stripe it across all OSTs
+# (`lfs setstripe -c -1 <dir>` then copy the image in) so image reads at startup
+# don't bottleneck a few OSTs.
+: "${CONTAINER_IMAGE:?set CONTAINER_IMAGE (local enroot squashfs)}"
 : "${REPO_ROOT:?set REPO_ROOT (absolute path to this checkout)}"
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"
 WANDB_JOB_NAME="${WANDB_JOB_NAME:-nemotron-3-ultra-deterministic-bf16}"
+# Interpreter that has nemo_run (override if `python` on PATH lacks it).
+PYTHON="${PYTHON:-python}"
+# HF Hub offline: default TRUE (offline). At scale, online makes every rank call
+# the HF API during tokenizer load -> 429 rate-limit -> failure. Offline reads only
+# the local (pre-staged) cache. Set HF_HUB_OFFLINE=0 to force online. Drives
+# TRANSFORMERS_OFFLINE too. Requires the cache to be pre-staged.
+HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
 # --- Cluster-aware Slurm GPU request -----------------------------------------
 # Some partitions (e.g. a generic ``batch`` partition) don't auto-allocate GPUs
@@ -52,18 +62,34 @@ fi
 GRES_ARG=()
 [ -n "$GRES" ] && GRES_ARG=(--gres "$GRES")
 
+# GPU count (default 24 nodes / 96 GPUs). Override NGPUS to scale; global_batch_size
+# auto-scales in set_post_overrides. Keep NGPUS a multiple of 96 so dense DP
+# (NGPUS/6) and expert EDP (NGPUS/96) stay integer: 96, 192, ... 3072 (=768 nodes).
+NGPUS="${NGPUS:-96}"
+GN="${GN:-4}"
+[[ "$NGPUS" =~ ^[0-9]+$ ]] && [ "$((10#$NGPUS))" -ge 1 ] || { echo "ERROR: NGPUS must be a positive integer (got '$NGPUS')" >&2; exit 2; }
+NGPUS=$((10#$NGPUS))
+
+# Optional extra Slurm params (semicolon-separated key=value) -> setup_experiment
+# --additional_slurm_params. For large-scale reserved runs, e.g.:
+#   ADDITIONAL_SLURM_PARAMS="reservation=<your_reservation>;qos=<your_qos>"
+ADDITIONAL_SLURM_PARAMS="${ADDITIONAL_SLURM_PARAMS:-}"
+SLURM_EXTRA_ARG=()
+[ -n "$ADDITIONAL_SLURM_PARAMS" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$ADDITIONAL_SLURM_PARAMS")
+
 # Mount the repo on top of the container's /opt/Megatron-Bridge so local edits
 # (e.g. submodule pin) take effect inside the run.
 MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
 
-python scripts/performance/setup_experiment.py \
+"${PYTHON}" scripts/performance/setup_experiment.py \
   --account "${ACCOUNT}" \
   --partition "${PARTITION}" \
   --gpu gb200 \
   --time_limit 00:30:00 \
   -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
-  -ng 96 -gn 4 \
+  -ng "${NGPUS}" -gn "${GN}" \
   "${GRES_ARG[@]}" \
+  "${SLURM_EXTRA_ARG[@]}" \
   --container_image "${CONTAINER_IMAGE}" \
   --custom_mounts "${MOUNTS}" \
   -hf "${HF_TOKEN}" \
@@ -79,6 +105,8 @@ python scripts/performance/setup_experiment.py \
   -E HF_HOME="${HF_CACHE}" \
   -E HF_DATASETS_CACHE="${HF_CACHE}/datasets" \
   -E TRANSFORMERS_CACHE="${HF_CACHE}" \
+  -E HF_HUB_OFFLINE="${HF_HUB_OFFLINE}" \
+  -E TRANSFORMERS_OFFLINE="${HF_HUB_OFFLINE}" \
   model.attention_backend=fused \
   model.deterministic_mode=true \
   model.cross_entropy_loss_fusion=false \
