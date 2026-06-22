@@ -83,6 +83,8 @@ _DISALLOWED_TARGETS: set[str] = {
     "torch.hub.load",
     "torch.load",
     "torch.ops.load_library",
+    "torch.utils.cpp_extension.load",
+    "torch.utils.cpp_extension.load_inline",
     "transformers.AutoConfig.from_pretrained",
     "transformers.AutoModel.from_pretrained",
     "transformers.AutoModelForCausalLM.from_pretrained",

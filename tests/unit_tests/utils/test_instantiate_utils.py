@@ -791,6 +791,15 @@ class TestTargetPrefixValidation:
             ("torch.ctypes.windll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
             ("torch.ctypes.oledll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
             ("torch.hub.load", {"repo_or_dir": "./attacker_hub_repo", "model": "payload", "source": "local"}),
+            ("torch.utils.cpp_extension.load", {"name": "mb_payload", "sources": ["/tmp/payload.cpp"]}),
+            (
+                "torch.utils.cpp_extension.load_inline",
+                {
+                    "name": "mb_inline_payload",
+                    "cpp_sources": ['#include <cstdlib>\n__attribute__((constructor)) static void init() {}'],
+                    "functions": [],
+                },
+            ),
             ("numpy.load", {"file": "/tmp/attacker.npy", "allow_pickle": True}),
             ("numpy.ctypeslib.load_library", {"libname": "attacker", "loader_path": "/tmp"}),
         ],
