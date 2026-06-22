@@ -97,10 +97,10 @@ def test_glm5_lora_target_modules_can_include_router():
     assert glm5_lora_target_modules(include_router=True)[-1] == GLM5_ROUTER_LORA_TARGET_MODULES[0]
 
 
-def test_glm5_lora_wraps_indexer_alias_targets_and_excludes_norm():
+def test_glm5_lora_wraps_indexer_targets_and_excludes_norm():
     model = _FakeGLM5Model()
 
-    peft = GLM5LoRA(target_modules=["indexer.wq_b", "indexer.wk", "indexer.weights_proj"], dim=2, alpha=4)
+    peft = GLM5LoRA(target_modules=["linear_wq_b", "linear_wk", "linear_weights_proj"], dim=2, alpha=4)
     peft(model)
 
     indexer = model.decoder.layers[0].self_attention.core_attention.indexer

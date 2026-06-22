@@ -47,24 +47,6 @@ GLM5_DSA_INDEXER_LORA_TARGET_MODULES = [
 ]
 GLM5_ROUTER_LORA_TARGET_MODULES = ["router"]
 
-_GLM5_LORA_TARGET_MODULE_ALIASES = {
-    # Hugging Face / SGLang names -> Megatron-Core module names.
-    "q_a_proj": "linear_q_down_proj",
-    "q_b_proj": "linear_q_up_proj",
-    "kv_a_proj_with_mqa": "linear_kv_down_proj",
-    "kv_b_proj": "linear_kv_up_proj",
-    "o_proj": "linear_proj",
-    "gate_proj": "linear_fc1",
-    "up_proj": "linear_fc1",
-    "down_proj": "linear_fc2",
-    "indexer.wq_b": "indexer.linear_wq_b",
-    "wq_b": "linear_wq_b",
-    "indexer.wk": "indexer.linear_wk",
-    "wk": "linear_wk",
-    "indexer.weights_proj": "indexer.linear_weights_proj",
-    "weights_proj": "linear_weights_proj",
-}
-
 
 def glm5_lora_target_modules(
     *,
@@ -99,52 +81,15 @@ def glm5_lora_target_modules(
     return target_modules
 
 
-def _glm5_lora_target_to_megatron(target: str) -> str:
-    """Translate GLM5 HF/SGLang target suffixes to Megatron-Core names."""
-
-    for alias, megatron_name in sorted(_GLM5_LORA_TARGET_MODULE_ALIASES.items(), key=lambda item: -len(item[0])):
-        if target == alias:
-            if "." in alias:
-                return f"*.{megatron_name}"
-            return megatron_name
-        if target.endswith(f".{alias}"):
-            return f"{target[: -len(alias)]}{megatron_name}"
-    return target
-
-
 @dataclass
 class GLM5LoRA(LoRA):
     """LoRA preset for GLM5 / GLM5.1 / GLM5.2 MLA, MoE, and DSA Indexer modules.
 
     The default target set follows the GLM5 architecture instead of Bridge's
-    generic QKV/MLP defaults. It also accepts Hugging Face and SGLang-style
-    suffixes such as ``wq_b``, ``wk``, and ``weights_proj`` by translating them
-    to Megatron-Core's ``linear_*`` module names before matching.
+    generic QKV/MLP defaults.
     """
 
     target_modules: list[str] = field(default_factory=glm5_lora_target_modules)
-
-    def __post_init__(self) -> None:
-        """Eagerly build alias mappings for callers that inspect them before use."""
-
-        self._init_target_match_state()
-
-    def _init_target_match_state(self) -> None:
-        """Build GLM5 target aliases from the current ``target_modules``."""
-
-        if not self.target_modules:
-            super()._init_target_match_state()
-            return
-
-        self.canonical_mapping.clear()
-        self._pattern_to_alias.clear()
-        self._alias_to_pattern.clear()
-        self._alias_matches.clear()
-
-        for target in self.target_modules:
-            megatron_target = _glm5_lora_target_to_megatron(target)
-            self.register_target_alias(target, megatron_target)
-            self.canonical_mapping[megatron_target].add(target)
 
 
 @MegatronModelBridge.register_bridge(
