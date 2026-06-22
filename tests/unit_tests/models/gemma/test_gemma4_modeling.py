@@ -1341,7 +1341,7 @@ class TestGemma4PLEHelpers:
         torch.testing.assert_close(out, torch.tensor(1.0) + first_expected.sum() + second_expected.sum())
         assert not hasattr(decoder, "_gemma4_current_per_layer_inputs")
 
-    def test_patch_ple_block_threading_wraps_checkpointed_forward(self, monkeypatch):
+    def test_patch_ple_block_threading_wraps_module_checkpointed_forward(self, monkeypatch):
         from megatron.core.transformer import transformer_block as transformer_block_module
 
         calls = []
@@ -1363,7 +1363,12 @@ class TestGemma4PLEHelpers:
             calls.append(("gemma4", block, args, per_layer_inputs, kwargs))
             return "gemma4"
 
-        monkeypatch.setattr(transformer_block_module, "checkpointed_forward", fake_orig_checkpointed_forward)
+        monkeypatch.setattr(
+            transformer_block_module,
+            "checkpointed_forward",
+            fake_orig_checkpointed_forward,
+            raising=False,
+        )
         monkeypatch.setattr(
             "megatron.bridge.models.gemma.modeling_gemma4._gemma4_checkpointed_forward",
             fake_gemma4_checkpointed_forward,
@@ -1378,6 +1383,42 @@ class TestGemma4PLEHelpers:
         assert calls[0][0] == "gemma4"
         assert calls[0][3] is per_layer_inputs
         assert transformer_block_module.checkpointed_forward is fake_orig_checkpointed_forward
+
+    def test_patch_ple_block_threading_wraps_instance_checkpointed_forward(self, monkeypatch):
+        calls = []
+
+        class FakeDecoder(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList()
+
+            def _checkpointed_forward(self, hidden_states, attention_mask, input_ids=None):
+                calls.append(("orig", self, (hidden_states, attention_mask), {"input_ids": input_ids}))
+                return "orig"
+
+            def forward(self, hidden_states, **kwargs):
+                del kwargs
+                return self._checkpointed_forward(hidden_states, "mask", input_ids="tokens")
+
+        def fake_gemma4_checkpointed_forward(block, *args, per_layer_inputs=None, **kwargs):
+            calls.append(("gemma4", block, args, per_layer_inputs, kwargs))
+            return "gemma4"
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4._gemma4_checkpointed_forward",
+            fake_gemma4_checkpointed_forward,
+        )
+        decoder = FakeDecoder()
+        per_layer_inputs = torch.ones(1, 2, 1, 3)
+
+        _patch_ple_block_threading(decoder)
+        out = decoder(torch.tensor(1.0), per_layer_inputs=per_layer_inputs)
+
+        assert out == "gemma4"
+        assert calls[0][0] == "gemma4"
+        assert calls[0][3] is per_layer_inputs
+        assert calls[0][4]["input_ids"] == "tokens"
+        assert "_checkpointed_forward" not in decoder.__dict__
 
     def test_gemma4_checkpointed_forward_uniform_threads_ple_inputs(self, monkeypatch):
         from megatron.core import tensor_parallel
