@@ -20,8 +20,8 @@ from megatron.bridge.models.qwen_omni.qwen3_omni_step import (
     forward_step,
     get_batch,
     get_batch_from_iterator,
-    pad_batch_sequences_for_context_parallel,
     pack_or_pad_batch_sequences,
+    pad_batch_sequences_for_context_parallel,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -47,6 +47,13 @@ def _as_nocuda(tensor: torch.Tensor) -> torch.Tensor:
             return self
 
     return tensor.as_subclass(_NoCudaTensor)
+
+
+def _patch_get_pg_size(monkeypatch):
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_omni.qwen3_omni_step.get_pg_size",
+        lambda group=None: 1 if group is None else group.size(),
+    )
 
 
 def _make_batch():
@@ -226,6 +233,8 @@ def test_forward_step_passes_omni_multimodal_args(monkeypatch):
     ],
 )
 def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, local_labels, local_loss_mask):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size=1, rank=0):
             self._size = size
@@ -354,6 +363,8 @@ def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, loca
 
 
 def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size=1, rank=0):
             self._size = size
@@ -476,7 +487,9 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
     assert torch.equal(model.schedule_args["loss_mask"], local_loss_mask)
 
 
-def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple():
+def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -518,7 +531,9 @@ def test_pad_batch_sequences_for_context_parallel_pads_to_zigzag_multiple():
     assert loss_mask[0, -1].item() == 0
 
 
-def test_pad_batch_sequences_for_context_parallel_can_force_seq_length():
+def test_pad_batch_sequences_for_context_parallel_can_force_seq_length(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -559,7 +574,9 @@ def test_pad_batch_sequences_for_context_parallel_can_force_seq_length():
     assert position_ids.shape == (1, 12)
 
 
-def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length():
+def test_pad_batch_sequences_for_context_parallel_rejects_bad_forced_seq_length(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -626,7 +643,9 @@ def test_pack_or_pad_batch_sequences_uses_null_safe_parallel_sizes_and_fp8_align
     assert packed_seq_params.max_seqlen_kv == 16
 
 
-def test_pack_or_pad_batch_sequences_can_force_seq_length():
+def test_pack_or_pad_batch_sequences_can_force_seq_length(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size):
             self._size = size
@@ -751,6 +770,8 @@ def test_forward_step_passes_packed_sequence_params_to_model(monkeypatch):
 
 
 def test_forward_step_supports_packed_sequence_with_context_parallel(monkeypatch):
+    _patch_get_pg_size(monkeypatch)
+
     class _MockProcessGroup:
         def __init__(self, size=1, rank=0):
             self._size = size

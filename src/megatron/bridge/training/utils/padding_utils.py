@@ -123,9 +123,7 @@ def get_padded_sequence_length(
         if seq_length is None:
             raise ValueError("seq_length must be set when force_to_seq_length=True")
         if validate_forced_seq_length and seq_length % divisible_by != 0:
-            raise ValueError(
-                f"seq_length={seq_length} must be divisible by {divisible_by} for {error_context}"
-            )
+            raise ValueError(f"seq_length={seq_length} must be divisible by {divisible_by} for {error_context}")
         return seq_length
 
     return math.ceil(current_length / divisible_by) * divisible_by
