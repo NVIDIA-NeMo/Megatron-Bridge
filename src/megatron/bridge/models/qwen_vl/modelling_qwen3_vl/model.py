@@ -552,7 +552,9 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings = combined_embeddings_thd
 
             if self.config.sequence_parallel:
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                    combined_embeddings, group=self.pg_collection.tp
+                )
                 combined_embeddings = combined_embeddings.contiguous()
 
         else:

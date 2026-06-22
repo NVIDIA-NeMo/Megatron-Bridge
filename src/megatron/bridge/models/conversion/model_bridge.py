@@ -1184,6 +1184,7 @@ class MegatronModelBridge(
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
+    @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -1306,7 +1307,7 @@ class MegatronModelBridge(
                 )
                 if merged_result is not None:
                     for hf_name, tensor in merged_result.items():
-                        yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
+                        yield HFWeightTuple(hf_name, tensor.detach().cpu() if cpu else tensor.detach())
                 continue
 
             # --- Standard export path ---
@@ -1330,7 +1331,7 @@ class MegatronModelBridge(
                 )
 
             for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.cpu() if cpu else tensor
+                final_tensor = tensor.detach().cpu() if cpu else tensor.detach()
 
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
@@ -2018,6 +2019,7 @@ def stream_adapter_weights_megatron_to_hf(
     megatron_model: Union[MegatronModel, List[MegatronModel]],
     cpu: bool = True,
     show_progress: bool = True,
+    exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
 ) -> Iterable[HFWeightTuple]:
     """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
@@ -2109,12 +2111,14 @@ def register_bridge_implementation(
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         cpu: bool = True,
         show_progress: bool = True,
+        exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_adapter_weights_megatron_to_hf(
             megatron_model,
             cpu=cpu,
             show_progress=show_progress,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
         )
 
     # Set meaningful names for debugging

@@ -39,6 +39,7 @@ from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from torch import Tensor
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -47,7 +48,6 @@ TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEN
 TELayerNormColumnParallelLinear, _ = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TELayerNormColumnParallelLinear"
 )
-TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TERowParallelLinear")
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
 
 
@@ -337,28 +337,3 @@ def _is_local_attn_layer(
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0
-
-
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Modified From TERowParallelLinear with an additional Post-LN."""
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with additional Post LN on output"""
-        output, bias = super().forward(x)
-        return self.post_layernorm(output), bias
