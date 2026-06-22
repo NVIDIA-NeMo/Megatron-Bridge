@@ -706,7 +706,17 @@ class TestTargetPrefixValidation:
             "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
             "_args_": ["os."],
         }
-        with pytest.raises(InstantiationException, match="modify target validation state"):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    def test_instantiate_rejects_direct_transformers_import_target(self):
+        """Test that configs cannot import arbitrary files through Transformers helpers."""
+        config = {
+            "_target_": "transformers.utils.import_utils.direct_transformers_import",
+            "_args_": ["."],
+            "file": "__init__.py",
+        }
+        with pytest.raises(InstantiationException, match="bypass target validation"):
             instantiate(config)
 
     @pytest.mark.parametrize(
@@ -721,7 +731,7 @@ class TestTargetPrefixValidation:
     def test_instantiate_rejects_target_allowlist_mutators(self, target):
         """Test that configs cannot mutate the shared target allowlist."""
         config = {"_target_": target, "_args_": ["os."]}
-        with pytest.raises(InstantiationException, match="modify target validation state"):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
             instantiate(config)
 
     def test_instantiate_rejects_private_target_segments(self):

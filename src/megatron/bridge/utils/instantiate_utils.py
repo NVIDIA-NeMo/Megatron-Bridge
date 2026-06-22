@@ -65,6 +65,7 @@ _ALLOWED_PRIVATE_TARGETS: set[str] = {
 
 _DISALLOWED_TARGETS: set[str] = {
     "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+    "transformers.utils.import_utils.direct_transformers_import",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
     *{
         f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
@@ -109,7 +110,7 @@ def _validate_target_prefix(*, target: str, full_key: str) -> None:
     """Validate that a _target_ string is permitted by Bridge hardening rules."""
     if target in _DISALLOWED_TARGETS:
         raise InstantiationException(
-            f"Instantiation of '{target}' is not allowed because it can modify target validation state."
+            f"Instantiation of '{target}' is not allowed because it can bypass target validation."
             + (f"\nfull_key: {full_key}" if full_key else "")
         )
     private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
