@@ -152,11 +152,11 @@ class TestQwen2AudioFinetuneConfig:
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
         assert isinstance(cfg.dataset, HFConversationDatasetProvider)
-        assert cfg.dataset.maker_name == "make_default_audio_dataset"
+        assert cfg.dataset.maker_name == "make_cv17_dataset"
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
-        # Default split selection — train uses train, val uses dev.
-        assert cfg.dataset.maker_kwargs["subset"] == "train"
-        assert cfg.dataset.val_maker_kwargs["subset"] == "dev"
+        assert cfg.dataset.maker_kwargs["path_or_dataset"] == "ysdede/commonvoice_17_tr_fixed"
+        assert cfg.dataset.maker_kwargs["split"] == "train"
+        assert cfg.dataset.val_maker_kwargs["split"] == "validation"
 
     def test_finetune_config_full_sft_uses_low_lr(self):
         """When peft is None (full SFT), the entry point picks lr=5e-6."""

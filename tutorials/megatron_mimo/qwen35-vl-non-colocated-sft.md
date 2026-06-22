@@ -3,14 +3,14 @@
 This tutorial shows how to fine-tune dense Qwen3.5-VL with *MegatronMIMO*,
 using *heterogeneous parallelism*. In the non-colocated setup covered here,
 the vision encoder and the language model run on disjoint GPU sets and can use
-different TP/PP/DP layouts.
+different declared TP/PP/DP layouts.
 
 You will:
 
 1. Convert a Hugging Face Qwen3.5-VL checkpoint into the MegatronMIMO format.
 2. Launch the validated 27B non-colocated SFT job on a multi-node cluster.
 3. Review the reported validation evidence: throughput gain and loss parity
-   against the standard Megatron-Bridge path.
+   against the standard Megatron-Bridge baseline.
 
 **Scope.** This tutorial is hands-on for the MegatronMIMO path. It covers
 **dense** Qwen3.5-VL, two components (`language` + `images`), and
@@ -91,10 +91,24 @@ validated 17-rank layout.
 
 ## 3. Launch 27B non-colocated SFT
 
-In a standard Qwen3.5-VL SFT run, the vision encoder and the language model use
-one uniform parallelism plan. MegatronMIMO changes that: each component declares
-its own TP/PP/DP layout, and the launcher places those components on disjoint
-rank ranges.
+Before launching the run, it helps to separate three terms that are used below:
+
+- **Model abstraction.** The standard Qwen3.5-VL training loop already supported
+  in Megatron-Bridge is non-MIMO: a regular integrated Megatron model where the
+  vision encoder, projector, and language model are internal submodules.
+  MegatronMIMO uses the MIMO model abstraction: a graph of computational modules
+  connected by activation edges, with support for multiple encoders per
+  modality.
+- **Placement.** Colocated means module rank sets overlap; non-colocated means
+  module rank sets are disjoint.
+- **Layout.** Homogeneous means there is one declared parallel topology, or
+  equivalent declared component topologies. Heterogeneous means at least two
+  declared component topologies differ.
+
+Using those terms, the standard baseline used for validation is **non-MIMO +
+colocated + homogeneous**. The run below is **MIMO + non-colocated +
+heterogeneous**: `language` and `images` run on disjoint rank sets and declare
+different TP/PP/DP layouts.
 
 The validated 27B layout is:
 
@@ -104,9 +118,13 @@ rank  16     images     TP=1  PP=1  DP=1     (rank_offset=16)
 world_size = 17
 ```
 
-The language model needs 16 ranks to fit and run efficiently. The image encoder
-fits on one rank, so non-colocated MIMO keeps it off the language ranks and lets
-its work overlap the language model's critical path.
+This layout comes from a baseline sweep of standard Megatron-Bridge runs for
+the 27B setup: smaller 8-GPU candidates did not fit, while wider TP or deeper
+PP alternatives completed but delivered lower active tokens/s/GPU. For the MIMO
+comparison, we keep that selected LLM layout unchanged and change only the
+image-encoder placement. The image encoder fits on one rank, so non-colocated
+MIMO keeps it off the language ranks and lets its work overlap the language
+model's critical path.
 
 The validated 27B job is launched with
 `examples/megatron_mimo/qwen35_vl/slurm_sft.sh`. The script declares the
@@ -179,20 +197,22 @@ per-iteration step time as the throughput signal.
 
 ## 4. Reported validation results — performance
 
-The numbers below are reported validation evidence from a controlled
-Standard-vs-MIMO comparison on Qwen3.5-VL 27B (bf16). You do not need to run the
-standard baseline to use the MIMO workflow above.
+The numbers below are reported validation evidence from a controlled comparison
+between the standard baseline and MIMO on Qwen3.5-VL 27B (bf16). You do not
+need to run the standard baseline to use the MIMO workflow above.
 
-**Comparison setup.** The Standard baseline is TP=4 PP=2 DP=2 (16 GPUs), the
-strongest standard layout found by a parallelism sweep. MIMO uses the same
-language layout plus a single image rank (language TP=4 PP=2 DP=2 + image
-TP=1 PP=1 DP=1, 17 active ranks). Both paths use Qwen3.5-VL 27B, bf16, the same
-supported HF VLM dataset path, and matched language-local microbatch size. The
-performance sweep ran 20 iterations; timing is the mean step time over
-iterations 3–20.
+**Comparison setup.** The standard Megatron-Bridge baseline is TP=4 PP=2 DP=2
+(16 GPUs), the strongest standard layout found by a parallelism sweep. In the
+terminology from Section 3, that baseline is **non-MIMO + colocated +
+homogeneous**. MIMO uses the same language layout plus a single image rank
+(language TP=4 PP=2 DP=2 + image TP=1 PP=1 DP=1, 17 active ranks), so the
+reported MIMO run is **MIMO + non-colocated + heterogeneous**. Both paths use
+Qwen3.5-VL 27B, bf16, the same supported HF VLM dataset path, and matched
+language-local microbatch size. The performance sweep ran 20 iterations; timing
+is the mean step time over iterations 3–20.
 
 **Metric.** We report **active tokens/s/GPU** — throughput divided by the number
-of ranks actually doing work (16 for Standard, 17 for MIMO) — and the
+of ranks actually doing work (16 for the baseline, 17 for MIMO) — and the
 wall-clock step-time reduction.
 
 The results use the Hugging Face VLM dataset makers currently supported by
@@ -218,19 +238,23 @@ re-measure if you adapt the workflow to a different configuration.
 ## 5. Reported validation results — loss parity
 
 A faster path is only useful if it trains the same model. In the reported
-validation run, Standard and MIMO start from the same converted Qwen3.5-VL 27B
-checkpoint and produce matching loss trajectories.
+validation run, the standard baseline and MIMO start from the same converted
+Qwen3.5-VL 27B checkpoint and produce matching loss trajectories.
 
 **Setup.** MedPix-VQA, seq=2048, GBS=32, 400 training iterations, from the
-pretrained checkpoint. Standard uses MBS=1 and MIMO uses MBS=2, so both paths
-see a language-local microbatch of 1. Both load model weights only; optimizer
-and RNG state start fresh.
+pretrained checkpoint. The standard baseline uses MBS=1 and MIMO uses MBS=2, so
+both paths see a language-local microbatch of 1. Both load model weights only;
+optimizer and RNG state start fresh.
 
-The plot below overlays the `lm loss` curves from the Standard and MIMO runs.
-The curves track each other over the 400-iteration window, with no systematic
-drift between the two paths.
+The plot below overlays the `lm loss` curves from the standard baseline and
+MIMO runs. The curves track each other over the 400-iteration window, with no
+systematic drift between the two paths.
 
-![Qwen3.5-VL 27B loss parity between Standard and MegatronMIMO](figures/qwen35_vl_loss_parity_400iter.png)
+![Qwen3.5-VL 27B loss parity between the standard baseline and MegatronMIMO](figures/qwen35_vl_loss_parity_400iter.png)
+
+In the plot legend, **Standard Qwen3.5-27B** is the standard Megatron-Bridge
+baseline (non-MIMO + colocated + homogeneous), and **MegatronMIMO Qwen3.5-27B**
+is the MIMO run (MIMO + non-colocated + heterogeneous).
 
 This is the expected loss-parity result for the validated 27B setup: MIMO uses a
 different rank layout, but it trains from the same checkpoint and follows the

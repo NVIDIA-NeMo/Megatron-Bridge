@@ -621,7 +621,10 @@ def make_valor32k_avqa_dataset(
 
 
 def make_cv17_dataset(
-    path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed", split: str = "train", **kwargs
+    path_or_dataset: str = "ysdede/commonvoice_17_tr_fixed",
+    split: str = "train",
+    prompt: str = "Transcribe the Turkish audio clip.",
+    **kwargs,
 ) -> List[Dict[str, Any]]:
     """Load and preprocess the CommonVoice 17 dataset for audio-to-text fine-tuning."""
     import io
@@ -667,8 +670,14 @@ def make_cv17_dataset(
         array, sr = _decode_audio(example["audio"])
         return {
             "conversation": [
-                {"role": "user", "content": "<|audio_1|>Transcribe the Turkish audio clip."},
-                {"role": "assistant", "content": example["transcription"]},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "audio", "audio_url": "placeholder"},
+                        {"type": "text", "text": prompt},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": example["transcription"]}]},
             ],
             "audio": (array, sr),
         }

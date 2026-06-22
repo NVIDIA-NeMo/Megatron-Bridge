@@ -339,10 +339,11 @@ class TestQwen3OmniModel:
         model = self._build_model(thinker_config)
         model.thinker.config.sequence_parallel = True
 
-        calls = {"scatter": 0, "split": 0}
+        calls = {"scatter": 0, "scatter_group": None, "split": 0}
 
-        def _identity_scatter(x):
+        def _identity_scatter(x, *, group=None):
             calls["scatter"] += 1
+            calls["scatter_group"] = group
             return x
 
         def _identity_split(visual_pos_masks, deepstack_visual_embeds, **kwargs):
@@ -381,6 +382,7 @@ class TestQwen3OmniModel:
 
         assert output is not None
         assert calls["scatter"] == 1
+        assert calls["scatter_group"] is model.thinker.pg_collection.tp
         assert calls["split"] == 1
 
     def test_cp_mrope_uses_full_input_without_local_attention_mask(self, thinker_config, monkeypatch):
