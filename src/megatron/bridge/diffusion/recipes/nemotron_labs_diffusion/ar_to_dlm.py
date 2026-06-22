@@ -204,7 +204,7 @@ def _nemotron_labs_diffusion_common(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
     if hf_path is not None:
-        hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
+        hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=True)
         bridge = NemotronLabsDiffusionBridge()
         model_cfg = bridge.provider_bridge(hf_pretrained)
         model_cfg.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head

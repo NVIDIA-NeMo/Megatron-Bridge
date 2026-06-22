@@ -12,15 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE."""
+"""NemotronLabsDiffusionAttention for sbd_block_diff diffusion LM training with YARN RoPE.
 
+Context-parallelism design note
+===============================
+This is the *core* attention submodule (it receives projected Q/K/V and returns
+``[s, b, hp]``). The diffusion sequence is doubled to ``[xt | x0]`` (length 2L)
+and uses the arbitrary ``sbd_block_diff`` attention pattern (bidirectional within
+each xt block, block-causal xt->x0, fully-causal x0).
+
+Why not TE's native context parallelism?
+  TEDotProductAttention has built-in CP, but only for causal/padding-family
+  masks. The only way to feed an arbitrary mask to TE is as an additive
+  ``post_scale_bias`` -- and on this stack (TE 2.14 / cuDNN 9.10 / sm90) the
+  ``post_scale_bias + context_parallel`` combination has NO available backend:
+    - UnfusedDotProductAttention (the only arbitrary-mask backend) is disabled under CP,
+    - FlashAttention never supports post_scale_bias,
+    - cuDNN FusedAttention returns NoBackend for bias+CP (verified for p2p/all_gather/a2a,
+      and for b1ss/bhss/1hss bias shapes -- it is not a shape issue).
+  cuDNN *does* support post_scale_bias WITHOUT CP. (Latest TE main permits
+  bias+CP with cp_comm_type="p2p" at the Python layer, but it still depends on a
+  cuDNN kernel that 9.10 lacks -- revisit with a newer cuDNN.)
+
+Approach used here ("cuDNN core in cp=1 mode + manual CP collectives"):
+  Under CP we do the sequence communication ourselves --
+    all-gather Q/K/V across the CP group -> full 2L  (cp_utils.all_gather_seq_cp)
+    -> RoPE (per-half) + Llama-4 scale + GQA
+    -> TEDotProductAttention built with a cp=1 config copy + dense sbd_block_diff
+       post_scale_bias  (cuDNN fused, non-CP path: bias IS supported)
+    -> scatter output back to this rank's zigzag slice  (cp_utils.scatter_seq_cp)
+  The model input is zigzag-sharded and logits are re-gathered in DGPTStep; the
+  loss is restricted to each rank's owned positions so Megatron's standard CP
+  loss/grad reduction stays valid.
+
+Trade-offs: each rank runs the full-2L attention (cp_size x attention FLOPs; no
+comm/compute overlap), and the bias is a dense ``[1,1,2L,2L]`` tensor (O((2L)^2)
+memory -- fine at short context, costly at 128k). Verified bit-exact forward and
+numerically-equivalent gradients (cp=1 vs cp=2 vs cp=4) in
+``tests/unit_tests/diffusion/`` (test_cp_parity_suite.py).
+"""
+
+import copy
 import math
 from typing import Optional
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from megatron.core import tensor_parallel
+from megatron.core import parallel_state
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.enums import AttnMaskType
@@ -28,21 +68,10 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import divide
 from torch import Tensor
-from torch.nn.attention.flex_attention import flex_attention
 from transformers import ROPE_INIT_FUNCTIONS
 
-from megatron.bridge.diffusion.common.dllm import compute_block_mask
-
-
-# ---------------------------------------------------------------------------
-# Compiled flex_attention kernel
-# ---------------------------------------------------------------------------
-
-
-@torch.compile(fullgraph=True, mode="max-autotune-no-cudagraphs", dynamic=False)
-def fused_flex_attention(q, k, v, score_mod=None, block_mask=None, return_lse=False):
-    """Thin compiled wrapper around flex_attention."""
-    return flex_attention(q, k, v, score_mod=score_mod, block_mask=block_mask, return_lse=return_lse)
+from megatron.bridge.diffusion.common.cp_utils import all_gather_seq_cp, scatter_seq_cp
+from megatron.bridge.diffusion.common.dllm import compute_block_bias
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +190,18 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         super().__init__(config=config)
         self.config = config
 
-        assert config.context_parallel_size == 1, "Context parallelism is only supported by TEDotProductAttention!"
+        # Context parallelism: cuDNN's CP-integrated (ring) attention has no kernel
+        # for an arbitrary post_scale_bias on this stack (TE 2.14 / cuDNN 9.10).
+        # But cuDNN DOES support post_scale_bias WITHOUT CP. So we do the CP
+        # collectives ourselves -- all-gather Q/K/V to the full 2L sequence, run
+        # TEDotProductAttention in cp=1 mode with the dense sbd_block_diff bias,
+        # then scatter the output back to this rank's zigzag slice (see forward).
+        # cuDNN-backed; costs cp_size x attention compute (each rank does full 2L).
+        self.cp_size = config.context_parallel_size
+        assert not config.apply_query_key_layer_scaling, (
+            "softmax_scale is passed to the TE core directly; apply_query_key_layer_scaling "
+            "must be False (the model uses Llama-4 style query scaling instead)."
+        )
 
         self.layer_number = max(1, layer_number)
 
@@ -209,11 +249,24 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             ):
                 hf_text_config.rope_parameters["factor"] = config.yarn_rotary_scaling_factor
 
-        # Pre-compute the sbd_block_diff block mask
-        self.mask = compute_block_mask(
-            block_size=getattr(config, "block_size", 16),
-            max_seq_length=config.seq_length,
+        self.block_size = getattr(config, "block_size", 16)
+
+        # TE core attention run WITHOUT CP (cp=1 config copy): cuDNN supports
+        # post_scale_bias in the non-CP path. We feed it the full gathered 2L
+        # sequence and the dense sbd_block_diff bias; CP comms are done by us.
+        core_cfg = copy.copy(config)
+        core_cfg.context_parallel_size = 1
+        self.core_attention = TEDotProductAttention(
+            config=core_cfg,
+            layer_number=self.layer_number,
+            attn_mask_type=AttnMaskType.no_mask,
+            attention_type=attention_type or "self",
+            attention_dropout=config.attention_dropout if attention_dropout is None else attention_dropout,
+            softmax_scale=self.softmax_scale,
+            pg_collection=None,
         )
+        # Lazily-built additive sbd_block_diff bias [1, 1, 2L, 2L].
+        self._sbd_bias = None
 
         import torch._dynamo.config as dcfg
 
@@ -257,15 +310,26 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         if self._inference_mode:
             return self._inference_forward(query, key, value)
 
-        # Position ids for each half of the doubled sequence
-        half_seq_len = query.shape[0] // 2
-        position_ids = torch.arange(half_seq_len, device=query.device).unsqueeze(0)
-        cos, sin = self.rope_embedding_module(query, position_ids)
+        cp_size = self.cp_size
+        cp_group = parallel_state.get_context_parallel_group() if cp_size > 1 else None
 
-        # [sq, b, np, hn] -> [b, np, sq, hn]
+        # [local_seq, b, np, hn] -> [b, np, local_seq, hn]
         query = query.transpose(0, 1).transpose(1, 2)
         key = key.transpose(0, 1).transpose(1, 2)
         value = value.transpose(0, 1).transpose(1, 2)
+
+        # Under CP, all-gather Q/K/V to the full doubled 2L sequence (undoing the
+        # zigzag) so the cp=1 TE core sees the global sbd_block_diff structure. The
+        # output is scattered back to this rank's slice after attention.
+        if cp_size > 1:
+            query = all_gather_seq_cp(query, cp_group, seq_dim=2)
+            key = all_gather_seq_cp(key, cp_group, seq_dim=2)
+            value = all_gather_seq_cp(value, cp_group, seq_dim=2)
+
+        # Position ids for each half of the (now full) doubled sequence
+        half_seq_len = query.shape[2] // 2
+        position_ids = torch.arange(half_seq_len, device=query.device).unsqueeze(0)
+        cos, sin = self.rope_embedding_module(query, position_ids)
 
         # Apply RoPE independently to each half (xt and x0)
         q1, q2 = query.chunk(2, dim=2)
@@ -282,25 +346,43 @@ class NemotronLabsDiffusionAttention(MegatronModule):
                 query.dtype
             )
 
-        # GQA: expand KV heads
-        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
-        key = repeat_kv(key, n_rep)
-        value = repeat_kv(value, n_rep)
+        # GQA is handled inside TEDotProductAttention (num_gqa_groups); kv keeps
+        # num_query_groups heads (no repeat_kv).
 
-        # NemotronLabsDiffusionAttention with pre-computed block mask
-        context = fused_flex_attention(query, key, value, block_mask=self.mask)
+        # [b, np, seq, hn] -> [seq, b, np, hn] (TE sbhd layout)
+        query = query.transpose(1, 2).transpose(0, 1).contiguous()
+        key = key.transpose(1, 2).transpose(0, 1).contiguous()
+        value = value.transpose(1, 2).transpose(0, 1).contiguous()
 
-        # Dropout
-        if not self.config.sequence_parallel:
-            with tensor_parallel.get_cuda_rng_tracker().fork():
-                context = self.attention_dropout(context)
-        else:
-            context = self.attention_dropout(context)
+        # Dense sbd_block_diff bias [1, 1, 2L, 2L] (post_scale_bias); cuDNN applies
+        # it in the non-CP fused path.
+        full_2l = query.shape[0]
+        if (
+            self._sbd_bias is None
+            or self._sbd_bias.device != query.device
+            or self._sbd_bias.dtype != query.dtype
+            or self._sbd_bias.shape[-1] != full_2l
+        ):
+            self._sbd_bias = compute_block_bias(
+                block_size=self.block_size,
+                max_seq_length=full_2l // 2,
+                dtype=query.dtype,
+                device=query.device,
+            )
 
-        # [b, np, sq, hn] -> [sq, b, hp]
-        context = context.transpose(1, 2).transpose(0, 1)
-        new_context_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
-        context = context.contiguous().view(*new_context_shape)
+        # cp=1 TE core attention -> [seq, b, hp].
+        context = self.core_attention(
+            query,
+            key,
+            value,
+            attention_mask=None,
+            attn_mask_type=AttnMaskType.no_mask,
+            attention_bias=self._sbd_bias,
+        )
+
+        # Scatter the full-sequence output back to this rank's zigzag slice.
+        if cp_size > 1:
+            context = scatter_seq_cp(context, cp_group, seq_dim=0)
 
         return context
 
