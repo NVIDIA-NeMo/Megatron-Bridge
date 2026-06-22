@@ -735,6 +735,50 @@ class TestTargetPrefixValidation:
     @pytest.mark.parametrize(
         "target",
         [
+            "transformers.AutoConfig.from_pretrained",
+            "transformers.AutoTokenizer.from_pretrained",
+            "transformers.AutoProcessor.from_pretrained",
+            "transformers.AutoModel.from_pretrained",
+            "transformers.AutoModelForCausalLM.from_pretrained",
+            "transformers.models.auto.configuration_auto.AutoConfig.from_pretrained",
+            "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
+            "transformers.models.auto.processing_auto.AutoProcessor.from_pretrained",
+            "transformers.models.auto.modeling_auto.AutoModel.from_pretrained",
+            "transformers.models.auto.modeling_auto.AutoModelForCausalLM.from_pretrained",
+        ],
+    )
+    def test_instantiate_rejects_transformers_loader_targets(self, target):
+        """Test that configs cannot opt into HuggingFace custom code loaders."""
+        config = {
+            "_target_": target,
+            "pretrained_model_name_or_path": "./attacker_processor",
+            "trust_remote_code": True,
+        }
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target,kwargs",
+        [
+            (
+                "megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained",
+                {"path": "./attacker_hf_model", "trust_remote_code": True},
+            ),
+            (
+                "megatron.bridge.models.hf_pretrained.safe_config_loader.safe_load_config_with_retry",
+                {"path": "./attacker_hf_model", "trust_remote_code": True},
+            ),
+        ],
+    )
+    def test_instantiate_rejects_bridge_hf_loader_targets(self, target, kwargs):
+        """Test that configs cannot reach Bridge wrappers that load trusted HF code."""
+        config = {"_target_": target, **kwargs}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
             "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
             "megatron.bridge.utils.instantiate_utils.target_allowlist.disable",
             "megatron.training.config.instantiate_utils.target_allowlist.add_prefix",

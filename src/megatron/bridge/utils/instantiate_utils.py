@@ -64,9 +64,21 @@ _ALLOWED_PRIVATE_TARGETS: set[str] = {
 }
 
 _DISALLOWED_TARGETS: set[str] = {
+    "megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained",
+    "megatron.bridge.models.hf_pretrained.safe_config_loader.safe_load_config_with_retry",
     "megatron.bridge.utils.import_utils.safe_import",
     "megatron.bridge.utils.import_utils.safe_import_from",
     "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+    "transformers.AutoConfig.from_pretrained",
+    "transformers.AutoModel.from_pretrained",
+    "transformers.AutoModelForCausalLM.from_pretrained",
+    "transformers.AutoProcessor.from_pretrained",
+    "transformers.AutoTokenizer.from_pretrained",
+    "transformers.models.auto.configuration_auto.AutoConfig.from_pretrained",
+    "transformers.models.auto.modeling_auto.AutoModel.from_pretrained",
+    "transformers.models.auto.modeling_auto.AutoModelForCausalLM.from_pretrained",
+    "transformers.models.auto.processing_auto.AutoProcessor.from_pretrained",
+    "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
     "transformers.utils.import_utils.direct_transformers_import",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
     *{
