@@ -90,15 +90,15 @@ VLM variants additionally set:
 
 | Model Size | TP | PP | EP | CP | Notes |
 |-----------|----|----|----|----|-------|
-| < 3B | 1 | 1 | 1 | 1 | Single GPU |
+| &lt; 3B | 1 | 1 | 1 | 1 | Single GPU |
 | 3-8B | 2 | 1 | 1 | 1 | |
 | 8-13B | 4 | 1 | 1 | 1 | |
 | 13-70B | 4 | 4 | 1 | 1 | |
 | MoE (any) | 1-2 | 1-4 | 8-32 | 1 | EP dominates |
 
 **Rules:**
-- TP must be <= `num_key_value_heads`
-- When EP > 1 and TP > 1, `sequence_parallel` must be True
+- TP must be &lt;= `num_key_value_heads`
+- When EP &gt; 1 and TP &gt; 1, `sequence_parallel` must be True
 - PEFT typically uses smaller parallelism (TP=1, PP=1)
 
 ## Export / Registration
