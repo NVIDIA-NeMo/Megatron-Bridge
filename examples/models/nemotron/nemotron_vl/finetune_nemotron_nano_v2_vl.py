@@ -68,6 +68,12 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     )
     # Finetune-specific flags
     parser.add_argument(
+        "--hf-model-path",
+        type=str,
+        default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+        help="Path to the HuggingFace model to load weights from. Default: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
+    )
+    parser.add_argument(
         "--pretrained-checkpoint",
         type=str,
         required=True,
@@ -105,11 +111,12 @@ def main() -> None:
 
     if args.lora_on_language_model or args.lora_on_vision_model:
         cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
+            hf_model_path=args.hf_model_path,
             lora_on_language_model=args.lora_on_language_model,
             lora_on_vision_model=args.lora_on_vision_model,
         )
     else:
-        cfg = nemotron_nano_v2_vl_12b_sft_config()
+        cfg = nemotron_nano_v2_vl_12b_sft_config(hf_model_path=args.hf_model_path)
 
     cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
