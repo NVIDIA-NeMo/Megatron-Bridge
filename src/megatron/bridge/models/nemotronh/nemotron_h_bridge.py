@@ -17,7 +17,7 @@ from typing import Dict, Optional, Tuple
 
 import torch
 from megatron.core.activations import squared_relu
-from megatron.core.models.mamba import MambaModel
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,7 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
 
 logger = logging.getLogger(__name__)
@@ -214,8 +214,8 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
 @MegatronModelBridge.register_bridge(
     source="NemotronHForCausalLM",
-    target=MambaModel,
-    provider=MambaModelProvider,
+    target=HybridModel,
+    provider=HybridModelProvider,
     model_type="nemotron_h",
 )
 class NemotronHBridge(MegatronModelBridge):
@@ -223,7 +223,7 @@ class NemotronHBridge(MegatronModelBridge):
     Megatron Bridge for Nemotron-H Causal LM.
 
     This bridge handles the conversion between HuggingFace NemotronHForCausalLM
-    and Megatron-Core MambaModel formats, including weight mappings and
+    and Megatron-Core HybridModel formats, including weight mappings and
     configuration translation.
 
     Example:
@@ -266,8 +266,8 @@ class NemotronHBridge(MegatronModelBridge):
 
         return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MambaModelProvider:
-        """Convert HuggingFace Nemotron-H config to MambaModelProvider."""
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
+        """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
         # Use base class for common config conversion
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config

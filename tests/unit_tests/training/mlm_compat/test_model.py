@@ -19,7 +19,12 @@ import pytest
 import torch
 from megatron.core.transformer import TransformerConfig
 
-from megatron.bridge.training.mlm_compat.model import _get_transformer_layer_spec, _gpt_provider, _mamba_provider
+from megatron.bridge.training.mlm_compat.model import (
+    _get_transformer_layer_spec,
+    _gpt_provider,
+    _hybrid_provider,
+    _mamba_provider,
+)
 
 
 def common_mock_args() -> argparse.Namespace:
@@ -356,15 +361,15 @@ class TestGPTProvider:
         assert mock_layer_spec_func.call_count == 2
 
 
-class TestMambaModelProvider:
-    """Test Mamba model provider function."""
+class TestHybridModelProvider:
+    """Test Hybrid model provider function."""
 
     @pytest.fixture
     def mock_args(self):
-        """Create mock args namespace with required attributes for Mamba model."""
+        """Create mock args namespace with required attributes for Hybrid model."""
         args = common_mock_args()
 
-        args.spec = "megatron.core.models.mamba.mamba_layer_specs.mamba_stack_spec"
+        args.spec = "megatron.core.models.hybrid.hybrid_layer_specs.hybrid_stack_spec"
 
         # Hybrid model parameters
         args.hybrid_layer_pattern = None
@@ -381,38 +386,38 @@ class TestMambaModelProvider:
         return common_mock_transformer_cfg()
 
     @pytest.fixture
-    def mock_mamba_stack_spec(self):
-        """Create a mock mamba stack spec."""
+    def mock_hybrid_stack_spec(self):
+        """Create a mock Hybrid stack spec."""
         mock_spec = MagicMock()
-        mock_spec.name = "mamba_stack_spec"
+        mock_spec.name = "hybrid_stack_spec"
         return mock_spec
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_basic(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_basic(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
-        """Test basic Mamba model creation with default parameters."""
-        mock_import.return_value = mock_mamba_stack_spec
+        """Test basic Hybrid model creation with default parameters."""
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
         mock_model_instance = MagicMock()
-        mock_mamba_model_class.return_value = mock_model_instance
+        mock_hybrid_model_class.return_value = mock_model_instance
 
-        _mamba_provider(mock_args)
+        _hybrid_provider(mock_args)
 
         mock_import.assert_called_once_with(mock_args.spec)
         mock_config_func.assert_called_once_with(mock_args)
 
-        mock_mamba_model_class.assert_called_once_with(
+        mock_hybrid_model_class.assert_called_once_with(
             config=mock_transformer_config,
-            mamba_stack_spec=mock_mamba_stack_spec,
+            hybrid_stack_spec=mock_hybrid_stack_spec,
             vocab_size=32000,
             max_sequence_length=2048,
             pre_process=True,
@@ -429,62 +434,62 @@ class TestMambaModelProvider:
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_transformer_config_not_called_when_provided(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_transformer_config_not_called_when_provided(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that _transformer_config_from_args is not called when config is provided."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
 
-        _mamba_provider(mock_args, config=mock_transformer_config)
+        _hybrid_provider(mock_args, config=mock_transformer_config)
 
         mock_config_func.assert_not_called()
-        call_args = mock_mamba_model_class.call_args
+        call_args = mock_hybrid_model_class.call_args
         assert call_args[1]["config"] == mock_transformer_config
 
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    def test_mamba_no_stack_spec(
+    def test_hybrid_no_stack_spec(
         self,
         mock_config_func,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test failure without stack spec."""
         mock_config_func.return_value = mock_transformer_config
         mock_args.spec = None
 
-        with pytest.raises(AssertionError, match="You must provide a valid Mamba layer spec!"):
-            _mamba_provider(mock_args)
+        with pytest.raises(AssertionError, match="You must provide a valid Hybrid layer spec!"):
+            _hybrid_provider(mock_args)
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_migrates_hybrid_override_to_layer_pattern(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_migrates_hybrid_override_to_layer_pattern(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that deprecated hybrid_override_pattern is migrated to hybrid_layer_pattern."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
-        mock_mamba_model_class.return_value = MagicMock()
+        mock_hybrid_model_class.return_value = MagicMock()
 
         # Set deprecated pattern, leave hybrid_layer_pattern as None
         mock_args.hybrid_override_pattern = "M-M-M*-M-M"
         mock_args.hybrid_layer_pattern = None
 
-        _mamba_provider(mock_args)
+        _hybrid_provider(mock_args)
 
         # Should migrate to hybrid_layer_pattern
         assert mock_args.hybrid_layer_pattern == "M-M-M*-M-M"
@@ -492,26 +497,26 @@ class TestMambaModelProvider:
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_legacy_mtp_pattern_unification(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_legacy_mtp_pattern_unification(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that separate mtp_hybrid_override_pattern is unified into hybrid_layer_pattern."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
-        mock_mamba_model_class.return_value = MagicMock()
+        mock_hybrid_model_class.return_value = MagicMock()
 
         mock_args.hybrid_layer_pattern = "M-M*-M"
         mock_args.mtp_hybrid_override_pattern = "*E"
         mock_args.mtp_num_layers = 2
 
-        _mamba_provider(mock_args)
+        _hybrid_provider(mock_args)
 
         # Should unify: main_pattern + sep + mtp_pattern * mtp_num_layers
         sep = "/"  # Symbols.MTP_SEPARATOR
@@ -520,69 +525,69 @@ class TestMambaModelProvider:
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_infers_mtp_num_layers_from_pattern(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_infers_mtp_num_layers_from_pattern(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that mtp_num_layers is inferred from unified pattern when not set."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
-        mock_mamba_model_class.return_value = MagicMock()
+        mock_hybrid_model_class.return_value = MagicMock()
 
         # Unified pattern with 2 MTP depths (2 sections after separator)
         mock_args.hybrid_layer_pattern = "M-M*/*E/*E"
         mock_args.mtp_num_layers = None
         mock_args.use_legacy_models = False
 
-        _mamba_provider(mock_args)
+        _hybrid_provider(mock_args)
 
         assert mock_args.mtp_num_layers == 2
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    @patch("megatron.bridge.training.mlm_compat.model.MambaModel")
-    def test_mamba_provider_mtp_num_layers_conflict_uses_inferred(
+    @patch("megatron.bridge.training.mlm_compat.model.HybridModel")
+    def test_hybrid_provider_mtp_num_layers_conflict_uses_inferred(
         self,
-        mock_mamba_model_class,
+        mock_hybrid_model_class,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that inferred mtp_num_layers overrides conflicting explicit value."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
-        mock_mamba_model_class.return_value = MagicMock()
+        mock_hybrid_model_class.return_value = MagicMock()
 
         # Pattern has 2 MTP depths but args says 5
         mock_args.hybrid_layer_pattern = "M-M*/*E/*E"
         mock_args.mtp_num_layers = 5
         mock_args.use_legacy_models = False
 
-        _mamba_provider(mock_args)
+        _hybrid_provider(mock_args)
 
         # Inferred (2) should win over explicit (5)
         assert mock_args.mtp_num_layers == 2
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
-    def test_mamba_provider_mtp_validation_rejects_learned_embeddings(
+    def test_hybrid_provider_mtp_validation_rejects_learned_embeddings(
         self,
         mock_config_func,
         mock_import,
         mock_args,
         mock_transformer_config,
-        mock_mamba_stack_spec,
+        mock_hybrid_stack_spec,
     ):
         """Test that MTP validation rejects unsupported position embedding types."""
-        mock_import.return_value = mock_mamba_stack_spec
+        mock_import.return_value = mock_hybrid_stack_spec
         mock_config_func.return_value = mock_transformer_config
 
         mock_args.hybrid_layer_pattern = "M-M*"
@@ -591,4 +596,19 @@ class TestMambaModelProvider:
         mock_args.position_embedding_type = "learned_absolute"
 
         with pytest.raises(AssertionError, match="not supported"):
-            _mamba_provider(mock_args)
+            _hybrid_provider(mock_args)
+
+
+class TestMambaModelProviderCompatibility:
+    """Test deprecated Mamba provider compatibility alias."""
+
+    def test_mamba_provider_delegates_to_hybrid_provider(self):
+        args = common_mock_args()
+        config = common_mock_transformer_cfg()
+        model = MagicMock()
+
+        with patch("megatron.bridge.training.mlm_compat.model._hybrid_provider", return_value=model) as mock_hybrid:
+            result = _mamba_provider(args, config=config, pre_process=False, post_process=True, vp_stage=3)
+
+        assert result is model
+        mock_hybrid.assert_called_once_with(args, config=config, pre_process=False, post_process=True, vp_stage=3)
