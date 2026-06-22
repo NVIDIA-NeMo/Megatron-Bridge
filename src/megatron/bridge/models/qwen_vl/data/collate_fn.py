@@ -28,6 +28,8 @@ MISSING_QWEN_VL_UTILS_MSG = (
     "qwen_vl_utils is required for Qwen2.5 VL processing. Please `pip install qwen-vl-utils` or"
     " provide compatible vision preprocessing."
 )
+QWEN_VL_MIN_PIXELS = 200704
+QWEN_VL_MAX_PIXELS = 1003520
 
 try:
     from qwen_vl_utils import process_vision_info
@@ -40,8 +42,8 @@ except ImportError:
 def qwen2_5_collate_fn(
     examples: list,
     processor,
-    min_pixels: int = 200704,
-    max_pixels: int = 1003520,
+    min_pixels: int = QWEN_VL_MIN_PIXELS,
+    max_pixels: int = QWEN_VL_MAX_PIXELS,
     require_assistant_matches: bool = False,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""

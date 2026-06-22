@@ -39,6 +39,7 @@ class _DummyProcessor:
     def __init__(self):
         self.tokenizer = self._Tok()
         self.template_kwargs = []
+        self.processor_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
         self.template_kwargs.append(kwargs)
@@ -57,6 +58,7 @@ class _DummyProcessor:
         return "dummy"
 
     def __call__(self, text=None, images=None, videos=None, padding=True, return_tensors="pt", **kwargs):
+        self.processor_kwargs.append(kwargs)
         # Minimal shape/value outputs used by qwen2_5_collate_fn
         input_ids = torch.tensor([[1, 2, 3]])
         out = {"input_ids": input_ids}
@@ -120,6 +122,21 @@ def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
     batch = collate.qwen2_5_collate_fn(examples, proc)
     assert "input_ids" in batch and "labels" in batch and "loss_mask" in batch
     assert "visual_inputs" in batch
+
+
+def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: ([object()], None))
+
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    collate.qwen2_5_collate_fn(examples, proc)
+
+    assert proc.processor_kwargs[-1]["min_pixels"] == qwen_vl_collate.QWEN_VL_MIN_PIXELS
+    assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
 
 
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
