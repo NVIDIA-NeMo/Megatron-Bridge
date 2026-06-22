@@ -49,7 +49,7 @@ Trade-offs: each rank runs the full-2L attention (cp_size x attention FLOPs; no
 comm/compute overlap), and the bias is a dense ``[1,1,2L,2L]`` tensor (O((2L)^2)
 memory -- fine at short context, costly at 128k). Verified bit-exact forward and
 numerically-equivalent gradients (cp=1 vs cp=2 vs cp=4) in
-``tests/unit_tests/diffusion/`` (test_cp_parity_suite.py).
+``tests/unit_tests/diffusion/`` (TODO: add test_cp_parity_suite.py).
 """
 
 import copy

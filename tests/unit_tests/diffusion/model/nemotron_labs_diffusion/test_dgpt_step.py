@@ -56,9 +56,15 @@ class TestMaskedLossSbdBlockDiff:
         check_for_spiky=False,
     ):
         output_tensor = (dlm_losses, ar_losses, num_tokens_ar)
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=_make_rerun_state_machine_mock(),
+        with (
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
+                return_value=_make_rerun_state_machine_mock(),
+            ),
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_world_size",
+                return_value=1,
+            ),
         ):
             return _masked_loss_sbd_block_diff(
                 loss_mask,
@@ -506,9 +512,15 @@ class TestMaskedLossSbdBlockDiffNanSpiky:
         ar = torch.tensor([1.0])
         mask = torch.ones(1, 2, dtype=torch.bool)
         mock_rsm = MagicMock()
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=mock_rsm,
+        with (
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
+                return_value=mock_rsm,
+            ),
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_world_size",
+                return_value=1,
+            ),
         ):
             _masked_loss_sbd_block_diff(
                 mask,
@@ -524,9 +536,15 @@ class TestMaskedLossSbdBlockDiffNanSpiky:
         ar = torch.tensor([1.0])
         mask = torch.ones(1, 2, dtype=torch.bool)
         mock_rsm = MagicMock()
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=mock_rsm,
+        with (
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
+                return_value=mock_rsm,
+            ),
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_world_size",
+                return_value=1,
+            ),
         ):
             _masked_loss_sbd_block_diff(
                 mask,
@@ -542,9 +560,15 @@ class TestMaskedLossSbdBlockDiffNanSpiky:
         ar = torch.tensor([1.0])
         mask = torch.ones(1, 2, dtype=torch.bool)
         mock_rsm = MagicMock()
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=mock_rsm,
+        with (
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
+                return_value=mock_rsm,
+            ),
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_world_size",
+                return_value=1,
+            ),
         ):
             _masked_loss_sbd_block_diff(
                 mask,

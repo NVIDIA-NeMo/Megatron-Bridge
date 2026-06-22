@@ -204,6 +204,8 @@ def _nemotron_labs_diffusion_common(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
     if hf_path is not None:
+        # trust_remote_code=True is required: Nemotron Labs diffusion checkpoint uses
+        # custom modeling code (NemotronLabsDiffusionForCausalLM) not shipped with transformers.
         hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=True)
         bridge = NemotronLabsDiffusionBridge()
         model_cfg = bridge.provider_bridge(hf_pretrained)
