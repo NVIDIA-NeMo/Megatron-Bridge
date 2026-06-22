@@ -103,13 +103,11 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import (
-        nemotron_nano_v2_vl_12b_peft_config,
-        nemotron_nano_v2_vl_12b_sft_config,
-    )
-
     if args.lora_on_language_model or args.lora_on_vision_model:
-        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config()
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
+            lora_on_language_model=args.lora_on_language_model,
+            lora_on_vision_model=args.lora_on_vision_model,
+        )
     else:
         cfg = nemotron_nano_v2_vl_12b_sft_config()
 
