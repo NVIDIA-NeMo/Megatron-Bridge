@@ -77,7 +77,6 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
         moe_grouped_gemm=True,
         moe_token_dispatcher_type="alltoall",
         moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
         # Parallelism
         tensor_model_parallel_size=4,
         pipeline_model_parallel_size=1,
@@ -247,7 +246,6 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
         moe_grouped_gemm=True,
         moe_token_dispatcher_type="alltoall",
         moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
         # Extra config
         apply_rope_fusion=False,
         attention_backend="fused",
@@ -436,7 +434,6 @@ def nemotron_3_nano_peft_config(
         moe_grouped_gemm=True,
         moe_token_dispatcher_type="alltoall",
         moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
         # Extra config
         apply_rope_fusion=False,
         attention_backend="fused",

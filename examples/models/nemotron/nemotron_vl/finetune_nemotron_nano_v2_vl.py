@@ -66,12 +66,6 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         default=str(DEFAULT_CONFIG_FILE_PATH),
         help="Path to the YAML OmegaConf override file. Default: conf/nemotron_nano_v2_vl_override_example.yaml",
     )
-    parser.add_argument(
-        "--hf-model-path",
-        type=str,
-        default="nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
-        help="Path to the HuggingFace model to load weights from. Default: nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16",
-    )
     # Finetune-specific flags
     parser.add_argument(
         "--pretrained-checkpoint",
@@ -109,20 +103,19 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    config_kwargs = {
-        "hf_model_path": args.hf_model_path,
-        "pretrained_checkpoint": args.pretrained_checkpoint,
-    }
+    from megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl import (
+        nemotron_nano_v2_vl_12b_peft_config,
+        nemotron_nano_v2_vl_12b_sft_config,
+    )
+
     if args.lora_on_language_model or args.lora_on_vision_model:
-        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
-            **config_kwargs,
-            lora_on_language_model=args.lora_on_language_model,
-            lora_on_vision_model=args.lora_on_vision_model,
-        )
-        logger.info("Loaded base configuration for PEFT")
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config()
     else:
-        cfg = nemotron_nano_v2_vl_12b_sft_config(**config_kwargs)
-        logger.info("Loaded base configuration for SFT")
+        cfg = nemotron_nano_v2_vl_12b_sft_config()
+
+    cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+
+    logger.info("Loaded base configuration for finetuning")
 
     if get_rank_safe() == 0:
         cfg.print_yaml()
