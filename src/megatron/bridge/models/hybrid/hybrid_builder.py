@@ -129,18 +129,8 @@ class HybridModelConfig(ModelConfig):
     hybrid_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["HybridModelConfig"], ModuleSpec] | None = (
         None
     )
-    # Backward-compatible input for old MambaModelConfig callers.
-    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["HybridModelConfig"], ModuleSpec] | None = None
     vocab_size: int | None = None
     should_pad_vocab: bool = False
-
-    def __post_init__(self) -> None:
-        """Validate deprecated stack-spec aliases after dataclass construction."""
-        if self.hybrid_stack_spec is not None and self.mamba_stack_spec is not None:
-            raise ValueError(
-                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
-                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
-            )
 
     @override
     def __getattr__(self, name: str, /) -> Any:
@@ -192,18 +182,8 @@ class HybridModelBuilder(ModelBuilder[MCoreHybridModel, HybridModelConfig]):
         super().__init__(model_config)
 
     def _resolve_hybrid_stack_spec(self) -> ModuleSpec:
-        """Resolve the configured Hybrid stack spec, including deprecated aliases."""
-        if self._model_config.hybrid_stack_spec is not None and self._model_config.mamba_stack_spec is not None:
-            raise ValueError(
-                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
-                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
-            )
-
-        hybrid_stack_spec = (
-            self._model_config.hybrid_stack_spec
-            if self._model_config.hybrid_stack_spec is not None
-            else self._model_config.mamba_stack_spec
-        )
+        """Resolve the configured Hybrid stack spec."""
+        hybrid_stack_spec = self._model_config.hybrid_stack_spec
         if hybrid_stack_spec is None:
             return get_default_hybrid_stack_spec(self._model_config)
         if not isinstance(hybrid_stack_spec, ModuleSpec):

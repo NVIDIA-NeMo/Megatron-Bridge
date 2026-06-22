@@ -75,18 +75,16 @@ class TestHybridModelConfig:
         assert config.share_embeddings_and_output_weights is False
         assert config.hybrid_layer_pattern is None
         assert config.hybrid_stack_spec is None
-        assert config.mamba_stack_spec is None
         assert config.seq_length == 8192
         assert config.position_embedding_type == "none"
         assert config.vocab_size is None
 
-    def test_rejects_hybrid_and_mamba_stack_spec_together(self):
+    def test_rejects_mamba_stack_spec_argument(self):
         module_spec = ModuleSpec(module=object)
 
-        with pytest.raises(ValueError, match="Cannot specify both hybrid_stack_spec and mamba_stack_spec"):
+        with pytest.raises(TypeError, match="mamba_stack_spec"):
             HybridModelConfig(
                 transformer=_make_transformer(),
-                hybrid_stack_spec=module_spec,
                 mamba_stack_spec=module_spec,
             )
 
@@ -128,15 +126,6 @@ class TestHybridModelBuilder:
     def test_hybrid_stack_spec_used_directly(self, mock_model):
         module_spec = ModuleSpec(module=object)
         self.config.__dict__["hybrid_stack_spec"] = module_spec
-
-        self.builder.build_model(self.pg, pre_process=True, post_process=True)
-
-        assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
-
-    @patch("megatron.bridge.models.hybrid.hybrid_builder.MCoreHybridModel")
-    def test_mamba_stack_spec_alias_used_directly(self, mock_model):
-        module_spec = ModuleSpec(module=object)
-        self.config.__dict__["mamba_stack_spec"] = module_spec
 
         self.builder.build_model(self.pg, pre_process=True, post_process=True)
 

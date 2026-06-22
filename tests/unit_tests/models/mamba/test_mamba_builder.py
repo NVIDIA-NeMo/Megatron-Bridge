@@ -43,6 +43,8 @@ class TestMambaModelBuilderCompatibility:
 
         builder.build_model(pg, pre_process=True, post_process=True)
 
+        assert config.hybrid_stack_spec is module_spec
+        assert config.mamba_stack_spec is None
         assert mock_model.call_args.kwargs["hybrid_stack_spec"] is module_spec
 
     def test_rejects_hybrid_and_mamba_stack_spec_together(self):
@@ -65,6 +67,32 @@ class TestMambaModelBuilderCompatibility:
 
         assert isinstance(restored, MambaModelConfig)
         assert restored.get_builder_cls() is MambaModelBuilder
+
+    def test_serialized_mamba_config_uses_hybrid_stack_spec(self):
+        module_spec = ModuleSpec(module=object)
+        config = MambaModelConfig(
+            transformer=_make_transformer(),
+            vocab_size=32000,
+            mamba_stack_spec=module_spec,
+        )
+
+        data = config.as_dict()
+
+        assert data["hybrid_stack_spec"] is module_spec
+        assert "mamba_stack_spec" not in data
+
+    def test_old_serialized_mamba_stack_spec_converts_to_hybrid_stack_spec(self):
+        module_spec = ModuleSpec(module=object)
+        config = MambaModelConfig(transformer=_make_transformer(), vocab_size=32000)
+        data = config.as_dict()
+        data["mamba_stack_spec"] = module_spec
+        data.pop("hybrid_stack_spec", None)
+
+        restored = ModelConfig.from_dict(data)
+
+        assert isinstance(restored, MambaModelConfig)
+        assert restored.hybrid_stack_spec is module_spec
+        assert restored.mamba_stack_spec is None
 
     def test_old_serialized_module_targets_resolve(self):
         config = MambaModelConfig(transformer=_make_transformer(), vocab_size=32000)

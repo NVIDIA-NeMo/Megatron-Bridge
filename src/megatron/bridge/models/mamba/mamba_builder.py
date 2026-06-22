@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, Callable, ClassVar
 
 from megatron.core.transformer import ModuleSpec
 
@@ -31,6 +31,28 @@ class MambaModelConfig(HybridModelConfig):
     """Backward-compatible wrapper around :class:`HybridModelConfig`."""
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"
+    mamba_stack_spec: ModuleSpec | Callable[[], ModuleSpec] | Callable[["MambaModelConfig"], ModuleSpec] | None = None
+
+    def __post_init__(self) -> None:
+        """Normalize the deprecated Mamba stack-spec field to the Hybrid field."""
+        if self.hybrid_stack_spec is not None and self.mamba_stack_spec is not None:
+            raise ValueError(
+                "Cannot specify both hybrid_stack_spec and mamba_stack_spec. "
+                "mamba_stack_spec has been deprecated; use hybrid_stack_spec instead."
+            )
+        if self.mamba_stack_spec is not None:
+            self.hybrid_stack_spec = self.mamba_stack_spec
+            self.mamba_stack_spec = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """Serialize without the deprecated ``mamba_stack_spec`` field."""
+        result = super().as_dict()
+        result.pop("mamba_stack_spec", None)
+        return result
+
+    def _to_dict(self) -> dict[str, Any]:
+        """Bridge config serialization hook."""
+        return self.as_dict()
 
 
 class MambaModelBuilder(HybridModelBuilder):
