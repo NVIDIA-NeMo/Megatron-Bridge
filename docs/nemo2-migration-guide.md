@@ -34,9 +34,6 @@ Megatron Bridge supports the following model families through bridge mappings an
 - **Nemotron**: Nemotron3, Nemotron4, NemotronH, NemotronNano
 - **NVIDIA Mamba**: Mamba variants and hybrid models
 
-`MambaModelProvider` remains available as a backward-compatible wrapper around
-`HybridModelProvider`.
-
 For a complete list of bridge mappings, providers, and their parameters, see {py:mod}`bridge.models`.
 
 <!-- TODO: Create a dedicated model support table with tested HF checkpoint mappings -->
