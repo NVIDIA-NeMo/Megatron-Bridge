@@ -39,6 +39,7 @@ class TestKimiK25VLModelProvider:
         assert provider.freeze_language_model is False
         assert provider.freeze_vision_model is False
         assert provider.freeze_vision_projection is False
+        assert provider.trust_remote_code is False
 
     def test_token_id_defaults(self, mock_vision_config):
         """Test token ID defaults."""
