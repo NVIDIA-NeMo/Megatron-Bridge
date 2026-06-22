@@ -25,6 +25,87 @@ def _batch_dim_for_tensor(key: str, value: torch.Tensor) -> int:
     return 0
 
 
+def _is_patch_packed_visual_dict(value: Any) -> bool:
+    """Detect a patch-packed visual encoder input layout.
+
+    Some VLM adapters pack all image patches for a microbatch into one flat
+    tensor while keeping per-image grid metadata:
+
+    - ``hidden_states``: ``[sum(patches_across_images), patch_feature_dim]``
+    - ``grid_thw``:      ``[num_images, 3]``
+
+    Dim 0 of these two tensors means different things (patches vs images), so
+    they cannot be sliced independently by DP. They must be sliced jointly
+    along the per-image boundary.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("hidden_states"), torch.Tensor)
+        and isinstance(value.get("grid_thw"), torch.Tensor)
+        and value["hidden_states"].dim() >= 1
+        and value["grid_thw"].dim() == 2
+        and value["grid_thw"].size(-1) == 3
+    )
+
+
+def _slice_patch_packed_visual_dict(value: Dict[str, Any], dp_rank: int, dp_size: int) -> Dict[str, Any]:
+    """Joint-slice a patch-packed ``{hidden_states, grid_thw, ...}`` dict.
+
+    Shards by image count, then derives the corresponding patch range from
+    ``cumsum(grid_thw.prod(dim=-1))``. Other keys in the dict are passed
+    through unchanged because they are treated as global encoder metadata.
+
+    Constraints:
+
+    - ``num_images`` (rows of ``grid_thw``) must be divisible by ``dp_size``.
+      For the encoder rank, ``num_images_per_microbatch`` is set by the
+      training-time MIMO MBS and the dataset's images-per-sample. With
+      single-image-per-sample data and MIMO ``MICRO_BATCH_SIZE`` divisible by
+      encoder ``DP``, this always holds.
+
+    TODO(mimo): This convention slices by image row. Multi-image samples with
+    uneven image counts need explicit per-sample image split metadata so DP
+    slices remain sample-aligned instead of only image-aligned.
+    """
+    g = value["grid_thw"]  # [num_images, 3]
+    hs = value["hidden_states"]  # [sum(patches), feat]
+    n_images = int(g.size(0))
+    if n_images % dp_size != 0:
+        raise ValueError(
+            f"Patch-packed visual input has num_images_in_microbatch ({n_images}) "
+            f"is not divisible by encoder DP ({dp_size}). Set MIMO MICRO_BATCH_SIZE "
+            f"so that each encoder DP shard receives a whole number of images."
+        )
+    imgs_per_shard = n_images // dp_size
+    img_lo = dp_rank * imgs_per_shard
+    img_hi = img_lo + imgs_per_shard
+
+    patches_per_image = g.prod(dim=-1).to(torch.long)  # [num_images]
+    total_patches = int(patches_per_image.sum().item())
+    if int(hs.size(0)) != total_patches:
+        raise ValueError(
+            f"Patch-packed visual input expected hidden_states dim 0 ({hs.size(0)}) "
+            f"to equal sum(grid_thw products) ({total_patches})."
+        )
+    patch_offsets = torch.zeros(n_images + 1, dtype=torch.long, device=patches_per_image.device)
+    patch_offsets[1:] = patches_per_image.cumsum(0)
+    patch_lo = int(patch_offsets[img_lo].item())
+    patch_hi = int(patch_offsets[img_hi].item())
+
+    out: Dict[str, Any] = {}
+    for key, sub_value in value.items():
+        if key == "grid_thw":
+            out[key] = g[img_lo:img_hi].contiguous()
+        elif key == "hidden_states":
+            out[key] = hs[patch_lo:patch_hi].contiguous()
+        else:
+            # Other entries (encoder kwargs, attention masks, etc.) are
+            # passed through as global metadata - same convention as the
+            # outer slicer's "non-divisible list" branch.
+            out[key] = sub_value
+    return out
+
+
 def _find_rank_module(
     grids: Dict[str, "HyperCommGrid"],
 ) -> Tuple["HyperCommGrid | None", "str | None"]:
@@ -171,8 +252,14 @@ def slice_batch_for_megatron_mimo(
             index[batch_dim] = builtins.slice(start_idx, end_idx)
             sliced[key] = value[tuple(index)]
         elif isinstance(value, dict):
-            # Recurse into nested dicts (e.g. modality_inputs)
-            sliced[key] = slice_batch_for_megatron_mimo(value, dp_rank, dp_size)
+            # Patch-packed visual encoder inputs use dim 0 for different units
+            # across fields (patches for hidden_states, images for grid_thw), so
+            # they need joint slicing instead of normal recursive tensor slicing.
+            if _is_patch_packed_visual_dict(value):
+                sliced[key] = _slice_patch_packed_visual_dict(value, dp_rank, dp_size)
+            else:
+                # Recurse into nested dicts (e.g. modality_inputs)
+                sliced[key] = slice_batch_for_megatron_mimo(value, dp_rank, dp_size)
         elif isinstance(value, list) and len(value) > 0:
             list_len = len(value)
             if list_len % dp_size == 0:
