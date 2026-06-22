@@ -48,6 +48,29 @@ def _safe_asdict(obj, skip_keys: set[str]) -> dict:
     return obj
 
 
+def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
+    """Resolve string-valued fields to their runtime types.
+
+    Handles ``activation_func`` (e.g. ``model.activation_func=silu``) and dtype
+    fields ``params_dtype`` / ``pipeline_dtype`` (e.g. ``model.params_dtype=bf16``)
+    when they arrive as strings via CLI overrides.
+    """
+    if isinstance(config.activation_func, str):
+        from megatron.bridge.utils.activation_map import str_to_callable
+
+        config.activation_func = str_to_callable(config.activation_func)
+
+    if isinstance(config.params_dtype, str):
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        config.params_dtype = str_to_dtype(config.params_dtype)
+
+    if isinstance(config.pipeline_dtype, str):
+        from megatron.bridge.utils.activation_map import str_to_dtype
+
+        config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
+
+
 @dataclass
 class TransformerConfig(MCoreTransformerConfig):
     """Megatron Core TransformerConfig with deferred post-init.
@@ -87,9 +110,19 @@ class TransformerConfig(MCoreTransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreTransformerConfig.__post_init__(self)
+
+        # In-batch packing produces variable-length packed sequences across microbatches,
+        # so PP stages must communicate tensor shapes dynamically instead of using static
+        # buffers.  Set *after* __post_init__ to avoid the false-positive MoE allgather
+        # dispatcher check (irrelevant for non-MoE models).
+        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
 
     def __deepcopy__(self, memo):
         """Custom deepcopy to preserve process group handles when cloning configs.
@@ -152,9 +185,15 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
         to compute derived fields based on the current field values. It can be
         called multiple times safely.
         """
+        _resolve_string_fields(self)
         if self.pipeline_model_parallel_size > 1 and self.pipeline_dtype is None:
             self.pipeline_dtype = self.params_dtype
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreMLATransformerConfig.__post_init__(self)
+
+        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+            self.variable_seq_lengths = True
 
 
 @dataclass
@@ -201,6 +240,9 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         to compute derived fields and parse the heterogeneous block configurations.
         It can be called multiple times safely.
         """
+        _resolve_string_fields(self)
+        if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
+            self.sequence_parallel = False
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:

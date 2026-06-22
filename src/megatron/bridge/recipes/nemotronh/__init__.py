@@ -19,6 +19,13 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
 )
+
+# Nemotron 3 Super models
+from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
+    nemotron_3_super_peft_config,
+    nemotron_3_super_pretrain_config,
+    nemotron_3_super_sft_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_nano_v2 import (
     nemotron_nano_9b_v2_peft_config,
     nemotron_nano_9b_v2_pretrain_config,
@@ -70,4 +77,8 @@ __all__ = [
     "nemotron_3_nano_pretrain_config",
     "nemotron_3_nano_sft_config",
     "nemotron_3_nano_peft_config",
+    # Nemotron 3 Super models
+    "nemotron_3_super_pretrain_config",
+    "nemotron_3_super_sft_config",
+    "nemotron_3_super_peft_config",
 ]

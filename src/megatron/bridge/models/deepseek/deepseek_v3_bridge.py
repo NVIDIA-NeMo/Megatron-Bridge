@@ -13,12 +13,13 @@
 # limitations under the License.
 
 from functools import partial
-from typing import Dict, Mapping
+from typing import Dict, Mapping, Union
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
@@ -34,6 +35,12 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
+
+
+__all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
+
+
+_dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
 
 
 @MegatronModelBridge.register_bridge(
@@ -69,6 +76,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_aux_loss_coeff = 0.0001
 
         provider.apply_rope_fusion = False
+        provider.gradient_accumulation_fusion = True
         provider.bias_activation_fusion = True
         provider.bias_dropout_fusion = True
         provider.cross_entropy_fusion_impl = "te"
@@ -87,13 +95,40 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         )
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size * hf_config.n_shared_experts
 
-        # TODO: mtp
-        provider.mtp_num_layers = None
+        provider.mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or None
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
+        hf_cfg = super(DeepSeekV3Bridge, cls).megatron_to_hf_config(provider)
+
+        # Megatron uses None="not set/disabled", but HF expects integers
+        hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
+        hf_cfg["n_group"] = hf_cfg.get("n_group") or 1
+        hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
+
+        # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
+        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
+            first_k_dense_replace = 0
+            for val in moe_layer_freq:
+                if val == 0:
+                    first_k_dense_replace += 1
+                else:
+                    break
+            hf_cfg["first_k_dense_replace"] = first_k_dense_replace
+
+        # Reconstruct n_shared_experts from moe_shared_expert_intermediate_size / moe_ffn_hidden_size
+        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
+        moe_ffn = getattr(provider, "moe_ffn_hidden_size", None)
+        if shared_size is not None and moe_ffn is not None and moe_ffn > 0:
+            hf_cfg["n_shared_experts"] = shared_size // moe_ffn
+
+        return hf_cfg
+
     def mapping_registry(self) -> MegatronMappingRegistry:
-        mapping_list = get_common_mapping_list()
+        mapping_list = get_common_mapping_list(hf_config=self.hf_config)
         mapping_list.append(
             AutoMapping(
                 megatron_param="decoder.layers.*.mlp.router.expert_bias",
@@ -101,6 +136,42 @@ class DeepSeekV3Bridge(MegatronModelBridge):
             )
         )
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_loaded_hf_weight(
+        self,
+        hf_param: Union[str, dict[str, str]],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> Union[torch.Tensor, dict[str, torch.Tensor]]:
+        """Load HF weights and dequantize FP8 tensors on the fly.
+
+        DeepSeek-V3 ships linear weights as ``float8_e4m3fn`` with per-block scale
+        factors stored in ``<key>_scale_inv`` (128x128 blocks). The true bf16 weight is::
+
+            w_bf16 = fp8_weight.float() * scale_inv_block
+
+        Without this override the bridge would do a bare ``.to(bf16)`` cast in
+        ``ColumnParallelMapping.hf_to_megatron`` (param_mapping.py:905), discarding the
+        per-block scales — the resulting model produces random-looking logits.
+        """
+        hf_weights = super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+        if isinstance(hf_weights, dict):
+            # Compound params (QKV / GatedMLP): dequantize each component individually.
+            return {
+                key: self._maybe_dequantize_fp8(tensor, hf_param[key], hf_state_dict)
+                for key, tensor in hf_weights.items()
+            }
+        return self._maybe_dequantize_fp8(hf_weights, hf_param, hf_state_dict)
+
+    @staticmethod
+    def _maybe_dequantize_fp8(
+        weight: torch.Tensor,
+        param_name: str,
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> torch.Tensor:
+        """Dequantize ``weight`` if it is stored as FP8 with a matching ``*_scale_inv``."""
+        scale_key = param_name + "_scale_inv"
+        return quantization_utils.maybe_dequantize_fp8_blockwise(weight, hf_state_dict.get(scale_key))
 
     def maybe_modify_converted_hf_weight(
         self,

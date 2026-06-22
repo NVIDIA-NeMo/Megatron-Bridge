@@ -197,6 +197,60 @@ When enabled, MLFlow receives:
 
 
 
+### Comet ML
+
+Megatron Bridge can log metrics and experiment metadata to Comet ML, following the same pattern as the W&B and MLFlow integrations.
+
+#### What Gets Logged
+
+When enabled, Comet ML receives:
+
+- Training configuration as experiment parameters
+- Scalar metrics (losses, learning rate, batch size, throughput, timers, memory, runtime, norms, energy, etc.)
+- Validation loss and perplexity metrics
+- Checkpoint save/load metadata
+
+#### Enable Comet ML Logging
+
+  1) Install Comet ML:
+
+  ```bash
+  pip install comet-ml
+  ```
+
+  2) Authenticate:
+  - Either set `COMET_API_KEY` in the environment, or
+  - Pass an explicit `comet_api_key` in the logger config.
+
+  3) Configure logging in your training setup.
+
+  ```python
+  from megatron.bridge.training.config import LoggerConfig
+
+  cfg.logger = LoggerConfig(
+      tensorboard_dir="./runs/tensorboard",
+      comet_project="my_project",
+      comet_experiment_name="llama32_1b_pretrain_run",
+      comet_workspace="my_workspace",          # optional
+      comet_tags=["pretrain", "llama32"],       # optional
+  )
+  ```
+
+```{note}
+Comet ML is initialized lazily on the last rank when `comet_project` is set and `comet_experiment_name` is non-empty.
+```
+
+#### Comet ML Configuration with NeMo Run Launching
+
+For users launching training scripts with NeMo Run, Comet ML can be optionally configured using the {py:class}`bridge.recipes.run_plugins.CometPlugin`.
+
+The plugin automatically forwards the `COMET_API_KEY` and by default injects CLI overrides for the following logger parameters:
+
+- `logger.comet_project`
+- `logger.comet_workspace`
+- `logger.comet_experiment_name`
+
+
 #### Progress Log
 
 When `logger.log_progress` is enabled, the framework generates a `progress.txt` file in the checkpoint save directory.

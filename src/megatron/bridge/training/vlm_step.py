@@ -13,7 +13,10 @@
 # limitations under the License.
 
 import logging
+import math
+from collections.abc import Mapping
 from functools import partial
+from inspect import Parameter, signature
 from typing import Any, Iterable
 
 import torch
@@ -26,6 +29,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
@@ -36,6 +40,51 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _unwrap_forward_module(model: Any) -> Any:
+    """Return the innermost wrapped module used for forward signature checks."""
+    module = model
+    seen_ids = set()
+    while hasattr(module, "module") and id(module) not in seen_ids:
+        seen_ids.add(id(module))
+        wrapped = getattr(module, "module")
+        if wrapped is None or wrapped is module:
+            break
+        module = wrapped
+    return module
+
+
+def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Drop visual kwargs that the target model forward cannot consume.
+
+    Shared VLM processors may return model-specific fields such as
+    ``mm_token_type_ids``.  Keep those fields for models that accept them, but
+    avoid passing them through wrappers into models with stricter signatures.
+    """
+    if not visual_kwargs:
+        return {}
+
+    forward_module = _unwrap_forward_module(model)
+    forward = getattr(forward_module, "forward", getattr(forward_module, "__call__", None))
+    if forward is None:
+        return dict(visual_kwargs)
+
+    try:
+        forward_signature = signature(forward)
+    except (TypeError, ValueError):
+        return dict(visual_kwargs)
+
+    params = forward_signature.parameters.values()
+    if any(param.kind == Parameter.VAR_KEYWORD for param in params):
+        return dict(visual_kwargs)
+
+    supported_kwargs = {
+        name
+        for name, param in forward_signature.parameters.items()
+        if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    }
+    return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
 def get_batch_from_iterator(
@@ -94,34 +143,54 @@ def get_batch_from_iterator(
         else:
             _batch_required_keys[key] = None
 
+    # Preserve collator's 2D padding mask for sequence packing length detection.
+    # skip_getting_attention_mask_from_dataset may discard the attention_mask for model
+    # forward, but packing still needs it to identify real vs padding positions.
+    raw_attn = batch.get("attention_mask")
+    if isinstance(raw_attn, torch.Tensor) and raw_attn.dim() == 2:
+        _batch_required_keys["_padding_mask"] = raw_attn.cuda(non_blocking=True)
+
     return _batch_required_keys
 
 
 def pack_batch_sequences(
     tokens: torch.Tensor,
-    labels: torch.Tensor,
-    loss_mask: torch.Tensor,
-    attention_mask: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
     position_ids: torch.Tensor,
     pad_token_id: int = 0,
     pad_to_multiple_of: int = 1,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    padding_mask: torch.Tensor | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor | None,
+]:
     """
     Pack sequences in a batch by concatenating them and removing padding.
 
     Args:
         tokens: [batch_size, seq_len]
-        labels: [batch_size, seq_len]
-        loss_mask: [batch_size, seq_len]
+        labels: [batch_size, seq_len] or None (non-last PP stages)
+        loss_mask: [batch_size, seq_len] or None (non-last PP stages)
         attention_mask: [batch_size, 1, seq_len, seq_len] or None
         position_ids: [batch_size, seq_len]
-        pad_token_id: Token ID used for padding
+        pad_token_id: Token ID used for padding (fallback when padding_mask is unavailable)
+        pad_to_multiple_of: Pad each sequence length to a multiple of this value
+        padding_mask: [batch_size, seq_len] explicit mask from collator (1=real, 0=padding).
+            When provided, this is used instead of pad_token_id for robust length detection.
 
     Returns:
         Tuple of:
         - packed_tokens: [1, total_len] - concatenated sequences
-        - packed_labels: [1, total_len]
-        - packed_loss_mask: [1, total_len]
+        - packed_labels: [1, total_len] or None
+        - packed_loss_mask: [1, total_len] or None
         - packed_attention_mask: None (not used with packing)
         - packed_position_ids: [1, total_len]
         - cu_seqlens: [num_sequences + 1] - cumulative sequence lengths
@@ -130,34 +199,35 @@ def pack_batch_sequences(
     batch_size, seq_len = tokens.shape
     device = tokens.device
 
-    # Find actual sequence lengths (excluding padding)
-    # Assuming padding is at the end and uses pad_token_id (0)
     seq_lengths = []
     valid_sequences = []
 
     for i in range(batch_size):
-        # Find first padding token or use full length
-        non_pad_mask = tokens[i] != pad_token_id
-        if non_pad_mask.any():
-            # Find the last non-padding token
-            last_valid_idx = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+        if padding_mask is not None:
+            length = int(padding_mask[i].sum().item())
         else:
-            # Empty sequence, skip
-            continue
+            non_pad_mask = tokens[i] != pad_token_id
+            if non_pad_mask.all():
+                length = seq_len
+            elif non_pad_mask.any():
+                length = non_pad_mask.nonzero(as_tuple=True)[0][-1].item() + 1
+            else:
+                length = 0
 
-        seq_lengths.append(last_valid_idx)
-        valid_sequences.append(i)
+        if length > 0:
+            seq_lengths.append(length)
+            valid_sequences.append(i)
 
     if len(valid_sequences) == 0:
         # No valid sequences, return empty packed batch
         logger.warning("No valid sequences found in batch, skipping packing")
         return (
-            tokens[:, :0],  # Empty tensor
-            labels[:, :0],
-            loss_mask[:, :0],
+            tokens[:, :0],
+            labels[:, :0] if labels is not None else None,
+            loss_mask[:, :0] if loss_mask is not None else None,
             attention_mask,
             position_ids[:, :0],
-            torch.tensor([0], dtype=torch.int32, device=device),  # Empty cu_seqlens
+            torch.tensor([0], dtype=torch.int32, device=device),
             torch.tensor(0, dtype=torch.int32, device=device),
         )
 
@@ -179,8 +249,10 @@ def pack_batch_sequences(
 
     # Concatenate sequences (remove padding)
     packed_tokens = torch.zeros(1, total_len, dtype=tokens.dtype, device=device)
-    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device)
-    packed_loss_mask = torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device)
+    packed_labels = torch.zeros(1, total_len, dtype=labels.dtype, device=device) if labels is not None else None
+    packed_loss_mask = (
+        torch.zeros(1, total_len, dtype=loss_mask.dtype, device=device) if loss_mask is not None else None
+    )
     packed_position_ids = torch.zeros(1, total_len, dtype=position_ids.dtype, device=device)
 
     offset = 0
@@ -189,13 +261,17 @@ def pack_batch_sequences(
         padded_len = padded_seq_lengths[i]
         pad_len = padded_len - length
         packed_tokens[0, offset : offset + length] = tokens[seq_idx, :length]
-        packed_labels[0, offset : offset + length] = labels[seq_idx, :length]
-        packed_loss_mask[0, offset : offset + length] = loss_mask[seq_idx, :length]
+        if packed_labels is not None:
+            packed_labels[0, offset : offset + length] = labels[seq_idx, :length]
+        if packed_loss_mask is not None:
+            packed_loss_mask[0, offset : offset + length] = loss_mask[seq_idx, :length]
         packed_position_ids[0, offset : offset + length] = position_ids[seq_idx, :length]
         if pad_len > 0:
             packed_tokens[0, offset + length : offset + padded_len] = pad_token_id
-            packed_labels[0, offset + length : offset + padded_len] = -100
-            packed_loss_mask[0, offset + length : offset + padded_len] = 0
+            if packed_labels is not None:
+                packed_labels[0, offset + length : offset + padded_len] = -100
+            if packed_loss_mask is not None:
+                packed_loss_mask[0, offset + length : offset + padded_len] = 0
             start_pos = position_ids[seq_idx, length - 1] + 1
             packed_position_ids[0, offset + length : offset + padded_len] = torch.arange(
                 start_pos,
@@ -250,8 +326,13 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
 
     if not enable_packing:
-        # When using pipeline parallelism, ensure fixed shapes equal to cfg.model.seq_length
-        if getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1:
+        # PP needs fixed activation shapes across stages. EP/HybridEP also needs
+        # matching token dimensions across the expert group for routing metadata.
+        requires_fixed_seq_len = (
+            getattr(cfg.model, "pipeline_model_parallel_size", 1) > 1
+            or getattr(cfg.model, "expert_model_parallel_size", 1) > 1
+        )
+        if requires_fixed_seq_len:
             seq_len = cfg.model.seq_length
 
             tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
@@ -304,10 +385,21 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
 
     visual_inputs = batch.get("visual_inputs")
     cp_size = pg_collection.cp.size() if pg_collection is not None and pg_collection.cp is not None else 1
+    tp_size = pg_collection.tp.size() if pg_collection is not None and pg_collection.tp is not None else 1
+    has_sp = getattr(cfg.model, "sequence_parallel", False)
 
     if enable_packing:
         # Pack sequences
         tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+
+        # Compute pad_to_multiple_of as lcm of CP and SP constraints.
+        # CP zigzag requires divisibility by 2*cp_size; SP reduce_scatter requires
+        # the per-CP-rank length to be divisible by tp_size (i.e. total divisible by
+        # cp_size*tp_size). Reference: megatron/core/models/multimodal/context_parallel.py
+        cp_multiple = 2 * cp_size if cp_size > 1 else 1
+        sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+        pad_multiple = math.lcm(cp_multiple, sp_multiple)
+
         (
             packed_tokens,
             packed_labels,
@@ -323,7 +415,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             attention_mask=batch.get("attention_mask"),
             position_ids=batch.get("position_ids"),
             pad_token_id=0,
-            pad_to_multiple_of=cp_size * 2 if cp_size > 1 else 1,
+            pad_to_multiple_of=pad_multiple,
+            padding_mask=batch.get("_padding_mask"),
         )
 
         # Update batch dict with packed tensors
@@ -390,6 +483,32 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+    # Accumulate FLOPS metadata across micro-batches. Passing ``cu_seqlens`` gives
+    # the THD-correct Σᵢ sᵢ² for the attention term instead of the pack-length²
+    # BSHD approximation. At CP=1 (and no SP) VLM in-batch packing leaves
+    # ``cu_seqlens`` equal to the real sub-sequence boundaries, so this counts
+    # meaningful tokens only.
+    # NOTE: under CP>1 (or SP), sub-sequences are padded to ``pad_multiple`` (see
+    # get_batch above), so ``cu_seqlens`` carries that per-sub-seq padding and the
+    # attention-FLOPS estimate currently includes it (a small over-count). The
+    # real pre-pad boundaries are not surfaced here yet — tracked as a CP
+    # follow-up (the linear term also needs a *cp_size correction there, since
+    # gpt_step CP-shards tokens). train.py resets these before each step and reads
+    # accumulated values afterwards.
+    # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
+    # t*h*w per image/video), so compute it here and hand a plain scalar to the
+    # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
+    num_vision_patches = None
+    if visual_inputs is not None:
+        for grid in (
+            getattr(visual_inputs, "image_grid_thw", None),
+            getattr(visual_inputs, "video_grid_thw", None),
+        ):
+            if grid is not None and grid.numel() > 0:
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, num_vision_patches=num_vision_patches)
+
     forward_args = {
         "input_ids": tokens,
         "position_ids": position_ids,
@@ -399,7 +518,8 @@ def forward_step(
     }
 
     if visual_inputs is not None:
-        forward_args.update(visual_inputs.normalized_for_model())
+        visual_kwargs = visual_inputs.normalized_for_model()
+        forward_args.update(_filter_visual_kwargs_for_model(model, visual_kwargs))
 
     # Add packed sequence support
     if cu_seqlens is not None:
@@ -409,7 +529,15 @@ def forward_step(
             "max_seqlen": max_seqlen,
             "cu_seqlens_argmin": cu_seqlens_argmin,
         }
+        # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
+        # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
+        # transformer models to avoid per-step CUDA overhead.
+        if getattr(config, "is_hybrid_model", False):
+            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+
+    if loss_mask is not None:
+        loss_mask = loss_mask.contiguous()
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

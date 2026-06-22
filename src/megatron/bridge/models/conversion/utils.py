@@ -20,9 +20,37 @@ from typing import Iterable, List, Optional, Tuple
 
 import torch
 from megatron.core.transformer.module import MegatronModule
-from megatron.core.utils import unwrap_model
 from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
+
+
+def unwrap_model(model, module_instances=None):
+    """Unwrap a model (or list of models) to the underlying module.
+    Extends ``megatron.core.utils.unwrap_model`` with awareness of ``MegatronFSDP``.
+    """
+    if module_instances is None:
+        from megatron.core.distributed import DistributedDataParallel as DDP
+        from megatron.core.distributed import TorchFullyShardedDataParallel as torch_FSDP
+        from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
+            FullyShardedDataParallel as megatron_FSDP,
+        )
+        from megatron.core.distributed.fsdp.src.megatron_fsdp.megatron_fsdp import MegatronFSDP
+        from megatron.core.transformer.module import Float16Module
+
+        module_instances = (DDP, torch_FSDP, megatron_FSDP, Float16Module, MegatronFSDP)
+
+    return_list = True
+    if not isinstance(model, list):
+        model = [model]
+        return_list = False
+    unwrapped_model = []
+    for model_module in model:
+        while isinstance(model_module, module_instances):
+            model_module = model_module.module
+        unwrapped_model.append(model_module)
+    if not return_list:
+        return unwrapped_model[0]
+    return unwrapped_model
 
 
 def weights_verification_table(bridge, megatron_model) -> Table:
@@ -245,10 +273,15 @@ def extract_sort_key(param_name: str):
     layer_match = re.search(r"layers\.(\d+)", param_name)
     if layer_match:
         numbers.append(int(layer_match.group(1)))
-    # Find expert number after bias or weight
+    # Find expert number after bias or weight for grouped experts.
     expert_match = re.search(r"(?:bias|weight)(\d+)", param_name)
     if expert_match:
         numbers.append(int(expert_match.group(1)))
+    else:
+        # SequentialMLP names use local_experts.<N> instead.
+        local_experts_match = re.search(r"local_experts\.(\d+)", param_name)
+        if local_experts_match:
+            numbers.append(int(local_experts_match.group(1)))
     # Pad to ensure consistent comparison (max 2 numbers)
     while len(numbers) < 2:
         numbers.append(-1)
@@ -271,6 +304,27 @@ def get_causal_lm_class_name_via_auto_map(
         return str(auto_map_class).split(".")[-1]
 
     return None
+
+
+def conform_config_to_reference(
+    hf_config_dict: dict[str, object], reference_config: dict[str, object]
+) -> dict[str, object]:
+    """Return hf_config_dict projected onto reference keys, filling missing values from reference_config."""
+    reference_config_keys = set(reference_config.keys())
+    filtered_config_dict = {}
+    for key, value in hf_config_dict.items():
+        if key not in reference_config_keys:
+            continue
+
+        reference_value = reference_config[key]
+        if isinstance(value, dict) and isinstance(reference_value, dict):
+            value = conform_config_to_reference(value, reference_value)
+        filtered_config_dict[key] = value
+
+    for key, value in reference_config.items():
+        if key not in filtered_config_dict:
+            filtered_config_dict[key] = value
+    return filtered_config_dict
 
 
 def persistent_buffers(model: torch.nn.Module) -> Iterable[Tuple[str, torch.Tensor]]:

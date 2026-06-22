@@ -2,6 +2,8 @@
 
 This directory contains example scripts for quantizing Megatron Bridge models using NVIDIA ModelOpt.
 
+> **Note**: These are minimal, hard-coded reference examples. For more comprehensive, production-quality post-training quantization (PTQ), export, and Quantization Aware Distillation (QAD) scripts, see the NVIDIA Model Optimizer repository: [examples/megatron_bridge/](https://github.com/NVIDIA/Model-Optimizer/tree/main/examples/megatron_bridge).
+
 ## Overview
 
 The quantization examples demonstrate how to:
@@ -18,7 +20,7 @@ The quantization examples demonstrate how to:
 Quantize LLM:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/quantize.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/quantize.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --export-quant-cfg fp8 \
     --tp 2 \
@@ -28,7 +30,7 @@ torchrun --nproc_per_node 2 examples/quantization/quantize.py \
 Quantize VLM:
 
 ```bash
-torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/quantize_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --export-quant-cfg fp8 \
     --megatron-save-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
@@ -42,7 +44,7 @@ torchrun --nproc_per_node 8 examples/quantization/quantize_vlm.py \
 Resume and generate with quantized LLM:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/ptq_generate.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-load-path ./llama3_2_1b_fp8 \
     --tp 2
@@ -51,7 +53,7 @@ torchrun --nproc_per_node 2 examples/quantization/ptq_generate.py \
 Resume and generate with quantized VLM:
 
 ```bash
-torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
+uv run python -m torch.distributed.run --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
     --hf-model-id Qwen/Qwen3-VL-30B-A3B-Instruct \
     --megatron-load-path ./Qwen3-VL-30B-A3B-Instruct_fp8 \
     --tp 8 \
@@ -65,7 +67,7 @@ torchrun --nproc_per_node 8 examples/quantization/ptq_generate_vlm.py \
 Train quantized model (requires a checkpoint from [PTQ](#1-post-training-quantization-ptq)) for better accuracy:
 
 ```bash
-torchrun pretrain_quantized_llama3_8b.py \
+uv run python -m torch.distributed.run pretrain_quantized_llama3_8b.py \
     --nproc_per_node 4 \
     model.tensor_model_parallel_size=4 \
     model.gradient_accumulation_fusion=False \
@@ -77,7 +79,7 @@ torchrun pretrain_quantized_llama3_8b.py \
 Export unified Huggingface checkpoint:
 
 ```bash
-torchrun --nproc_per_node 2 examples/quantization/export.py \
+uv run python -m torch.distributed.run --nproc_per_node 2 examples/quantization/export.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --megatron-load-path ./llama3_2_1b_fp8 \
     --export-dir ./llama3_2_1b_fp8_hf \

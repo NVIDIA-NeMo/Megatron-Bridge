@@ -7,17 +7,20 @@ This guide shows you how to pretrain and finetune Llama models using Megatron Br
 The fastest way to get started with Megatron Bridge pretraining:
 
 ```bash
-torchrun --nproc_per_node=1 00_quickstart_pretrain.py
+uv run python -m torch.distributed.run --nproc_per_node=1 00_quickstart_pretrain.py
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
+It uses the Hugging Face architecture configuration for random initialization, so it does not require converting a
+Hugging Face checkpoint to Megatron format first.
 
-For finetuning, you first need a checkpoint in Megatron format. Convert from HuggingFace using the `AutoBridge`:
+For finetuning from pretrained weights, you need a checkpoint in Megatron format. Convert from Hugging Face using
+the `AutoBridge`:
 
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-python ../../conversion/convert_checkpoints.py import \
+uv run python ../../conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```
@@ -25,7 +28,7 @@ python ../../conversion/convert_checkpoints.py import \
 Then run finetuning:
 
 ```bash
-torchrun --nproc_per_node=1 01_quickstart_finetune.py \
+uv run python -m torch.distributed.run --nproc_per_node=1 01_quickstart_finetune.py \
     --pretrained-checkpoint ./checkpoints/llama32_1b
 ```
 
@@ -56,7 +59,7 @@ The recipes include optional support for YAML configuration and dot-notation ove
 To use the provided YAML system:
 
 ```bash
-torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml
 ```
 
@@ -70,7 +73,7 @@ Example YAML (`conf/llama32_1b_pretrain.yaml`):
 # Each section maps to a ConfigContainer field
 dataset:                           # GPTDatasetConfig
   data_path: /path/to/training/data
-  sequence_length: 4096
+  seq_length: 4096
 
 train:                             # TrainingConfig
   train_iters: 100
@@ -81,7 +84,7 @@ checkpoint:                        # CheckpointConfig
   save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match data.sequence_length
+  seq_length: 4096                 # Must match dataset.seq_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
@@ -93,7 +96,7 @@ Command-Line Overrides:
 You can override values using dot notation (`section.field=value`):
 
 ```bash
-torchrun --nproc_per_node=2 02_pretrain_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 02_pretrain_with_yaml.py \
     --config-file conf/llama32_1b_pretrain.yaml \
     train.train_iters=5000 \
     train.global_batch_size=512 \
@@ -110,7 +113,7 @@ Priority order (highest to lowest):
 For more complex finetuning configurations:
 
 ```bash
-torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 03_finetune_with_yaml.py \
     --config-file conf/llama32_1b_finetune.yaml
 ```
 
@@ -119,10 +122,10 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 ```yaml
 # Each section maps to a ConfigContainer field
 dataset:                           # FinetuningDatasetConfig
-  data_path: /path/to/finetuning_dataset.jsonl
+  dataset_root: /path/to/finetuning_dataset_dir
   seq_length: 4096
 
-train:                             # TrainingConfig  
+train:                             # TrainingConfig
   train_iters: 100
   global_batch_size: 128
 
@@ -136,7 +139,7 @@ peft:                             # PEFT (LoRA config)
   alpha: 16   # LoRA alpha
 
 model:                            # Model Provider
-  seq_length: 4096                # Must match data.seq_length
+  seq_length: 4096                # Must match dataset.seq_length
   
 optimizer:                        # OptimizerConfig
   lr: 0.0001
@@ -145,7 +148,7 @@ optimizer:                        # OptimizerConfig
 Full Finetuning (No LoRA)
 
 ```bash
-torchrun --nproc_per_node=2 03_finetune_with_yaml.py \
+uv run python -m torch.distributed.run --nproc_per_node=2 03_finetune_with_yaml.py \
     --peft none \
     train.train_iters=1000
 ```
@@ -183,7 +186,7 @@ pip install nemo-run
 From the Slurm cluster login node:
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -194,7 +197,7 @@ python 04_launch_slurm_with_nemo_run.py \
 From your local machine (SSHTunnel):
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 00_quickstart_pretrain.py \
     --nodes 2 \
     --devices 8 \
@@ -209,7 +212,7 @@ python 04_launch_slurm_with_nemo_run.py \
 With custom config:
 
 ```bash
-python 04_launch_slurm_with_nemo_run.py \
+uv run python 04_launch_slurm_with_nemo_run.py \
     --script 03_finetune_with_yaml.py \
     --nodes 1 \
     --devices 8 \

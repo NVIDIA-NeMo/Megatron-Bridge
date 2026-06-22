@@ -25,6 +25,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +46,21 @@ def set_deepseek_v3_common_configs(cfg: ConfigContainer, moe_a2a_overlap: bool =
     cfg.model.moe_router_force_load_balancing = True
 
 
+def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    """Apply defaults required by full-iteration CUDA graph capture with dropless MoE.
+
+    Dropless MoE produces variable-shaped per-expert tensors that CG cannot
+    capture; we pad to a fixed capacity (pad_experts + capacity factor) and use
+    MCore PR #4247 paged stashing to recover memory. Callers should gate on
+    `is_full_iteration_cuda_graph(cfg.model)`.
+    """
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+
 def deepseek_v3_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -62,6 +78,9 @@ def deepseek_v3_pretrain_config_gb300(
     cfg = pretrain_config()
     cfg.mixed_precision = precision_config
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     # Apply model-specific settings that were previously passed as constructor args
     cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
     cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
@@ -74,8 +93,15 @@ def deepseek_v3_pretrain_config_gb300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
+
+    if cfg.ddp.use_megatron_fsdp and cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_param_gather = True
+        cfg.model.fp8_param = True
+        cfg.model.moe_router_dtype = "bf16"
 
     return cfg
 
@@ -97,6 +123,9 @@ def deepseek_v3_pretrain_config_gb200(
     cfg = pretrain_config()
     cfg.mixed_precision = precision_config
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     # Apply model-specific settings that were previously passed as constructor args
     cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
     cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
@@ -109,6 +138,45 @@ def deepseek_v3_pretrain_config_gb200(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    return cfg
+
+
+def deepseek_v3_pretrain_config_vr200(
+    precision: str = "bf16", mock: bool = True, config_variant: str = "v2"
+) -> ConfigContainer:
+    """VR200, baseline config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="vr200",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+    precision_config = get_precision_config(precision)
+
+    cfg = pretrain_config()
+    cfg.mixed_precision = precision_config
+
+    # Apply model-specific settings that were previously passed as constructor args
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+    if base_cfg.pp_layout:
+        cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+    else:
+        # Recompute layout based on updated PP/VP sizes
+        set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    set_deepseek_v3_common_configs(cfg)
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -141,6 +209,8 @@ def deepseek_v3_pretrain_config_b300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -173,8 +243,12 @@ def deepseek_v3_pretrain_config_b200(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
+
+    cfg.mixed_precision.fp4_param_gather = False
 
     return cfg
 
@@ -208,6 +282,8 @@ def deepseek_v3_pretrain_config_h100(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False

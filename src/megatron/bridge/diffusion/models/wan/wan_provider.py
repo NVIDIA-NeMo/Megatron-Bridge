@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # noqa: D101
     crossattn_emb_size: int = 1536  # cross attention emebedding size after linear projection
+    qk_layernorm: bool = True
     add_bias_linear: bool = True
     gated_linear_unit: bool = False
 
@@ -54,9 +55,7 @@ class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # 
     bf16: bool = False
     params_dtype: torch.dtype = torch.float32
     qkv_format: str = "thd"  # "sbhd". NOTE: if we use context parallelism, we need to use "thd"
-    apply_rope_fusion: bool = (
-        False  # currently, in Megatron-LM's TE, apply_rope_fusion + thd doesn't support interleaved RoPE
-    )
+    apply_rope_fusion: bool = True
     bias_activation_fusion: bool = True
     # these attributes are unused for images/videos, we just set because bridge training requires for LLMs
     seq_length: int = 1024

@@ -242,13 +242,13 @@ class Qwen25OmniThinkerModel(MegatronModule):
 
                 # Process images through vision encoder
                 if pixel_values is not None and image_grid_thw is not None:
-                    image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                    image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw).pooler_output
                 else:
                     image_embeds = None
 
                 # Process videos through vision encoder
                 if pixel_values_videos is not None and video_grid_thw is not None:
-                    video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                    video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw).pooler_output
                 else:
                     video_embeds = None
 
@@ -296,7 +296,9 @@ class Qwen25OmniThinkerModel(MegatronModule):
                 sp_pad_len = (tp_size - seq_len % tp_size) % tp_size
                 if sp_pad_len > 0:
                     combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                    combined_embeddings, group=self.pg_collection.tp
+                )
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None

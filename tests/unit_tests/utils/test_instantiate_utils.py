@@ -18,9 +18,11 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from megatron.bridge.utils.instantiate_utils import (
+    _ALLOWED_TARGET_PREFIXES,
     InstantiationException,
     InstantiationMode,
     _call_target,
@@ -32,9 +34,34 @@ from megatron.bridge.utils.instantiate_utils import (
     _locate,
     _prepare_input_dict_or_list,
     _resolve_target,
+    _validate_target_prefix,
     instantiate,
     instantiate_node,
+    register_allowed_target_prefix,
+    target_allowlist,
 )
+
+
+@pytest.fixture(autouse=True)
+def _register_test_prefixes():
+    """Temporarily register test prefixes so test targets pass the allowlist."""
+    added_to_bridge = []
+    added_to_mlm = []
+    for prefix in ("tests.", "builtins."):
+        if prefix not in _ALLOWED_TARGET_PREFIXES:
+            _ALLOWED_TARGET_PREFIXES.add(prefix)
+            added_to_bridge.append(prefix)
+        if prefix not in target_allowlist.allowed_prefixes:
+            target_allowlist.add_prefix(prefix)
+            added_to_mlm.append(prefix)
+    yield
+    for prefix in added_to_bridge:
+        _ALLOWED_TARGET_PREFIXES.discard(prefix)
+    for prefix in added_to_mlm:
+        try:
+            target_allowlist.remove_prefix(prefix)
+        except ValueError:
+            pass
 
 
 # Test classes and functions for instantiation testing
@@ -188,7 +215,7 @@ class TestInstantiate:
         """Test instantiate in strict mode with error."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
         with pytest.raises(InstantiationException):
             instantiate(config, mode=InstantiationMode.STRICT)
@@ -197,7 +224,7 @@ class TestInstantiate:
         """In lenient mode, nested resolution errors now propagate (no auto-None)."""
         config = {
             "_target_": "tests.unit_tests.utils.test_instantiate_utils.TestClass",
-            "nested": {"_target_": "non.existent.module.Class"},
+            "nested": {"_target_": "megatron.non_existent_module.Class"},
         }
         with pytest.raises(InstantiationException, match="Error locating target"):
             instantiate(config, mode=InstantiationMode.LENIENT)
@@ -408,19 +435,19 @@ class TestResolveTarget:
         assert result == test_function
 
     def test_resolve_invalid_string_target(self):
-        """Test resolving invalid string target."""
+        """Test resolving invalid string target that passes prefix check but doesn't exist."""
         with pytest.raises(InstantiationException, match="Error locating target"):
-            _resolve_target("invalid.target", "test_key")
+            _resolve_target("megatron.invalid.target", "test_key")
 
     def test_resolve_non_callable_target(self):
         """Test resolving non-callable target with check_callable=True."""
         with pytest.raises(InstantiationException, match="Expected a callable target"):
-            _resolve_target("builtins.__name__", "test_key", check_callable=True)
+            _resolve_target("builtins.Ellipsis", "test_key", check_callable=True)
 
     def test_resolve_non_callable_target_no_check(self):
         """Test resolving non-callable target with check_callable=False."""
-        result = _resolve_target("builtins.__name__", "test_key", check_callable=False)
-        assert result == "builtins"
+        result = _resolve_target("builtins.Ellipsis", "test_key", check_callable=False)
+        assert result is Ellipsis
 
 
 class TestExtractPosArgs:
@@ -616,3 +643,119 @@ class TestInstantiateEnum:
         # This previously failed because _args_ was dropped in lenient mode
         result = instantiate(config)
         assert result == TestEnum.B
+
+
+class TestTargetPrefixValidation:
+    """Test _target_ prefix allowlist validation."""
+
+    def test_allowed_prefix_passes(self):
+        """Test that targets with allowed prefixes pass validation."""
+        _validate_target_prefix(target="megatron.bridge.Foo", full_key="key")
+        _validate_target_prefix(target="torch.nn.Module", full_key="key")
+        _validate_target_prefix(target="torch._C._nn.gelu", full_key="key")
+        _validate_target_prefix(target="transformers.AutoModel", full_key="key")
+        _validate_target_prefix(target="numpy.array", full_key="key")
+        _validate_target_prefix(target="nvidia.dali.Pipeline", full_key="key")
+        _validate_target_prefix(target="nemo.collections.nlp", full_key="key")
+
+    def test_disallowed_prefix_rejected(self):
+        """Test that targets without allowed prefixes are rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="os.system", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="subprocess.run", full_key="key")
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="shutil.rmtree", full_key="key")
+
+    def test_disallowed_prefix_error_includes_full_key(self):
+        """Test that the error message includes the full_key when present."""
+        with pytest.raises(InstantiationException, match="full_key: my.config.key"):
+            _validate_target_prefix(target="os.system", full_key="my.config.key")
+
+    def test_disallowed_prefix_error_no_full_key(self):
+        """Test that the error message omits full_key when empty."""
+        with pytest.raises(InstantiationException, match="is not allowed") as exc_info:
+            _validate_target_prefix(target="os.system", full_key="")
+        assert "full_key" not in str(exc_info.value)
+
+    def test_empty_string_target(self):
+        """Test that empty string target is rejected."""
+        with pytest.raises(InstantiationException, match="is not allowed"):
+            _validate_target_prefix(target="", full_key="key")
+
+    def test_register_allowed_target_prefix(self):
+        """Test that register_allowed_target_prefix extends the allowlist."""
+        original = _ALLOWED_TARGET_PREFIXES.copy()
+        try:
+            with pytest.raises(InstantiationException, match="is not allowed"):
+                _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")
+
+            register_allowed_target_prefix("custom_pkg.")
+            _validate_target_prefix(target="custom_pkg.MyClass", full_key="key")  # should not raise
+        finally:
+            _ALLOWED_TARGET_PREFIXES.clear()
+            _ALLOWED_TARGET_PREFIXES.update(original)
+            try:
+                target_allowlist.remove_prefix("custom_pkg.")
+            except ValueError:
+                pass
+
+    def test_instantiate_rejects_allowlist_registration_target(self):
+        """Test that configs cannot mutate the target allowlist."""
+        config = {
+            "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+            "_args_": ["os."],
+        }
+        with pytest.raises(InstantiationException, match="modify target validation state"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
+            "megatron.bridge.utils.instantiate_utils.target_allowlist.disable",
+            "megatron.training.config.instantiate_utils.target_allowlist.add_prefix",
+            "megatron.training.config.instantiate_utils.target_allowlist.disable",
+        ],
+    )
+    def test_instantiate_rejects_target_allowlist_mutators(self, target):
+        """Test that configs cannot mutate the shared target allowlist."""
+        config = {"_target_": target, "_args_": ["os."]}
+        with pytest.raises(InstantiationException, match="modify target validation state"):
+            instantiate(config)
+
+    def test_instantiate_rejects_private_target_segments(self):
+        """Test that configs cannot reach private target attributes."""
+        config = {
+            "_target_": "megatron.bridge.utils.instantiate_utils._ALLOWED_TARGET_PREFIXES.add",
+            "_args_": ["os."],
+        }
+        with pytest.raises(InstantiationException, match="private target path segments"):
+            instantiate(config)
+
+    def test_instantiate_allows_known_torch_private_activation_target(self):
+        """Test that serialized torch.nn.functional.gelu can be resolved."""
+        config = {"_target_": "torch._C._nn.gelu", "_call_": False}
+        assert instantiate(config) is F.gelu
+
+    def test_instantiate_rejects_unknown_torch_private_target_segments(self):
+        """Test that only exact known private torch targets are allowed."""
+        config = {"_target_": "torch._C._nn._unsafe_private_symbol"}
+        with pytest.raises(InstantiationException, match="private target path segments"):
+            instantiate(config)
+
+    def test_register_empty_prefix_rejected(self):
+        """Test that registering an empty prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("")
+
+    def test_register_whitespace_prefix_rejected(self):
+        """Test that registering a whitespace-only prefix is rejected."""
+        with pytest.raises(ValueError, match="non-empty string"):
+            register_allowed_target_prefix("   ")
+
+    def test_instantiate_rejects_disallowed_target(self):
+        """Test end-to-end: instantiate rejects a config with a disallowed _target_."""
+        config = {"_target_": "os.system", "command": "echo hello"}
+        with pytest.raises(InstantiationException, match="not in the allowlist"):
+            instantiate(config)

@@ -14,21 +14,26 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional
 
 from omegaconf import OmegaConf
 
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
+from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.comm_overlap import *
 from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.utils.moe_token_drop import apply_moe_token_drop
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 from utils.datasets import (
+    create_c4_dataset_config,
     create_mock_dataset_config,
     create_rp2_dataset_config,
     create_squad_dataset_config,
@@ -59,14 +64,14 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.scheduler.lr_decay_iters = recipe.train.train_iters
     recipe.scheduler.lr_warmup_iters = 10
 
-    if hasattr(recipe.model, "use_transformer_engine_op_fuser") and recipe.model.use_transformer_engine_op_fuser:
-        recipe.model.use_transformer_engine_op_fuser = False
-    recipe.model.apply_rope_fusion = True
-    recipe.model.cross_entropy_fusion_impl = "te"
+    if hasattr(recipe.model, "apply_rope_fusion"):
+        recipe.model.apply_rope_fusion = True
+    if hasattr(recipe.model, "cross_entropy_fusion_impl"):
+        recipe.model.cross_entropy_fusion_impl = "te"
 
     # TODO: This needs to be adjusted when overlapping HybridEP with computation or
     # the number of SMs for HybridEP is reduced.
-    if recipe.model.moe_flex_dispatcher_backend == "hybridep":
+    if hasattr(recipe.model, "moe_flex_dispatcher_backend") and recipe.model.moe_flex_dispatcher_backend == "hybridep":
         recipe.model.moe_hybridep_num_sms = 32
 
     return recipe
@@ -91,10 +96,6 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if recipe.optimizer.use_precision_aware_optimizer:
-        recipe.optimizer.use_precision_aware_optimizer = False
-        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
-
     recipe.checkpoint.load = None
     return recipe
 
@@ -109,17 +110,24 @@ def _set_cuda_graph_overrides(
         recipe.model.cuda_graph_impl = cuda_graph_impl
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
-        else:  # this condition ensures we unset in case of user override to "none" from default
-            recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
-
-        if cuda_graph_impl == "transformer_engine":
-            valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-            assert all(scope in valid_te_scopes for scope in cuda_graph_scope), (
-                f"Invalid cuda graph scope: {cuda_graph_scope}. Valid options are: {valid_te_scopes}"
-            )
 
     if cuda_graph_scope is not None:
         recipe.model.cuda_graph_scope = cuda_graph_scope
+
+    # Validate post-override state so we check the effective recipe value,
+    # not the raw CLI input (which may be None when the recipe default is used).
+    if recipe.model.cuda_graph_impl == "transformer_engine":
+        valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
+        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
+        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+            f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
+        )
+    elif recipe.model.cuda_graph_impl == "none":
+        recipe.model.cuda_graph_scope = []
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+
+    if is_full_iteration_cuda_graph(recipe.model):
+        recipe.rerun_state_machine.check_for_nan_in_loss = False
 
     return recipe
 
@@ -131,7 +139,7 @@ def _set_recompute_overrides(
     recompute_modules: Optional[List[str]] = None,
 ) -> ConfigContainer:
     """Set the recompute and CPU offloading overrides."""
-    if cpu_offloading_num_layers is not None:
+    if cpu_offloading_num_layers is not None and cpu_offloading_num_layers > 0:
         recipe.model.cpu_offloading = True
         recipe.model.cpu_offloading_weights = False
         recipe.model.cpu_offloading_num_layers = cpu_offloading_num_layers
@@ -142,6 +150,10 @@ def _set_recompute_overrides(
     if recompute_modules is not None:
         recipe.model.recompute_modules = recompute_modules
         recipe.model.recompute_granularity = "selective"
+    # No else: if the caller has no recompute configuration to apply, leave
+    # whatever the recipe already has in place. Callers that want to *disable*
+    # recompute should set granularity=None / modules=[] at the recipe or via
+    # Hydra overrides explicitly.
 
     return recipe
 
@@ -149,6 +161,9 @@ def _set_recompute_overrides(
 def _set_moe_a2a_overlap_overrides(recipe: ConfigContainer, moe_a2a_overlap: bool = False) -> ConfigContainer:
     """Tune configuration for MoE A2A communication overlap."""
     if moe_a2a_overlap:
+        if recipe.comm_overlap is None:
+            tp_comm_overlap = bool(recipe.model.tensor_model_parallel_size > 1)
+            recipe.comm_overlap = CommOverlapConfig(tp_comm_overlap=tp_comm_overlap)
         recipe.comm_overlap.overlap_moe_expert_parallel_comm = True
         recipe.comm_overlap.delay_wgrad_compute = True
         recipe.model.moe_shared_expert_overlap = False
@@ -189,6 +204,9 @@ def _set_checkpoint_overrides(recipe: ConfigContainer, args: argparse.Namespace)
 
     if args.save_config_filepath is not None:
         recipe.logger.save_config_filepath = args.save_config_filepath
+        # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+        # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+        os.makedirs(os.path.dirname(os.path.abspath(args.save_config_filepath)), exist_ok=True)
 
     return recipe
 
@@ -213,13 +231,40 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cuda_graph_scope=settings.cuda_graph_scope,
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
+    if settings.cutedsl_fused_grouped_mlp:
+        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.moe_mlp_glu_interleave_size = 32
+        if settings.moe_a2a_overlap:
+            cfg.model.high_priority_a2a_comm_stream = True
+            cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    if settings.fp8_dot_product_attention is not None:
+        cfg.mixed_precision.fp8_dot_product_attention = settings.fp8_dot_product_attention
     _set_recompute_overrides(
         cfg,
         recompute_modules=settings.recompute_modules,
         cpu_offloading_num_layers=settings.cpu_offloading_num_layers,
         recompute_num_layers=settings.recompute_num_layers,
     )
+    if settings.te_precision_config_file is not None:
+        from megatron.core.quantization.utils import load_quantization_recipe
+
+        cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.fine_grained_activation_offloading is not None:
+        cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
+    if settings.offload_modules is not None:
+        cfg.model.offload_modules = settings.offload_modules
+
+    if settings.outer_dp_sharding_strategy is not None:
+        cfg.ddp.outer_dp_sharding_strategy = settings.outer_dp_sharding_strategy
+    if settings.num_distributed_optimizer_instances is not None:
+        cfg.ddp.num_distributed_optimizer_instances = settings.num_distributed_optimizer_instances
+
+    if settings.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
+    elif hasattr(cfg.model, "moe_token_dispatcher_type"):
+        cfg.model.moe_token_dispatcher_type = "alltoall"
 
     return cfg
 
@@ -290,6 +335,9 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.logger.wandb_save_dir = "/nemo_run/wandb"
 
     recipe.logger.save_config_filepath = args.save_config_filepath or "/nemo_run/configs/ConfigContainer.yaml"
+    # maybe_log_and_save_config calls cfg.to_yaml() during training startup; that uses
+    # plain open(..., "w") and fails if the parent dir doesn't exist. Ensure it does.
+    os.makedirs(os.path.dirname(os.path.abspath(recipe.logger.save_config_filepath)), exist_ok=True)
 
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
@@ -348,6 +396,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
             seq_length=recipe.dataset.sequence_length,
+            index_mapping_dir=args.index_mapping_dir,
+            num_workers=recipe.dataset.num_workers,
+            pin_memory=recipe.dataset.pin_memory,
+            persistent_workers=recipe.dataset.persistent_workers,
+        )
+    elif args.data == "c4":
+        if not args.c4_root:
+            raise ValueError("--c4_root is required for c4 dataset")
+        recipe.dataset = create_c4_dataset_config(
+            seq_length=recipe.dataset.sequence_length,
+            c4_root=args.c4_root,
+            train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
@@ -428,6 +488,18 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
     if args.pytorch_profiler:
         recipe.logger.tensorboard_dir = "/nemo_run/pytorch_profile"
 
+    if args.moe_flex_dispatcher_backend is not None:
+        apply_flex_dispatcher_backend(recipe.model, args.moe_flex_dispatcher_backend)
+    elif hasattr(recipe.model, "moe_token_dispatcher_type"):
+        recipe.model.moe_token_dispatcher_type = "alltoall"
+
+    pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
+    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+        recipe.dist.use_tp_pp_dp_mapping = True
+
+    if args.deterministic:
+        apply_determinism_overrides(recipe)
+
     return recipe
 
 
@@ -467,7 +539,10 @@ def set_post_overrides(
 
     default_num_gpus = workload_base_config.num_gpus
     if user_gbs is None:
-        if num_gpus != default_num_gpus:
+        # Only auto-rescale if the recipe's current GBS still equals the
+        # workload default — i.e., no one (Hydra or earlier step) has already
+        # expressed an intent. Otherwise Hydra-set GBS gets silently stomped.
+        if recipe.train.global_batch_size == workload_base_config.global_batch_size and num_gpus != default_num_gpus:
             new_gbs = int(workload_base_config.gbs_scaling_factor * num_gpus)
             recipe.train.global_batch_size = new_gbs
             logger.info(

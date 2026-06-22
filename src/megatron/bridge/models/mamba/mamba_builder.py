@@ -150,6 +150,11 @@ class MambaModelConfig(ModelConfig):
         else:
             super().__setattr__(name, value)
 
+    def finalize(self) -> None:
+        """One time validation to run once config is ready to be used by builder."""
+
+        self.transformer.finalize()
+
 
 class MambaModelBuilder(ModelBuilder[MCoreMambaModel, MambaModelConfig]):
     """Builder to construct Megatron Core Mamba models.

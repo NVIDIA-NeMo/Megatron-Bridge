@@ -20,8 +20,9 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import torch
-from megatron.core.dist_checkpointing.strategies.async_utils import AsyncCallsQueue
+from megatron.core.dist_checkpointing.strategies.torch import get_async_strategy
 from megatron.core.energy_monitor import EnergyMonitor
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.timers import Timers
 from megatron.core.utils import StragglerDetector
 from torch.distributed.checkpoint.stateful import Stateful
@@ -63,10 +64,10 @@ class TrainState(Stateful):
             their corresponding tensor representations.
         """
         return {
-            "step": torch.tensor(self.step, dtype=torch.int32),
-            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int32),
-            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int32),
-            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int32),
+            "step": torch.tensor(self.step, dtype=torch.int64),
+            "consumed_train_samples": torch.tensor(self.consumed_train_samples, dtype=torch.int64),
+            "skipped_train_samples": torch.tensor(self.skipped_train_samples, dtype=torch.int64),
+            "consumed_valid_samples": torch.tensor(self.consumed_valid_samples, dtype=torch.int64),
             "floating_point_operations_so_far": torch.tensor(
                 self.floating_point_operations_so_far, dtype=torch.float64
             ),
@@ -126,6 +127,7 @@ class GlobalState:
         self._tensorboard_logger: Optional[SummaryWriter] = None
         self._wandb_logger: Optional[Any] = None
         self._mlflow_logger: Optional[Any] = None
+        self._comet_logger: Optional[Any] = None
         self._timers: Optional[Timers] = None
         self._train_state: Optional[TrainState] = None
         self.rank_monitor_client: Optional[Any] = None
@@ -133,11 +135,16 @@ class GlobalState:
         self.start_time: float = time.time()
         self._ft_state: Optional[FaultToleranceState] = None
         self._straggler_timer: Optional[StragglerDetector] = None
-        self._async_calls_queue: Optional[AsyncCallsQueue] = None
+        self._async_calls_queue: Optional[Any] = None
         self._nvrx_straggler_manager: Optional[NVRxStragglerDetectionManager] = None
         self._nvrx_straggler_created: bool = False
-        self._energy_monitor: Optional[EnergyMonitor] = None
+        self._energy_monitor: Optional[Any] = None
         self._energy_monitor_created: bool = False
+        # Eval-time context parallelism: set by the caller when eval_context_parallel_size
+        # differs from the training CP degree. ``eval_context_parallel_rebinding.eval_cp_context``
+        # reads these.
+        self._train_pgs: Optional[ProcessGroupCollection] = None
+        self._eval_pgs: Optional[ProcessGroupCollection] = None
 
     @property
     def cfg(self) -> Optional[ConfigContainer]:
@@ -266,7 +273,19 @@ class GlobalState:
 
                 active_run = mlflow.active_run()
                 if active_run is None:
-                    mlflow.start_run(run_name=run_name, tags=tags or None)
+                    mlflow.start_run(
+                        run_name=run_name,
+                        tags=tags or None,
+                        description=logger_cfg.mlflow_description,
+                    )
+
+                    # Mark the run FAILED on uncaught Python exceptions.
+                    # Local import: mlflow_utils → checkpoint_utils → state forms a
+                    # cycle if install_mlflow_failure_hook is imported at module top.
+                    from megatron.bridge.training.utils.mlflow_utils import install_mlflow_failure_hook
+
+                    install_mlflow_failure_hook()
+
                 elif tags:
                     # If there is already an active run, at least set provided tags
                     mlflow.set_tags(tags)
@@ -283,12 +302,61 @@ class GlobalState:
         return self._mlflow_logger
 
     @property
+    def comet_logger(self) -> Optional[Any]:
+        """The Comet ML Experiment instance, lazily initialized for rank N-1."""
+        if self._comet_logger is None:
+            cfg = self.cfg
+            if cfg is None:
+                self._comet_logger = None
+                return self._comet_logger
+
+            logger_cfg = cfg.logger
+            if logger_cfg.comet_project and get_rank_safe() == (get_world_size_safe() - 1):
+                if not logger_cfg.comet_experiment_name:
+                    raise ValueError("Please specify the comet_experiment_name for Comet ML logging!")
+
+                import comet_ml
+
+                init_kwargs: dict[str, Any] = {
+                    "project_name": logger_cfg.comet_project,
+                    "auto_metric_logging": False,
+                }
+
+                api_key = logger_cfg.comet_api_key
+                if api_key is None:
+                    api_key = os.environ.get("COMET_API_KEY")
+                if api_key:
+                    api_key = api_key.strip()
+                    if "COMET_API_KEY" in os.environ:
+                        os.environ["COMET_API_KEY"] = api_key
+                    init_kwargs["api_key"] = api_key
+
+                if logger_cfg.comet_workspace:
+                    init_kwargs["workspace"] = logger_cfg.comet_workspace
+
+                experiment = comet_ml.Experiment(**init_kwargs)
+                experiment.set_name(logger_cfg.comet_experiment_name)
+
+                if logger_cfg.comet_tags:
+                    experiment.add_tags(logger_cfg.comet_tags)
+
+                config_dict = cfg.to_dict()
+                sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
+                experiment.log_parameters(sanitized_config)
+
+                self._comet_logger = experiment
+            else:
+                self._comet_logger = None
+        return self._comet_logger
+
+    @property
     def timers(self) -> Timers:
         """The Megatron Timers instance used for tracking execution times."""
         if self._timers is None:
             self._timers = Timers(self.cfg.logger.timing_log_level, self.cfg.logger.timing_log_option)
             self._timers.write_to_wandb = types.MethodType(_timers_write_to_wandb, self._timers)
             self._timers.write_to_mlflow = types.MethodType(_timers_write_to_mlflow, self._timers)
+            self._timers.write_to_comet = types.MethodType(_timers_write_to_comet, self._timers)
         return self._timers
 
     @property
@@ -345,10 +413,24 @@ class GlobalState:
             and self.cfg.checkpoint.save is not None
             and self.cfg.checkpoint.async_save
         ):
-            self._async_calls_queue = AsyncCallsQueue(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+            async_strategy, async_modules = get_async_strategy(self.cfg.checkpoint.async_strategy)
+            async_calls_queue_cls = async_modules["AsyncCallsQueue"]
+            get_write_results_queue_fn = async_modules["get_write_results_queue"]
+
+            self._async_calls_queue = async_calls_queue_cls(persistent=self.cfg.checkpoint.use_persistent_ckpt_worker)
+
+            if self.cfg.checkpoint.use_persistent_ckpt_worker:
+                warmup_kwargs = {
+                    "cpu_priority": self.cfg.checkpoint.async_ckpt_cpu_priority,
+                    "io_priority": self.cfg.checkpoint.async_ckpt_io_priority,
+                }
+                if async_strategy == "mcore":
+                    warmup_kwargs["mp_mode"] = "spawn"
+                self._async_calls_queue.warmup_persistent_caller(get_rank_safe(), **warmup_kwargs)
+                get_write_results_queue_fn(self.cfg.checkpoint.async_write_results_mp_mode)
 
     @property
-    def async_calls_queue(self) -> Optional[AsyncCallsQueue]:
+    def async_calls_queue(self) -> Optional[Any]:
         """The AsyncCallsQueue instance for handling asynchronous checkpoint saves."""
         return self._async_calls_queue
 
@@ -366,7 +448,7 @@ class GlobalState:
         return self._nvrx_straggler_manager
 
     @property
-    def energy_monitor(self) -> Optional[EnergyMonitor]:
+    def energy_monitor(self) -> Optional[Any]:
         """The EnergyMonitor instance for tracking energy consumption."""
         if (
             not self._energy_monitor_created
@@ -381,7 +463,7 @@ class GlobalState:
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""
         if self.cfg.train is not None:
-            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
+            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal).__enter__()
 
     def reset_for_restart(self) -> None:
         """Reset GlobalState components for in-process restart.
@@ -394,8 +476,11 @@ class GlobalState:
         self._tensorboard_logger = None
         self._wandb_logger = None
         self._mlflow_logger = None
+        self._comet_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
+        if self._signal_handler is not None:
+            self._signal_handler.release()
         self._signal_handler = None
         self._straggler_timer = None
         self._nvrx_straggler_manager = None
@@ -447,3 +532,28 @@ def _timers_write_to_mlflow(
             import warnings
 
             warnings.warn("Failed to log timer metrics to MLFlow; continuing without timer metrics.")
+
+
+def _timers_write_to_comet(
+    self: Timers,
+    names: list[str],
+    logger: Any,
+    iteration: int,
+    normalizer: float = 1.0,
+    reset: bool = True,
+    barrier: bool = False,
+) -> None:
+    """Patch to write timers to Comet ML for Megatron Core Timers."""
+    assert normalizer > 0.0
+    name_to_min_max_time = self._get_global_min_max_time(names, reset, barrier, normalizer)
+    if logger is not None:
+        metrics: dict[str, float] = {}
+        for name in name_to_min_max_time:
+            _, max_time = name_to_min_max_time[name]
+            metrics[name + "-time"] = max_time
+        try:
+            logger.log_metrics(metrics, step=iteration)
+        except Exception:
+            import warnings
+
+            warnings.warn("Failed to log timer metrics to Comet ML; continuing without timer metrics.", stacklevel=2)

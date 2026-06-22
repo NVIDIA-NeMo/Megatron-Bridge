@@ -16,20 +16,24 @@
 Provider that builds conversation datasets from HuggingFace datasets.
 """
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
 from transformers import AutoProcessor
 
+from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
 from megatron.bridge.data.vlm_datasets.hf_dataset_makers import (
     make_cord_v2_dataset,
     make_cv17_dataset,
+    make_default_audio_dataset,
     make_llava_video_178k_dataset,
     make_medpix_dataset,
     make_raven_dataset,
     make_rdr_dataset,
+    make_valor32k_avqa_dataset,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
@@ -55,8 +59,16 @@ class HFDatasetConversationProvider(DatasetProvider):
     # like `make_rdr_dataset`, `make_cord_v2_dataset`, `make_medpix_dataset`, `make_cv17_dataset`.
     maker_name: str
 
-    # Optional parameters forwarded to the selected maker
+    # Optional parameters forwarded to the selected maker (used for train split by default)
     maker_kwargs: Optional[Dict[str, Any]] = None
+
+    # Per-split overrides: merged on top of maker_kwargs when building that split.
+    # This allows different subset/split/prompt per data split (e.g. aishell "dev" vs "train").
+    val_maker_kwargs: Optional[Dict[str, Any]] = None
+    test_maker_kwargs: Optional[Dict[str, Any]] = None
+
+    # Skip building specific splits (returns None for that split)
+    skip_test: bool = False
 
     # Optional collate override. If None, inferred from processor type.
     collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None
@@ -70,6 +82,13 @@ class HFDatasetConversationProvider(DatasetProvider):
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     pack_sequences_in_batch: bool = False
 
+    def _collate_supports_packing(self, processor: Any) -> bool:
+        collate_key = type(processor).__name__ if processor is not None else "default"
+        selected_impl = self.collate_impl or COLLATE_FNS.get(collate_key)
+        if selected_impl is None:
+            return False
+        return "pack_sequences" in inspect.signature(selected_impl).parameters
+
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         registry: Dict[str, Callable[..., List[Dict[str, Any]]]] = {
             "make_rdr_dataset": make_rdr_dataset,
@@ -78,10 +97,11 @@ class HFDatasetConversationProvider(DatasetProvider):
             "make_cv17_dataset": make_cv17_dataset,
             "make_raven_dataset": make_raven_dataset,
             "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
+            "make_default_audio_dataset": make_default_audio_dataset,
+            "make_valor32k_avqa_dataset": make_valor32k_avqa_dataset,
         }
         if self.maker_name in registry:
             return registry[self.maker_name]
-        # Allow passing function name alias without prefix, e.g., "rdr" -> make_rdr_dataset
         alias_map = {
             "rdr": "make_rdr_dataset",
             "cord_v2": "make_cord_v2_dataset",
@@ -89,6 +109,8 @@ class HFDatasetConversationProvider(DatasetProvider):
             "cv17": "make_cv17_dataset",
             "raven": "make_raven_dataset",
             "llava_video_178k": "make_llava_video_178k_dataset",
+            "default_audio": "make_default_audio_dataset",
+            "valor32k_avqa": "make_valor32k_avqa_dataset",
         }
         if self.maker_name in alias_map and alias_map[self.maker_name] in registry:
             return registry[alias_map[self.maker_name]]
@@ -99,11 +121,14 @@ class HFDatasetConversationProvider(DatasetProvider):
         split: str,
         target_length: int,
         processor: Any,
+        extra_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Optional[VLMConversationDataset]:
         if target_length <= 0:
             return None
         maker = self._get_maker()
         kwargs = dict(self.maker_kwargs or {})
+        if extra_kwargs:
+            kwargs.update(extra_kwargs)
         kwargs.setdefault("split", split)
         base_examples = maker(**kwargs)  # type: ignore[misc]
         if not isinstance(base_examples, list) or len(base_examples) == 0:
@@ -113,6 +138,7 @@ class HFDatasetConversationProvider(DatasetProvider):
             target_length=target_length,
             processor=processor,
             collate_impl=self.collate_impl,
+            pack_sequences=self.pack_sequences_in_batch and self._collate_supports_packing(processor),
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
@@ -126,7 +152,11 @@ class HFDatasetConversationProvider(DatasetProvider):
         )
 
         train_ds = self._build_split_dataset("train", context.train_samples, processor)
-        valid_ds = self._build_split_dataset("validation", context.valid_samples, processor)
-        test_ds = self._build_split_dataset("test", context.test_samples, processor)
+        valid_ds = self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)
+        test_ds = (
+            None
+            if self.skip_test
+            else self._build_split_dataset("test", context.test_samples, processor, self.test_maker_kwargs)
+        )
 
         return train_ds, valid_ds, test_ds

@@ -14,7 +14,6 @@
 
 """Iterator utilities for handling virtual pipeline parallelism."""
 
-import queue
 from typing import Iterator, TypeVar, Union
 
 
@@ -29,8 +28,8 @@ def make_data_iterator_list(
     With interleaved/virtual pipeline parallelism, Megatron expects a list of one data
     iterator per model chunk. Each model chunk independently gets data from its data
     iterator, so we need to interact with the data iterator multiple times for each
-    microbatch step. Instead of incorporating this logic into the data loader, we cache
-    the iterator's output to the first model chunk and reuse it in the other model chunks.
+    microbatch step. Instead of incorporating this logic into the data loader, we lazily
+    cache the source iterator by microbatch index and expose one cache view per model chunk.
 
     Args:
         model: List of model chunks (when virtual PP is used) or single-element list
@@ -39,8 +38,8 @@ def make_data_iterator_list(
     Returns:
         If model has only 1 chunk: returns the iterator as-is
         If model has multiple chunks: returns a list of iterators with caching behavior
-            - First iterator in list consumes from data_iterator and caches values
-            - Remaining iterators are proxies that read from the cache
+            - Each iterator can advance independently
+            - All iterators see the same microbatch sequence regardless of scheduler order
 
     Example:
         >>> # With virtual PP size = 2 (model has 2 chunks)
@@ -54,52 +53,39 @@ def make_data_iterator_list(
     if not isinstance(model, list) or len(model) <= 1:
         return data_iterator
 
-    class CachingIterator:
-        """Iterator wrapper that caches values for proxy iterators.
+    class SharedCache:
+        """Shared lazy cache over an iterator.
 
-        When the main iterator is advanced, it caches the value and distributes
-        it to all registered proxy iterators.
+        Any model chunk may be scheduled first. Fetching by index fills the cache
+        up to that position, so all chunk iterators see the same microbatch
+        sequence without assuming chunk 0 advances first.
         """
-
-        class Proxy:
-            """Proxy iterator that reads from the cache.
-
-            Assumed to never advance past the caching iterator.
-            """
-
-            def __init__(self):
-                self.cache = queue.Queue()
-
-            def __iter__(self):
-                return self
-
-            def __next__(self):
-                return self.cache.get_nowait()
 
         def __init__(self, iterator: Iterator[DataT]):
             self.iterator = iterator
-            self.proxies = []
+            self.cache: list[DataT] = []
 
-        def make_proxy(self):
-            """Create a new proxy iterator that reads from this cache."""
-            self.proxies.append(CachingIterator.Proxy())
-            return self.proxies[-1]
+        def get(self, index: int) -> DataT:
+            """Return the cached value at index, reading the source iterator if needed."""
+            while len(self.cache) <= index:
+                self.cache.append(next(self.iterator))
+            return self.cache[index]
+
+    class CacheView:
+        """Per-model-chunk iterator view into a shared cache."""
+
+        def __init__(self, cache: SharedCache):
+            self.cache = cache
+            self.index = 0
 
         def __iter__(self):
             return self
 
         def __next__(self):
-            """Advance the main iterator and cache the value for all proxies."""
-            val = next(self.iterator)
-            for proxy in self.proxies:
-                proxy.cache.put(val)
+            """Return the next value for this chunk from the shared cache."""
+            val = self.cache.get(self.index)
+            self.index += 1
             return val
 
-    # Create list of iterator wrappers - one per model chunk
-    # First iterator is the main caching iterator
-    # Remaining iterators are proxies that read from the cache
-    iters = [CachingIterator(data_iterator)]
-    while len(iters) < len(model):
-        iters.append(iters[0].make_proxy())
-
-    return iters
+    shared_cache = SharedCache(data_iterator)
+    return [CacheView(shared_cache) for _ in model]

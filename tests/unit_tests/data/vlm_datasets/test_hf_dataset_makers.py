@@ -15,7 +15,12 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 import megatron.bridge.data.vlm_datasets.hf_dataset_makers as makers
+
+
+pytestmark = pytest.mark.unit
 
 
 class _DummyDataset(list):
@@ -76,6 +81,23 @@ def test_make_cv17_dataset(monkeypatch):
     _monkeypatch_load_dataset(monkeypatch, rows)
     out = makers.make_cv17_dataset()
     assert out and isinstance(out[0]["audio"], tuple)
+    assert out[0]["conversation"][0]["content"][0]["type"] == "audio"
+    assert out[0]["conversation"][1]["content"][0]["text"] == "hello"
+
+
+def test_make_default_audio_dataset_custom_text_column_keeps_spaces(monkeypatch):
+    rows = [{"audio": {"array": [0.1, 0.2], "sampling_rate": 16000}, "transcription": "hello world"}]
+    _monkeypatch_load_dataset(monkeypatch, rows)
+
+    out = makers.make_default_audio_dataset(
+        path_or_dataset="ysdede/commonvoice_17_tr_fixed",
+        split="train",
+        text_column="transcription",
+        remove_text_spaces=False,
+    )
+
+    assert out[0]["conversation"][1]["content"][0]["text"] == "hello world"
+    assert out[0]["audio"] == ([0.1, 0.2], 16000)
 
 
 def test_make_raven_dataset(monkeypatch):
@@ -130,3 +152,88 @@ def test_make_llava_video_178k_dataset(monkeypatch, tmp_path):
     contentless_conv = out[1]["conversation"]
     assert len(contentless_conv) == 1
     assert contentless_conv[0]["role"] == "assistant"
+
+
+def test_make_valor32k_avqa_dataset_formats_modalities(tmp_path):
+    root = tmp_path
+    (root / "videos").mkdir()
+    (root / "audio").mkdir()
+    (root / "videos" / "av.mp4").touch()
+    (root / "audio" / "av.wav").touch()
+    (root / "audio" / "audio_only.wav").touch()
+    (root / "videos" / "visual_only.mp4").touch()
+
+    qa_rows = [
+        {
+            "video_id": "av",
+            "modality": "audio-visual",
+            "question": "Which sound matches the clip?",
+            "options": ["music", "speech", "rain"],
+            "correct_answer_idx": 1,
+        },
+        {
+            "video_id": "audio_only",
+            "modality": "audio",
+            "question": "What is heard?",
+            "rephrased_answers": ["applause"],
+        },
+        {
+            "video_id": "visual_only",
+            "modality": "visual",
+            "question": "What is visible?",
+            "options": ["dog", "car"],
+            "correct_answer_idx": 0,
+        },
+        {
+            "video_id": "missing_visual",
+            "modality": "visual",
+            "question": "This row should be skipped.",
+            "rephrased_answers": ["missing"],
+        },
+    ]
+    (root / "combined_dataset_train_flattened.json").write_text(json.dumps(qa_rows))
+
+    out = makers.make_valor32k_avqa_dataset(str(root), max_audio_duration=7.5)
+
+    assert len(out) == 3
+    av = out[0]
+    assert av["conversation"][0]["content"][0] == {"type": "video", "path": str(root / "videos" / "av.mp4")}
+    assert "A. music\nB. speech\nC. rain" in av["conversation"][0]["content"][1]["text"]
+    assert av["conversation"][1]["content"][0]["text"] == "speech"
+    assert av["audio_path"] == str(root / "audio" / "av.wav")
+    assert av["max_audio_duration"] == 7.5
+
+    audio_only = out[1]
+    assert [item["type"] for item in audio_only["conversation"][0]["content"]] == ["text"]
+    assert audio_only["audio_path"] == str(root / "audio" / "audio_only.wav")
+    assert audio_only["conversation"][1]["content"][0]["text"] == "applause"
+
+    visual_only = out[2]
+    assert visual_only["conversation"][0]["content"][0]["type"] == "video"
+    assert "audio_path" not in visual_only
+
+
+def test_make_valor32k_avqa_dataset_validation_split_and_empty_error(tmp_path):
+    root = tmp_path
+    (root / "videos").mkdir()
+    (root / "audio").mkdir()
+    (root / "videos" / "sample.mp4").touch()
+    (root / "combined_dataset_val_flattened.json").write_text(
+        json.dumps(
+            [
+                {
+                    "video_id": "sample",
+                    "modality": "visual",
+                    "question": "What is shown?",
+                    "rephrased_answers": ["a scene"],
+                }
+            ]
+        )
+    )
+
+    out = makers.make_valor32k_avqa_dataset(str(root), split="validation", modality_filter="visual")
+    assert len(out) == 1
+    assert out[0]["conversation"][0]["content"][0]["path"] == str(root / "videos" / "sample.mp4")
+
+    with pytest.raises(ValueError, match="No valid examples found"):
+        makers.make_valor32k_avqa_dataset(str(root), split="validation", modality_filter="audio")

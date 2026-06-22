@@ -1,0 +1,398 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Megatron Bridge for Gemma 4 Vision-Language (ConditionalGeneration).
+
+Text conversion logic is inherited from
+:class:`~megatron.bridge.models.gemma.gemma4_bridge.Gemma4Bridge`.
+
+Usage::
+
+  AutoBridge.from_hf_pretrained("google/gemma-4-E4B-it")
+    └─ Gemma4VLBridge (registered for Gemma4ForConditionalGeneration)
+         ├─ provider_bridge()  text mode → Gemma4DenseProvider (pretraining)
+         │                     auto/vl   → Gemma4DenseVLProvider (full VL)
+         └─ mapping_registry()  Dense → _dense_vl_mapping_registry()
+                                 MoE   → _moe_vl_mapping_registry()
+"""
+
+import os
+import re
+from typing import Mapping
+
+import torch
+
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+    ReplicatedMapping,
+)
+from megatron.bridge.models.conversion.transformers_compat import (
+    rope_local_base_freq_from_hf,
+    rope_theta_from_hf,
+)
+from megatron.bridge.models.gemma.gemma4_bridge import (
+    Gemma4Bridge,
+    _Gemma4QKVMapping,
+    _infer_attn_pattern,
+)
+from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
+    Gemma4DenseVLProvider,
+    Gemma4VLModelProvider,
+)
+from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
+from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+
+
+# ---------------------------------------------------------------------------
+# Gemma4VLBridge — VL ConditionalGeneration bridge, inherits Gemma4Bridge
+# ---------------------------------------------------------------------------
+
+
+@MegatronModelBridge.register_bridge(
+    source="Gemma4ForConditionalGeneration",
+    target=Gemma4VLModel,
+    provider=Gemma4VLModelProvider,
+    model_type="gemma4_vl",
+)
+class Gemma4VLBridge(Gemma4Bridge):
+    """Megatron Bridge for Gemma 4 Vision-Language models.
+
+    Inherits all Dense/MoE logic from Gemma4Bridge and adds VL-specific:
+    - vision_tower and embed_vision weight mappings
+    - Dense E4B VL provider construction
+    - ``GEMMA4_CONVERSION_MODE`` dispatch (text / auto / vl)
+    """
+
+    def provider_bridge(
+        self, hf_pretrained: PreTrainedVLM
+    ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
+        hf_config = hf_pretrained.config
+        text_config = hf_config.text_config
+        vision_config = hf_config.vision_config
+
+        if not getattr(text_config, "enable_moe_block", False):
+            self._is_dense = True
+            if self._conversion_mode() == "text":
+                return self._build_dense_provider(text_config)
+            return self._build_dense_vl_provider(hf_config, text_config, vision_config)
+
+        self._is_dense = False
+
+        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
+        provider = Gemma4VLModelProvider(**provider_kwargs)
+
+        provider.window_size = getattr(text_config, "sliding_window", 1024)
+        provider.rotary_base = (
+            rope_local_base_freq_from_hf(text_config),
+            rope_theta_from_hf(text_config),
+        )
+
+        head_dim = getattr(text_config, "head_dim", 256)
+        provider.softmax_scale = 1.0
+        provider.kv_channels = head_dim
+        provider.qk_layernorm = True
+
+        provider.global_head_dim = getattr(text_config, "global_head_dim", 512)
+        provider.num_global_key_value_heads = getattr(text_config, "num_global_key_value_heads", 2)
+        provider.attention_k_eq_v = getattr(text_config, "attention_k_eq_v", False)
+
+        rope_params = getattr(text_config, "rope_parameters", {})
+        if isinstance(rope_params, dict):
+            full_attn_rope = rope_params.get("full_attention", {})
+            provider.global_rotary_percent = full_attn_rope.get("partial_rotary_factor", 0.25)
+
+        layer_types = getattr(text_config, "layer_types", None)
+        if layer_types:
+            provider.interleaved_attn_pattern = _infer_attn_pattern(layer_types)
+
+        if getattr(text_config, "enable_moe_block", False):
+            provider.num_moe_experts = getattr(text_config, "num_experts", None) or 128
+            provider.moe_router_topk = getattr(text_config, "top_k_experts", None) or 8
+            provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", None) or 704
+            provider.moe_shared_expert_intermediate_size = getattr(text_config, "intermediate_size", 2112)
+            provider.moe_shared_expert_overlap = False
+            provider.moe_shared_expert_gate = False
+            provider.moe_layer_freq = 1
+
+        provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
+        # Keep the MoE VL path in fp32 for HF parity. The text-only MoE path
+        # defaults to bf16, but VL conversion also runs HF vision/audio modules
+        # whose precision-sensitive buffers are kept in fp32 by transformers.
+        provider.bf16 = False
+        provider.params_dtype = torch.float32
+        provider.autocast_dtype = torch.float32
+        provider.make_vocab_size_divisible_by = 128
+
+        provider.vision_config = vision_config
+        provider.text_config = text_config
+        provider.audio_config = getattr(hf_config, "audio_config", None)
+        provider.vision_soft_tokens_per_image = getattr(hf_config, "vision_soft_tokens_per_image", 280)
+        provider.bos_token_id = getattr(hf_config, "bos_token_id", 2)
+        provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 258_880)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 258_884)
+        provider.audio_token_id = getattr(hf_config, "audio_token_id", 258_881)
+
+        return provider
+
+    def _conversion_mode(self) -> str:
+        mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")
+        mode = mode.lower()
+        if mode not in {"auto", "text", "vl", "audio"}:
+            raise ValueError(f"Invalid GEMMA4_CONVERSION_MODE={mode!r}; expected auto, text, vl, or audio.")
+        # "audio" is treated as full VL+audio conversion (same as "vl"/"auto")
+        return mode
+
+    def _build_dense_vl_provider(self, hf_config, text_config, vision_config) -> Gemma4DenseVLProvider:
+        """Build a Dense VL provider by copying all Dense provider fields."""
+        from dataclasses import fields
+
+        text_provider = self._build_dense_provider(text_config)
+        provider = Gemma4DenseVLProvider()
+        for f in fields(Gemma4DenseProvider):
+            setattr(provider, f.name, getattr(text_provider, f.name))
+
+        provider.vision_config = vision_config
+        provider.text_config = text_config
+        provider.audio_config = getattr(hf_config, "audio_config", None)
+        provider.vision_soft_tokens_per_image = getattr(hf_config, "vision_soft_tokens_per_image", 280)
+        provider.bos_token_id = getattr(hf_config, "bos_token_id", 2)
+        provider.eos_token_id = getattr(hf_config, "eos_token_id", 1)
+        provider.image_token_id = getattr(hf_config, "image_token_id", 258_880)
+        provider.video_token_id = getattr(hf_config, "video_token_id", 258_884)
+        provider.audio_token_id = getattr(hf_config, "audio_token_id", 258_881)
+        return provider
+
+    def _text_config(self):
+        hf_config = getattr(self, "hf_config", None)
+        return getattr(hf_config, "text_config", None)
+
+    def _is_dense_e4b_config(self) -> bool:
+        if getattr(self, "_is_dense", False):
+            return True
+        text_config = self._text_config()
+        return text_config is not None and not getattr(text_config, "enable_moe_block", True)
+
+    def _hf_layer_prefix(self) -> str:
+        """VLM text weights live under ``model.language_model.*``."""
+        return "model.language_model."
+
+    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
+        """Fuse router preprocessing — VLM prefix-aware version."""
+        proj_weight = hf_state_dict[hf_param]
+        layer_match = re.search(r"layers\.(\d+)\.", hf_param)
+        if layer_match is None:
+            return proj_weight
+        layer_idx = layer_match.group(1)
+        prefix = hf_param.rsplit("layers.", 1)[0]
+        scale_key = f"{prefix}layers.{layer_idx}.router.scale"
+        ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+        if scale_key not in hf_state_dict or ln2_key not in hf_state_dict:
+            return proj_weight
+        router_scale = hf_state_dict[scale_key].float()
+        ln2_weight = hf_state_dict[ln2_key].float()
+        hidden_size = proj_weight.shape[-1]
+        scalar_root_size = hidden_size**-0.5
+        fusion_factor = router_scale * scalar_root_size / ln2_weight
+        fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
+        return fused_weight.to(proj_weight.dtype)
+
+    def _fuse_shared_expert_prenorm(
+        self, hf_param: dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
+        """Fuse pre-norm correction — VLM prefix-aware version."""
+        gate_name = hf_param["gate"]
+        layer_match = re.search(r"layers\.(\d+)\.", gate_name)
+        if layer_match is None:
+            return {role: hf_state_dict[name] for role, name in hf_param.items()}
+        layer_idx = layer_match.group(1)
+        prefix = gate_name.rsplit("layers.", 1)[0]
+        pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
+        pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
+        if pffl_key not in hf_state_dict or pffl2_key not in hf_state_dict:
+            return {role: hf_state_dict[name] for role, name in hf_param.items()}
+        w_pffl = hf_state_dict[pffl_key].float()
+        w_pffl2 = hf_state_dict[pffl2_key].float()
+        correction = w_pffl / w_pffl2
+        hf_weights = {}
+        for role, name in hf_param.items():
+            weight = hf_state_dict[name]
+            fused = weight.float() * correction.unsqueeze(0)
+            hf_weights[role] = fused.to(weight.dtype)
+        return hf_weights
+
+    def maybe_modify_loaded_hf_weight(
+        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
+    ) -> torch.Tensor:
+        """Handle special weight loading for Gemma 4 VLM."""
+        if self._is_dense_e4b_config() and isinstance(hf_param, dict) and "v" in hf_param:
+            k_name = hf_param["k"]
+            v_name = hf_param["v"]
+            q_name = hf_param["q"]
+            if k_name not in hf_state_dict and v_name not in hf_state_dict:
+                q_weight = hf_state_dict[q_name]
+                text_config = self._text_config()
+                num_q_heads = getattr(text_config, "num_attention_heads", 8)
+                num_kv_heads = getattr(text_config, "num_key_value_heads", 2)
+                layer_match = re.search(r"layers\.(\d+)\.", q_name)
+                layer_types = getattr(text_config, "layer_types", None)
+                if layer_match and layer_types:
+                    layer_idx = int(layer_match.group(1))
+                    if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
+                        num_kv_heads = getattr(text_config, "num_global_key_value_heads", num_kv_heads)
+                kv_head_dim = q_weight.shape[0] // num_q_heads
+                kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
+                k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
+                return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
+
+        return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Dispatch to Dense or MoE VLM mappings."""
+        if self._is_dense_e4b_config():
+            if self._conversion_mode() == "text":
+                return self._dense_mapping_registry(megatron_prefix="")
+            return self._dense_vl_mapping_registry()
+        return self._moe_vl_mapping_registry()
+
+    def _dense_vl_mapping_registry(self) -> MegatronMappingRegistry:
+        """Dense E4B VL: language mappings + vision tower + audio tower."""
+        registry = self._dense_mapping_registry(megatron_prefix="language_model.")
+        mapping_list = list(registry.mappings)
+        mapping_list.extend(
+            [
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="model.vision_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_vision.**",
+                    hf_param="model.embed_vision.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="audio_tower.**",
+                    hf_param="model.audio_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_audio.**",
+                    hf_param="model.embed_audio.**",
+                ),
+            ]
+        )
+        return MegatronMappingRegistry(*mapping_list)
+
+    def _moe_vl_mapping_registry(self) -> MegatronMappingRegistry:
+        """MoE VL parameter mappings."""
+        param_mappings = {
+            "language_model.embedding.word_embeddings.weight": "model.language_model.embed_tokens.weight",
+            "language_model.decoder.final_layernorm.weight": "model.language_model.norm.weight",
+            "language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": (
+                "model.language_model.layers.*.input_layernorm.weight"
+            ),
+            "language_model.decoder.layers.*.self_attention.q_layernorm.weight": (
+                "model.language_model.layers.*.self_attn.q_norm.weight"
+            ),
+            "language_model.decoder.layers.*.self_attention.k_layernorm.weight": (
+                "model.language_model.layers.*.self_attn.k_norm.weight"
+            ),
+            "language_model.decoder.layers.*.self_attention.linear_proj.weight": (
+                "model.language_model.layers.*.self_attn.o_proj.weight"
+            ),
+            "language_model.decoder.layers.*.self_attention.linear_proj.post_layernorm.weight": (
+                "model.language_model.layers.*.post_attention_layernorm.weight"
+            ),
+            "language_model.decoder.layers.*.post_ffn_layernorm.weight": (
+                "model.language_model.layers.*.post_feedforward_layernorm.weight"
+            ),
+            "language_model.decoder.layers.*.pre_mlp_layernorm.weight": (
+                "model.language_model.layers.*.pre_feedforward_layernorm_2.weight"
+            ),
+            "language_model.decoder.layers.*.mlp.shared_experts.linear_fc2.weight": (
+                "model.language_model.layers.*.mlp.down_proj.weight"
+            ),
+            "language_model.decoder.layers.*.mlp.post_shared_expert_layernorm.weight": (
+                "model.language_model.layers.*.post_feedforward_layernorm_1.weight"
+            ),
+            "language_model.decoder.layers.*.mlp.router.weight": "model.language_model.layers.*.router.proj.weight",
+        }
+
+        mapping_list = [AutoMapping(megatron_param=m, hf_param=h) for m, h in param_mappings.items()]
+        mapping_list.append(
+            _Gemma4QKVMapping(
+                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                q="model.language_model.layers.*.self_attn.q_proj.weight",
+                k="model.language_model.layers.*.self_attn.k_proj.weight",
+                v="model.language_model.layers.*.self_attn.v_proj.weight",
+            )
+        )
+        mapping_list.extend(
+            [
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.up_proj.weight",
+                ),
+                FusedGatedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                    hf_param="model.language_model.layers.*.experts.gate_up_proj",
+                ),
+                FusedExpertMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                    hf_param="model.language_model.layers.*.experts.down_proj",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.per_expert_scale",
+                    hf_param="model.language_model.layers.*.router.per_expert_scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.router.scale",
+                    hf_param="model.language_model.layers.*.router.scale",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.pffl_weight",
+                    hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.post_moe_layernorm.weight",
+                    hf_param="model.language_model.layers.*.post_feedforward_layernorm_2.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="vision_tower.**",
+                    hf_param="model.vision_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_vision.**",
+                    hf_param="model.embed_vision.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="audio_tower.**",
+                    hf_param="model.audio_tower.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="embed_audio.**",
+                    hf_param="model.embed_audio.**",
+                ),
+                ReplicatedMapping(
+                    megatron_param="language_model.decoder.layers.*.layer_scalar",
+                    hf_param="model.language_model.layers.*.layer_scalar",
+                ),
+            ]
+        )
+        return MegatronMappingRegistry(*mapping_list)

@@ -1,6 +1,6 @@
 # Using Recipes
 
-Megatron Bridge provides production-ready training recipes for several popular models. You can find an overview of supported recipes and 🤗 HuggingFace bridges [here](index.md#supported-models).
+Megatron Bridge provides production-ready training recipes for several popular models. You can find an overview of supported recipes and 🤗 Hugging Face bridges [here](index.md#supported-models).
 This guide will cover the next steps to make use of a training recipe, including how to [override configuration](#overriding-configuration) and how to [launch a job](#launch-methods).
 
 ## Overview
@@ -10,12 +10,29 @@ This guide will cover the next steps to make use of a training recipe, including
 - **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
 
+## Choosing a recipe or a new config
+
+Start from an exported recipe when the model family and workflow already exist in `megatron.bridge.recipes`. Recipe functions such as `llama3_8b_pretrain_config`, `llama32_1b_sft_config`, and `qwen3_8b_peft_config` provide model, optimizer, scheduler, precision, dataset, logger, and checkpoint defaults in one `ConfigContainer`. Override those defaults for your dataset, checkpoint paths, run length, parallelism, or precision before creating a new recipe.
+
+Create a new recipe or config when the base model architecture is not represented by an existing model provider, the checkpoint conversion needs a new bridge, the forward step or dataset provider is model-specific, or you need a reusable configuration that will be shared across jobs. If the Hugging Face model is already supported by `AutoBridge`, you usually only need to start from the closest recipe and override the model provider or `hf_path`.
+
+Training mode follows the recipe and dataset type:
+
+| Workflow | Typical config | Entry point | Checkpoint expectation |
+|----------|----------------|-------------|------------------------|
+| LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
+| Full SFT | `FinetuningDatasetConfig`, `HFDatasetConfig`, or a dataset provider | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
+| PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
+| VLM SFT or PEFT | VLM dataset provider such as Energon, HF, or preloaded JSON provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
+
+For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
+
 ## Overriding configuration
 
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a complete training script, please see [this example](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b.py).
+The following sections detail a few different ways to override the configuration recipe. For a generic recipe launcher, see [`scripts/training/run_recipe.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/run_recipe.py).
 
 
 ### Python
@@ -23,10 +40,11 @@ The following sections detail a few different ways to override the configuration
 If you prefer to manage configuration in Python, you can directly modify attributes of the `ConfigContainer`:
 
 ```python
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
 # Get the base ConfigContainer from the recipe
-cfg: ConfigContainer = pretrain_config()
+cfg: ConfigContainer = llama3_8b_pretrain_config()
 
 # Apply overrides. Note the hierarchical structure
 cfg.train.train_iters = 20
@@ -38,18 +56,13 @@ cfg.logger.log_interval = 1
 You can also replace entire sub-configs of the `ConfigContainer`:
 
 ```python
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.models.llama import Llama3ModelProvider
+from megatron.bridge.recipes.llama import llama32_1b_pretrain_config, llama3_8b_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
-cfg: ConfigContainer = pretrain_config()
+cfg: ConfigContainer = llama3_8b_pretrain_config()
 
-small_llama = Llama3ModelProvider(
-    num_layers=2,
-    hidden_size=768,
-    ffn_hidden_size=2688,
-    num_attention_heads=16,
-)
-cfg.model = small_llama
+small_cfg: ConfigContainer = llama32_1b_pretrain_config()
+cfg.model = small_cfg.model
 ```
 
 ### YAML
@@ -57,13 +70,14 @@ Overriding a configuration recipe with a YAML file can be done using OmegaConf u
 
 ```python
 from omegaconf import OmegaConf
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
 )
 
-cfg: ConfigContainer = pretrain_config()
+cfg: ConfigContainer = llama3_8b_pretrain_config()
 yaml_filepath = "conf/llama3-8b-benchmark-cfg.yaml"
 
 # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
@@ -88,14 +102,15 @@ Megatron Bridge provides some utilities to update the ConfigContainer using Hydr
 ```python
 import sys
 from omegaconf import OmegaConf
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.utils.omegaconf_utils import (
     apply_overrides,
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
 
-cfg: ConfigContainer = pretrain_config()
+cfg: ConfigContainer = llama3_8b_pretrain_config()
 cli_overrides = sys.argv[1:]
 
 # Convert the initial Python dataclass to an OmegaConf DictConfig for merging
@@ -114,8 +129,29 @@ After the above snippet, `cfg` will be updated with all CLI-provided overrides.
 A script containing the above code could be called like so:
 
 ```sh
-torchrun <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
+uv run python -m torch.distributed.run <torchrun arguments> pretrain_cli_overrides.py model.tensor_model_parallel_size=4 train.train_iters=100000 ...
 ```
+
+Common dataset overrides:
+
+```python
+from megatron.bridge.recipes.llama import llama32_1b_sft_config, llama3_8b_pretrain_config
+
+pretrain_cfg = llama3_8b_pretrain_config()
+finetune_cfg = llama32_1b_sft_config()
+
+# LLM pretraining data on a pretrain recipe:
+# prefix path without .bin/.idx suffixes
+pretrain_cfg.dataset.data_path = "/data/dclm/preprocessed_text_document"
+pretrain_cfg.dataset.seq_length = 8192
+
+# SFT/PEFT local JSONL data on a finetune recipe:
+# directory containing training.jsonl, validation.jsonl, and optionally test.jsonl
+finetune_cfg.dataset.dataset_root = "/data/sft_jsonl"
+finetune_cfg.dataset.seq_length = 4096
+```
+
+For more detail on accepted dataset layouts, see [Data Preparation](training/data-preparation.md).
 
 ## Launch methods
 
@@ -127,7 +163,7 @@ Megatron Bridge training scripts can be launched with the `torchrun` command tha
 Simply specify the number of GPUs to use with `--nproc-per-node` and the number of nodes with `--nnodes`. For example, on a single node:
 
 ```sh
-torchrun --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
+uv run python -m torch.distributed.run --nnodes 1 --nproc-per-node 8 /path/to/train/script.py <args to pretrain script>
 ```
 
 For multi-node training, it is recommended to use a cluster orchestration system like SLURM.
@@ -140,7 +176,7 @@ For example, with Slurm, wrap the `torchrun` command inside of `srun`:
 srun --nodes 2 --gpus-per-node 8 \
     --container-image <image tag> --container-mounts <mounts> \
     bash -c "
-        torchrun --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
+        uv run python -m torch.distributed.run --nnodes $SLURM_NNODES --nproc-per-node $SLURM_GPUS_PER_NODE /path/to/train/script.py <args to pretrain script>
     "
 ```
 
@@ -184,7 +220,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, please see [this script](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/llama/pretrain_llama3_8b_nemo_run_script.py).
+For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/launch_with_nemo_run.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/launch_with_nemo_run.py).
 
 #### Plugins
 

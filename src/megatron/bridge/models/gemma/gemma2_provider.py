@@ -19,7 +19,7 @@ from typing import Callable, Optional, Union
 import torch
 from megatron.core import parallel_state, tensor_parallel
 from megatron.core.activations import fast_gelu
-from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear, TENorm, TERowParallelLinear
+from megatron.core.extensions.transformer_engine import TELayerNormColumnParallelLinear
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.fusions.fused_softmax import FusedScaleMaskSoftmax
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
@@ -45,6 +45,7 @@ from megatron.core.transformer.utils import attention_mask_func
 from megatron.core.utils import divide
 from torch import Tensor
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin, extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -252,31 +253,6 @@ class Gemma2DotProductAttention(MegatronModule):
         return context
 
 
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Modified From TERowParallelLinear with an additional Post-LN."""
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with additional Post LN on output"""
-        output, bias = super().forward(x)
-        return self.post_layernorm(output), bias
-
-
 class Gemma2OutputLayer(ColumnParallelLinear):
     """Extends from ColumnParallelLinear with logit soft capping."""
 
@@ -394,49 +370,3 @@ class Gemma2ModelProvider(GPTModelProvider):
             extend_instance(model.output_layer, Gemma2OutputLayer)
 
         return model
-
-
-@dataclass
-class Gemma2ModelProvider2B(Gemma2ModelProvider):
-    """Configuration for a 2B parameter Gemma2 model.
-    Specific configuration for the 2B Gemma2 model with 26 layers,
-    2304 hidden size, and 8 attention heads.
-    """
-
-    num_layers: int = 26
-    hidden_size: int = 2304
-    num_attention_heads: int = 8
-    num_query_groups: int = 4
-    ffn_hidden_size: int = 9216
-    query_pre_attn_scalar: int = 256
-
-
-@dataclass
-class Gemma2ModelProvider9B(Gemma2ModelProvider):
-    """Configuration for a 9B parameter Gemma2 model.
-    Specific configuration for the 9B Gemma2 model with 42 layers,
-    3584 hidden size, and 16 attention heads.
-    """
-
-    num_layers: int = 42
-    hidden_size: int = 3584
-    num_attention_heads: int = 16
-    num_query_groups: int = 8
-    ffn_hidden_size: int = 14336
-    query_pre_attn_scalar: int = 256
-
-
-@dataclass
-class Gemma2ModelProvider27B(Gemma2ModelProvider):
-    """Configuration for a 27B parameter Gemma2 model.
-    Specific configuration for the 27B Gemma2 model with 46 layers,
-    4608 hidden size, and 32 attention heads.
-    """
-
-    num_layers: int = 46
-    hidden_size: int = 4608
-    num_attention_heads: int = 32
-    num_query_groups: int = 16
-    kv_channels: int = 128
-    ffn_hidden_size: int = 36864
-    query_pre_attn_scalar: int = 144

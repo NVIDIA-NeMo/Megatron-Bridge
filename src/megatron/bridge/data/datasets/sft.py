@@ -36,6 +36,7 @@ from megatron.bridge.data.datasets.utils import (
     _tokenize,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+from megatron.bridge.utils.safe_pickle import safe_load_npy
 
 
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
@@ -61,6 +62,24 @@ __idx_version__ = "0.2"  # index file version
 __idx_suffix__ = "idx"  # index file suffix
 
 
+def _safe_load_packed_npy(file_path: str | Path) -> np.ndarray:
+    """Load a packed ``.npy`` dataset without enabling unrestricted pickle.
+
+    Reads the raw file bytes (with MSC support) and delegates to
+    :func:`~megatron.bridge.utils.safe_pickle.safe_load_npy` which uses a
+    restricted unpickler for object arrays.
+    """
+    if MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        with msc.open(str(file_path), "rb") as f:
+            data = f.read()
+    else:
+        with open(file_path, "rb") as f:
+            data = f.read()
+
+    return safe_load_npy(data)
+
+
 def get_dataset_root(name: str) -> Path:
     """
     Returns the root directory for NeMo datasets, creating it if it doesn't exist.
@@ -72,13 +91,17 @@ def get_dataset_root(name: str) -> Path:
         Path: The path to the dataset's root directory.
     """
     output = Path(NEMO_DATASETS_CACHE) / name
-    output.mkdir(parents=True, exist_ok=True)
+    try:
+        # Shared filesystems can expose stale parent-dir state despite exist_ok=True.
+        output.mkdir(parents=True, exist_ok=True)
+    except (FileExistsError, FileNotFoundError):
+        pass
 
     return output
 
 
 def create_sft_dataset(
-    path: Path,
+    path: str | Path,
     tokenizer: "MegatronTokenizer",
     seq_length: int = 2048,
     add_bos: bool = False,
@@ -96,7 +119,7 @@ def create_sft_dataset(
     hf_dataset: bool = False,
     global_sample_mapping: bool = False,
     get_attention_mask_from_fusion: bool = True,
-    pack_metadata_file_path: Path = None,
+    pack_metadata_file_path: Path | str | None = None,
     pad_cu_seqlens: bool = False,
     pad_seq_to_mult: int = 1,
     chat: bool = False,
@@ -111,8 +134,19 @@ def create_sft_dataset(
     input parameters. It can create standard SFT datasets, chat-specific datasets,
     or packed sequence datasets.
 
+    Dataset selection logic:
+    1. If path ends with .npy: GPTSFTPackedDataset (legacy packed format)
+    2. If path is a packed parquet spec (file/dir/glob ending in .parquet/.pq,
+       or a directory): GPTSFTPackedParquetDataset
+       - Note: Selection is based on path pattern, not pack_metadata_file_path
+       - Schema validation (REQUIRED_COLUMNS) will fast-fail for non-packed files
+    3. If chat=True: GPTSFTChatDataset
+    4. Otherwise: GPTSFTDataset
+
     Args:
-        path (Path): Path to the dataset file. For packed datasets, this should be a .npy file.
+        path (str | Path): Path to the dataset file or packed parquet spec (file/dir/glob).
+            For packed datasets, this can be a .npy file, a .parquet file, a directory
+            containing parquet files, or a glob pattern.
         tokenizer (MegatronTokenizer): The tokenizer to use for tokenizing the data.
         seq_length (int, optional): Maximum sequence length for each example. Defaults to 2048.
         add_bos (bool, optional): Whether to add a beginning-of-sentence token. Defaults to False.
@@ -135,8 +169,8 @@ def create_sft_dataset(
             or shuffle within each epoch. Defaults to False.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
-        pack_metadata_file_path (Path, optional): Path to the metadata file for packed datasets.
-            Required if `pad_cu_seqlens` is True. Defaults to None.
+        pack_metadata_file_path (Path | str | None, optional): Path to the metadata file for packed datasets.
+            When provided, enables packed mode. Required if `pad_cu_seqlens` is True. Defaults to None.
         pad_cu_seqlens (bool, optional): Whether to pad `cu_seqlens` for packed datasets,
             required for cudagraphs. Defaults to False.
         chat (bool, optional): If True, creates a `GPTSFTChatDataset`. Defaults to False.
@@ -150,9 +184,11 @@ def create_sft_dataset(
     Returns:
         GPTSFTDataset | GPTSFTChatDataset | GPTSFTPackedDataset: An instance of the appropriate SFT dataset class.
     """
+    # Normalize path to string for consistent handling
+    path_str = str(path)
 
     gpt_sft_dataset_kwargs = {
-        "file_path": str(path),
+        "file_path": path_str,
         "tokenizer": tokenizer,
         "max_seq_length": seq_length,
         "memmap_workers": memmap_workers,
@@ -172,11 +208,32 @@ def create_sft_dataset(
         "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
     }
 
-    if path.suffix == ".npy":
+    # Check for .npy packed dataset (legacy format)
+    if path_str.lower().endswith(".npy"):
         return GPTSFTPackedDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
             pad_seq_to_mult=pad_seq_to_mult,
+            **gpt_sft_dataset_kwargs,
+            **kwargs,
+        )
+
+    # Lazy import to avoid circular dependency (packed_parquet imports from sft)
+    from megatron.bridge.data.datasets.packed_parquet import (
+        GPTSFTPackedParquetDataset,
+        is_packed_parquet_spec,
+    )
+
+    # Select GPTSFTPackedParquetDataset for any packed parquet spec (file/dir/glob)
+    # This is determined purely by path pattern, NOT by pack_metadata_file_path.
+    # Rationale:
+    # - Directory/glob specs clearly indicate packed parquet shards
+    # - Schema validation (REQUIRED_COLUMNS) will fast-fail if files aren't packed format
+    # - This allows externally-prepared packed data to work without requiring MB metadata
+    if is_packed_parquet_spec(path_str):
+        return GPTSFTPackedParquetDataset(
+            pack_metadata_file_path=pack_metadata_file_path,
+            pad_cu_seqlens=pad_cu_seqlens,
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
@@ -795,11 +852,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
 
     def _load_dataset(self):
         try:
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                self.indexed_dataset = msc.numpy.load(self.file_path, allow_pickle=True)
-            else:
-                self.indexed_dataset = np.load(self.file_path, allow_pickle=True)
+            self.indexed_dataset = _safe_load_packed_npy(self.file_path)
         except Exception as e:
             logger.error(
                 f"Failed to load packed dataset. The dataset should be a `.npy` file. "

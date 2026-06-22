@@ -25,14 +25,11 @@ if [ -f "/opt/Megatron-Bridge/.mcore_commit_sha" ]; then
 fi
 echo ""
 
-# Skip timeout on Azure runners because the machines are slower
-TIMEOUT_ARG="--timeout=2"
-if [[ "${GHA_RUNNER:-}" == *"azure"* ]]; then
-    TIMEOUT_ARG=""
-fi
+# The 'diffusion' codecs (imageio/imageio-ffmpeg/av) are excluded from the shipped image;
+# install them so the WAN video-caching unit test runs instead of skips.
+bash /opt/Megatron-Bridge/scripts/install_diffusion_deps.sh
 
 CUDA_VISIBLE_DEVICES="0,1" uv run coverage run -a --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ -m pytest \
-    $TIMEOUT_ARG \
     -o log_cli=true \
     -o log_cli_level=INFO \
     --disable-warnings \

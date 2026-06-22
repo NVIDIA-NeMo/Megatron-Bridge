@@ -27,6 +27,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -258,9 +259,31 @@ def forward_step(
         position_ids,
         this_pg_collection,
         use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1,
+        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
+
+    # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
+    # active, ``packed_seq_params.cu_seqlens_q`` describes the real sub-seq
+    # boundaries used by the THD attention kernel; the helper uses it to
+    # compute the THD-correct Σᵢ sᵢ² instead of pack-length² (BSHD). When not
+    # packed, the helper falls back to BSHD. train.py resets these before each
+    # step and reads accumulated values afterwards.
+    # Vision-patch count is model-specific (Qwen-VL reports grid_thw = t*h*w per
+    # image/video); compute it here and pass a scalar to the model-agnostic helper.
+    num_vision_patches = None
+    if isinstance(multi_modal_inputs, dict):
+        for grid in (multi_modal_inputs.get("image_grid_thw"), multi_modal_inputs.get("video_grid_thw")):
+            if grid is not None and grid.numel() > 0:
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
+        num_vision_patches=num_vision_patches,
+    )
+
     forward_args = {
         "input_ids": tokens,
         "labels": labels,
@@ -270,7 +293,11 @@ def forward_step(
     }
 
     original_tokens = tokens.clone()
-    forward_args = get_batch_on_this_cp_rank(forward_args, cp_group=this_pg_collection.cp)
+    forward_args = get_batch_on_this_cp_rank(
+        forward_args,
+        is_hybrid_cp=False,
+        cp_group=this_pg_collection.cp,
+    )
     forward_args["packed_seq_params"] = None
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward

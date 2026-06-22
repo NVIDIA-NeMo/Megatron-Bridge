@@ -39,6 +39,7 @@ from megatron.core.transformer.enums import AttnBackend, AttnMaskType
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from torch import Tensor
 
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.import_utils import safe_import_from
 
@@ -47,7 +48,6 @@ TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEN
 TELayerNormColumnParallelLinear, _ = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TELayerNormColumnParallelLinear"
 )
-TERowParallelLinear, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TERowParallelLinear")
 TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
 
 
@@ -68,6 +68,7 @@ class Gemma3ModelProvider(GPTModelProvider):
     layernorm_epsilon: float = 1e-6
 
     # attention
+    qk_layernorm: bool = True
     window_size: tuple = 512  # local
     interleaved_attn_pattern: tuple = (5, 1)  # (local, global)
     attention_dropout: float = 0.0
@@ -139,73 +140,6 @@ class Gemma3ModelProvider(GPTModelProvider):
         return model
 
 
-@dataclass
-class Gemma3ModelProvider1B(Gemma3ModelProvider):
-    """Gemma3 1B config"""
-
-    is_vision_language: bool = False
-    num_layers: int = 26
-    hidden_size: int = 1152
-    num_attention_heads: int = 4
-    num_query_groups: int = 1
-    kv_channels: int = 256
-    ffn_hidden_size: int = 6912
-    window_size: int = 512
-    rope_scaling_factor: float = 1.0  # no rope scaling
-    seq_length: int = 32768
-    bf16: bool = True
-    vocab_size: int = 262_144
-
-
-@dataclass
-class Gemma3ModelProvider4B(Gemma3ModelProvider):
-    """Gemma3 4B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 34
-    hidden_size: int = 2560
-    num_attention_heads: int = 8
-    num_query_groups: int = 4
-    kv_channels: int = 256
-    ffn_hidden_size: int = 10240
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider12B(Gemma3ModelProvider):
-    """Gemma3 12B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 48
-    hidden_size: int = 3840
-    num_attention_heads: int = 16
-    num_query_groups: int = 8
-    kv_channels: int = 256
-    ffn_hidden_size: int = 15360
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
-@dataclass
-class Gemma3ModelProvider27B(Gemma3ModelProvider):
-    """Gemma3 27B config"""
-
-    is_vision_language: bool = True
-    num_layers: int = 62
-    hidden_size: int = 5376
-    num_attention_heads: int = 32
-    num_query_groups: int = 16
-    kv_channels: int = 128
-    softmax_scale: int = 1.0 / math.sqrt(168)  # only for 27B, (5376 // 32)^(-0.5)
-    ffn_hidden_size: int = 21504
-    window_size: int = 1024
-    rope_scaling_factor: float = 8.0
-    vocab_size: int = 262_208
-
-
 def gemma3_layer_spec(config) -> ModuleSpec:
     """Gemma3 custom layer spec."""
     return ModuleSpec(
@@ -217,8 +151,8 @@ def gemma3_layer_spec(config) -> ModuleSpec:
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TELayerNormColumnParallelLinear,
                     core_attention=Gemma3TEDotProductAttention,  # mixed gloabl/local attn
-                    q_layernorm=TENorm,
-                    k_layernorm=TENorm,
+                    q_layernorm=TENorm if config.qk_layernorm else None,
+                    k_layernorm=TENorm if config.qk_layernorm else None,
                     linear_proj=TERowParallelLinearLayerNorm,  # post attn RMSNorm
                 ),
             ),
@@ -403,28 +337,3 @@ def _is_local_attn_layer(
 ) -> bool:
     pattern_size = sum(layer_pattern)
     return layer_number % pattern_size != 0
-
-
-class TERowParallelLinearLayerNorm(TERowParallelLinear):
-    """Modified From TERowParallelLinear with an additional Post-LN."""
-
-    def __init__(
-        self,
-        input_size: int,
-        output_size: int,
-        *,
-        config: TransformerConfig,
-        **kwargs,
-    ):
-        super().__init__(
-            input_size,
-            output_size,
-            config=config,
-            **kwargs,
-        )
-        self.post_layernorm = TENorm(config, output_size)
-
-    def forward(self, x):
-        """Forward with additional Post LN on output"""
-        output, bias = super().forward(x)
-        return self.post_layernorm(output), bias

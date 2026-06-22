@@ -14,8 +14,9 @@
 
 import abc
 import os
+import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -30,14 +31,9 @@ except ImportError:
 
         Unpack = MagicMock()
 
-
-from typing import Callable
-
 import torch
 from megatron.core import parallel_state, tensor_parallel
-from megatron.core.distributed import (
-    DistributedDataParallelConfig,
-)
+from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.core.enums import ModelType
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
@@ -103,6 +99,54 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         """
         pass
 
+    @abc.abstractmethod
+    def finalize(self) -> None:
+        """Finalize provider state after configuration overrides are applied."""
+        pass
+
+    def apply_overrides_and_finalize(
+        self,
+        dtype: torch.dtype | None = None,
+        overrides: Mapping[str, object] | None = None,
+    ) -> Self:
+        """Apply dtype and attribute overrides, then finalize this provider.
+
+        Args:
+            dtype: Optional parameter dtype. Also sets ``fp16`` and ``bf16``.
+            overrides: Provider attributes to set before finalization.
+
+        Returns:
+            This provider.
+        """
+        if dtype is not None:
+            self.params_dtype = dtype
+            self.fp16 = dtype == torch.float16
+            self.bf16 = dtype == torch.bfloat16
+
+        for name, value in (overrides or {}).items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
+            setattr(self, name, value)
+
+        # DeepSeek-V4 hash-routed MoE requires an explicit pipeline_model_parallel_layout
+        # when PP > 1 (the hash layers must co-locate with the embedding on the first
+        # stage). Recipes set this explicitly; auto-set it here so provider paths that
+        # bypass recipes (e.g. mbridge/verl) also work for PP > 1 without the caller
+        # supplying a layout. Only applies to DeepSeek-V4 and never overrides a user layout.
+        if (
+            getattr(self, "experimental_attention_variant", None) == "dsv4_hybrid"
+            and (getattr(self, "pipeline_model_parallel_size", 1) or 1) > 1
+            and getattr(self, "pipeline_model_parallel_layout", None) is None
+        ):
+            from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+                set_deepseek_v4_pipeline_model_parallel_layout,
+            )
+
+            set_deepseek_v4_pipeline_model_parallel_layout(self)
+
+        self.finalize()
+        return self
+
     def provide_distributed_model(
         self,
         ddp_config: DistributedDataParallelConfig | None = None,
@@ -158,6 +202,12 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         Returns:
             A list containing the wrapped model instance.
         """
+        warnings.warn(
+            "ModelProviderMixin-based model configuration is deprecated. Migrate to ModelConfig + ModelBuilder.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if wrap_with_ddp and not ddp_config:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -469,6 +519,7 @@ class ModelParallelKwargs(TypedDict, total=False):
     sequence_parallel: bool
     virtual_pipeline_model_parallel_size: int | None
     hierarchical_context_parallel_sizes: list[int] | None
+    pipeline_model_parallel_layout: list[list[str]] | None
     pipeline_dtype: torch.dtype
 
 
@@ -644,6 +695,7 @@ def _create_model(
                 vp_stage=i,
             )
             this_model.model_type = model_type
+            this_model.vp_stage = i
             model.append(this_model)
     else:
         pre_process = is_pp_first_stage(pp_group)

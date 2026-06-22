@@ -31,6 +31,7 @@ def _make_cfg(
     num_single_layers=38,
     num_attention_heads=24,
     attention_head_dim=128,
+    joint_attention_dim=4096,
     pooled_projection_dim=768,
     guidance_embeds=False,
     axes_dims_rope=(16, 56, 56),
@@ -42,6 +43,7 @@ def _make_cfg(
     cfg.num_single_layers = num_single_layers
     cfg.num_attention_heads = num_attention_heads
     cfg.attention_head_dim = attention_head_dim
+    cfg.joint_attention_dim = joint_attention_dim
     cfg.pooled_projection_dim = pooled_projection_dim
     cfg.guidance_embeds = guidance_embeds
     cfg.axes_dims_rope = axes_dims_rope
@@ -74,7 +76,11 @@ def test_provider_bridge_constructs_provider_with_expected_fields():
     assert provider.patch_size == cfg.patch_size
     assert provider.vec_in_dim == cfg.pooled_projection_dim
     assert provider.guidance_embed == cfg.guidance_embeds
-    assert provider.axes_dims_rope == cfg.axes_dims_rope
+    assert provider.axes_dims_rope == list(cfg.axes_dims_rope)
+
+    assert provider.hidden_size == cfg.num_attention_heads * cfg.attention_head_dim
+    assert provider.context_dim == cfg.joint_attention_dim
+    assert provider.ffn_hidden_size == int(getattr(cfg, "mlp_ratio", 4) * provider.hidden_size)
 
     # bf16 and params_dtype set by bridge
     assert provider.bf16 is False

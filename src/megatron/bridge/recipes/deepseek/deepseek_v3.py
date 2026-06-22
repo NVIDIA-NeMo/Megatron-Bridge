@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Union
-
 import torch
 
 from megatron.bridge import AutoBridge
@@ -26,10 +24,43 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
+def _build_standalone_mtp_layout(num_decoder_layers: int, total_stages: int, mtp_layers: int) -> list[list[str]]:
+    if mtp_layers <= 0:
+        raise ValueError("standalone MTP layout requires mtp_num_layers > 0")
+    if total_stages < 3:
+        raise ValueError("standalone MTP layout requires at least three PP/VPP stages")
+
+    decoder_stage_count = total_stages - 2
+    decoder_layers_per_stage, extra_decoder_layers = divmod(num_decoder_layers, decoder_stage_count)
+
+    layout = []
+    for stage_idx in range(decoder_stage_count):
+        num_layers = decoder_layers_per_stage + (1 if stage_idx < extra_decoder_layers else 0)
+        stage = ["decoder"] * num_layers
+        if stage_idx == 0:
+            stage = ["embedding"] + stage
+        layout.append(stage)
+
+    layout.append(["mtp"] * mtp_layers)
+    layout.append(["loss"])
+    return layout
+
+
 def set_deepseek_v3_pipeline_model_parallel_layout(
-    model_cfg: GPTModelProvider, layout: Optional[Union[str, List[List[str]]]] = None
+    model_cfg: GPTModelProvider, layout: str | list[list[str]] | None = None, *, mtp_standalone: bool = False
 ) -> None:
-    """Set the DeepSeek-V3 pipeline model parallel layout."""
+    """Set the DeepSeek-V3 pipeline model parallel layout.
+
+    Args:
+        model_cfg: DeepSeek-V3 model configuration to update.
+        layout: Explicit pipeline layout. When provided, this overrides the predefined layouts.
+        mtp_standalone: Place MTP layers in a standalone penultimate PP/VPP stage and loss in the
+            final stage. Defaults to colocating MTP with loss, matching existing recipes.
+    """
+    if layout is not None:
+        model_cfg.pipeline_model_parallel_layout = layout
+        return
+
     mtp_layers = getattr(model_cfg, "mtp_num_layers", 1) or 0
     last_layer = ["mtp"] * mtp_layers + ["loss"]
     pp_size = model_cfg.pipeline_model_parallel_size or 1
@@ -43,8 +74,15 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         (8, 2): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
         (4, 4): [["embedding"] + ["decoder"] * 4] + [["decoder"] * 4] * 14 + [["decoder"] + last_layer],
     }
-    if layout is not None:
-        model_cfg.pipeline_model_parallel_layout = layout
+    if mtp_standalone:
+        num_decoder_layers = getattr(model_cfg, "num_layers", None)
+        if not isinstance(num_decoder_layers, int) or isinstance(num_decoder_layers, bool) or num_decoder_layers <= 0:
+            raise ValueError("standalone MTP layout requires model config num_layers to be a positive integer")
+        model_cfg.pipeline_model_parallel_layout = _build_standalone_mtp_layout(
+            num_decoder_layers=num_decoder_layers,
+            total_stages=pp_size * vp_size,
+            mtp_layers=mtp_layers,
+        )
     elif (pp_size, vp_size) in layout_map:
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
@@ -134,13 +172,19 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "te"  # Default from DeepSeekModelProvider
 
-    # Memory saving (recompute & offloading) - selective recompute for V3
-    cfg.model.recompute_granularity = "selective"
+    # Memory saving (recompute & offloading) — no recompute by default.
+    # Setting granularity="selective" with modules=None would cause MCore's
+    # post-init default-fill (transformer_config.py) to silently fill
+    # recompute_modules with ["core_attn"], giving a surprise recompute
+    # across all layers. Workloads that want recompute install it via
+    # their perf-config (scripts/performance/configs/...), or users can
+    # enable it via argparse (--recompute_modules ...) or Hydra.
+    cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    cfg.model.offload_modules = []
 
     # Mixed precision - DeepSeek V3 uses custom MixedPrecisionConfig (NOT "bf16_mixed" string)
     cfg.mixed_precision = MixedPrecisionConfig(
@@ -290,7 +334,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg.model.recompute_num_layers = 1
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
-    cfg.model.offload_modules = None
+    cfg.model.offload_modules = []
 
     # Mixed precision - DeepSeek V3 uses custom MixedPrecisionConfig
     cfg.mixed_precision = MixedPrecisionConfig(

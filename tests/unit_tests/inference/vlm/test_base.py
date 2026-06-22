@@ -29,10 +29,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_basic(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -75,7 +77,11 @@ class TestSetupModelAndTokenizer:
         # Assertions
         mock_print_rank_0.assert_called()
         mock_get_hf_model_id.assert_called_once_with("/path/to/checkpoint")
-        mock_auto_bridge.from_hf_pretrained.assert_called_once_with("Qwen/Qwen2.5-VL-3B")
+        mock_auto_bridge.from_hf_pretrained.assert_called_once()
+        fb_args, fb_kwargs = mock_auto_bridge.from_hf_pretrained.call_args
+        assert fb_args[0] == "Qwen/Qwen2.5-VL-3B"
+        if "trust_remote_code" in fb_kwargs:
+            assert fb_kwargs["trust_remote_code"] is False
         mock_bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
 
         # Verify model provider configuration
@@ -107,14 +113,22 @@ class TestSetupModelAndTokenizer:
         assert result_model == mock_wrapped_model
         assert result_processor == mock_processor
 
+    @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint", return_value=None)
+    @patch("megatron.bridge.inference.vlm.base.print_rank_0")
+    def test_setup_model_raises_without_hf_id(self, mock_print_rank_0, mock_get_hf_model_id):
+        with pytest.raises(ValueError, match="Could not determine HuggingFace model id"):
+            setup_model_and_tokenizer(megatron_model_path="/path/to/checkpoint")
+
     @patch("megatron.bridge.inference.vlm.base.setup_inference_wrapper")
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_with_existing_pad_token(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -149,10 +163,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_grad_scale_func_set_to_none(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,
@@ -189,10 +205,12 @@ class TestSetupModelAndTokenizer:
     @patch("megatron.bridge.inference.vlm.base.AutoProcessor")
     @patch("megatron.bridge.inference.vlm.base.AutoBridge")
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint")
+    @patch("megatron.bridge.inference.vlm.base.is_safe_repo", return_value=False)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
     def test_setup_model_and_tokenizer_default_params(
         self,
         mock_print_rank_0,
+        mock_is_safe_repo,
         mock_get_hf_model_id,
         mock_auto_bridge,
         mock_auto_processor,

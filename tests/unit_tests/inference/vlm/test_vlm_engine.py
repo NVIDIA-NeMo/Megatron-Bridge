@@ -16,11 +16,13 @@ from unittest.mock import MagicMock
 
 from megatron.core.inference.contexts import StaticInferenceContext
 
+from megatron.bridge.inference.vlm._mcore_compat import InferenceMode
 from megatron.bridge.inference.vlm.vlm_engine import VLMEngine
 
 
 class TestVLMEngine:
     def test_generate(self):
+        InferenceMode.unset_active()
         mock_controller = MagicMock()
         mock_controller.tokenize_prompt.return_value = ([1, 2, 3], "image_dict")
         # MCoreEngine/StaticInferenceEngine expects inference_context to be a StaticInferenceContext
@@ -30,14 +32,18 @@ class TestVLMEngine:
         )
         mock_controller.inference_wrapped_model.inference_wrapper_config = MagicMock(inference_max_requests=128)
 
-        engine = VLMEngine(mock_controller, max_batch_size=4)
-        engine.scheduler = MagicMock()
-        engine.scheduler.add_request.return_value = "req_id"
-        engine.scheduler.completed_request_pool = {"req_id": "result"}
-        engine.run_engine = MagicMock()
+        try:
+            engine = VLMEngine(mock_controller, max_batch_size=4)
+            engine.scheduler = MagicMock()
+            engine.scheduler.add_request.return_value = "req_id"
+            engine.scheduler.completed_request_pool = {"req_id": "result"}
+            engine.run_engine = MagicMock()
 
-        results = engine.generate(["prompt"], ["image"])
+            results = engine.generate(["prompt"], ["image"])
 
-        assert results == ["result"]
-        engine.scheduler.add_request.assert_called()
-        engine.run_engine.assert_called()
+            assert results == ["result"]
+            engine.scheduler.add_request.assert_called()
+            engine.run_engine.assert_called()
+            assert not InferenceMode.is_active()
+        finally:
+            InferenceMode.unset_active()

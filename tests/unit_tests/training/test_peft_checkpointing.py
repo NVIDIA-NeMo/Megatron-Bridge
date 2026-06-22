@@ -198,6 +198,25 @@ class TestApplyPeftAdapterFilterToStateDict:
         for key in expected_adapter_keys:
             assert torch.equal(filtered_dict["model"][key], sample_complete_state_dict["model"][key])
 
+    def test_apply_peft_adapter_filter_drops_adapter_extra_state(self, mock_peft_config):
+        """Adapter-only checkpoint filtering should not keep Transformer Engine extra state."""
+        state_dict = {
+            "checkpoint_version": 3.0,
+            "model": {
+                "layer1.adapter.weight": torch.randn(8, 512),
+                "layer1.adapter._extra_state": "te-metadata",
+                "layer2.adapters.lora_A": torch.randn(8, 512),
+                "layer2.adapters.lora_A._extra_state": "te-metadata",
+            },
+        }
+
+        filtered_dict = apply_peft_adapter_filter_to_state_dict(state_dict, mock_peft_config)
+
+        assert set(filtered_dict["model"].keys()) == {
+            "layer1.adapter.weight",
+            "layer2.adapters.lora_A",
+        }
+
     def test_apply_peft_adapter_filter_multi_model(self, mock_peft_config, sample_multi_model_state_dict):
         """Test filtering a complete state dict with multiple model chunks."""
         filtered_dict = apply_peft_adapter_filter_to_state_dict(sample_multi_model_state_dict, mock_peft_config)
@@ -473,6 +492,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}
@@ -596,6 +617,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}
@@ -734,6 +757,8 @@ class TestPEFTCheckpointLoading:
         mock_state.train_state.consumed_valid_samples = 0
         mock_state.train_state.step = 1000  # Set to integer for comparisons
         mock_state.train_state.floating_point_operations_so_far = 50000
+        mock_cfg.ddp = Mock()
+        mock_cfg.ddp.use_megatron_fsdp = False
 
         # Mock dist_checkpointing
         mock_dist_ckpt.load_content_metadata.return_value = {}

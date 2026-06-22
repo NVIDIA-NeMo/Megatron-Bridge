@@ -186,8 +186,9 @@ class Qwen3VLGPTModel(GPTModel):
 
             def _sp_scatter_embedding(input_ids, position_ids):
                 out = _original_embedding(input_ids=input_ids, position_ids=position_ids)
-                return tensor_parallel.scatter_to_sequence_parallel_region(out)
+                return tensor_parallel.scatter_to_sequence_parallel_region(out, group=self.pg_collection.tp)
 
+            _sp_scatter_embedding.word_embeddings = _original_embedding.word_embeddings
             self.__dict__["embedding"] = _sp_scatter_embedding
             _shadow_embedding = True
 

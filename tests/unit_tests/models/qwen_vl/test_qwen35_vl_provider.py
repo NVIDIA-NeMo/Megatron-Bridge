@@ -12,14 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 import pytest
+from megatron.core.transformer.attention import SelfAttention
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
     _TRANSFORMERS_HAS_QWEN3_5_MOE,
+    Qwen3VLSelfAttention,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
+    _patch_standard_attention_specs,
 )
 
 
@@ -146,16 +153,84 @@ class TestQwen35VLModelProvider:
         assert hasattr(provider, "provide") and callable(provider.provide)
         assert hasattr(provider, "provide_language_model") and callable(provider.provide_language_model)
 
-    def test_tp_validation(self):
+    def test_mimo_spec_builders_exist(self):
+        """U2: provider exposes build_language_spec / build_mtp_spec / build_vision_module
+        for the MegatronMIMO Qwen3.5-VL builder."""
         provider = Qwen35VLModelProvider(
             num_layers=64,
             hidden_size=5120,
             num_attention_heads=24,
-            num_query_groups=2,
-            tensor_model_parallel_size=4,
         )
-        with pytest.raises(ValueError, match="TP size"):
-            provider.finalize()
+        assert hasattr(provider, "build_language_spec") and callable(provider.build_language_spec)
+        assert hasattr(provider, "build_mtp_spec") and callable(provider.build_mtp_spec)
+        assert hasattr(provider, "build_vision_encoder_spec") and callable(provider.build_vision_encoder_spec)
+        assert hasattr(provider, "build_language_model_spec") and callable(provider.build_language_model_spec)
+        assert provider.modality_keys == {"images": "qwen_visual"}
+        assert provider.special_token_ids == {"images": provider.image_token_id}
+
+    def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
+        """MIMO conversion v1 disables MTP at config time. Verify the helper
+        returns None so the MIMO model is built without an MTP submodule."""
+        provider = Qwen35VLModelProvider(
+            num_layers=64,
+            hidden_size=5120,
+            num_attention_heads=24,
+        )
+        assert provider.mtp_num_layers is None
+        assert provider.build_mtp_spec(vp_stage=None) is None
+
+    def test_build_vision_encoder_spec_shape(self):
+        """The vision encoder spec must slot into MIMO's modality_submodules_spec.
+
+        MIMO's ``ModalitySubmodules.from_spec`` calls ``build_module(encoder_spec)``
+        on each entry in ``submodules['encoders']``, and the MegatronMIMOProvider
+        injects ``pg_collection`` into ``encoder_spec.params`` per rank at build
+        time. The spec returned here must therefore be a ``ModuleSpec`` whose
+        ``module`` is ``Qwen3VLVisionModel`` and whose ``params`` carry the
+        static construction args (config, layer spec, patch merger) without
+        ``pg_collection``.
+        """
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+        from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+
+        provider = Qwen35VLModelProvider(
+            num_layers=64,
+            hidden_size=5120,
+            num_attention_heads=24,
+        )
+        # ``get_vision_model_config`` reads deepstack_visual_indexes on the HF
+        # vision config. Real loaded Qwen3.5-VL HF configs supply it (defaulted
+        # to empty); the bare ``Qwen3_5VisionConfig()`` constructed by
+        # ``__post_init__`` does not. Set it explicitly for the test.
+        provider.vision_config.deepstack_visual_indexes = []
+
+        spec = provider.build_vision_encoder_spec()
+        assert isinstance(spec, ModuleSpec)
+        assert spec.module is Qwen3VLVisionModel
+
+        params = spec.params
+        assert params is not None
+        assert "transformer_config" in params
+        assert "transformer_layer_spec" in params
+        assert "patch_merger_spec" in params
+        assert isinstance(params["patch_merger_spec"], PatchMergerSubmodules)
+        assert params["pre_process"] is True
+        assert params["post_process"] is True
+        # pg_collection must NOT be in the spec — MIMO injects it per rank.
+        assert "pg_collection" not in params
+        # Vision PP must be flattened to 1 so MIMO heterogeneous parallelism is honored.
+        assert params["transformer_config"].pipeline_model_parallel_size == 1
+        assert params["transformer_config"].first_pipeline_num_layers is None
+
+    def test_patch_standard_attention_specs_recurses_into_mtp_specs(self):
+        attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
+        mtp_model_layer = ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=attn_spec))
+        mtp_layer = ModuleSpec(module=object, submodules=SimpleNamespace(mtp_model_layer=mtp_model_layer))
+        mtp_block = SimpleNamespace(layer_specs=[mtp_layer])
+
+        _patch_standard_attention_specs(mtp_block, Qwen3VLSelfAttention)
+
+        assert mtp_model_layer.submodules.self_attention.module is Qwen3VLSelfAttention
 
 
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
@@ -222,6 +297,29 @@ class TestQwen35VLMoEModelProvider:
     def test_inherits_from_gpt_provider(self):
         assert issubclass(Qwen35VLMoEModelProvider, GPTModelProvider)
 
+    def test_mimo_spec_builders_exist(self):
+        """U2: MoE provider also exposes build_language_spec / build_mtp_spec / build_vision_module."""
+        provider = Qwen35VLMoEModelProvider(
+            num_layers=60,
+            hidden_size=4096,
+            num_attention_heads=32,
+        )
+        assert hasattr(provider, "build_language_spec") and callable(provider.build_language_spec)
+        assert hasattr(provider, "build_mtp_spec") and callable(provider.build_mtp_spec)
+        assert hasattr(provider, "build_vision_encoder_spec") and callable(provider.build_vision_encoder_spec)
+        assert hasattr(provider, "build_language_model_spec") and callable(provider.build_language_model_spec)
+        assert provider.modality_keys == {"images": "qwen_visual"}
+        assert provider.special_token_ids == {"images": provider.image_token_id}
+
+    def test_build_mtp_spec_returns_none_when_mtp_disabled(self):
+        provider = Qwen35VLMoEModelProvider(
+            num_layers=60,
+            hidden_size=4096,
+            num_attention_heads=32,
+        )
+        assert provider.mtp_num_layers is None
+        assert provider.build_mtp_spec(vp_stage=None) is None
+
     def test_vision_config_default_type(self):
         from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeVisionConfig
 
@@ -232,13 +330,47 @@ class TestQwen35VLMoEModelProvider:
         )
         assert isinstance(provider.vision_config, Qwen3_5MoeVisionConfig)
 
-    def test_tp_validation(self):
+    def test_provide_patches_mtp_attention_spec(self, monkeypatch):
+        block_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
+        mtp_attn_spec = ModuleSpec(module=SelfAttention, submodules=SimpleNamespace())
+        block_spec = SimpleNamespace(
+            layer_specs=[ModuleSpec(module=object, submodules=SimpleNamespace(self_attention=block_attn_spec))]
+        )
+        mtp_spec = SimpleNamespace(
+            layer_specs=[
+                ModuleSpec(
+                    module=object,
+                    submodules=SimpleNamespace(
+                        mtp_model_layer=ModuleSpec(
+                            module=object,
+                            submodules=SimpleNamespace(self_attention=mtp_attn_spec),
+                        )
+                    ),
+                )
+            ]
+        )
+        model_ctor = Mock(return_value=Mock())
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.qwen35_vl_provider.get_transformer_block_with_experimental_attention_variant_spec",
+            lambda *args, **kwargs: block_spec,
+        )
+        monkeypatch.setattr("megatron.bridge.models.gpt_provider.mtp_block_spec", lambda *args, **kwargs: mtp_spec)
+        monkeypatch.setattr("megatron.bridge.models.qwen_vl.qwen35_vl_provider.Qwen3VLModel", model_ctor)
+
         provider = Qwen35VLMoEModelProvider(
             num_layers=60,
             hidden_size=4096,
             num_attention_heads=32,
-            num_query_groups=2,
-            tensor_model_parallel_size=4,
+            mtp_num_layers=1,
         )
-        with pytest.raises(ValueError, match="TP size"):
-            provider.finalize()
+        provider.provide()
+
+        kwargs = model_ctor.call_args.kwargs
+        assert kwargs["language_transformer_layer_spec"].layer_specs[0].submodules.self_attention.module is (
+            Qwen3VLSelfAttention
+        )
+        assert (
+            kwargs["mtp_block_spec"].layer_specs[0].submodules.mtp_model_layer.submodules.self_attention.module
+            is Qwen3VLSelfAttention
+        )

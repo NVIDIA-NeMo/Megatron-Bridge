@@ -11,22 +11,64 @@
 </div>
 
 ## 📣 News
+- [06/16/2026] NVIDIA topped [MLPerf Training v6.0](https://developer.nvidia.com/blog/nvidia-blackwell-tops-mlperf-training-6-0-with-industry-leading-scale-and-performance/) across every benchmark, including the new DeepSeek-V3 and GPT-OSS MoE training workloads. Megatron Bridge serves as the packaging layer for the NeMo 26.06 training stack that integrates full-iteration CUDA graphs, HybridEP/router optimizations, all-to-all overlap, MXFP8 attention, and pipeline-layout balancing; the blog highlights [DeepSeek-V3 training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance/configs/deepseek) at **1,648 TFLOPS/GPU** (**6,338 tokens/sec/GPU**) on GB300. To try related runs, start from the [performance recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance); the corresponding container is expected with the NeMo 26.06 release soon.
+
+- [06/04/2026] [**NVIDIA Nemotron 3 Ultra**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) is now public! Day-0 support for the 550B-A55B hybrid Mamba-Transformer MoE model is available on the [`nemotron_3_ultra`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_ultra) branch, including checkpoint conversion, inference, SFT, PEFT (LoRA), and pretraining examples. Read the [NVIDIA Technical Blog](https://developer.nvidia.com/blog/nvidia-nemotron-3-ultra-powers-faster-more-efficient-reasoning-for-long-running-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_ultra/examples/models/nemotron/nemotron_3/ultra/README.md) for the full walkthrough.
+
+- [05/28/2026] [**Step-3.7-Flash**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37/README.md) for sft training details.
+
+- [05/26/2026] [**DeepSeek V4**](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash) FP8 support is now available in Megatron Bridge, including HF↔Megatron conversion, quantized checkpoint export with regenerated scale tensors, and downstream verification with Megatron-backend GRPO.
+
+- [05/20/2026] [**DeepSeek V4**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/deepseek_v4/README.md) for conversion and inference details.
+
+- [05/20/2026] [**Nemotron-3 Nano Omni**](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16) day-0 branch support is now merged on **main**! The 30B-A3B MoE multimodal model supports image, video, audio, and text workflows with checkpoint conversion, inference, SFT, and PEFT (LoRA) examples. Read the [NVIDIA Blog](https://blogs.nvidia.com/blog/nemotron-3-nano-omni-multimodal-ai-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md) for the full walkthrough.
+
+- [05/19/2026] [**Nemotron-Labs Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron_labs_diffusion) is now supported on **main** with autoregressive-to-diffusion conversion, continuous pretraining, checkpoint conversion, and inference workflows. Read the [NVIDIA Research blog](https://research.nvidia.com/publication/2026-05_nemotron-labs-diffusion-tri-mode-language-model-unifying-autoregressive) for the tri-mode language model overview.
+
+- [05/06/2026] [**Gemma 4 VL 26B-A4B**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/gemma/gemma4_vl) is now supported! Checkpoint conversion, SFT, and PEFT (LoRA) recipes for Google's MoE vision-language model (26B total / 4B active params, 128 experts top-k=8, dual sliding/global attention with K=V tying on full-attention layers) are available on **main**. See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/gemma/gemma4_vl/README.md) for the full walkthrough.
+
+- [04/28/2026] Day 0 support for [**Nemotron-3 Nano Omni**](https://huggingface.co/nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16), a 30B-A3B MoE multimodal model that jointly processes image, video, audio, and text. Checkpoint conversion, SFT, and LoRA recipes are available on **main** — see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/nemotron/nemotron_3_omni/README.md) for the full walkthrough.
+
+- [04/19/2026] [**Qwen3.6-35B-A3B**](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) is now supported! Qwen3.6 uses the same architecture as Qwen3.5 VL MoE (`Qwen3_5MoeForConditionalGeneration`) and works with the existing [Qwen3.5-VL bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) out of the box — no code changes needed. HF→Megatron conversion and inference verified.
+
+- [04/16/2026] **Megatron Bridge 0.4.0 released!** New model support (Kimi 2.5, Nemotron 3 Super, Qwen 3.5 VL, MiniMax M2, Sarvam, MiMo, and more), diffusion model collection, sequence-packing improvements, FP8 export, pruning & quantization, Transformers 5.x compatibility, and Python 3.12 migration. Huge thanks to our community contributors: [@HollowMan6](https://github.com/HollowMan6), [@shaltielshmid](https://github.com/shaltielshmid), [@jaeminh](https://github.com/jaeminh), [@pavelgein](https://github.com/pavelgein), [@ShiftyBlock](https://github.com/ShiftyBlock), [@erictang000](https://github.com/erictang000), [@eternally-z](https://github.com/eternally-z), [@Hayak3](https://github.com/Hayak3), and [@mohit-sarvam](https://github.com/mohit-sarvam)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.4.0).
+
+- [04/12/2026] [**MiniMax-M2.5 / M2.7**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/minimax/minimax_m2) are now supported! Both models share the same architecture as MiniMax-M2 and work with the existing bridge out of the box — checkpoint conversion and inference verified on real FP8 checkpoints.
+
+- [04/10/2026] [**Qwen3-ASR**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen/qwen3_asr) is now supported! Checkpoint conversion and inference for [Qwen3's ASR model](https://github.com/QwenLM/Qwen3-ASR) are available on **main**.
+
+- [04/09/2026] [**Bailing MoE V2**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/bailing) is now supported! Checkpoint conversion and inference for the Bailing MoE V2 model are available on **main**. Thank you to [@ccclyu](https://github.com/ccclyu) for the community contribution!
+
+- [04/07/2026] Megatron Bridge’s PEFT support was featured at [PyTorch Conference Europe 2026 Talk](https://pytorchconferenceeu2026.sched.com/event/2Juce/optimizing-reinforcement-learning-at-trillion-parameter-scale-songlin-jiang-aalto-university-mind-lab).
+
+- [04/01/2026] [**Kimi K2.5 VL**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/kimi/kimi_k25_vl) is now supported! Checkpoint conversion, inference, and training recipes for [Moonshot AI’s Kimi-K2.5-VL](https://huggingface.co/moonshotai/Kimi-K2.5) vision-language model are available on **main**.
+
+- [03/31/2026] **Agent Skills for Megatron Bridge!** We've added a [`skills/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/skills) directory with structured guides that AI coding agents (Cursor, Claude Code, Codex, etc.) can use to help you add model support, set up dev environments, tune performance, and more. Try them out, and PRs to improve or add new skills are very welcome!
+
+- [03/26/2026] [**Nemotron 3 Super**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron/nemotron_3) is now on **main**! Checkpoint conversion and SFT/LoRA recipes (120B-A12B) are available in the main branch. Read the [blog post](https://developer.nvidia.com/blog/introducing-nemotron-3-super-an-open-hybrid-mamba-transformer-moe-for-agentic-reasoning/).
 
 - [03/12/2026] **Deprecating Python 3.10 support:** We're officially dropping Python 3.10 support with the upcoming 0.4.0 release. Downstream applications must raise their lower boundary to 3.12 to stay compatible with Megatron-Bridge.
 
-* [12/16/2025] [Mind Lab](https://macaron.im/mindlab) successfully used Megatron-bridge and [VeRL](https://github.com/volcengine/verl) to trained GRPO Lora for Trillion-parameter model on 64 H800 - See their [techblog](https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus).
+- [12/16/2025] [Mind Lab](https://macaron.im/mindlab) successfully used Megatron-bridge and [VeRL](https://github.com/volcengine/verl) to trained GRPO Lora for Trillion-parameter model on 64 H800 - See their [techblog](https://macaron.im/mindlab/research/building-trillion-parameter-reasoning-rl-with-10-gpus).
 
-- [12/15/2025] Day 0 support for [NVIDIA-NeMotron-3-Nano-30B-A3B-FP8](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8)! [Reproducible code](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nano-v3) and custom NGC container: [nvcr.io/nvidia/nemo:25.11.nemotron_3_nano](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo?version=25.11.nemotron_3_nano)
+- [12/15/2025] Day 0 support for [NVIDIA-NeMotron-3-Nano-30B-A3B-FP8](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8)! [Reproducible code](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/nemotron/nemotron_3/nano) and custom NGC container: [nvcr.io/nvidia/nemo:25.11.nemotron_3_nano](https://catalog.ngc.nvidia.com/orgs/nvidia/containers/nemo?version=25.11.nemotron_3_nano)
 
 ## Overview
 
-NeMo Megatron Bridge is a PyTorch-native library within the [NeMo Framework](https://github.com/NVIDIA-NeMo) that provides pretraining, SFT and LoRA for popular LLM and VLM models. It serves as a powerful **bridge, conversion, and verification layer** between 🤗 Hugging Face and [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). It provides bidirectional checkpoint conversion between these formats, enabling other projects to leverage Megatron Core's parallelism capabilities or export models for various inference engines. The bridge includes built-in verification mechanisms to ensure conversion accuracy and checkpoint integrity across different model formats.
+NeMo Megatron Bridge is a PyTorch-native library within the [NeMo Framework](https://github.com/NVIDIA-NeMo) that provides pretraining, SFT and LoRA for popular language, vision-language, audio, and multimodal models. It serves as a powerful **bridge, conversion, and verification layer** between 🤗 Hugging Face and [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). It provides bidirectional checkpoint conversion between these formats, enabling other projects to leverage Megatron Core's parallelism capabilities or export models for various inference engines. The bridge includes built-in verification mechanisms to ensure conversion accuracy and checkpoint integrity across different model formats.
 
 On top of the bridge, NeMo Megatron Bridge provides a performant and scalable PyTorch-native training loop that leverages [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core) to deliver state-of-the-art training throughput. It supports pretraining and fine-tuning with features like tensor and pipeline parallelism, and mixed precision (FP8, BF16, FP4, etc.). Users can either use existing 🤗 Hugging Face models or define custom PyTorch model definitions for flexible end-to-end workflows.
 
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) training stack that adopts a PyTorch-native training loop to provide greater flexibility and customizability for developers.
 
 ![image](Repo-Mbridge.png)
+### Broad functional support matrix
+
+||Pretrain|SFT|SFT LoRA|RL|RL LoRA|Notes|
+|-|-|-|-|-|-|-|
+|[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)|Y|Y|Y|N|N|Megatron based *pretraining* library|
+|[AutoModel](https://github.com/NVIDIA-NeMo/Automodel)|Y|Y|Y|N|N| PyT DTensor based *pretraining* library|
+|[NeMo RL](https://github.com/NVIDIA-NeMo/RL)|N|Y|Y|Y|Y| *Post-training* library with both Megatron and Automodel backends|
 
 ## 🔧 Installation
 
@@ -42,6 +84,22 @@ docker run --rm -it -w /workdir -v $(pwd):/workdir \
 ```
 
 For development installation and additional details, please refer to our [Contribution guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md).
+
+### Megatron-Core Submodule (main & dev)
+
+Megatron Bridge pins [Megatron-Core](https://github.com/NVIDIA/Megatron-LM) as a git submodule at `3rdparty/Megatron-LM`. The repository tracks two pinned commits — one from the upstream **main** branch (default) and one from **dev** — managed by `scripts/switch_mcore.sh`.
+
+The submodule committed to the repo always points to the **main** commit. Use the **dev** commit when you need a Megatron-Core feature or fix that has not yet landed on main, or to validate forward-compatibility with upcoming MCore changes:
+
+```bash
+./scripts/switch_mcore.sh status   # Show current commit
+./scripts/switch_mcore.sh dev      # Switch to dev; then run: uv sync
+./scripts/switch_mcore.sh main     # Switch back; then run: uv sync --locked
+```
+
+> **Note:** `uv.lock` is generated against the main commit. After switching to dev, use `uv sync` (without `--locked`). After switching back to main, use `uv sync --locked`.
+
+The dev branch follows Megatron-LM's upstream [dev branch philosophy](https://github.com/NVIDIA/Megatron-LM/tree/dev) — features are experimental, follow a streamlined review process, and must graduate to stable within 6 months or be deprecated.
 
 ## ⚡ Quickstart
 
@@ -80,13 +138,26 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
 Training quickstart using pre-configured recipes:
 
 ```python
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
-    cfg = llama32_1b_pretrain_config(seq_length=1024)
+    # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
+    # This is random-init pretraining and does not require a converted Megatron checkpoint.
+    cfg = llama32_1b_pretrain_config()
+
+    # The recipe already sets cfg.model internally using this pattern.
+    # Override cfg.model to choose a different Hugging Face model ID as the architecture source.
+    # cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+
+    # Optional: use a local Hugging Face model/config directory instead.
+    # cfg.model = AutoBridge.from_hf_pretrained("/path/to/local/hf_model").to_megatron_provider(load_weights=False)
+
+    # Optional: initialize weights from a converted Megatron checkpoint for SFT/PEFT
+    # or other pretrained-weight workflows.
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/megatron/checkpoint"
 
     # Override training parameters
     cfg.train.train_iters = 10
@@ -100,8 +171,16 @@ if __name__ == "__main__":
 You can launch the above script with:
 
 ```sh
-torchrun --nproc-per-node=<num devices> /path/to/script.py
+uv run python -m torch.distributed.run --nproc-per-node=<num devices> /path/to/script.py
 ```
+
+HF → Megatron conversion is workflow-specific. Use it when you need pretrained HF weights as a Megatron checkpoint,
+such as for finetuning from converted weights or for checkpoint round-trip workflows. It is not required for
+random-init pretraining from an HF architecture, where `AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)`
+only reads the architecture configuration.
+
+For runnable recipe, data preparation, and training examples, see the repository
+[`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
 
 More examples:
 
@@ -129,51 +208,29 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
 
 ## Supported Models
 
-Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the most up-to-date list of model bridges.
+Megatron Bridge provides out-of-the-box bridges and training recipes for a wide range of models, built on top of base model architectures from [Megatron Core](https://github.com/NVIDIA/Megatron-LM/tree/main/megatron/core). Refer to the [models directory](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models) for the full list of model bridges.
 
-### Supported Models Overview
+| Family | Supported variants |
+|----------------|--------------------|
+| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 (Bailing) |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 |
+| [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4-VL (26B-A4B MoE) |
+| [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
+| [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
+| [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
+| [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
+| [**Mistral**](docs/models/mistral/index.md) | Mistral, Ministral 3 (3B/8B/14B) |
+| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo |
+| [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
+| [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H, Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni |
+| [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
+| [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash |
 
-For more details on supported models, see our documentation:
-
-- **[Large Language Models](https://docs.nvidia.com/nemo/megatron-bridge/latest/models/llm/index.html)**
-- **[Vision Language Models](https://docs.nvidia.com/nemo/megatron-bridge/latest/models/vlm/index.html)**
-
-| Model | Checkpoint Conversion | Pretrain Recipes | SFT & LoRA Recipes |
-|-------|-------------------|-------------------|-------------------|
-| [DeepSeek V2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek) | ✅ | ✅ ([v2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/deepseek/deepseek_v2.py)) | Coming soon |
-| [DeepSeek V2 Lite](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek) | ✅ | ✅ ([v2-lite](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/deepseek/deepseek_v2.py)) | Coming soon |
-| [DeepSeek V3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek) | ✅ | ✅ ([v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/deepseek/deepseek_v3.py)) | Coming soon |
-| [Gemma](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gemma) | ✅ | Coming soon | Coming soon |
-| [Gemma 2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gemma) | ✅ | Coming soon | Coming soon |
-| [Gemma 3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gemma) | ✅ | ✅ ([1B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/gemma/gemma3.py)) | ✅ ([1B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/gemma/gemma3.py)) |
-| [Gemma 3-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gemma_vl) | ✅ | Coming soon | ✅ ([4B/12B/27B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/gemma3_vl/gemma3_vl.py)) |
-| [GLM-4.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/glm) | ✅ | ✅ ([106B-Air/355B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/glm/glm45.py)) | ✅ ([106B-Air/355B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/glm/glm45.py)) |
-| [GPT-oss](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/gpt_oss) | ✅ | ✅ ([20B/120B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)) | ✅ ([20B/120B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)) |
-| [Llama 2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama) | ✅ | ✅ ([7B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama2.py)) | Coming soon |
-| [Llama 3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama) | ✅ | ✅ ([8B/70B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) | ✅ ([8B/70B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) |
-| [Llama 3.1](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama) | ✅ | ✅ ([8B/70B/405B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) | ✅ ([8B/70B/405B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) |
-| [Llama 3.2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama) | ✅ | ✅ ([1B/3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) | ✅ ([1B/3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/llama/llama3.py)) |
-| [Llama 3.3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama) | ✅ | Coming soon | Coming soon |
-| [Llama Nemotron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/llama_nemotron) | ✅ | Coming soon | Coming soon |
-| [Mistral](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/mistral) | ✅ | Coming soon | Coming soon |
-|[Ministral](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ministral3)| ✅| ✅ [3B/8B/14B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/ministral3/ministral3.py)|✅ [3B/8B/14B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/ministral3/ministral3.py)|
-| [Moonlight](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/deepseek) | ✅ | ✅ ([16B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/moonlight/moonlight_16b.py)) | ✅ ([16B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/moonlight/moonlight_16b.py)) |
-| [Nemotron](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotron) | ✅ | Coming soon | Coming soon |
-| [Nemotron-nano-v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nano-v3/src/megatron/bridge/models/nemotronh) | ✅ | ✅ ([30B-A3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nano-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)) | ✅ ([A3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nano-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_nano.py)) |
-| [Nemotron-super-v3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/super-v3/src/megatron/bridge/models/nemotronh) | ✅ | ✅ ([120B-A12B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/super-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_super.py)) | ✅ ([A12B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/super-v3/src/megatron/bridge/recipes/nemotronh/nemotron_3_super.py)) |
-| [Nemotron-H](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) | ✅ | ✅ ([4B/8B/47B/56B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotronh.py)) | Coming soon |
-| [Nemotron Nano v2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotronh) | ✅ | ✅ ([9B/12B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotronh/nemotron_nano_v2.py)) | Coming soon |
-| [Nemotron Nano v2 VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/nemotron_vl) | ✅ | Coming soon | ✅ ([9B/12B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/nemotron_vl/nemotron_nano_v2_vl.py)) |
-| [OlMoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/olmoe) | ✅ | ✅ ([7B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/olmoe/olmoe_7b.py)) | ✅ ([7B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/olmoe/olmoe_7b.py)) |
-| [Qwen2](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen) | ✅ | ✅ ([500M/1.5B/7B/72B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen2.py)) | ✅ ([500M/1.5B/7B/72B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen2.py)) |
-| [Qwen2.5](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen) | ✅ | ✅ ([500M/1.5B/7B/14B/32B/72B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen2.py)) | ✅ ([500M/1.5B/7B/14B/32B/72B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen2.py)) |
-| [Qwen2.5-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) | ✅ | Coming soon | ✅ ([3B/7B/32B/72B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen_vl/qwen25_vl.py)) |
-| [Qwen3](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen) | ✅ | ✅ ([600M/1.7B/4B/8B/14B/32B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3.py)) | ✅ ([600M/1.7B/4B/8B/14B/32B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3.py)) |
-| [Qwen3-MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen) | ✅ | ✅ ([A3B/A22B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_moe.py)) | ✅ ([A3B/A22B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_moe.py)) |
-| [Qwen3 Next](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen) | ✅ | ✅ ([80B-A3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_next.py)) | ✅ ([80B-A3B](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen/qwen3_next.py)) |
-| [Qwen3-VL](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_vl) | ✅ | Coming soon | ✅ ([8B/A3B-A30B-MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/qwen_vl/qwen3vl.py)) |
-
-#### Launching Recipes
+### Launching Recipes
 
 For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
 
@@ -182,8 +239,6 @@ Runnable tutorials live in `tutorials/recipes/llama` that covers:
 - `00_quickstart_pretrain.py` for mock-data pretraining
 - `01_quickstart_finetune.py` + LoRA configs
 - YAML-driven flows and launch helpers
-
-<!-- ### Vision-Language Models -->
 
 ## Performance Benchmarks
 

@@ -73,7 +73,7 @@ class ConfigWithOptionalFields:
     name: str = "test"
     optional_str: Optional[str] = None  # Should be preserved
     optional_int: Optional[int] = None  # Should be preserved
-    activation_func: Any = torch.nn.functional.relu  # Should be excluded
+    activation_func: Any = torch.nn.functional.relu  # Should be serialized as "relu"
     value: int = 42
 
 
@@ -224,15 +224,15 @@ class TestDataclassToOmegaconfDict:
 
         assert result["dtype"] == "torch.float16"
         assert result["name"] == "test"
-        # activation_func should be excluded (None not included)
-        assert "activation_func" not in result
+        # activation_func should be serialized as its short string name
+        assert result["activation_func"] == "relu"
 
-    def test_callable_exclusion(self):
-        """Test that callable fields are excluded."""
+    def test_callable_serialization(self):
+        """Test that known callable fields are serialized as strings."""
         config = ConfigWithCallable(activation_func=torch.nn.functional.gelu)
         result = _dataclass_to_omegaconf_dict(config)
 
-        assert "activation_func" not in result
+        assert result["activation_func"] == "gelu"
         assert "name" in result
         assert "dtype" in result
 
@@ -245,7 +245,7 @@ class TestDataclassToOmegaconfDict:
         assert "with_callable" in result
         assert result["simple"]["name"] == "test"
         assert result["simple"]["value"] == 42
-        assert "activation_func" not in result["with_callable"]
+        assert result["with_callable"]["activation_func"] == "relu"
 
     def test_list_handling(self):
         """Test handling of lists."""
@@ -343,15 +343,18 @@ class TestTrackExcludedFields:
         config = ConfigWithCallable()
         excluded = _track_excluded_fields(config)
 
-        assert "activation_func" in excluded
-        assert excluded["activation_func"] == torch.nn.functional.relu
+        # activation_func is now serialized as a string, so it is NOT excluded
+        assert "activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_nested_tracking(self):
         """Test tracking callable fields in nested config."""
         config = NestedConfig()
         excluded = _track_excluded_fields(config, "root")
 
-        assert "root.with_callable.activation_func" in excluded
+        # activation_func is now serialized as a string, so it is NOT excluded
+        assert "root.with_callable.activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_no_callables(self):
         """Test tracking when no callables exist."""
@@ -448,9 +451,10 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        assert len(excluded) > 0
-        assert "root.activation_func" in excluded
-        assert excluded["root.activation_func"] == torch.nn.functional.relu
+        # activation_func is now serialized as a string in the OmegaConf dict
+        assert omega_conf.activation_func == "relu"
+        # No fields should be excluded since activation_func is serializable
+        assert len(excluded) == 0
 
     def test_nested_preservation(self):
         """Test preservation with nested configs."""
@@ -458,7 +462,9 @@ class TestSafeCreateOmegaconfWithPreservation:
         omega_conf, excluded = create_omegaconf_dict_config(config)
 
         assert isinstance(omega_conf, DictConfig)
-        assert "root.with_callable.activation_func" in excluded
+        # activation_func is serialized as a string, not excluded
+        assert omega_conf.with_callable.activation_func == "relu"
+        assert "root.with_callable.activation_func" not in excluded
 
 
 class TestApplyOverrides:
@@ -826,9 +832,9 @@ class TestIntegration:
         assert omega_conf.simple.name == "test"
         assert omega_conf.simple.value == 42
         assert omega_conf.with_callable.name == "test"
-        assert "activation_func" not in omega_conf.with_callable  # Excluded
+        assert omega_conf.with_callable.activation_func == "relu"  # Serialized as string
         assert omega_conf.with_callable.dtype == "torch.float32"  # Converted to string
-        assert len(excluded) > 0  # Should have excluded callables
+        assert len(excluded) == 0  # activation_func is serialized, not excluded
 
         # 3. Apply YAML-style overrides
         yaml_overrides = OmegaConf.create(
@@ -860,9 +866,8 @@ class TestIntegration:
         assert config.with_callable.activation_func == original_func  # Preserved
         assert config.with_callable.dtype == torch.float16  # Type converted back correctly
 
-        # 7. Verify that excluded fields were properly tracked and restored
-        assert "root.with_callable.activation_func" in excluded
-        assert excluded["root.with_callable.activation_func"] == original_func
+        # 7. Verify that activation_func was serialized (not excluded) and roundtripped
+        assert len(excluded) == 0  # activation_func is serialized, not excluded
 
         # Note: New fields are not added to dataclasses (this is expected behavior)
         # The dataclass structure remains strongly typed
@@ -954,12 +959,12 @@ class TestNoneHandling:
         assert omega_conf.name == "test"
         assert omega_conf.value == 42
 
-        # Verify callable was excluded from OmegaConf
-        assert "activation_func" not in omega_conf
+        # Verify callable was serialized as a string in OmegaConf
+        assert omega_conf.activation_func == "relu"
 
-        # Verify callable was tracked for restoration
-        assert "root.activation_func" in excluded
-        assert excluded["root.activation_func"] == torch.nn.functional.relu
+        # activation_func is serialized (not excluded), so excluded should be empty
+        assert "root.activation_func" not in excluded
+        assert len(excluded) == 0
 
     def test_none_values_roundtrip_correctly(self):
         """Test that None values survive the full conversion roundtrip."""

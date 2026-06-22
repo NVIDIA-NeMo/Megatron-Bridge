@@ -31,6 +31,7 @@ from megatron.bridge.training.utils.checkpoint_utils import (
     get_checkpoint_train_state_filename,
     get_hf_model_id_from_checkpoint,
     is_checkpoint_iteration_directory,
+    is_hf_checkpoint_dir,
     read_run_config,
     read_train_state,
 )
@@ -295,7 +296,7 @@ class TestCheckpointUtils:
         assert result.iteration == 100
         assert result.epoch == 5
         assert result.step == 1000
-        mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu")
+        mock_torch_load.assert_called_once_with("train_state.pt", map_location="cpu", weights_only=True)
 
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_rank_safe")
     @patch("megatron.bridge.training.utils.checkpoint_utils.get_world_size_safe")
@@ -468,10 +469,12 @@ class TestCheckpointUtils:
 
     # ===== ADVANCED TEST SCENARIOS =====
 
-    def test_concurrent_access_to_cached_functions(self):
+    def test_concurrent_access_to_cached_functions(self, tmp_path):
         """Test concurrent access to cached functions for thread safety."""
         config_data = {"model": {"type": "concurrent_test"}}
-        config_yaml = yaml.dump(config_data)
+        config_file = tmp_path / "concurrent_config.yaml"
+        with open(config_file, "w") as f:
+            yaml.dump(config_data, f)
 
         results = []
         errors = []
@@ -484,9 +487,8 @@ class TestCheckpointUtils:
                         "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized",
                         return_value=False,
                     ),
-                    patch("builtins.open", mock_open(read_data=config_yaml)),
                 ):
-                    result = read_run_config("concurrent_config.yaml")
+                    result = read_run_config(str(config_file))
                     results.append(result)
             except Exception as e:
                 errors.append(e)
@@ -814,6 +816,25 @@ class TestCheckpointUtils:
     def test_is_iteration_dir_nonexistent(self):
         """Test that a nonexistent path returns False."""
         assert is_checkpoint_iteration_directory("/nonexistent/iter_0000000") is False
+
+    def test_hf_model_dir_is_not_iteration_dir(self, tmp_path):
+        """A raw HF model directory should not be treated as a Megatron iteration directory."""
+        hf_dir = tmp_path / "hf_model"
+        hf_dir.mkdir()
+        (hf_dir / "config.json").touch()
+        (hf_dir / "model.safetensors").touch()
+
+        assert is_hf_checkpoint_dir(str(hf_dir)) is True
+        assert is_checkpoint_iteration_directory(str(hf_dir)) is False
+        assert checkpoint_exists(str(hf_dir)) is False
+        assert checkpoint_exists(str(hf_dir)) or is_hf_checkpoint_dir(str(hf_dir))
+
+        adapter_dir = tmp_path / "adapter_only"
+        adapter_dir.mkdir()
+        (adapter_dir / "adapter_config.json").touch()
+        (adapter_dir / "adapter_model.safetensors").touch()
+
+        assert is_hf_checkpoint_dir(str(adapter_dir)) is False
 
     def test_checkpoint_exists_with_iteration_directory(self, tmp_path):
         """Test checkpoint_exists detects a direct iteration directory."""

@@ -13,16 +13,19 @@
 # limitations under the License.
 
 import inspect
+import logging
 import math
 import os
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from datetime import datetime
 from functools import partial
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 import torch
 import torch.nn as nn
+from megatron.core import tensor_parallel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
@@ -30,10 +33,9 @@ from megatron.core.transformer.moe.moe_utils import track_moe_metrics
 from megatron.core.transformer.multi_token_prediction import MTPLossLoggingHelper
 from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_dtensor
 
-from megatron.bridge.training.config import ConfigContainer, TrainingConfig
+from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -42,6 +44,197 @@ from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_saf
 
 if TYPE_CHECKING:
     from torch.distributed.distributed_c10d import ProcessGroup as TorchProcessGroup
+
+
+logger = logging.getLogger(__name__)
+
+ModelList = list[MegatronModule]
+ModelHook = Callable[[ModelList], ModelList | None]
+
+
+class LinearForLastLayer(nn.Linear):
+    """Final replicated projection head compatible with Megatron output-layer calls.
+
+    Megatron-Core output layers receive a few runtime-only arguments. This head
+    accepts those arguments for call-site compatibility while using a standard
+    replicated linear projection.
+    """
+
+    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
+        """Initialize a replicated final projection.
+
+        Args:
+            input_size: Hidden dimension of the transformer output.
+            output_size: Output dimension of the value/reward head.
+            sequence_parallel: Whether to gather sequence-parallel activations.
+        """
+        super().__init__(in_features=input_size, out_features=output_size, bias=False)
+        self.sequence_parallel = sequence_parallel
+        if sequence_parallel:
+            setattr(self.weight, "sequence_parallel", True)
+
+    def forward(
+        self,
+        input_: torch.Tensor,
+        weight: torch.Tensor | None = None,
+        runtime_gather_output: bool | None = None,
+    ) -> tuple[torch.Tensor, None]:
+        """Run the final projection and return Megatron-style ``(output, bias)``."""
+        del weight, runtime_gather_output
+        logits = super().forward(input_).float()
+        if self.sequence_parallel:
+            logits = tensor_parallel.gather_from_sequence_parallel_region(
+                logits,
+                tensor_parallel_output_grad=False,
+            )
+        return logits, None
+
+
+def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
+    """Create a pre-wrap hook that replaces the final pipeline stage output head.
+
+    Args:
+        hidden_size: Hidden dimension of the transformer output.
+        sequence_parallel: Whether the model uses sequence parallelism.
+        output_size: Number of outputs produced by the final head.
+
+    Returns:
+        A model hook suitable for external trainer provider construction.
+    """
+    from megatron.core import parallel_state
+
+    _register_linear_for_last_layer_mapping()
+
+    def hook(model: ModelList | MegatronModule) -> ModelList:
+        model_chunks = _ensure_model_list(model)
+        model_post_process: list[bool] = []
+        if (
+            parallel_state.get_pipeline_model_parallel_world_size() > 1
+            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
+        ):
+            for vp_stage in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
+                model_post_process.append(
+                    parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage)
+                )
+        else:
+            model_post_process.append(parallel_state.is_pipeline_last_stage())
+
+        if len(model_post_process) != len(model_chunks):
+            raise ValueError(
+                "Model list length and pipeline post-process list length must match. "
+                f"Got {len(model_chunks)} model chunks and {len(model_post_process)} post-process flags."
+            )
+
+        for index, model_chunk in enumerate(model_chunks):
+            if model_post_process[index]:
+                model_chunk.output_layer = LinearForLastLayer(
+                    input_size=hidden_size,
+                    output_size=output_size,
+                    sequence_parallel=sequence_parallel,
+                )
+
+        return model_chunks
+
+    return hook
+
+
+def make_value_model(hidden_size: int, sequence_parallel: bool) -> ModelHook:
+    """Create a value-head hook compatible with existing external trainer code."""
+    return create_value_head_hook(hidden_size=hidden_size, sequence_parallel=sequence_parallel)
+
+
+def freeze_moe_router(model: ModelList | MegatronModule) -> ModelList:
+    """Freeze MoE router and shared-expert gate parameters in model chunks.
+
+    Args:
+        model: Single Megatron module or list of virtual-pipeline model chunks.
+
+    Returns:
+        The normalized model chunk list with router parameters frozen in place.
+    """
+    model_chunks = _ensure_model_list(model)
+    for model_chunk in model_chunks:
+        decoder = getattr(model_chunk, "decoder", None)
+        layers = getattr(decoder, "layers", None)
+        if layers is None:
+            continue
+        for layer in layers:
+            mlp = getattr(layer, "mlp", None)
+            if mlp is None:
+                continue
+            router = getattr(mlp, "router", None)
+            if router is not None:
+                _freeze_parameter_if_present(router, "weight")
+                _freeze_parameter_if_present(router, "bias")
+
+            shared_experts = getattr(mlp, "shared_experts", None)
+            if shared_experts is not None:
+                _freeze_parameter_if_present(shared_experts, "gate_weight")
+                _freeze_parameter_if_present(shared_experts, "gate_bias")
+
+    return model_chunks
+
+
+def _ensure_model_list(model: ModelList | MegatronModule) -> ModelList:
+    return model if isinstance(model, list) else [model]
+
+
+def _freeze_parameter_if_present(module: object, name: str) -> None:
+    parameter = getattr(module, name, None)
+    if parameter is not None:
+        parameter.requires_grad = False
+
+
+def _register_linear_for_last_layer_mapping() -> None:
+    from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+    AutoMapping.register_module_type("LinearForLastLayer", "replicated")
+
+
+def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:
+    """Enable the CUDA caching allocator trace so memory snapshots contain history.
+
+    ``torch.cuda.memory._snapshot()`` only includes allocation/free events and
+    Python stack context after ``_record_memory_history()`` has been enabled.
+    Without this call, dumped snapshots contain only the current live
+    allocations — no timeline, no call sites.
+
+    Must be invoked before model construction so every tensor allocation is
+    captured. Guarded by ``profile_ranks`` so only ranks that will dump a
+    snapshot pay the recording overhead.
+    """
+    if profiling is None or not profiling.record_memory_history:
+        return
+    if get_rank_safe() not in profiling.profile_ranks:
+        return
+
+    torch.cuda.memory._record_memory_history(
+        True,
+        # Retain up to 100k alloc/free events.
+        trace_alloc_max_entries=100_000,
+        # Record the Python stack at each event — lets memory_viz show call sites.
+        trace_alloc_record_context=True,
+    )
+
+    def _oom_observer(device: int, alloc: int, device_alloc: int, device_free: int) -> None:
+        """Dump a snapshot on OOM so we can inspect what was live at the failure."""
+        import pickle
+
+        rank = get_rank_safe()
+        base, ext = os.path.splitext(profiling.memory_snapshot_path)
+        filename = f"{base}_oom_rank-{rank}{ext}"
+        snapshot = torch.cuda.memory._snapshot()
+        with open(filename, "wb") as f:
+            pickle.dump(snapshot, f)
+        # logger.info so the message reaches stderr on any profiled rank, not just rank 0.
+        logger.info(f"[OOM] rank {rank} saved memory snapshot to {filename}")
+
+    torch._C._cuda_attach_out_of_memory_observer(_oom_observer)
+    print_rank_0(
+        f"Memory history recording enabled (rank {get_rank_safe()}); "
+        f"snapshots will be written to '{profiling.memory_snapshot_path}'."
+    )
+
 
 try:
     from transformer_engine.pytorch.optimizers import multi_tensor_applier, multi_tensor_l2norm
@@ -332,6 +525,139 @@ def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcess
     return bool(input.item())
 
 
+def reduce_max_memory_across_pp_group(
+    memory_report: dict[str, Union[int, float]],
+    pp_group: "TorchProcessGroup",
+) -> dict[str, Union[int, float]]:
+    """Reduce per-rank memory metrics across the PP group with MAX.
+
+    With pipeline parallelism, peak GPU memory is typically dominated by the
+    first PP stage (activation buildup). The TensorBoard / W&B / MLFlow / Comet
+    writers, however, only initialize on the last rank (``world_size - 1``), so
+    without aggregation the logged values reflect only the last PP stage and
+    under-report true peak headroom.
+
+    This helper performs a single bulk all-reduce with MAX over the PP group
+    so that the writer rank emits the per-metric peak across the pipeline.
+    Counter-style integer keys (e.g. ``alloc_retries``) are preserved as
+    ``int`` so dashboards continue to render them correctly.
+
+    No-op when distributed is uninitialized, the PP group has a single rank,
+    or the report is empty.
+
+    Args:
+        memory_report: Mapping of metric name to per-rank value.
+        pp_group: The pipeline-parallel process group to reduce across.
+
+    Returns:
+        A new dict with values replaced by the per-metric MAX across the PP
+        group, or the input report unchanged when no reduction is needed.
+    """
+    if not memory_report:
+        return memory_report
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return memory_report
+    pp_size_attr = getattr(pp_group, "size", None)
+    if not callable(pp_size_attr) or pp_size_attr() <= 1:
+        return memory_report
+
+    keys = list(memory_report.keys())
+    values = torch.tensor(
+        [memory_report[k] for k in keys],
+        dtype=torch.float64,
+        device=torch.cuda.current_device(),
+    )
+    torch.distributed.all_reduce(values, op=torch.distributed.ReduceOp.MAX, group=pp_group)
+
+    reduced: dict[str, Union[int, float]] = {}
+    for key, max_val in zip(keys, values.tolist()):
+        original = memory_report[key]
+        # Preserve int type for counter-style metrics; floats stay as floats.
+        if not isinstance(original, bool) and isinstance(original, int):
+            reduced[key] = int(max_val)
+        else:
+            reduced[key] = max_val
+    return reduced
+
+
+class _MoeMetricFanoutWriter:
+    """SummaryWriter-shaped adapter that fans add_scalar to MLFlow / Comet.
+
+    MCore's `track_moe_metrics` and `track_mtp_metrics` emit metrics through a
+    TensorBoard `writer.add_scalar(name, value, iteration)` call (and a separate
+    `wandb_writer.log(...)` call). They do not know about MLFlow or Comet, so
+    those backends never see MoE / MTP metrics — see issue #2989.
+
+    Rather than fork MCore, this adapter wraps the real TB writer (or stands in
+    for a missing one) and forwards every `add_scalar` to MLFlow and Comet
+    using the same per-step value. W&B is unaffected — the underlying functions
+    still receive `wandb_writer` directly so their dict-based per-layer logging
+    stays untouched.
+
+    Tensors are sanitized with `.item()` before being handed to MLFlow / Comet,
+    matching the float/int conversion the existing MoE TensorBoard path
+    implicitly relies on (TB tolerates 0-d tensors; MLFlow / Comet do not).
+    """
+
+    def __init__(
+        self,
+        tb_writer: Optional[Any],
+        comet_logger: Optional[Any],
+        mlflow_logger: Optional[Any],
+    ) -> None:
+        self._tb_writer = tb_writer
+        self._comet_logger = comet_logger
+        self._mlflow_logger = mlflow_logger
+
+    @staticmethod
+    def _sanitize(value: Any) -> Any:
+        """Convert 0-d torch tensors to Python scalars; pass other values through.
+
+        MLFlow / Comet client APIs reject torch tensors silently or raise; the
+        existing TB call accepts them. Force a scalar so all sinks behave.
+        """
+        if isinstance(value, torch.Tensor):
+            try:
+                return value.item()
+            except (RuntimeError, ValueError):
+                return value
+        return value
+
+    def add_scalar(self, name: str, value: Any, iteration: int) -> None:
+        """Forward an add_scalar call to TB (if any), MLFlow, and Comet."""
+        if self._tb_writer is not None:
+            self._tb_writer.add_scalar(name, value, iteration)
+        # Only sanitize for the MLFlow / Comet sinks — the TB writer tolerates
+        # tensors and we do not want to perturb its behavior.
+        if self._mlflow_logger is not None or self._comet_logger is not None:
+            scalar = self._sanitize(value)
+            metrics = {name: scalar}
+            if self._mlflow_logger is not None:
+                self._mlflow_logger.log_metrics(_sanitize_mlflow_metrics(metrics), step=iteration)
+            if self._comet_logger is not None:
+                self._comet_logger.log_metrics(metrics, step=iteration)
+
+
+def _build_moe_metric_writer(
+    tb_writer: Optional[Any],
+    comet_logger: Optional[Any],
+    mlflow_logger: Optional[Any],
+) -> Optional[Any]:
+    """Return a writer suitable for MCore's MoE/MTP metric helpers.
+
+    - When neither MLFlow nor Comet is wired up, the real TB writer is returned
+      unchanged (zero overhead, no behavior change).
+    - When at least one of MLFlow / Comet is wired up, return a fanout adapter
+      that forwards `add_scalar` to all configured backends. The adapter is
+      returned even when the TB writer itself is None, which is required to
+      surface MoE / MTP metrics in Comet / MLFlow on rank N-1 even if the user
+      hasn't enabled TensorBoard.
+    """
+    if comet_logger is None and mlflow_logger is None:
+        return tb_writer
+    return _MoeMetricFanoutWriter(tb_writer, comet_logger, mlflow_logger)
+
+
 def training_log(
     loss_dict: dict[str, torch.Tensor],
     total_loss_dict: dict[str, Any],
@@ -347,7 +673,10 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
+    loaded_iteration: int = 0,
+    seq_length: Optional[int] = None,
 ) -> bool:
     """Log training stats (losses, learning rate, timings, etc.).
 
@@ -370,6 +699,8 @@ def training_log(
         global_state: The global training state.
         history_wct (list): list of elapsed time per each iteration.
         model (list[MegatronModule]): megatron model state.
+        pg_collection (Optional[Any]): ProcessGroupCollection to use for logging reductions.
+            If None, falls back to extracting from model wrappers.
         log_max_attention_logit (Optional[float]): Maximum attention logit if available, None otherwise.
     Returns:
         bool: The updated report_memory_flag.
@@ -380,10 +711,13 @@ def training_log(
     writer = global_state.tensorboard_logger
     wandb_writer = global_state.wandb_logger
     mlflow_logger = global_state.mlflow_logger
+    comet_logger = global_state.comet_logger
     energy_monitor = global_state.energy_monitor
     logger_config = config.logger
     train_config = config.train
-    pg_collection = get_pg_collection(model)
+    pg_collection = pg_collection or get_pg_collection(model)
+
+    loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"
@@ -462,22 +796,33 @@ def training_log(
             timers.write_to_wandb(timers_to_log, wandb_writer, iteration, normalizer=total_iterations, reset=True)
         if hasattr(timers, "write_to_mlflow"):
             timers.write_to_mlflow(timers_to_log, mlflow_logger, iteration, normalizer=total_iterations, reset=True)
+        if hasattr(timers, "write_to_comet"):
+            timers.write_to_comet(timers_to_log, comet_logger, iteration, normalizer=total_iterations, reset=True)
 
-    if config.profiling:
-        if config.profiling.record_memory_history and get_rank_safe() in config.profiling.profile_ranks:
-            assert config.logger.tensorboard_dir is not None, (
-                "Tensorboard directory must be set when profiling memory history"
-            )
+    if config.profiling and config.profiling.record_memory_history and iteration == config.profiling.profile_step_end:
+        rank = get_rank_safe()
+        if rank in config.profiling.profile_ranks:
             snapshot = torch.cuda.memory._snapshot()
             from pickle import dump
 
             filename, ext = os.path.splitext(config.profiling.memory_snapshot_path)
-            filename = f"{filename}_{get_rank_safe()}{ext}"
+            filename = f"{filename}_{rank}{ext}"
             with open(filename, "wb") as f:
                 dump(snapshot, f)
                 print_rank_0(f"Saved memory snapshot to {filename}")
 
-    if writer and (iteration % logger_config.tensorboard_log_interval == 0):
+    # Memory metrics must be aggregated across the PP group BEFORE the
+    # writer-gated block below. The TensorBoard / W&B / MLFlow / Comet writers
+    # only initialize on the last rank, but peak GPU memory typically lives on
+    # the first PP stage. Compute and reduce on all ranks so the writer rank
+    # emits the per-metric peak across the pipeline (issue #3167).
+    memory_report: Optional[dict[str, Union[int, float]]] = None
+    if logger_config.log_memory_to_tensorboard and iteration % logger_config.tensorboard_log_interval == 0:
+        memory_report = report_memory(memory_keys=logger_config.memory_keys)
+        memory_report = reduce_max_memory_across_pp_group(memory_report, pg_collection.pp)
+        memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
+
+    if loggers_exist and iteration % logger_config.tensorboard_log_interval == 0:
         if logger_config.log_throughput_to_tensorboard:
             throughput_report = report_throughput(
                 iteration=iteration,
@@ -486,21 +831,25 @@ def training_log(
                 history_wct=history_wct,
                 window_size=logger_config.throughput_window_size,
             )
-            for metric, value in throughput_report.items():
-                writer.add_scalar(metric, value, iteration)
+            if writer:
+                for metric, value in throughput_report.items():
+                    writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(throughput_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(throughput_report), step=iteration)
-        if logger_config.log_memory_to_tensorboard:
-            memory_report = report_memory(memory_keys=logger_config.memory_keys)
-            memory_report = {f"memory/{mem_stat}": val for (mem_stat, val) in memory_report.items()}
-            for metric, value in memory_report.items():
-                writer.add_scalar(metric, value, iteration)
+            if comet_logger:
+                comet_logger.log_metrics(throughput_report, step=iteration)
+        if logger_config.log_memory_to_tensorboard and memory_report is not None:
+            if writer:
+                for metric, value in memory_report.items():
+                    writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(memory_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(memory_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(memory_report, step=iteration)
         if logger_config.log_runtime_to_tensorboard:
             runtime_report = report_runtime(
                 train_state=train_state,
@@ -509,34 +858,54 @@ def training_log(
                 train_iters=train_config.train_iters,
                 time_unit=logger_config.runtime_time_unit,
             )
-            for metric, value in runtime_report.items():
-                writer.add_scalar(metric, value, iteration)
+            if writer:
+                for metric, value in runtime_report.items():
+                    writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(runtime_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(runtime_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(runtime_report, step=iteration)
+
+        # l2 grad norm
         if logger_config.log_l2_norm_grad_to_tensorboard:
             l2_report = report_l2_norm_grad(model)
-            for metric, value in l2_report.items():
-                writer.add_scalar(metric, value, iteration)
+            if writer:
+                for metric, value in l2_report.items():
+                    writer.add_scalar(metric, value, iteration)
             if wandb_writer:
                 wandb_writer.log(l2_report, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics(_sanitize_mlflow_metrics(l2_report), step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics(l2_report, step=iteration)
         if wandb_writer:
             wandb_writer.log({"samples vs steps": train_state.consumed_train_samples}, iteration)
         if mlflow_logger:
             mlflow_logger.log_metrics({"samples vs steps": train_state.consumed_train_samples}, step=iteration)
-        writer.add_scalar("learning-rate", learning_rate, iteration)
-        writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
-        if wandb_writer and learning_rate is not None:
-            wandb_writer.log({"learning-rate": learning_rate}, iteration)
-        if mlflow_logger and learning_rate is not None:
-            mlflow_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
+
+        # learning rate
+        if learning_rate is not None:
+            if writer:
+                writer.add_scalar("learning-rate", learning_rate, iteration)
+                writer.add_scalar("learning-rate vs samples", learning_rate, train_state.consumed_train_samples)
+            if wandb_writer:
+                wandb_writer.log({"learning-rate": learning_rate}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"learning-rate": learning_rate}, step=iteration)
+
+        # decoupled lr
         if config.optimizer.decoupled_lr is not None:
-            writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
+            if writer:
+                writer.add_scalar("decoupled-learning-rate", decoupled_learning_rate, iteration)
+
+        # skipped samples
         if global_state.train_state.skipped_train_samples > 0:
-            writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
+            if writer:
+                writer.add_scalar("skipped-train-samples", global_state.train_state.skipped_train_samples, iteration)
             if wandb_writer:
                 wandb_writer.log({"skipped-train-samples": global_state.train_state.skipped_train_samples}, iteration)
             if mlflow_logger:
@@ -544,137 +913,222 @@ def training_log(
                     {"skipped-train-samples": global_state.train_state.skipped_train_samples},
                     step=iteration,
                 )
-        writer.add_scalar("batch-size", batch_size, iteration)
-        writer.add_scalar("batch-size vs samples", batch_size, global_state.train_state.consumed_train_samples)
+            if comet_logger:
+                comet_logger.log_metrics(
+                    {"skipped-train-samples": global_state.train_state.skipped_train_samples},
+                    step=iteration,
+                )
+
+        # batch size
+        if writer:
+            writer.add_scalar("batch-size", batch_size, iteration)
+            writer.add_scalar("batch-size vs samples", batch_size, global_state.train_state.consumed_train_samples)
         if wandb_writer:
             wandb_writer.log({"batch-size": batch_size}, iteration)
         if mlflow_logger:
             mlflow_logger.log_metrics({"batch-size": batch_size}, step=iteration)
+        if comet_logger:
+            comet_logger.log_metrics({"batch-size": batch_size}, step=iteration)
+
+        # loss dict
         for key in loss_dict:
-            writer.add_scalar(key, loss_dict[key], iteration)
-            writer.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
+            if writer:
+                writer.add_scalar(key, loss_dict[key], iteration)
+                writer.add_scalar(key + " vs samples", loss_dict[key], global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({key: loss_dict[key]}, iteration)
         if mlflow_logger:
             loss_metrics = {key: float(val) for key, val in loss_dict.items()}
             mlflow_logger.log_metrics(loss_metrics, step=iteration)
+        if comet_logger:
+            comet_logger.log_metrics({key: float(val) for key, val in loss_dict.items()}, step=iteration)
+
+        # loss scale
         if logger_config.log_loss_scale_to_tensorboard:
-            writer.add_scalar("loss-scale", loss_scale, iteration)
-            writer.add_scalar("loss-scale vs samples", loss_scale, global_state.train_state.consumed_train_samples)
+            if writer:
+                writer.add_scalar("loss-scale", loss_scale, iteration)
+                writer.add_scalar("loss-scale vs samples", loss_scale, global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({"loss-scale": loss_scale}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"loss-scale": loss_scale}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"loss-scale": loss_scale}, step=iteration)
+
+        # world size
         if logger_config.log_world_size_to_tensorboard:
-            writer.add_scalar("world-size", get_world_size_safe(), iteration)
-            writer.add_scalar(
-                "world-size vs samples", get_world_size_safe(), global_state.train_state.consumed_train_samples
-            )
+            if writer:
+                writer.add_scalar("world-size", get_world_size_safe(), iteration)
+                writer.add_scalar(
+                    "world-size vs samples", get_world_size_safe(), global_state.train_state.consumed_train_samples
+                )
             if wandb_writer:
                 wandb_writer.log({"world-size": get_world_size_safe()}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"world-size": get_world_size_safe()}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"world-size": get_world_size_safe()}, step=iteration)
+
+        # grad norm
         if grad_norm is not None:
-            writer.add_scalar("grad-norm", grad_norm, iteration)
-            writer.add_scalar("grad-norm vs samples", grad_norm, global_state.train_state.consumed_train_samples)
+            if writer:
+                writer.add_scalar("grad-norm", grad_norm, iteration)
+                writer.add_scalar("grad-norm vs samples", grad_norm, global_state.train_state.consumed_train_samples)
             if wandb_writer:
                 wandb_writer.log({"grad-norm": grad_norm}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"grad-norm": grad_norm}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"grad-norm": grad_norm}, step=iteration)
+
+        # num zeros in grad
         if num_zeros_in_grad is not None:
-            writer.add_scalar("num-zeros", num_zeros_in_grad, iteration)
-            writer.add_scalar(
-                "num-zeros vs samples", num_zeros_in_grad, global_state.train_state.consumed_train_samples
-            )
+            if writer:
+                writer.add_scalar("num-zeros", num_zeros_in_grad, iteration)
+                writer.add_scalar(
+                    "num-zeros vs samples", num_zeros_in_grad, global_state.train_state.consumed_train_samples
+                )
             if wandb_writer:
                 wandb_writer.log({"num-zeros": num_zeros_in_grad}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"num-zeros": num_zeros_in_grad}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"num-zeros": num_zeros_in_grad}, step=iteration)
+
+        # params norm
         if params_norm is not None:
-            writer.add_scalar("params-norm", params_norm, iteration)
-            writer.add_scalar("params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples)
+            if writer:
+                writer.add_scalar("params-norm", params_norm, iteration)
+                writer.add_scalar(
+                    "params-norm vs samples", params_norm, global_state.train_state.consumed_train_samples
+                )
             if wandb_writer:
                 wandb_writer.log({"params-norm": params_norm}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"params-norm": params_norm}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"params-norm": params_norm}, step=iteration)
+
+        # max attention logit
         if log_max_attention_logit is not None:
-            writer.add_scalar("max-attention-logit", log_max_attention_logit, iteration)
-            writer.add_scalar(
-                "max-attention-logit vs samples",
-                log_max_attention_logit,
-                global_state.train_state.consumed_train_samples,
-            )
+            if writer:
+                writer.add_scalar("max-attention-logit", log_max_attention_logit, iteration)
+                writer.add_scalar(
+                    "max-attention-logit vs samples",
+                    log_max_attention_logit,
+                    global_state.train_state.consumed_train_samples,
+                )
             if wandb_writer:
                 wandb_writer.log({"max-attention-logit": log_max_attention_logit}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"max-attention-logit": log_max_attention_logit}, step=iteration)
 
-    if config.model.num_moe_experts is not None:
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if num_moe_experts is not None:
         moe_loss_scale = 1 / get_num_microbatches()
         track_names = []
 
-        moe_router_load_balancing_type = config.model.moe_router_load_balancing_type
+        moe_router_load_balancing_type = getattr(config.model, "moe_router_load_balancing_type", "")
         if "aux_loss" in moe_router_load_balancing_type:
             track_names.append("load_balancing_loss")
         if "seq_aux_loss" in moe_router_load_balancing_type:
             track_names.append("seq_load_balancing_loss")
         if "global_aux_loss" in moe_router_load_balancing_type:
             track_names.append("global_load_balancing_loss")
-        if config.model.moe_z_loss_coeff is not None:
+        if getattr(config.model, "moe_z_loss_coeff", None) is not None:
             track_names.append("z_loss")
 
-        if config.model.is_hybrid_model:
-            layers = config.model.hybrid_layer_pattern.count("E")
+        if getattr(config.model, "is_hybrid_model", False):
+            layers = getattr(config.model, "hybrid_layer_pattern", "").count("E")
         else:
-            layers = config.model.num_layers
+            layers = getattr(config.model, "num_layers", None)
 
+        # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
+        # No-op when neither logger is configured: the original writer is returned as-is.
+        moe_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
         track_moe_metrics(
             loss_scale=moe_loss_scale,
             iteration=iteration,
-            writer=writer,
+            writer=moe_metric_writer,
             wandb_writer=wandb_writer,
             total_loss_dict=total_loss_dict,
-            per_layer_logging=config.model.moe_per_layer_logging,
+            per_layer_logging=getattr(config.model, "moe_per_layer_logging", False),
             force_initialize=True,
             track_names=track_names,
             num_layers=layers,
-            moe_layer_freq=config.model.moe_layer_freq,
-            mtp_num_layers=config.model.mtp_num_layers,
+            moe_layer_freq=getattr(config.model, "moe_layer_freq", None),
+            mtp_num_layers=getattr(config.model, "mtp_num_layers", None),
             pg_collection=pg_collection,
         )
-    if config.model.mtp_num_layers is not None:
+    if getattr(config.model, "mtp_num_layers", None) is not None:
         mtp_loss_scale = 1 / get_num_microbatches()
-        MTPLossLoggingHelper.track_mtp_metrics(mtp_loss_scale, iteration, writer, wandb_writer, total_loss_dict)
+        mtp_metric_writer = _build_moe_metric_writer(writer, comet_logger, mlflow_logger)
+        MTPLossLoggingHelper.track_mtp_metrics(
+            mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
+        )
 
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
-        # Calculate GPU utilization
-        num_flops = num_floating_point_operations(config, batch_size)
-        per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
-        print_rank_0(
-            f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
-        )
+        # Calculate GPU utilization (interval-average achieved throughput).
+        #
+        # The main training loop folds each step's DP-exact FLOPS (Σ tokens for the
+        # linear terms, Σᵢ sᵢ² for THD attention) into
+        # ``train_state.floating_point_operations_so_far`` every step, so the FLOPS
+        # performed over this logging interval is exactly the delta since the last
+        # log. Dividing that interval total by the *interval* elapsed time (not the
+        # per-iteration average) keeps numerator and denominator over the same window.
+        # This matters for variable-length THD packing: a per-step numerator (the
+        # log-boundary step alone) divided by an interval-averaged time would over- or
+        # under-report whenever that step is heavier/lighter than the interval mean.
+        # Using the cumulative delta is also the single source of truth — it cannot
+        # disagree with ``floating_point_operations_so_far`` and needs no extra reduce.
+        num_flops = None
+        if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
+            # Coerce to float — floating_point_operations_so_far is a float in
+            # production, but getattr on a MagicMock test double (and an unset anchor)
+            # returns a MagicMock; treat non-numerics as 0 so the math stays valid.
+            flops_so_far = train_state.floating_point_operations_so_far
+            if not isinstance(flops_so_far, (int, float)):
+                flops_so_far = 0.0
+            prev_flops = getattr(global_state, "_flops_at_last_log", 0.0)
+            if not isinstance(prev_flops, (int, float)):
+                prev_flops = flops_so_far
+            num_flops = max(flops_so_far - prev_flops, 0.0)
+            global_state._flops_at_last_log = flops_so_far
+            per_gpu_tf = num_flops / elapsed_time / get_world_size_safe() / 1e12
+            print_rank_0(
+                f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
+            )
 
-        if logger_config.log_throughput_to_tensorboard:
+        # throughput
+        if num_flops is not None and logger_config.log_throughput_to_tensorboard:
             if writer:
                 writer.add_scalar("throughput/tflops/device", per_gpu_tf, iteration)
                 writer.add_scalar("throughput/tflops", per_gpu_tf * get_world_size_safe(), iteration)
-                if wandb_writer:
-                    wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
-                    wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
-                if mlflow_logger:
-                    mlflow_logger.log_metrics(
-                        _sanitize_mlflow_metrics(
-                            {
-                                "throughput/tflops/device": per_gpu_tf,
-                                "throughput/tflops": per_gpu_tf * get_world_size_safe(),
-                            }
-                        ),
-                        step=iteration,
-                    )
-
+            if wandb_writer:
+                wandb_writer.log({"throughput/tflops/device": per_gpu_tf}, iteration)
+                wandb_writer.log({"throughput/tflops": per_gpu_tf * get_world_size_safe()}, iteration)
+            if mlflow_logger:
+                mlflow_logger.log_metrics(
+                    metrics={
+                        "throughput/tflops_per_device": per_gpu_tf,
+                        "throughput/tflops": per_gpu_tf * get_world_size_safe(),
+                    },
+                    step=iteration,
+                )
+            if comet_logger:
+                comet_logger.log_metrics(
+                    {
+                        "throughput/tflops/device": per_gpu_tf,
+                        "throughput/tflops": per_gpu_tf * get_world_size_safe(),
+                    },
+                    step=iteration,
+                )
+        # timers
         if logger_config.log_timers_to_tensorboard:
             if writer:
                 writer.add_scalar("iteration-time", elapsed_time_per_iteration, iteration)
@@ -682,6 +1136,9 @@ def training_log(
                 wandb_writer.log({"iteration-time": elapsed_time_per_iteration}, iteration)
             if mlflow_logger:
                 mlflow_logger.log_metrics({"iteration-time": elapsed_time_per_iteration}, step=iteration)
+            if comet_logger:
+                comet_logger.log_metrics({"iteration-time": elapsed_time_per_iteration}, step=iteration)
+
         log_string = f" [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]"
         log_string += " iteration {:8d}/{:8d} |".format(iteration, train_config.train_iters)
         log_string += " consumed samples: {:12d} |".format(global_state.train_state.consumed_train_samples)
@@ -689,7 +1146,7 @@ def training_log(
             log_string += " skipped samples: {:12d} |".format(global_state.train_state.skipped_train_samples)
         log_string += " elapsed time per iteration (ms): {:.1f} |".format(elapsed_time_per_iteration * 1000.0)
 
-        if logger_config.log_throughput:
+        if num_flops is not None and logger_config.log_throughput:
             log_string += f" throughput per GPU (TFLOP/s/GPU): {per_gpu_tf:.1f} |"
 
         if energy_monitor is not None:
@@ -708,6 +1165,8 @@ def training_log(
                     _sanitize_mlflow_metrics({"iter-energy/gpu": float(energy), "power/gpu": float(power)}),
                     step=iteration,
                 )
+            if comet_logger:
+                comet_logger.log_metrics({"iter-energy/gpu": float(energy), "power/gpu": float(power)}, step=iteration)
 
         # Decoupled_learning_rate should be not None only on first and last pipeline stage.
         log_string += f" learning rate: {learning_rate:.6E} |"
@@ -743,7 +1202,10 @@ def training_log(
                 memory_string += f" | {metric}: {value}"
             if torch.distributed.get_rank(group=pg_collection.dp) == 0:
                 print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
-            report_memory_flag = False
+            if iteration > (loaded_iteration + 1):
+                # Make sure the memory after the second iteration is reported
+                # to include optimizer state memory.
+                report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
 
     return report_memory_flag
@@ -833,7 +1295,7 @@ def report_l2_norm_grad(model: list[MegatronModule]) -> dict:
 
     for model_chunk in model:
         for name, p in model_chunk.named_parameters():
-            if p.main_grad is not None and p.requires_grad:
+            if p.requires_grad and p.main_grad is not None:
                 if f"l2_norm/grad/{name}" not in optimizer_metrics:
                     param_grad_norm = torch.linalg.vector_norm(p.main_grad)
                     optimizer_metrics[f"l2_norm/grad/{name}"] = param_grad_norm

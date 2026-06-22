@@ -7,7 +7,7 @@ This directory contains comprehensive documentation for training and customizing
 ### I want to
 
 **🚀 Get started with training**
-→ Start with [Configuration Container Overview](config-container-overview.md) to understand the training setup
+→ Start with [Configuration Container Overview](config-container-overview.md) and [Data Preparation](data-preparation.md) to understand the training setup
 
 **⚙️ Configure training parameters**
 → See [Training Loop Settings](training-loop-settings.md) and [Optimizer & Scheduler](optimizer-scheduler.md)
@@ -22,7 +22,7 @@ This directory contains comprehensive documentation for training and customizing
 → Explore [Performance Guide](../performance-guide.md) and [Performance Summary](../performance-summary.md)
 
 **🔧 Customize training**
-→ See [PEFT](peft.md), [Distillation](distillation.md), [Entry Points](entry-points.md), and [Callbacks](callbacks.md)
+→ See [PEFT](peft.md), [Distillation](../modelopt/distillation.md), [Entry Points](entry-points.md), and [Callbacks](callbacks.md)
 
 ## Core Training Documentation
 
@@ -32,6 +32,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[Configuration Container Overview](config-container-overview.md)** | Central configuration object for all training settings | First time setting up training |
 | **[Entry Points](entry-points.md)** | Training entry points and execution flow | Understanding how training starts |
+| **[Data Preparation](data-preparation.md)** | Dataset formats for pretraining, SFT, PEFT, and VLM fine-tuning | Preparing data or choosing dataset config fields |
 | **[Training Loop Settings](training-loop-settings.md)** | Training loop parameters and configuration | Configuring batch sizes, iterations, validation |
 
 ### Optimization and Performance
@@ -41,6 +42,7 @@ This directory contains comprehensive documentation for training and customizing
 | **[Optimizer & Scheduler](optimizer-scheduler.md)** | Optimizer and learning rate scheduler configuration | Setting up optimization |
 | **[Mixed Precision](mixed-precision.md)** | Mixed precision training for memory efficiency | Reducing memory usage |
 | **[Communication Overlap](communication-overlap.md)** | Overlapping communication with computation | Optimizing distributed training |
+| **[Hierarchical Context Parallel](hierarchical-context-parallel.md)** | Hierarchical `a2a+p2p` context parallel guidance | Advanced long-sequence scaling |
 | **[Attention Optimizations](attention-optimizations.md)** | Optimizing attention mechanisms | Improving training speed |
 | **[Activation Recomputation](activation-recomputation.md)** | Gradient checkpointing strategies | Reducing memory footprint |
 | **[CPU Offloading](cpu-offloading.md)** | Offloading to CPU for memory management | Working with limited GPU memory |
@@ -51,6 +53,7 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[Logging](logging.md)** | Logging configuration and TensorBoard/WandB integration | Monitoring training progress |
 | **[Profiling](profiling.md)** | Performance profiling and analysis | Identifying bottlenecks |
+| **[Theoretical Memory Estimator](memory-estimator.md)** | Formula-based per-GPU memory planning | Sizing dense and MoE training configs |
 | **[Resiliency](resiliency.md)** | Handling failures and recovery | Building robust training pipelines |
 
 ### Advanced Features
@@ -59,7 +62,8 @@ This directory contains comprehensive documentation for training and customizing
 |----------|---------|--------------|
 | **[PEFT](peft.md)** | Parameter-Efficient Fine-Tuning (LoRA, etc.) | Fine-tuning with limited resources |
 | **[Packed Sequences](packed-sequences.md)** | Sequence packing for efficiency | Optimizing data loading |
-| **[Distillation](distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
+| **[Megatron FSDP](megatron-fsdp.md)** | Stable overview of Megatron FSDP | Choosing an FSDP path |
+| **[Distillation](../modelopt/distillation.md)** | Knowledge distillation techniques | Transferring knowledge between models |
 | **[Checkpointing](checkpointing.md)** | Checkpoint saving, loading, and resuming | Managing training state |
 | **[Callbacks](callbacks.md)** | Inject custom logic into training loop | Custom logging, metrics, third-party integrations |
 
@@ -68,7 +72,7 @@ This directory contains comprehensive documentation for training and customizing
 A typical training workflow involves:
 
 1. **Configure Training** - Set up `ConfigContainer` with model, data, and training parameters
-2. **Prepare Data** - Configure dataset loading and preprocessing
+2. **Prepare Data** - Configure dataset loading and preprocessing with the right data format
 3. **Set Optimization** - Configure optimizer, scheduler, and mixed precision
 4. **Enable Monitoring** - Set up logging and profiling
 5. **Configure Checkpointing** - Set up checkpoint saving and resuming
@@ -90,9 +94,10 @@ A typical training workflow involves:
 ### 🆕 First-Time Training Setup
 
 1. [Configuration Container Overview](config-container-overview.md) - Understand the configuration system
-2. [Entry Points](entry-points.md) - Learn how to start training
-3. [Training Loop Settings](training-loop-settings.md) - Configure basic training parameters
-4. [Logging](logging.md) - Set up monitoring
+2. [Data Preparation](data-preparation.md) - Choose the right dataset format and config fields
+3. [Entry Points](entry-points.md) - Learn how to start training
+4. [Training Loop Settings](training-loop-settings.md) - Configure basic training parameters
+5. [Logging](logging.md) - Set up monitoring
 
 ### ⚡ Performance Optimization
 
@@ -112,7 +117,7 @@ A typical training workflow involves:
 ### 🔧 Customization
 
 1. [PEFT](peft.md) - Parameter-efficient fine-tuning
-2. [Distillation](distillation.md) - Knowledge distillation
+2. [Distillation](../modelopt/distillation.md) - Knowledge distillation
 3. [Entry Points](entry-points.md) - Custom training workflows
 4. [Callbacks](callbacks.md) - Inject custom logic (third-party integrations)
 

@@ -9,6 +9,8 @@ body:
     attributes:
       value: |
         Use this form for new functionality, enablement work, or product improvements. Keep the request focused on the user problem and desired outcome.
+
+        **If you already have a proposed solution, please open a PR alongside this issue.** We can discuss the implementation there and help get it merged.
   - type: textarea
     id: user-problem
     attributes:
