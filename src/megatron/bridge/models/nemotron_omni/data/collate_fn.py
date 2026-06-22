@@ -18,7 +18,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -55,6 +55,7 @@ def nemotron_omni_collate_fn(
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
     first_content = examples[0]["conversation"][0]["content"]
     is_video = isinstance(first_content, list) and first_content[0].get("type") == "video"
 
@@ -266,7 +267,13 @@ def nemotron_omni_collate_fn(
     # --- Loss mask (same pattern as nemotron_vl) ---
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            ).to(dtype=torch.int)
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     )
