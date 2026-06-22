@@ -368,6 +368,7 @@ def _forward_step_common(
     accumulate_flops_metadata(
         state,
         tokens,
+        config_seq_len=getattr(config, "seq_length", None),
         cu_seqlens=cu_seqlens if cp_use_thd else None,
         cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
         cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
