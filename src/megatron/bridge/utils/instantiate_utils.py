@@ -15,6 +15,9 @@
 # Patch for https://github.com/facebookresearch/hydra/blob/main/hydra/_internal/instantiate/_instantiate2.py
 # until https://github.com/facebookresearch/hydra/issues/2140 is resolved
 
+from typing import Any, Callable
+
+from megatron.training.config import instantiate_utils as _mcore_instantiate_utils
 from megatron.training.config.instantiate_utils import (
     InstantiationException,
     InstantiationMode,  # noqa: F401  (re-exported for tests / external callers)
@@ -27,10 +30,12 @@ from megatron.training.config.instantiate_utils import (
     _Keys,  # noqa: F401  (re-exported for tests / external callers)
     _locate,  # noqa: F401  (re-exported for tests / external callers)
     _prepare_input_dict_or_list,  # noqa: F401  (re-exported for tests / external callers)
-    _resolve_target,  # noqa: F401  (re-exported for tests / external callers)
     instantiate,  # noqa: F401  (re-exported for tests / external callers)
     instantiate_node,  # noqa: F401  (re-exported for tests / external callers)
     target_allowlist,
+)
+from megatron.training.config.instantiate_utils import (
+    _resolve_target as _mcore_resolve_target,
 )
 
 
@@ -41,6 +46,30 @@ _ALLOWED_TARGET_PREFIXES: set[str] = {
     "transformers.",
     "numpy.",
     "nemo.",
+}
+
+_TARGET_ALLOWLIST_MUTATORS: tuple[str, ...] = (
+    "add_prefix",
+    "remove_prefix",
+    "add_exact",
+    "remove_exact",
+    "disable",
+    "enable",
+)
+
+_ALLOWED_PRIVATE_TARGETS: set[str] = {
+    # PyTorch exposes torch.nn.functional.gelu as this C-extension symbol, and
+    # the YAML function representer serializes it with its underlying module.
+    "torch._C._nn.gelu",
+}
+
+_DISALLOWED_TARGETS: set[str] = {
+    "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+    *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
+    *{
+        f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
+        for method in _TARGET_ALLOWLIST_MUTATORS
+    },
 }
 
 
@@ -77,12 +106,37 @@ def register_allowed_target_prefix(prefix: str) -> None:
 
 
 def _validate_target_prefix(*, target: str, full_key: str) -> None:
-    """Validate that a _target_ string is permitted by the allowlist."""
+    """Validate that a _target_ string is permitted by Bridge hardening rules."""
+    if target in _DISALLOWED_TARGETS:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed because it can modify target validation state."
+            + (f"\nfull_key: {full_key}" if full_key else "")
+        )
+    private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
+    if private_segments and target not in _ALLOWED_PRIVATE_TARGETS:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed because private target path segments are not supported: "
+            f"{private_segments}." + (f"\nfull_key: {full_key}" if full_key else "")
+        )
     if not target_allowlist.is_allowed(target):
         raise InstantiationException(
-            f"Instantiation of '{target}' is not allowed. "
+            f"Instantiation of '{target}' is not allowed because it is not in the allowlist. "
             f"The target must start with one of the allowed prefixes: "
             f"{sorted(target_allowlist.allowed_prefixes)}. "
             f"Use register_allowed_target_prefix() to add additional allowed prefixes."
             + (f"\nfull_key: {full_key}" if full_key else "")
         )
+
+
+def _resolve_target(
+    target: str | type | Callable[..., Any],
+    full_key: str,
+    check_callable: bool = True,
+) -> type | Callable[..., Any] | object:
+    """Resolve target string, type, or callable after Bridge validation."""
+    if isinstance(target, str):
+        _validate_target_prefix(target=target, full_key=full_key)
+    return _mcore_resolve_target(target, full_key, check_callable)
+
+
+_mcore_instantiate_utils._resolve_target = _resolve_target

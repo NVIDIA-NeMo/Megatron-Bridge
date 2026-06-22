@@ -48,6 +48,9 @@ class KimiK25VLModelProvider(MLAModelProvider):
     # of MoonViT3d, PatchMergerMLP, and other custom model classes).
     hf_model_path: Optional[str] = None
 
+    # Whether loading the custom Kimi vision module from hf_model_path is allowed.
+    trust_remote_code: bool = False
+
     # Token IDs (from Kimi K2.5 config.json)
     bos_token_id: int = 163584
     eos_token_id: int = 163585

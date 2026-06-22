@@ -14,11 +14,18 @@
 
 """Unit tests for Gemma4VLModel helpers (no GPU / Megatron distributed required)."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import pytest
 import torch
 
-from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
+from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import (
+    Gemma4VLModel,
+    _keep_hf_precision_buffers_in_fp32,
+    _SimpleAudioEmbedder,
+    _SimpleVisionEmbedder,
+)
 
 
 IMAGE_TOKEN_ID = 258_880
@@ -149,3 +156,228 @@ class TestComputeAttentionMask:
         input_ids = torch.tensor([seq, seq], dtype=torch.long)
         mask = model._compute_attention_mask(input_ids)
         assert mask.shape == (2, 1, 3, 3)
+
+    def test_audio_tokens_follow_causal_mask(self):
+        """Audio tokens do not receive image-style bidirectional attention."""
+        model = _make_model()
+        model.config.audio_token_id = 258_881
+        seq = [model.config.audio_token_id, model.config.audio_token_id, self.TEXT_TOKEN]
+        input_ids = self._make_ids(seq)
+
+        mask = model._compute_attention_mask(input_ids)
+
+        assert mask[0, 0, 0, 1].item() is True
+        assert mask[0, 0, 1, 0].item() is False
+
+
+class TestHFPrecisionBuffers:
+    def test_keep_hf_precision_buffers_in_fp32(self):
+        class RopeModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = object()
+                self.rope_type = "default"
+                self.attention_scaling = None
+                self.register_buffer("inv_freq", torch.ones(2, dtype=torch.bfloat16), persistent=False)
+                self.register_buffer("original_inv_freq", torch.ones(2, dtype=torch.bfloat16), persistent=False)
+
+            def compute_default_rope_parameters(self, config, device):
+                del config
+                return torch.arange(2, device=device, dtype=torch.float32), 1.5
+
+        class AudioPositionModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.hidden_size = 4
+                self.register_buffer("inv_timescales", torch.ones(1, 1, 2, dtype=torch.bfloat16), persistent=False)
+
+        class SoftcapModule(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.register_buffer("softcap", torch.tensor(30.0, dtype=torch.bfloat16), persistent=False)
+
+        module = torch.nn.Module()
+        module.rope = RopeModule()
+        module.audio_position = AudioPositionModule()
+        module.softcap_module = SoftcapModule()
+
+        _keep_hf_precision_buffers_in_fp32(module)
+
+        assert module.rope.inv_freq.dtype == torch.float32
+        assert module.rope.original_inv_freq.dtype == torch.float32
+        assert module.rope.attention_scaling == 1.5
+        assert module.audio_position.inv_timescales.dtype == torch.float32
+        assert module.softcap_module.softcap.dtype == torch.float32
+
+
+class TestFallbackEmbedders:
+    def test_simple_vision_embedder_projects_to_text_hidden(self):
+        embedder = _SimpleVisionEmbedder(vision_hidden=3, text_hidden=5, eps=1e-6)
+
+        out = embedder(torch.ones(2, 4, 3))
+
+        assert out.shape == (2, 4, 5)
+
+    def test_simple_audio_embedder_projects_to_text_hidden(self):
+        embedder = _SimpleAudioEmbedder(audio_proj_dim=3, text_hidden=5, eps=1e-6)
+
+        out = embedder(torch.ones(2, 4, 3))
+
+        assert out.shape == (2, 4, 5)
+
+
+class TestScatterModalityFeatures:
+    def test_scatter_modality_features_replaces_token_slots(self):
+        model = _make_model()
+        inputs = torch.zeros(1, 3, 4)
+        input_ids = torch.tensor([[IMAGE_TOKEN_ID, 7, IMAGE_TOKEN_ID]])
+        features = torch.tensor([[[1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]]])
+
+        out = model._scatter_modality_features(inputs, input_ids, features, IMAGE_TOKEN_ID, "image")
+
+        torch.testing.assert_close(out[0, 0], features[0, 0])
+        torch.testing.assert_close(out[0, 1], torch.zeros(4))
+        torch.testing.assert_close(out[0, 2], features[0, 1])
+
+    def test_scatter_modality_features_rejects_mismatched_counts(self):
+        model = _make_model()
+        inputs = torch.zeros(1, 3, 4)
+        input_ids = torch.tensor([[IMAGE_TOKEN_ID, 7, IMAGE_TOKEN_ID]])
+        features = torch.ones(1, 1, 4)
+
+        with pytest.raises(ValueError, match="image token count mismatch"):
+            model._scatter_modality_features(inputs, input_ids, features, IMAGE_TOKEN_ID, "image")
+
+    def test_forward_scatters_audio_features(self):
+        model = _make_model()
+        model.config.audio_token_id = 258_881
+        model.config.text_config.pad_token_id = 0
+        model.language_model = Mock()
+        model.language_model.config = SimpleNamespace(scale_embeddings_by_hidden_size=False, hidden_size=4)
+        model.language_model.embedding.return_value = torch.zeros(3, 1, 4)
+        model.language_model.forward.return_value = torch.zeros(3, 1, 8)
+        model.audio_tower = Mock()
+        model.get_audio_features = Mock(return_value=torch.full((1, 2, 4), 9.0))
+        input_ids = torch.tensor([[model.config.audio_token_id, model.config.audio_token_id, 5]])
+
+        Gemma4VLModel.forward(model, input_ids=input_ids, input_features=torch.ones(1, 8, 128))
+
+        decoder_input = model.language_model.forward.call_args.kwargs["decoder_input"]
+        assert decoder_input.shape == (3, 1, 4)
+        torch.testing.assert_close(decoder_input[:2], torch.full((2, 1, 4), 9.0))
+        torch.testing.assert_close(decoder_input[2], torch.zeros(1, 4))
+
+    def test_forward_scatters_sequence_parallel_decoder_input(self):
+        model = _make_model()
+        model.config.sequence_parallel = True
+        model.config.audio_token_id = 258_881
+        model.language_model = Mock()
+        model.language_model.forward.return_value = "outputs"
+        inputs_embeds = torch.ones(1, 2, 4)
+        input_ids = torch.tensor([[7, 8]])
+        calls = []
+
+        def fake_scatter(tensor, *, group=None):
+            assert group is None
+            calls.append(tensor)
+            return tensor + 1.0
+
+        with patch(
+            "megatron.bridge.models.gemma_vl.modeling_gemma4_vl.scatter_to_sequence_parallel_region", fake_scatter
+        ):
+            out = Gemma4VLModel.forward(model, input_ids=input_ids, inputs_embeds=inputs_embeds)
+
+        assert out == "outputs"
+        torch.testing.assert_close(calls[0], inputs_embeds.transpose(1, 0).contiguous())
+        torch.testing.assert_close(model.language_model.forward.call_args.kwargs["decoder_input"], calls[0] + 1.0)
+
+
+class TestFeatureExtractionAndFreeze:
+    class _Tower(torch.nn.Module):
+        def __init__(self, output):
+            super().__init__()
+            self.output = output
+            self.calls = []
+
+        def forward(self, **kwargs):
+            self.calls.append(kwargs)
+            return SimpleNamespace(last_hidden_state=self.output)
+
+    class _Embedder(torch.nn.Module):
+        def __init__(self, offset):
+            super().__init__()
+            self.offset = offset
+
+        def forward(self, x):
+            return x + self.offset
+
+    class _ParamHolder:
+        def __init__(self):
+            self.param = torch.nn.Parameter(torch.ones(1))
+
+        def parameters(self):
+            return [self.param]
+
+    def test_get_image_features_runs_tower_and_embedder(self):
+        model = _make_model()
+        hidden = torch.ones(1, 2, 3)
+        object.__setattr__(model, "vision_tower", self._Tower(hidden))
+        object.__setattr__(model, "embed_vision", self._Embedder(offset=2.0))
+        pixel_values = torch.zeros(1, 2, 3)
+        image_position_ids = torch.zeros(1, 2, 2, dtype=torch.long)
+
+        out = Gemma4VLModel.get_image_features(model, pixel_values, image_position_ids=image_position_ids)
+
+        torch.testing.assert_close(out, hidden + 2.0)
+        assert model.vision_tower.calls[-1]["pixel_values"] is pixel_values
+        assert model.vision_tower.calls[-1]["pixel_position_ids"] is image_position_ids
+
+    def test_get_audio_features_runs_tower_and_embedder(self):
+        model = _make_model()
+        hidden = torch.ones(1, 2, 3)
+        object.__setattr__(model, "audio_tower", self._Tower(hidden))
+        object.__setattr__(model, "embed_audio", self._Embedder(offset=3.0))
+        input_features = torch.zeros(1, 8, 128)
+
+        out = Gemma4VLModel.get_audio_features(model, input_features)
+
+        torch.testing.assert_close(out, hidden + 3.0)
+        assert model.audio_tower.calls[-1]["input_features"] is input_features
+
+    def test_freeze_updates_requested_modules_only(self):
+        model = SimpleNamespace(
+            language_model=self._ParamHolder(),
+            vision_tower=self._ParamHolder(),
+            embed_vision=self._ParamHolder(),
+            audio_tower=self._ParamHolder(),
+            embed_audio=self._ParamHolder(),
+        )
+
+        Gemma4VLModel.freeze(
+            model,
+            freeze_language_model=True,
+            freeze_vision_model=False,
+            freeze_vision_projection=True,
+            freeze_audio_model=True,
+            freeze_audio_projection=False,
+        )
+
+        assert model.language_model.param.requires_grad is False
+        assert model.vision_tower.param.requires_grad is True
+        assert model.embed_vision.param.requires_grad is False
+        assert model.audio_tower.param.requires_grad is False
+        assert model.embed_audio.param.requires_grad is True
+
+    def test_freeze_ignores_requested_but_missing_optional_modules(self):
+        model = SimpleNamespace(language_model=self._ParamHolder())
+
+        Gemma4VLModel.freeze(
+            model,
+            freeze_language_model=True,
+            freeze_vision_model=True,
+            freeze_vision_projection=True,
+            freeze_audio_model=True,
+            freeze_audio_projection=True,
+        )
+
+        assert model.language_model.param.requires_grad is False
