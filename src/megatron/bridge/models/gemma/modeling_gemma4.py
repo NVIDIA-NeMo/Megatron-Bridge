@@ -28,6 +28,7 @@ MoE layer specification:
 """
 
 import copy
+import inspect
 import types
 import weakref
 from dataclasses import dataclass
@@ -898,6 +899,19 @@ def _gemma4_layer_input(
     return per_layer_inputs[:, :, global_layer_idx, :].transpose(0, 1)
 
 
+def _gemma4_layer_accepts_input_ids(layer: "torch.nn.Module") -> bool:
+    forward_attention = getattr(layer, "_forward_attention", None)
+    if forward_attention is None:
+        return False
+    try:
+        parameters = inspect.signature(forward_attention).parameters
+    except (TypeError, ValueError):
+        return False
+    return "input_ids" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+
+
 def _gemma4_checkpointed_forward(
     self: "torch.nn.Module",
     hidden_states: Tensor,
@@ -965,7 +979,11 @@ def _gemma4_checkpointed_forward(
                     padding_mask=padding_mask,
                     per_layer_input=_gemma4_layer_input(per_layer_inputs, layer),
                 )
-                if input_ids is not None:
+                if (
+                    input_ids is not None
+                    and isinstance(layer, TransformerLayer)
+                    and _gemma4_layer_accepts_input_ids(layer)
+                ):
                     layer_kwargs["input_ids"] = input_ids
                 with inner_quantization_context:
                     if isinstance(layer, TransformerLayer):
