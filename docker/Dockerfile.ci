@@ -29,6 +29,12 @@ ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
     RDMA_CORE_HOME=/opt/rdma-core/build \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
 
+##############################################################################
+##
+## Install DeepEP and nvshmem
+##
+##############################################################################
+
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
     curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
