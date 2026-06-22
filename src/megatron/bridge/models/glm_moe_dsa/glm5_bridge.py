@@ -32,53 +32,22 @@ from megatron.bridge.peft.lora import LoRA
 
 logger = logging.getLogger(__name__)
 
-GLM5_MLA_LORA_TARGET_MODULES = [
-    "linear_q_down_proj",
-    "linear_q_up_proj",
-    "linear_kv_down_proj",
-    "linear_kv_up_proj",
-    "linear_proj",
-]
-GLM5_MLP_LORA_TARGET_MODULES = ["linear_fc1", "linear_fc2"]
-GLM5_DSA_INDEXER_LORA_TARGET_MODULES = [
-    "linear_wq_b",
-    "linear_wk",
-    "linear_weights_proj",
-]
-GLM5_ROUTER_LORA_TARGET_MODULES = ["router"]
 
+def _glm5_lora_target_modules() -> list[str]:
+    """Return default Megatron-Core module names for GLM5 LoRA targeting."""
 
-def glm5_lora_target_modules(
-    *,
-    include_mla: bool = True,
-    include_mlp: bool = True,
-    include_indexer: bool = True,
-    include_router: bool = False,
-) -> list[str]:
-    """Return Megatron-Core module names for GLM5 LoRA targeting.
-
-    Args:
-        include_mla: Include GLM5 MLA attention projection linears.
-        include_mlp: Include dense MLP, shared expert, and routed expert linears.
-        include_indexer: Include the DSA Indexer linears. The Indexer norm is
-            intentionally excluded because LoRA targets linear/router modules.
-        include_router: Include MoE router modules. Off by default to avoid
-            changing router behavior unless requested explicitly.
-
-    Returns:
-        Ordered list of Megatron-Core module names for ``LoRA.target_modules``.
-    """
-
-    target_modules: list[str] = []
-    if include_mla:
-        target_modules.extend(GLM5_MLA_LORA_TARGET_MODULES)
-    if include_mlp:
-        target_modules.extend(GLM5_MLP_LORA_TARGET_MODULES)
-    if include_indexer:
-        target_modules.extend(GLM5_DSA_INDEXER_LORA_TARGET_MODULES)
-    if include_router:
-        target_modules.extend(GLM5_ROUTER_LORA_TARGET_MODULES)
-    return target_modules
+    return [
+        "linear_q_down_proj",
+        "linear_q_up_proj",
+        "linear_kv_down_proj",
+        "linear_kv_up_proj",
+        "linear_proj",
+        "linear_fc1",
+        "linear_fc2",
+        "linear_wq_b",
+        "linear_wk",
+        "linear_weights_proj",
+    ]
 
 
 @dataclass
@@ -89,7 +58,7 @@ class GLM5LoRA(LoRA):
     generic QKV/MLP defaults.
     """
 
-    target_modules: list[str] = field(default_factory=glm5_lora_target_modules)
+    target_modules: list[str] = field(default_factory=_glm5_lora_target_modules)
 
 
 @MegatronModelBridge.register_bridge(

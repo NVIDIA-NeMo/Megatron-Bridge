@@ -15,12 +15,7 @@
 import torch.nn as nn
 
 from megatron.bridge.models.glm_moe_dsa import (
-    GLM5_DSA_INDEXER_LORA_TARGET_MODULES,
-    GLM5_MLA_LORA_TARGET_MODULES,
-    GLM5_MLP_LORA_TARGET_MODULES,
-    GLM5_ROUTER_LORA_TARGET_MODULES,
     GLM5LoRA,
-    glm5_lora_target_modules,
 )
 from megatron.bridge.peft.lora_layers import LinearAdapter
 
@@ -79,22 +74,25 @@ class _FakeGLM5Model(nn.Module):
 
 
 def test_glm5_lora_target_modules_include_indexer_by_default():
-    target_modules = glm5_lora_target_modules()
+    target_modules = GLM5LoRA().target_modules
 
     assert target_modules == [
-        *GLM5_MLA_LORA_TARGET_MODULES,
-        *GLM5_MLP_LORA_TARGET_MODULES,
-        *GLM5_DSA_INDEXER_LORA_TARGET_MODULES,
+        "linear_q_down_proj",
+        "linear_q_up_proj",
+        "linear_kv_down_proj",
+        "linear_kv_up_proj",
+        "linear_proj",
+        "linear_fc1",
+        "linear_fc2",
+        "linear_wq_b",
+        "linear_wk",
+        "linear_weights_proj",
     ]
     assert "linear_wq_b" in target_modules
     assert "linear_wk" in target_modules
     assert "linear_weights_proj" in target_modules
     assert "k_norm" not in target_modules
-    assert GLM5_ROUTER_LORA_TARGET_MODULES[0] not in target_modules
-
-
-def test_glm5_lora_target_modules_can_include_router():
-    assert glm5_lora_target_modules(include_router=True)[-1] == GLM5_ROUTER_LORA_TARGET_MODULES[0]
+    assert "router" not in target_modules
 
 
 def test_glm5_lora_wraps_indexer_targets_and_excludes_norm():

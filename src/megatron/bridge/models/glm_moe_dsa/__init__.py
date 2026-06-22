@@ -13,22 +13,12 @@
 # limitations under the License.
 
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import (
-    GLM5_DSA_INDEXER_LORA_TARGET_MODULES,
-    GLM5_MLA_LORA_TARGET_MODULES,
-    GLM5_MLP_LORA_TARGET_MODULES,
-    GLM5_ROUTER_LORA_TARGET_MODULES,
     GLM5Bridge,
     GLM5LoRA,
-    glm5_lora_target_modules,
 )
 
 
 __all__ = [
     "GLM5Bridge",
     "GLM5LoRA",
-    "GLM5_DSA_INDEXER_LORA_TARGET_MODULES",
-    "GLM5_MLA_LORA_TARGET_MODULES",
-    "GLM5_MLP_LORA_TARGET_MODULES",
-    "GLM5_ROUTER_LORA_TARGET_MODULES",
-    "glm5_lora_target_modules",
 ]
