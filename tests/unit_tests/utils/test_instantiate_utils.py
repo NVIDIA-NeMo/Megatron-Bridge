@@ -790,6 +790,7 @@ class TestTargetPrefixValidation:
             ("torch.ctypes.OleDLL", {"name": "/tmp/attacker.dll"}),
             ("torch.ctypes.windll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
             ("torch.ctypes.oledll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
+            ("torch.hub.load", {"repo_or_dir": "./attacker_hub_repo", "model": "payload", "source": "local"}),
             ("numpy.load", {"file": "/tmp/attacker.npy", "allow_pickle": True}),
             ("numpy.ctypeslib.load_library", {"libname": "attacker", "loader_path": "/tmp"}),
         ],

@@ -80,6 +80,7 @@ _DISALLOWED_TARGETS: set[str] = {
     "torch.ctypes.oledll.LoadLibrary",
     "torch.ctypes.pydll.LoadLibrary",
     "torch.ctypes.windll.LoadLibrary",
+    "torch.hub.load",
     "torch.load",
     "torch.ops.load_library",
     "transformers.AutoConfig.from_pretrained",
