@@ -52,7 +52,10 @@ set -euo pipefail
 : "${WANDB_API_KEY:?set WANDB_API_KEY}"
 : "${ACCOUNT:?set ACCOUNT}"
 : "${PARTITION:?set PARTITION}"
-: "${CONTAINER_IMAGE:?set CONTAINER_IMAGE}"
+# Path to a local enroot squashfs. For many-rank runs, stripe it across all OSTs
+# (`lfs setstripe -c -1 <dir>` then copy the image in) so image reads at startup
+# don't bottleneck a few OSTs.
+: "${CONTAINER_IMAGE:?set CONTAINER_IMAGE (local enroot squashfs)}"
 : "${REPO_ROOT:?set REPO_ROOT (absolute path to this checkout)}"
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 
@@ -62,6 +65,12 @@ NSYS_START="${NSYS_START:-15}"
 NSYS_STOP="${NSYS_STOP:-18}"
 WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-3600}"
 PYTHON="${PYTHON:-python}"
+# HF Hub offline: default TRUE (offline). At scale, going online makes every rank
+# call the HF API during tokenizer load (is_base_mistral -> model_info), blowing
+# the 1000-req/5min quota -> 429 -> tokenizer load fails -> NCCL cascade. Offline
+# reads only the local (pre-staged) cache. Set HF_HUB_OFFLINE=0 to force online.
+# Drives TRANSFORMERS_OFFLINE too. Requires the cache to be pre-staged.
+HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(realpath "$OUT_DIR")
@@ -111,6 +120,13 @@ if [ -z "${GRES+x}" ]; then
 fi
 GRES_ARG=()
 [ -n "$GRES" ] && GRES_ARG=(--gres "$GRES")
+
+# Optional extra Slurm params (semicolon-separated key=value) -> setup_experiment
+# --additional_slurm_params. For reserved large-scale runs, e.g.:
+#   ADDITIONAL_SLURM_PARAMS="reservation=<your_reservation>;qos=<your_qos>"
+ADDITIONAL_SLURM_PARAMS="${ADDITIONAL_SLURM_PARAMS:-}"
+SLURM_EXTRA_ARG=()
+[ -n "$ADDITIONAL_SLURM_PARAMS" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$ADDITIONAL_SLURM_PARAMS")
 
 submit_run() {
     local MODE="$1"  # "det" | "nondet" | "det-bitwise" | "det-bitwise2"
@@ -175,6 +191,7 @@ submit_run() {
         -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
         -ng "$NGPUS" -gn "$GN" \
         "${GRES_ARG[@]}" \
+        "${SLURM_EXTRA_ARG[@]}" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
         -hf "$HF_TOKEN" \
@@ -188,6 +205,8 @@ submit_run() {
         -E HF_HOME="$HF_CACHE" \
         -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
         -E TRANSFORMERS_CACHE="$HF_CACHE" \
+        -E HF_HUB_OFFLINE="$HF_HUB_OFFLINE" \
+        -E TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" \
         model.attention_backend=fused \
         model.deterministic_mode="$DET_MODE" \
         model.cross_entropy_loss_fusion="$CE_FUSION" \
@@ -226,19 +245,20 @@ submit_run() {
 submit_run det
 submit_run nondet
 submit_run det-bitwise
-submit_run det-bitwise2
+# det-bitwise2 (2nd no-nsys run) intentionally NOT submitted: only 3 runs requested
+# (det+nsys, non-det+nsys, det+no-nsys). Re-enable for the 4-run cross-allocation check.
+# submit_run det-bitwise2
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
 JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
-JOB_BITWISE2=$(cat "$OUT_DIR/jobid-det-bitwise2.txt")
 
-# Wait for all four to complete.
+# Wait for all three to complete.
 deadline=$(($(date +%s) + WAIT_TIMEOUT_SEC))
 while :; do
-    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE,$JOB_BITWISE2" -h 2>/dev/null | wc -l)
+    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE" -h 2>/dev/null | wc -l)
     [ "$pending" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
-        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE / $JOB_BITWISE2" >&2
+        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE" >&2
         exit 124
     fi
     echo "$(date -Iseconds)  waiting for jobs: $pending still in queue"
@@ -304,15 +324,13 @@ generate_csv nondet
 "$PYTHON" "$REPO_ROOT/scripts/performance/perf_leaderboard/print_nsys_leaderboard.py" "$OUT_DIR" \
     | tee "$OUT_DIR/leaderboard.txt"
 
-# --- Bit-wise determinism check: TWO paired diffs ---
-# (1) nsys-on vs nsys-off (det vs det-bitwise) — measures nsys instrumentation effect
-# (2) no-nsys vs no-nsys  (det-bitwise vs det-bitwise2) — measures pure
-#     cross-allocation reproducibility without nsys
+# --- Bit-wise determinism check ---
+# nsys-on vs nsys-off (det vs det-bitwise) — measures the nsys instrumentation effect
+# on the deterministic recipe at this scale.
 echo ""
 echo "=== Bit-wise determinism check ==="
 DET_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det.txt)" -name "log-*${JOB_DET}*.out" -type f 2>/dev/null | head -1)
 BIT_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise.txt)" -name "log-*${JOB_BITWISE}*.out" -type f 2>/dev/null | head -1)
-BIT2_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise2.txt)" -name "log-*${JOB_BITWISE2}*.out" -type f 2>/dev/null | head -1)
 
 extract_loss() {
     local LOG="$1" it="$2"
@@ -341,7 +359,6 @@ diff_table() {
 }
 {
     diff_table "det+nsys"    "det+no-nsys"  "$DET_LOG"  "$BIT_LOG"
-    diff_table "det+no-nsys" "det+no-nsys2" "$BIT_LOG"  "$BIT2_LOG"
 } | tee "$OUT_DIR/bitwise_check.txt"
 
 echo ""
@@ -349,4 +366,4 @@ echo "Reports written to:"
 echo "  perf leaderboard:    $OUT_DIR/leaderboard.txt"
 echo "  bit-wise check:      $OUT_DIR/bitwise_check.txt"
 echo "CSVs:           $OUT_DIR/nsys-det.csv  $OUT_DIR/nsys-nondet.csv"
-echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE  det-bitwise2=$JOB_BITWISE2"
+echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE"
