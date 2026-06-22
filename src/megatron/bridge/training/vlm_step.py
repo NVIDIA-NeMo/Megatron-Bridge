@@ -14,7 +14,9 @@
 
 import logging
 import math
+from collections.abc import Mapping
 from functools import partial
+from inspect import Parameter, signature
 from typing import Any, Iterable
 
 import torch
@@ -27,6 +29,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
@@ -37,6 +40,51 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 logger = logging.getLogger(__name__)
+
+
+def _unwrap_forward_module(model: Any) -> Any:
+    """Return the innermost wrapped module used for forward signature checks."""
+    module = model
+    seen_ids = set()
+    while hasattr(module, "module") and id(module) not in seen_ids:
+        seen_ids.add(id(module))
+        wrapped = getattr(module, "module")
+        if wrapped is None or wrapped is module:
+            break
+        module = wrapped
+    return module
+
+
+def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    """Drop visual kwargs that the target model forward cannot consume.
+
+    Shared VLM processors may return model-specific fields such as
+    ``mm_token_type_ids``.  Keep those fields for models that accept them, but
+    avoid passing them through wrappers into models with stricter signatures.
+    """
+    if not visual_kwargs:
+        return {}
+
+    forward_module = _unwrap_forward_module(model)
+    forward = getattr(forward_module, "forward", getattr(forward_module, "__call__", None))
+    if forward is None:
+        return dict(visual_kwargs)
+
+    try:
+        forward_signature = signature(forward)
+    except (TypeError, ValueError):
+        return dict(visual_kwargs)
+
+    params = forward_signature.parameters.values()
+    if any(param.kind == Parameter.VAR_KEYWORD for param in params):
+        return dict(visual_kwargs)
+
+    supported_kwargs = {
+        name
+        for name, param in forward_signature.parameters.items()
+        if param.kind in (Parameter.POSITIONAL_OR_KEYWORD, Parameter.KEYWORD_ONLY)
+    }
+    return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
 def get_batch_from_iterator(
@@ -435,21 +483,31 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches.
-    # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
-    # train.py resets these before each step and reads accumulated values afterwards.
-    if tokens is not None:
-        mbs = tokens.shape[0]
-        seq_len = tokens.shape[1]
-        state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
-        state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + mbs * seq_len**2
+    # Accumulate FLOPS metadata across micro-batches. Passing ``cu_seqlens`` gives
+    # the THD-correct Σᵢ sᵢ² for the attention term instead of the pack-length²
+    # BSHD approximation. At CP=1 (and no SP) VLM in-batch packing leaves
+    # ``cu_seqlens`` equal to the real sub-sequence boundaries, so this counts
+    # meaningful tokens only.
+    # NOTE: under CP>1 (or SP), sub-sequences are padded to ``pad_multiple`` (see
+    # get_batch above), so ``cu_seqlens`` carries that per-sub-seq padding and the
+    # attention-FLOPS estimate currently includes it (a small over-count). The
+    # real pre-pad boundaries are not surfaced here yet — tracked as a CP
+    # follow-up (the linear term also needs a *cp_size correction there, since
+    # gpt_step CP-shards tokens). train.py resets these before each step and reads
+    # accumulated values afterwards.
+    # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
+    # t*h*w per image/video), so compute it here and hand a plain scalar to the
+    # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
+    num_vision_patches = None
     if visual_inputs is not None:
-        for attr in ("image_grid_thw", "video_grid_thw"):
-            grid = getattr(visual_inputs, attr, None)
+        for grid in (
+            getattr(visual_inputs, "image_grid_thw", None),
+            getattr(visual_inputs, "video_grid_thw", None),
+        ):
             if grid is not None and grid.numel() > 0:
-                state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
-                    grid.prod(dim=-1).sum().item()
-                )
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, num_vision_patches=num_vision_patches)
 
     forward_args = {
         "input_ids": tokens,
@@ -460,7 +518,8 @@ def forward_step(
     }
 
     if visual_inputs is not None:
-        forward_args.update(visual_inputs.normalized_for_model())
+        visual_kwargs = visual_inputs.normalized_for_model()
+        forward_args.update(_filter_visual_kwargs_for_model(model, visual_kwargs))
 
     # Add packed sequence support
     if cu_seqlens is not None:

@@ -399,6 +399,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
             if not has_multimodal_inputs:
                 position_ids = _build_text_only_mrope_position_ids(input_ids)
             else:
+                rope_attention_mask = None if cp_size > 1 and packed_seq_params is None else attention_mask
                 position_ids, _ = get_rope_index(
                     self.config.spatial_merge_size,
                     self.image_token_id,
@@ -411,7 +412,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                     second_per_grids=video_second_per_grid,
-                    attention_mask=attention_mask,
+                    attention_mask=rope_attention_mask,
                     audio_seqlens=audio_feature_lengths,
                 )
 
@@ -543,7 +544,9 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     combined_embeddings = torch.nn.functional.pad(combined_embeddings, (0, 0, 0, 0, 0, sp_pad_len))
                     if visual_pos_masks is not None:
                         visual_pos_masks = torch.nn.functional.pad(visual_pos_masks, (0, sp_pad_len), value=False)
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
+                    combined_embeddings, group=self.pg_collection.tp
+                )
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None

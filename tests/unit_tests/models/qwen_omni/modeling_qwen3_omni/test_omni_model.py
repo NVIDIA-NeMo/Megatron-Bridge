@@ -339,10 +339,11 @@ class TestQwen3OmniModel:
         model = self._build_model(thinker_config)
         model.thinker.config.sequence_parallel = True
 
-        calls = {"scatter": 0, "split": 0}
+        calls = {"scatter": 0, "scatter_group": None, "split": 0}
 
-        def _identity_scatter(x):
+        def _identity_scatter(x, *, group=None):
             calls["scatter"] += 1
+            calls["scatter_group"] = group
             return x
 
         def _identity_split(visual_pos_masks, deepstack_visual_embeds, **kwargs):
@@ -381,7 +382,77 @@ class TestQwen3OmniModel:
 
         assert output is not None
         assert calls["scatter"] == 1
+        assert calls["scatter_group"] is model.thinker.pg_collection.tp
         assert calls["split"] == 1
+
+    def test_cp_mrope_uses_full_input_without_local_attention_mask(self, thinker_config, monkeypatch):
+        model = self._build_model(thinker_config)
+
+        class _MockProcessGroup:
+            def __init__(self, size=1, rank=0):
+                self._size = size
+                self._rank = rank
+
+            def size(self):
+                return self._size
+
+            def rank(self):
+                return self._rank
+
+        model.thinker.pg_collection = SimpleNamespace(
+            cp=_MockProcessGroup(size=2),
+            tp=_MockProcessGroup(size=1),
+        )
+
+        class _FakeLanguageModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.forward_kwargs = None
+
+            def embedding(self, input_ids, position_ids):  # noqa: ARG002
+                return torch.zeros(input_ids.size(1), input_ids.size(0), HIDDEN_SIZE, device=input_ids.device)
+
+            def forward(self, **kwargs):
+                self.forward_kwargs = kwargs
+                return torch.tensor(0.0, device=kwargs["decoder_input"].device)
+
+        fake_language_model = _FakeLanguageModel()
+        model.thinker.language_model = fake_language_model
+
+        rope_calls = {}
+
+        def _fake_get_rope_index(*args, **kwargs):  # noqa: ARG001
+            input_ids = args[7]
+            rope_calls["attention_mask"] = kwargs.get("attention_mask")
+            position_ids = torch.zeros(
+                3, input_ids.size(0), input_ids.size(1), dtype=torch.long, device=input_ids.device
+            )
+            return position_ids, torch.zeros(input_ids.size(0), 1, dtype=torch.long, device=input_ids.device)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.get_rope_index",
+            _fake_get_rope_index,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.split_data_cp_rank",
+            lambda x, *args, **kwargs: x,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model.split_deepstack_embs",
+            lambda visual_pos_masks, deepstack_visual_embeds, **kwargs: (visual_pos_masks, deepstack_visual_embeds),
+        )
+
+        input_ids = torch.tensor([[AUDIO_START_TOKEN_ID, AUDIO_TOKEN_ID, 12, 13]])
+        attention_mask = torch.tensor([[1, 1]])
+        output = model.thinker(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            audio_feature_lengths=torch.tensor([1]),
+        )
+
+        assert output is not None
+        assert rope_calls["attention_mask"] is None
+        assert fake_language_model.forward_kwargs["attention_mask"] is attention_mask
 
     def test_audio_forward(self, thinker_config):
         model = self._build_model(thinker_config)

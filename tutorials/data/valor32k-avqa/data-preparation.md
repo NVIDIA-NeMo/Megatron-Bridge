@@ -21,6 +21,11 @@ apt-get install -y ffmpeg          # for audio extraction
 pip install webdataset tqdm        # for shard building
 ```
 
+> **Energon version**: Shard indexing uses `energon prepare`, which requires
+> **megatron-energon >= 7** (shipped in the NeMo 26.06 container and later). Earlier
+> v6 builds deadlocked during `energon prepare`; that bug is fixed in v7. Check with
+> `python -c "import megatron.energon as e; print(e.__version__)"`.
+
 ## Step 1: Extract videos from tar
 
 The tar has 4 path segments before the MP4 files (`raid/datasets/audioset/valor_videos/*.mp4`),
@@ -83,29 +88,46 @@ uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
 This script runs the full pipeline in one shot:
 
 1. **Shard building** — For each QA pair, writes a WebDataset sample containing
-   `conversation.json` (ChatML), `video.mp4` (raw MP4), and `audio.wav` (16 kHz WAV).
+   `conversation.json` (ChatML), `video.mp4` (raw MP4), and `audio.wav` (16 kHz WAV),
+   directly in the Energon flat layout `energon/{split}-shard-XXXXXX.tar`.
    The QA JSON stores bare YouTube IDs while the actual files have timestamp suffixes
    (`CEfOX4fYlsY_350.000_360.000.mp4`); the script indexes files by stripping those suffixes.
-   Output: ~1,772 train + ~223 val + ~261 test shards in per-split subdirectories.
+   Output: ~1,772 train + ~223 val + ~261 test shards.
 
-2. **Restructure** — Moves shards from `energon/{split}/shard-XXXXXX.tar` to the Energon
-   flat layout: `energon/{split}-shard-XXXXXX.tar`.
+2. **Index (`energon prepare`)** — Runs `energon prepare` to scan the shards and write
+   the `energon/.nv-meta/` metadata: a per-shard `*.tar.idx` byte-offset table, plus
+   `index.sqlite`, `index.uuid`, `.info.json`, and `split.yaml`. The split assignment is
+   driven by regex `--split-parts` patterns (`{split}-shard-.*`) so the train/val/test
+   boundaries from the source annotations are preserved (no random re-splitting).
 
-3. **Index** — Creates all Energon metadata in `energon/.nv-meta/`:
-   `.info.yaml` (per-shard sample counts), `index.sqlite` (byte-offset index for
-   random-access loading), `index.uuid`, and `split.yaml`.
+3. **dataset.yaml** — Writes `energon/.nv-meta/dataset.yaml` declaring the bridge
+   `ChatMLWebdataset` sample type and field mapping. (This step is separate because
+   `ChatMLWebdataset` is a Megatron-Bridge class, not an energon built-in sample type,
+   so `energon prepare --sample-type` cannot generate it.)
 
-   > **Note on `energon prepare`**: This script bypasses `energon prepare` entirely.
-   > `energon prepare` deadlocks in all modes tested on this version of megatron-energon —
-   > `AggregatorPool.close()` calls `aggregator_process.join()` which blocks indefinitely
-   > because the aggregator process never receives all expected worker-completion signals
-   > from the multiprocessing queue. The `index.sqlite` is always fully populated before
-   > the hang; the process simply never exits. This should be reported to the energon team.
-   > The script uses stdlib `tarfile` to index byte offsets directly instead.
+After this script finishes the dataset is ready to use — no manual steps remain.
 
-## Step 4: Create dataset.yaml
+### Running `energon prepare` manually
 
-Create `.nv-meta/dataset.yaml` to tell Energon how to decode samples:
+If you build shards some other way, you can run the indexing step yourself. This is the
+exact command the script invokes:
+
+```shell
+energon prepare /data/valor32k_avqa/energon \
+  --non-interactive \
+  --num-workers 8 \
+  --split-parts "train:train-shard-.*" \
+  --split-parts "val:val-shard-.*" \
+  --split-parts "test:test-shard-.*" \
+  --skip-dataset-yaml \
+  --force-overwrite
+```
+
+> **`--split-parts` is a regex, not a glob.** The pattern after `{split}:` is
+> brace-expanded then compiled with `re.compile`, so use `.*` (e.g. `train-shard-.*`),
+> not a shell glob `*`. A glob silently matches nothing and produces empty splits.
+
+Then write the sample loader (the script does this automatically):
 
 ```shell
 cat > /data/valor32k_avqa/energon/.nv-meta/dataset.yaml << 'EOF'
@@ -124,6 +146,7 @@ EOF
 ```
 /data/valor32k_avqa/energon/
   train-shard-000000.tar                     # ~1,772 train shards
+  train-shard-000000.tar.idx                 # per-shard byte-offset index
   train-shard-000001.tar
   ...
   val-shard-000000.tar                       # ~223 val shards
@@ -133,8 +156,8 @@ EOF
   .nv-meta/
     dataset.yaml                             # Sample type + field mapping
     split.yaml                               # Train/val/test shard assignment
-    .info.yaml                               # Per-shard sample counts
-    index.sqlite                             # Shard byte-offset index
+    .info.json                               # Per-shard sample counts
+    index.sqlite                             # Global sample index
     index.uuid                               # Dataset UUID
 ```
 

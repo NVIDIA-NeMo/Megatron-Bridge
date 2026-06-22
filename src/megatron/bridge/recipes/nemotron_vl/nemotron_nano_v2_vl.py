@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Nano V2 VL finetuning recipes with parameterless API.
+"""Nemotron Nano V2 VL finetuning recipes with parameterless defaults.
 
 This module provides SFT and PEFT configurations for Nemotron Nano V2 VL 12B.
 """
@@ -21,27 +21,106 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import VLMLoRA
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
 
+_DEFAULT_HF_MODEL_PATH = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+_ALL_COMPONENT_LORA_TARGET_MODULES = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+_LANGUAGE_LORA_TARGET_MODULES = [
+    "*language_model*.linear_qkv",
+    "*language_model*.linear_proj",
+    "*language_model*.linear_fc1",
+    "*language_model*.linear_fc2",
+]
+_VISION_LORA_TARGET_MODULES = [
+    "*vision_model*.linear_qkv",
+    "*vision_model*.linear_proj",
+    "*vision_model*.linear_fc1",
+    "*vision_model*.linear_fc2",
+    "*vision_projection*.linear_fc1",
+    "*vision_projection*.linear_fc2",
+]
+
+
+def _nemotron_vl_target_modules(
+    *,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
+) -> list[str]:
+    """Return adapter target modules for the selected Nemotron VL components."""
+    if not lora_on_language_model and not lora_on_vision_model:
+        raise ValueError("At least one of lora_on_language_model or lora_on_vision_model must be True.")
+
+    if lora_on_language_model and lora_on_vision_model:
+        return _ALL_COMPONENT_LORA_TARGET_MODULES.copy()
+
+    if lora_on_language_model:
+        return _LANGUAGE_LORA_TARGET_MODULES.copy()
+
+    return _VISION_LORA_TARGET_MODULES.copy()
+
+
+def _nemotron_vl_lora_config(
+    *,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
+) -> VLMLoRA:
+    """Build a Nemotron VL LoRA config that respects component selection flags."""
+    target_modules = _nemotron_vl_target_modules(
+        lora_on_language_model=lora_on_language_model,
+        lora_on_vision_model=lora_on_vision_model,
+    )
+
+    if lora_on_language_model and lora_on_vision_model:
+        return VLMLoRA(
+            target_modules=target_modules,
+            dim=16,
+            alpha=32,
+        )
+
+    if lora_on_language_model:
+        return VLMLoRA(
+            target_modules=target_modules,
+            dim=16,
+            alpha=32,
+            freeze_vision_model=False,
+            freeze_vision_projection=False,
+        )
+
+    return VLMLoRA(
+        target_modules=target_modules,
+        dim=16,
+        alpha=32,
+        freeze_language_model=False,
+    )
+
+
 # =============================================================================
 # Nemotron Nano V2 VL 12B SFT Configuration
 # =============================================================================
-def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
+def nemotron_nano_v2_vl_12b_sft_config(
+    hf_model_path: str = _DEFAULT_HF_MODEL_PATH,
+    pretrained_checkpoint: str | None = None,
+) -> ConfigContainer:
     """Return a full SFT config for Nemotron Nano V2 VL 12B.
 
     Default configuration: 1 node, 8 GPUs
     - TP=4, PP=1
     - LR=1e-5 (finetune default)
     - Sequence length: 4096
+
+    Args:
+        hf_model_path: Hugging Face model path used for provider and processor setup.
+        pretrained_checkpoint: Optional checkpoint path to load before finetuning.
     """
     cfg = _sft_common_vlm()
 
     # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    hf_path = hf_model_path
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -121,6 +200,8 @@ def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
 
     # Checkpoint config - override save_interval from common
     cfg.checkpoint.save_interval = 200
+    if pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = pretrained_checkpoint
 
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"
@@ -141,7 +222,14 @@ def nemotron_nano_v2_vl_12b_sft_config() -> ConfigContainer:
 # =============================================================================
 # Nemotron Nano V2 VL 12B PEFT Configuration
 # =============================================================================
-def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def nemotron_nano_v2_vl_12b_peft_config(
+    peft_scheme: str | PEFT = "lora",
+    *,
+    hf_model_path: str = _DEFAULT_HF_MODEL_PATH,
+    pretrained_checkpoint: str | None = None,
+    lora_on_language_model: bool = True,
+    lora_on_vision_model: bool = True,
+) -> ConfigContainer:
     """Return a PEFT config for Nemotron Nano V2 VL 12B.
 
     Default configuration: 1 node, 8 GPUs
@@ -152,28 +240,33 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
             Note: Default uses VLMLoRA targeting all model components.
+        hf_model_path: Hugging Face model path used for provider and processor setup.
+        pretrained_checkpoint: Optional checkpoint path to load before finetuning.
+        lora_on_language_model: Whether LoRA targets the language model when PEFT is "lora" or "dora".
+        lora_on_vision_model: Whether LoRA targets the vision model when PEFT is "lora" or "dora".
     """
     cfg = _peft_common_vlm()
 
     # PEFT scheme - Nemotron uses VLMLoRA by default
     if isinstance(peft_scheme, str) and peft_scheme.lower() == "lora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
-            dim=16,
-            alpha=32,
+        cfg.peft = _nemotron_vl_lora_config(
+            lora_on_language_model=lora_on_language_model,
+            lora_on_vision_model=lora_on_vision_model,
         )
     elif isinstance(peft_scheme, str) and peft_scheme.lower() == "dora":
-        cfg.peft = VLMLoRA(
-            target_modules=["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"],
+        cfg.peft = DoRA(
+            target_modules=_nemotron_vl_target_modules(
+                lora_on_language_model=lora_on_language_model,
+                lora_on_vision_model=lora_on_vision_model,
+            ),
             dim=16,
             alpha=32,
-            dora=True,
         )
     else:
         cfg.peft = peft_scheme
 
     # Model configuration
-    hf_path = "nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16"
+    hf_path = hf_model_path
     cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
 
@@ -253,6 +346,8 @@ def nemotron_nano_v2_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> Con
 
     # Checkpoint config - override save_interval from common
     cfg.checkpoint.save_interval = 200
+    if pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = pretrained_checkpoint
 
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"

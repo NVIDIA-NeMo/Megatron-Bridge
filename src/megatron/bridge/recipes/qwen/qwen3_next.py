@@ -73,7 +73,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 100
 
     # Scheduler config - Qwen3-Next specific
-    cfg.scheduler.no_weight_decay_cond_type = "qwen3_next"
+    cfg.optimizer.apply_wd_to_qk_layernorm = True
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -147,7 +147,6 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
 
     Recommended parallelism: TP=1, PP=2, EP=8
     Note: Packed sequence is NOT supported for Qwen3-Next.
-    Note: Qwen3-Next uses no_weight_decay_cond_type = "qwen3_next" for scheduler.
 
     Returns:
         ConfigContainer with all settings pre-configured for Qwen3-Next 80B-A3B SFT.
@@ -217,7 +216,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 50
     cfg.scheduler.lr_decay_iters = None  # Will use train_iters
     cfg.scheduler.max_lr = 5e-6
-    cfg.scheduler.no_weight_decay_cond_type = "qwen3_next"
+    cfg.optimizer.apply_wd_to_qk_layernorm = True
 
     # Optimizer min_lr - Qwen3-Next uses same value as max_lr
     cfg.optimizer.min_lr = 5e-6

@@ -16,6 +16,7 @@ import argparse
 import os
 import tempfile
 
+import pytest
 import torch
 
 from megatron.bridge.diffusion.models.wan.inference import utils as inf_utils
@@ -81,6 +82,9 @@ def test_cache_image_writes_file(tmp_path):
 
 
 def test_cache_video_uses_writer_and_returns_path(monkeypatch):
+    # imageio lives in the opt-in 'diffusion' group; skip when it is not installed
+    imageio = pytest.importorskip("imageio")
+
     # Stub imageio.get_writer to avoid codec dependency
     calls = {"frames": 0, "path": None}
 
@@ -95,7 +99,7 @@ def test_cache_video_uses_writer_and_returns_path(monkeypatch):
             pass
 
     monkeypatch.setattr(
-        inf_utils.imageio, "get_writer", lambda path, fps, codec, quality: _DummyWriter(path, fps, codec, quality)
+        imageio, "get_writer", lambda path, fps, codec, quality: _DummyWriter(path, fps, codec, quality)
     )
 
     # Stub make_grid to return a fixed CHW tensor regardless of input

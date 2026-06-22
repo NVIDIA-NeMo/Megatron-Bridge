@@ -293,6 +293,15 @@ def parse_cli_args():
         "--seq_length",
         type=int,
     )
+    training_args.add_argument(
+        "--distributed_timeout_minutes",
+        type=int,
+        help=(
+            "Process-group init timeout in minutes (dist.distributed_timeout_minutes). "
+            "Widen above the 10-minute default when a one-time dataset index build on rank 0 "
+            "can outlast the NCCL collective watchdog while other ranks wait at the setup barrier."
+        ),
+    )
 
     # Optimizer
     optimizer_args = parser.add_argument_group("Optimizer arguments")
@@ -314,8 +323,22 @@ def parse_cli_args():
         "--data",
         type=str,
         default="mock",
-        choices=["mock", "rp2", "squad", "squad_packed"],
+        choices=["mock", "rp2", "squad", "squad_packed", "c4"],
         help="Dataset type to use",
+    )
+    data_args.add_argument(
+        "--c4_root",
+        type=str,
+        help="C4 preproc root dir (containing c4-train.en_<shard>_text_document.{bin,idx} and "
+        "c4-validation-91205-samples.en_text_document.{bin,idx}). Used when --data c4. "
+        "Mirrors the layout used by NVIDIA's MLPerf DSV3 671B reference.",
+    )
+    data_args.add_argument(
+        "--c4_train_shards",
+        nargs="+",
+        type=int,
+        default=[6],
+        help="C4 train shard indices to blend (e.g. 6 for the 8b dataset; 6 7 for the full dataset). Default: [6].",
     )
     data_args.add_argument("--dataset_paths", nargs="*", help="Dataset paths (for rp2 dataset)")
     data_args.add_argument("--dataset_root", type=str, help="Dataset root directory (for squad datasets)")
@@ -506,63 +529,22 @@ def parse_cli_args():
         default=True,
     )
 
-    # DGXCloud
-    dgxc_args = parser.add_argument_group("DGXCloud arguments")
-    dgxc_args.add_argument(
-        "--dgxc_cluster",
-        type=str,
-        help="DGXCloud cluster to use for experiment",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_base_url",
-        type=str,
-        help="DGXCloud base url",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_kube_apiserver_url",
-        type=str,
-        help="DGXCloud kube apiserver url",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_app_id",
-        type=str,
-        help="DGXCloud app id",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_app_secret",
-        type=str,
-        help="DGXCloud app secret",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_project_name",
-        type=str,
-        help="DGXCloud project name",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_pvc_claim_name",
-        type=str,
-        help="DGXCloud pvc claim name",
-        required=False,
-    )
-    dgxc_args.add_argument(
-        "--dgxc_pvc_mount_path",
-        type=str,
-        help="DGXCloud pvc mount path",
-        required=False,
-    )
-
     # Kubeflow
     kubeflow_args = parser.add_argument_group("Kubeflow arguments")
     kubeflow_args.add_argument(
         "--kubeflow_namespace",
         type=str,
         help="Kubernetes namespace for Kubeflow TrainJob. When set, uses the Kubeflow executor instead of Slurm.",
+        required=False,
+    )
+    kubeflow_args.add_argument(
+        "--csp",
+        type=str,
+        choices=["aws", "gcp"],
+        default=None,
+        help="Cloud provider of the Kubeflow cluster. Selects the CSP fabric plugin "
+        "(aws -> EKSEnvPlugin/EFA, gcp -> GKEEnvPlugin/gIB). Omit on Slurm or when no "
+        "CSP-specific fabric config is needed.",
         required=False,
     )
     kubeflow_args.add_argument(
@@ -579,11 +561,104 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_workdir_local_path",
+        type=str,
+        help="Local directory whose contents nemo-run's KubeflowExecutor.package() "
+        "rsyncs into the workdir PVC via a temporary alpine pod before launch. "
+        "Used to overlay a --mbridge-ref checkout onto /opt/Megatron-Bridge in the "
+        "trainer container without rebuilding the image.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_image_pull_secrets",
         type=list_of_strings,
         help="Comma-separated list of Kubernetes image pull secret names.",
         required=False,
         default=[],
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_volumes_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Volume dicts attached to the training pod "
+        "(e.g. PVCs, emptyDir, hostPath).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_volume_mounts_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes VolumeMount dicts applied to the training container.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_tolerations_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes Toleration dicts applied to the training pods. "
+        "Required for landing on tainted GPU nodes.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_affinity_json",
+        type=str,
+        help="JSON-encoded Kubernetes Affinity dict applied to the training pods. "
+        "Used to pin pods to specific nodes via nodeAffinity.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_env_list_json",
+        type=str,
+        help="JSON-encoded list of Kubernetes EnvVar dicts (e.g. valueFrom.secretKeyRef entries) "
+        "appended to the training container in addition to flat env_vars.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_extra_resource_requests_json",
+        type=str,
+        help="JSON-encoded dict of extra container resource requests (e.g. {'vpc.amazonaws.com/efa': '32'}).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_extra_resource_limits_json",
+        type=str,
+        help="JSON-encoded dict of extra container resource limits.",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_pod_spec_overrides_json",
+        type=str,
+        help="JSON-encoded dict merged into the pod spec (escape hatch for nodeSelector, hostNetwork, etc.).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_pod_annotations_json",
+        type=str,
+        help="JSON-encoded dict of annotations applied to the trainer pod template metadata "
+        "(e.g. networking.gke.io/interfaces to attach GKE RDMA NICs for gIB).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_container_kwargs_json",
+        type=str,
+        help="JSON-encoded dict of extra fields set on the training container "
+        "(e.g. {'securityContext': {'privileged': true}} for EFA/RDMA).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_labels_json",
+        type=str,
+        help="JSON-encoded dict of labels applied to the TrainJob's pods.",
+        required=False,
+        default=None,
     )
 
     # For performance

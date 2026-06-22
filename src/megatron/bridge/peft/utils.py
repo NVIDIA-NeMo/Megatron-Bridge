@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import packaging
 import torch
 import torch.nn as nn
-from megatron.core import ModelParallelConfig
+from megatron.core import ModelParallelConfig, dist_checkpointing, parallel_state
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
@@ -46,6 +46,8 @@ logger = logging.getLogger(__name__)
 ModelList = list[MegatronModule]
 ModelHook = Callable[[ModelList], ModelList | None]
 CheckpointPath = str | Path
+
+_LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR = "use_legacy_shared_expert_adapter_checkpoint"
 
 
 TEColumnParallelLinear, HAVE_TE_COL_LINEAR = safe_import_from(
@@ -110,6 +112,128 @@ def _get_pg_collection(
         # pass it into adapter constructors explicitly and remove this default-MPU fallback.
         pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=required_pgs)
     return pg_collection
+
+
+def _iter_sharded_tensor_factories(state_dict: object) -> list[ShardedTensorFactory]:
+    """Return all sharded tensor factories in a nested state dict."""
+
+    if isinstance(state_dict, ShardedTensorFactory):
+        return [state_dict]
+    if isinstance(state_dict, Mapping):
+        factories = []
+        for value in state_dict.values():
+            factories.extend(_iter_sharded_tensor_factories(value))
+        return factories
+    if isinstance(state_dict, list | tuple):
+        factories = []
+        for value in state_dict:
+            factories.extend(_iter_sharded_tensor_factories(value))
+        return factories
+    return []
+
+
+def _checkpoint_tensor_shape(checkpoint_metadata: Mapping[str, ShardedTensor], key: str) -> tuple[int, ...] | None:
+    """Return checkpoint global tensor shape for a key, tolerating model-section prefixes."""
+
+    for candidate in (key, f"model.{key}"):
+        metadata = checkpoint_metadata.get(candidate)
+        if metadata is not None:
+            return tuple(metadata.global_shape)
+    return None
+
+
+def _legacy_shared_expert_adapter_key(factory: ShardedTensorFactory) -> str | None:
+    """Return the adapter module key if a factory represents a shared expert LoRA tensor."""
+
+    for suffix in (".linear_in.weight", ".linear_out.weight"):
+        if not factory.key.endswith(suffix):
+            continue
+        built = factory.build()
+        shards = built if isinstance(built, list) else [built]
+        if not shards or not isinstance(shards[0], ShardedTensor):
+            continue
+        expected_shape = tuple(shards[0].global_shape)
+        local_shape = tuple(factory.data.shape)
+        if len(expected_shape) == len(local_shape) + 1:
+            return factory.key[: -len(suffix)]
+    return None
+
+
+def _legacy_shared_expert_adapter_matches(
+    adapters_by_name: Mapping[str, "ParallelLinearAdapter"], adapter_key: str
+) -> list["ParallelLinearAdapter"]:
+    """Return adapter modules matching a legacy shared-expert checkpoint key."""
+
+    adapter = adapters_by_name.get(adapter_key)
+    if adapter is not None:
+        return [adapter]
+
+    adapter_base_key = adapter_key.removesuffix(".adapter")
+    matched_adapters = []
+    for module_name, module in adapters_by_name.items():
+        module_base_key = module_name.removesuffix(".adapter")
+        base_linear_name = module.base_linear_name
+        if (
+            adapter_key.endswith(module_name)
+            or module_name.endswith(adapter_key)
+            or adapter_base_key.endswith(module_base_key)
+            or module_base_key.endswith(adapter_base_key)
+            or adapter_base_key.endswith(base_linear_name)
+            or base_linear_name.endswith(adapter_base_key)
+        ):
+            matched_adapters.append(module)
+
+    if matched_adapters:
+        return matched_adapters
+
+    return list(adapters_by_name.values())
+
+
+def enable_legacy_shared_expert_adapter_loading(
+    megatron_model: list[nn.Module] | nn.Module,
+    sharded_state_dict: ShardedStateDict,
+    checkpoint_path: str | Path,
+) -> bool:
+    """Enable legacy 2D checkpoint loading for old shared grouped-expert adapters.
+
+    New shared grouped-expert LoRA checkpoints expose a leading global expert axis
+    so they can be resharded across EP changes. Older checkpoints saved the same
+    shared adapter as a plain 2D tensor. This helper detects that old metadata
+    shape and marks only the matching shared adapter modules to emit the legacy
+    2D sharded state dict for loading.
+
+    Args:
+        megatron_model: Model module or model chunks containing PEFT adapters.
+        sharded_state_dict: Current adapter-only sharded state dict.
+        checkpoint_path: Distributed checkpoint directory to inspect.
+
+    Returns:
+        True if at least one shared expert adapter was marked for legacy loading.
+    """
+
+    checkpoint_metadata = dist_checkpointing.load_tensors_metadata(str(checkpoint_path))
+    models = megatron_model if isinstance(megatron_model, list) else [megatron_model]
+    adapters_by_name: dict[str, ParallelLinearAdapter] = {}
+    for model in models:
+        for name, module in model.named_modules():
+            if isinstance(module, ParallelLinearAdapter) and module._uses_grouped_expert_sharding():
+                adapters_by_name[name.removeprefix("module.")] = module
+
+    enabled = False
+    for factory in _iter_sharded_tensor_factories(sharded_state_dict):
+        adapter_key = _legacy_shared_expert_adapter_key(factory)
+        if adapter_key is None:
+            continue
+        built = factory.build()
+        shards = built if isinstance(built, list) else [built]
+        expected_shape = tuple(shards[0].global_shape)
+        legacy_shape = expected_shape[1:]
+        if _checkpoint_tensor_shape(checkpoint_metadata, factory.key) == legacy_shape:
+            for adapter in _legacy_shared_expert_adapter_matches(adapters_by_name, adapter_key):
+                setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
+                enabled = True
+
+    return enabled
 
 
 def _get_process_group(pg_collection: ProcessGroupCollection | None, *names: str) -> object | None:
@@ -815,6 +939,7 @@ class ParallelLinearAdapter(nn.Module):
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
         self.base_linear_is_parallel = base_linear_is_parallel
+        self.use_legacy_shared_expert_adapter_checkpoint = False
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
         # in case this arg is not provided, use the dummy default config.
@@ -1247,7 +1372,7 @@ class ParallelLinearAdapter(nn.Module):
         # checkpoint must expose the global expert axis so EP changes can reshard it.
         # Non-grouped expert adapters already sit under .local_experts.* and keep
         # their existing expert-DP replica metadata instead.
-        use_expert_axis = self._uses_grouped_expert_sharding()
+        use_expert_axis = self._uses_grouped_expert_sharding() and not self.use_legacy_shared_expert_adapter_checkpoint
         split_swiglu = "linear_fc1" in self.base_linear_name and getattr(self.config, "gated_linear_unit", False)
         linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
         linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
@@ -2018,6 +2143,295 @@ class GroupedExpertLinearAdapter(nn.Module):
                 singleton_local_shards,
             )
 
+        sharded_state_dict.update(linear_in_sd)
+        sharded_state_dict.update(linear_out_sd)
+        return sharded_state_dict
+
+
+def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
+    """Mark a weight as logically replicated across the intra-PP-stage group.
+
+    Megatron's DDP routes ``is_expert=True`` parameters through the expert
+    data-parallel group only, which does not span the EP axis. A weight
+    that must stay bit-identical across all EP ranks (e.g., the shared
+    side of :class:`SharedOuterGroupedExpertAdapter`, which a serving
+    engine consumes as a single global LoRA tensor) is otherwise left
+    unsynced. This helper closes that gap with two primitives:
+
+      * a one-shot broadcast from group rank 0 so every rank starts with
+        bit-identical values despite per-rank RNG forks;
+      * a backward hook that SUM all-reduces the gradient across the group
+        so the optimizer step on every rank applies the same update.
+
+    SUM is the correct reduction: each rank's local gradient is the partial
+    loss gradient over its (token, expert) subset, and the total gradient
+    is the sum of those partials. AVG would train at 1/N the intended rate.
+
+    The intra-PP-stage group is ``tensor_and_data_parallel_group`` with
+    context parallel included, which by Megatron's construction equals
+    ETP × EP × EDP — all ranks within the current pipeline stage.
+
+    Args:
+        weight: The parameter to keep replicated across the group. Must
+            be a leaf parameter so the backward hook fires when its
+            gradient is computed.
+    """
+
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return
+    try:
+        group = parallel_state.get_tensor_and_data_parallel_group(with_context_parallel=True)
+    except AssertionError:
+        return
+    if torch.distributed.get_world_size(group=group) <= 1:
+        return
+
+    if weight.is_cuda:
+        # NCCL requires CUDA tensors; pre-GPU construction relies on
+        # deterministic init matching across ranks.
+        src_rank = torch.distributed.get_global_rank(group, 0)
+        with torch.no_grad():
+            torch.distributed.broadcast(weight.data, src=src_rank, group=group)
+
+    def _all_reduce_grad(grad: torch.Tensor) -> torch.Tensor:
+        grad = grad.contiguous()
+        torch.distributed.all_reduce(grad, op=torch.distributed.ReduceOp.SUM, group=group)
+        return grad
+
+    weight.register_hook(_all_reduce_grad)
+
+
+class PackedPerExpertLinear(nn.Module):
+    """Per-expert linear with a packed 3D weight ``[N_local, out, in]``.
+
+    Used as the per-expert side of :class:`SharedOuterGroupedExpertAdapter`.
+    Stores one ``nn.Parameter`` (3D) so Bridge's adapter export sees a single
+    ``.weight`` per side, matching the ``linear_in.weight`` / ``linear_out.weight``
+    convention in :mod:`megatron.bridge.models.conversion.peft_bridge`. Forward
+    dispatches to :func:`torch._grouped_mm` (the same grouped GEMM kernel TE's
+    :class:`te.pytorch.GroupedLinear` calls) via a single fused op with native
+    autograd, which keeps rank kernel launch counts in lockstep so CP's ring
+    P2P does not deadlock.
+    """
+
+    def __init__(
+        self,
+        num_local_experts: int,
+        in_features: int,
+        out_features: int,
+        *,
+        init_method: Optional[Callable] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+    ):
+        super().__init__()
+        if not hasattr(torch, "_grouped_mm"):
+            raise RuntimeError("PackedPerExpertLinear requires torch._grouped_mm (torch >= 2.9).")
+        self.num_local_experts = num_local_experts
+        self.in_features = in_features
+        self.out_features = out_features
+        weight = torch.empty(num_local_experts, out_features, in_features, dtype=dtype, device=device)
+        if init_method is not None:
+            for e in range(num_local_experts):
+                init_method(weight[e])
+        else:
+            nn.init.zeros_(weight)
+        self.weight = nn.Parameter(weight)
+        # DDP routes ``is_expert`` weights through the EDP group; the cross-EP
+        # axis is naturally distinct here (different experts on each EP rank).
+        setattr(self.weight, "allreduce", False)
+
+    def forward(self, x: torch.Tensor, m_splits) -> Tuple[torch.Tensor, None]:
+        # torch._grouped_mm expects mat2 as [num_groups, K, N]; our weight is
+        # [N_local, out, in] so transpose the last two dims.
+        if isinstance(m_splits, torch.Tensor):
+            m_splits_i32 = m_splits.to(device=x.device, dtype=torch.int32)
+        else:
+            m_splits_i32 = torch.tensor(m_splits, device=x.device, dtype=torch.int32)
+        offs = torch.cumsum(m_splits_i32, dim=0, dtype=torch.int32)
+        out = torch._grouped_mm(x, self.weight.transpose(1, 2), offs=offs)
+        return out, None
+
+    def sharded_state_dict(
+        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+    ) -> ShardedStateDict:
+        """Shard the packed 3D weight along dim 0 (experts) across EP ranks."""
+        key = f"{prefix}weight"
+        return {
+            key: _make_grouped_expert_sharded_tensor(
+                self.weight.data, key, tp_axis=None, sharded_offsets=sharded_offsets
+            )
+        }
+
+
+class SharedOuterGroupedExpertAdapter(nn.Module):
+    """LoRA adapter for grouped expert MLP with shared-outer semantics.
+
+    Matches SGLang PR #21466's ``experts_shared_outer_loras=True`` contract:
+
+    * fc1 (gate_up):  linear_in  = SHARED     (hidden -> rank)
+                      linear_out = PER-EXPERT (rank -> 2*intermediate)
+    * fc2 (down):     linear_in  = PER-EXPERT (intermediate -> rank)
+                      linear_out = SHARED     (rank -> hidden)
+
+    The shared side is an ``is_expert=True`` ``ColumnParallelLinear`` (fc1)
+    or ``RowParallelLinear`` (fc2): the TP group is ETP (ETP=1 → local
+    forward), DDP routes the weight through the EDP group, and the
+    logically-replicated cross-EP axis is covered by
+    :func:`_make_cross_ep_replicated`.
+
+    The per-expert side is :class:`PackedPerExpertLinear` (packed 3D weight
+    + :func:`torch._grouped_mm`) — kept as a single ``.weight`` Parameter so
+    Bridge's adapter-export materializer (which reads ``linear_in.weight`` /
+    ``linear_out.weight``) sees a standard single-weight linear per side.
+
+    Differs from ``ParallelLinearAdapter`` in ``__init__`` and ``forward``;
+    ``sharded_state_dict`` is specialized for the packed 3D per-expert side.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        dim: int,
+        *,
+        num_local_experts: int,
+        base_linear_name: str,
+        activation: str = "swish",
+        column_init_method: str = "xavier",
+        row_init_method: str = "zero",
+        input_is_parallel: bool = False,
+        dropout: float = 0.0,
+        model_parallel_config: Optional[ModelParallelConfig] = None,
+        alpha: Optional[float] = None,
+        dropout_position: str = "pre",
+        base_linear_is_parallel: bool = True,
+        params_device: Optional[torch.device] = None,
+        params_dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Initialize shared-outer LoRA weights with one shared and one per-expert side."""
+
+        super().__init__()
+        self.base_linear_name = base_linear_name
+        self.activation = ParallelLinearAdapter._get_activation_fn(self, activation)
+        self.dim = dim
+        self.alpha = alpha if alpha is not None else self.dim
+        self.dropout_position = dropout_position
+        self.num_local_experts = num_local_experts
+        self.base_linear_is_parallel = base_linear_is_parallel
+        # ``is_expert=True`` is observed by param_mapping.py and by inherited
+        # checkpoint helpers; the per-expert side's grad routing is set on its
+        # 3D weight directly inside :class:`PackedPerExpertLinear`.
+        self.is_expert = True
+
+        if model_parallel_config is None:
+            model_parallel_config = ModelParallelConfig()
+        model_parallel_config.perform_initialization = True
+        self.config = model_parallel_config
+
+        # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
+        # (row-parallel base). Mirrors :class:`ParallelLinearAdapter` and
+        # :class:`GroupedExpertLinearAdapter`.
+        self._is_fc1 = not input_is_parallel
+
+        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method)
+        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method)
+        if self._is_fc1:
+            # Shared A (hidden → rank); per-expert B (rank → 2*intermediate).
+            self.linear_in = ColumnParallelLinear(
+                in_features,
+                dim,
+                config=model_parallel_config,
+                bias=False,
+                gather_output=True,
+                init_method=column_init,
+                is_expert=True,
+            )
+            self.linear_out = PackedPerExpertLinear(
+                num_local_experts,
+                dim,
+                out_features,
+                init_method=row_init,
+                device=params_device,
+                dtype=params_dtype,
+            )
+        else:
+            # Per-expert A (intermediate → rank); shared B (rank → hidden).
+            self.linear_in = PackedPerExpertLinear(
+                num_local_experts,
+                in_features,
+                dim,
+                init_method=column_init,
+                device=params_device,
+                dtype=params_dtype,
+            )
+            self.linear_out = RowParallelLinear(
+                dim,
+                out_features,
+                config=model_parallel_config,
+                bias=False,
+                input_is_parallel=True,
+                skip_bias_add=True,
+                init_method=row_init,
+                is_expert=True,
+            )
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+        if model_parallel_config.bf16:
+            self.bfloat16()
+        elif model_parallel_config.fp16:
+            self.half()
+
+        # The shared weight is logically replicated across EP; close the gap
+        # that Megatron's expert-DDP routing leaves open.
+        shared_weight = self.linear_in.weight if self._is_fc1 else self.linear_out.weight
+        _make_cross_ep_replicated(shared_weight)
+
+    def forward(self, x: torch.Tensor, m_splits=None) -> torch.Tensor:
+        """Forward. ``m_splits`` is the tokens-per-expert split passed through
+        from the base TEGroupedLinear; required for the per-expert side.
+        """
+        if self.dropout_position == "pre":
+            x = self.dropout(x)
+
+        if self._is_fc1:
+            # Shared A → activation → per-expert B.
+            x, _ = self.linear_in(x)
+            x = self.activation(x)
+            x, _ = self.linear_out(x, m_splits)
+        else:
+            # Per-expert A → activation → shared B.
+            x, _ = self.linear_in(x, m_splits)
+            x = self.activation(x)
+            x, _ = self.linear_out(x)
+
+        if self.dropout_position == "post":
+            x = self.dropout(x)
+
+        return x * (self.alpha / self.dim)
+
+    def sharded_state_dict(
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+    ) -> ShardedStateDict:
+        """Create sharded state dictionary for mixed shared/per-expert adapter weights."""
+
+        linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
+        linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
+
+        if self._is_fc1:
+            singleton_local_shards = (metadata or {}).get("singleton_local_shards", False)
+            linear_out_key = f"{prefix}linear_out.weight"
+            linear_out_sd[linear_out_key] = _apply_grouped_expert_swiglu_sharded_factory(
+                linear_out_sd[linear_out_key],
+                sharded_offsets,
+                singleton_local_shards,
+            )
+
+        sharded_state_dict = {}
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
         return sharded_state_dict
