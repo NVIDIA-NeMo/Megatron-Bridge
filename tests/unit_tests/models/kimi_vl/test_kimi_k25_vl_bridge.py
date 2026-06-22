@@ -122,6 +122,7 @@ def mock_hf_pretrained(mock_hf_config):
     pretrained = Mock(spec=PreTrainedVLM)
     pretrained.config = mock_hf_config
     pretrained._model_name_or_path = "/path/to/kimi_k25_vl"
+    pretrained.trust_remote_code = False
     pretrained.generation_config = None
     return pretrained
 
@@ -206,6 +207,19 @@ class TestKimiK25VLBridgeProviderBridge:
         """Test HF model path is stored on provider."""
         provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
         assert provider.hf_model_path == "/path/to/kimi_k25_vl"
+
+    def test_provider_bridge_trust_remote_code_default(self, kimi_bridge, mock_hf_pretrained):
+        """Test remote code trust is disabled by default."""
+        provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
+        assert provider.trust_remote_code is False
+
+    def test_provider_bridge_trust_remote_code_propagates(self, kimi_bridge, mock_hf_pretrained):
+        """Test remote code trust is propagated from the HF wrapper."""
+        mock_hf_pretrained.trust_remote_code = True
+
+        provider = kimi_bridge.provider_bridge(mock_hf_pretrained)
+
+        assert provider.trust_remote_code is True
 
     def test_provider_bridge_different_hidden_sizes(self, kimi_bridge, mock_hf_pretrained):
         """Test provider_bridge with different hidden sizes."""

@@ -64,11 +64,13 @@ class TestTensorInspect:
         torch.distributed.barrier()
 
         try:
-            global_batch_size = 8
+            global_batch_size = 2
             micro_batch_size = 1
-            seq_length = 512
+            seq_length = 128
             total_iters = 10
 
+            # Keep this L0 focused on tensor inspection. The larger recipe-sized
+            # shape plus async checkpoint worker can OOM in the shared CI job.
             model_cfg = GPTModelProvider(
                 normalization="RMSNorm",
                 activation_func=F.silu,
@@ -82,7 +84,7 @@ class TestTensorInspect:
                 persist_layer_norm=True,
                 bias_dropout_fusion=True,
                 apply_rope_fusion=True,
-                num_query_groups=8,
+                num_query_groups=4,
                 init_method_std=0.02,
                 layernorm_epsilon=1e-05,
                 rotary_percent=1.0,
@@ -90,9 +92,9 @@ class TestTensorInspect:
                 rope_scaling_factor=32.0,
                 share_embeddings_and_output_weights=True,
                 rotary_base=500_000,
-                hidden_size=2048,
-                ffn_hidden_size=8192,
-                num_attention_heads=32,
+                hidden_size=512,
+                ffn_hidden_size=2048,
+                num_attention_heads=8,
                 tensor_model_parallel_size=1,
                 pipeline_model_parallel_size=1,
                 context_parallel_size=1,
@@ -147,7 +149,7 @@ class TestTensorInspect:
                     adam_beta1=0.9,
                     adam_beta2=0.95,
                     adam_eps=1e-8,
-                    use_distributed_optimizer=True,
+                    use_distributed_optimizer=False,
                     clip_grad=1.0,
                     lr=3e-3,
                     weight_decay=0.01,
@@ -165,11 +167,11 @@ class TestTensorInspect:
                 ),
                 ddp=DistributedDataParallelConfig(
                     check_for_nan_in_grad=True,
-                    grad_reduce_in_fp32=True,
-                    overlap_grad_reduce=True,
-                    overlap_param_gather=True,
+                    grad_reduce_in_fp32=False,
+                    overlap_grad_reduce=False,
+                    overlap_param_gather=False,
                     average_in_collective=True,
-                    use_distributed_optimizer=True,
+                    use_distributed_optimizer=False,
                 ),
                 dataset=MockGPTDatasetConfig(
                     random_seed=1234,
@@ -195,7 +197,7 @@ class TestTensorInspect:
                     save=checkpoint_dir,
                     ckpt_format="torch_dist",
                     fully_parallel_save=True,
-                    async_save=True,
+                    async_save=False,
                 ),
                 rng=RNGConfig(seed=1234),
                 tensor_inspect=tensor_inspect_cfg,
