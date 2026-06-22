@@ -777,6 +777,22 @@ class TestTargetPrefixValidation:
             instantiate(config)
 
     @pytest.mark.parametrize(
+        "target,kwargs",
+        [
+            ("torch.load", {"f": "/tmp/attacker_pickle.pt", "weights_only": False}),
+            ("torch.ops.load_library", {"path": "/tmp/attacker.so"}),
+            ("torch.classes.load_library", {"path": "/tmp/attacker.so"}),
+            ("numpy.load", {"file": "/tmp/attacker.npy", "allow_pickle": True}),
+            ("numpy.ctypeslib.load_library", {"libname": "attacker", "loader_path": "/tmp"}),
+        ],
+    )
+    def test_instantiate_rejects_deserialization_and_native_loader_targets(self, target, kwargs):
+        """Test that configs cannot invoke deserialization or native library loader gadgets."""
+        config = {"_target_": target, **kwargs}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
         "target",
         [
             "megatron.bridge.utils.instantiate_utils.target_allowlist.add_prefix",
