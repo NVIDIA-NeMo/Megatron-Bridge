@@ -38,7 +38,7 @@ import torch.distributed as dist
 from megatron.core.inference.apis import MegatronAsyncLLM, SamplingParams
 
 from megatron.bridge.inference.text_generation import (
-    HuggingFaceTextTokenizer,
+    HFTokenizerAdapter,
     add_distributed_args,
     add_engine_args,
     add_model_loading_args,
@@ -48,13 +48,12 @@ from megatron.bridge.inference.text_generation import (
     build_inference_config,
     build_sampling_params,
     build_tokenizer,
-    dtype_from_name,
     load_bridge_model,
     load_prompts,
-    maybe_initialize_distributed,
     resolve_hf_model_path,
 )
-from megatron.bridge.utils.common_utils import print_rank_0
+from megatron.bridge.utils.activation_map import str_to_dtype
+from megatron.bridge.utils.common_utils import maybe_initialize_distributed, print_rank_0
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,7 @@ def _validate_args(args: argparse.Namespace) -> None:
 async def _generate(
     args: argparse.Namespace,
     model: object,
-    tokenizer: HuggingFaceTextTokenizer,
+    tokenizer: HFTokenizerAdapter,
     prompts: list[str],
     sampling_params: SamplingParams,
 ) -> None:
@@ -132,7 +131,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO)
     _validate_args(args)
     maybe_initialize_distributed(args.distributed_timeout_minutes)
-    dtype = dtype_from_name(args.dtype)
+    dtype = str_to_dtype(args.dtype)
     hf_model_path = resolve_hf_model_path(args.hf_model_path, args.megatron_model_path)
     prompts = load_prompts(args.prompt, args.prompt_file, args.prompt_file_num_truncate, _DEFAULT_PROMPTS)
 

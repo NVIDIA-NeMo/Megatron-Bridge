@@ -26,35 +26,24 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-from datetime import timedelta
 from pathlib import Path
 
 import torch
-import torch.distributed as dist
 from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
 from megatron.core.inference.apis import SamplingParams
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import get_attr_wrapped_model
-from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoConfig, AutoTokenizer
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.inference._tokenizer import HFTokenizerAdapter
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.common_utils import (
-    disable_mtp_for_inference,
-    get_local_rank_preinit,
-    get_master_addr_safe,
-    get_master_port_safe,
-    get_rank_safe,
-    get_world_size_safe,
-    print_rank_0,
-)
+from megatron.bridge.utils.activation_map import str_to_dtype
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, print_rank_0
 
 __all__ = [
-    "HuggingFaceTextTokenizer",
-    "dtype_from_name",
-    "maybe_initialize_distributed",
+    "HFTokenizerAdapter",
     "resolve_hf_model_path",
     "build_tokenizer",
     "load_prompts",
@@ -71,65 +60,9 @@ __all__ = [
 ]
 
 
-class HuggingFaceTextTokenizer:
-    """Adapter exposing the tokenizer methods expected by MCore text generation."""
-
-    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
-        self._tokenizer = tokenizer
-        if self._tokenizer.pad_token is None and self._tokenizer.eos_token is not None:
-            self._tokenizer.pad_token = self._tokenizer.eos_token
-
-    @property
-    def eod(self) -> int | None:
-        """End-of-document token id used for early termination."""
-        return self._tokenizer.eos_token_id
-
-    @property
-    def bos(self) -> int | None:
-        """Beginning-of-sequence token id."""
-        return self._tokenizer.bos_token_id
-
-    @property
-    def vocab_size(self) -> int:
-        """Tokenizer vocabulary size."""
-        return len(self._tokenizer)
-
-    def tokenize(self, text: str) -> list[int]:
-        """Tokenize text into token ids."""
-        return self._tokenizer.encode(text, add_special_tokens=False)
-
-    def detokenize(self, tokens: list[int], skip_special_tokens: bool = True) -> str:
-        """Convert token ids back to text."""
-        return self._tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
-
-
-def dtype_from_name(name: str) -> torch.dtype:
-    """Map a CLI dtype name to a ``torch.dtype``."""
-    if name == "bf16":
-        return torch.bfloat16
-    if name == "fp16":
-        return torch.float16
-    if name == "fp32":
-        return torch.float32
-    raise ValueError(f"Unsupported dtype: {name}")
-
-
-def maybe_initialize_distributed(timeout_minutes: int) -> None:
-    """Initialize the default process group from the standard launcher env vars.
-
-    No-op when torch.distributed is unavailable or already initialized. Mirrors the
-    minimal, MLM-free distributed bring-up used by the Bridge inference scripts.
-    """
-    if not dist.is_available() or dist.is_initialized():
-        return
-
-    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
-    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
-    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
-    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
-    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-    dist.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
+# Dtype string -> torch.dtype: use the shared resolver (``str_to_dtype``) instead of a local map.
+# Distributed bring-up: use ``megatron.bridge.utils.common_utils.maybe_initialize_distributed``.
+# Tokenizer adapter: use ``megatron.bridge.inference._tokenizer.HFTokenizerAdapter``.
 
 
 def resolve_hf_model_path(hf_model_path: str | None, megatron_model_path: str | None) -> str:
@@ -181,13 +114,13 @@ def load_prompts(
     return collected
 
 
-def build_tokenizer(hf_model_path: str, trust_remote_code: bool | None) -> HuggingFaceTextTokenizer:
+def build_tokenizer(hf_model_path: str, trust_remote_code: bool | None) -> HFTokenizerAdapter:
     """Build the HF-backed tokenizer adapter for MCore text generation."""
     tokenizer = AutoTokenizer.from_pretrained(
         hf_model_path,
         trust_remote_code=is_safe_repo(hf_path=hf_model_path, trust_remote_code=trust_remote_code),
     )
-    return HuggingFaceTextTokenizer(tokenizer)
+    return HFTokenizerAdapter(tokenizer)
 
 
 def _apply_provider_parallelism(
