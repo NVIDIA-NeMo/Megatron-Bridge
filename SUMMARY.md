@@ -106,7 +106,13 @@ DETERMINISTIC=true BACKEND=fused GPU=gb200 \
 
 ## Cluster migration replay
 
-On the new cluster:
+The submodule changes are pushed to a personal fork
+(`git@github.com:ZhiyuLi-Nvidia/Megatron-LM.git`, branch
+`zhiyul/per_manager_hybridep_fix`). The same changes are also bundled as
+`patches/megatron-lm-dsv3-hybridep-determinism.patch` for cases where the
+fork isn't reachable.
+
+On the new cluster (fork-based, preferred):
 
 ```bash
 # 1. clone main repo + checkout this branch
@@ -117,11 +123,17 @@ cd Megatron-Bridge
 # 2. init submodule (pulls v0.4.1 pin = d7288711b)
 git submodule update --init --recursive
 
-# 3. apply the determinism patches to the submodule
-git -C 3rdparty/Megatron-LM apply ../../patches/megatron-lm-dsv3-hybridep-determinism.patch
+# 3a. (preferred) check out the fix branch from the personal fork:
+git -C 3rdparty/Megatron-LM remote add fork \
+    git@github.com:ZhiyuLi-Nvidia/Megatron-LM.git
+git -C 3rdparty/Megatron-LM fetch fork zhiyul/per_manager_hybridep_fix
+git -C 3rdparty/Megatron-LM checkout zhiyul/per_manager_hybridep_fix
+
+# 3b. (fallback) apply the bundled patch instead:
+# git -C 3rdparty/Megatron-LM apply ../../patches/megatron-lm-dsv3-hybridep-determinism.patch
 
 # 4. confirm bind-mounts will be detected by run_deepseek_v3.sh
-git -C 3rdparty/Megatron-LM diff --name-only
+git -C 3rdparty/Megatron-LM diff --name-only d7288711b
 
 # 5. update secrets.sh and PYTHON path at the top of run_deepseek_v3.sh
 #    for the new cluster (HF_TOKEN, WANDB_API_KEY, container path).
@@ -132,6 +144,11 @@ FLEX_BACKEND=hybridep GBS=64 \
 DETERMINISTIC=true BACKEND=fused GPU=gb200 \
 ./run_deepseek_v3.sh
 ```
+
+The bind-mount detection in `run_deepseek_v3.sh` works regardless of
+whether the submodule is on the fork branch (committed) or has the patch
+applied to the working tree — both produce a non-empty
+`git diff --name-only d7288711b`.
 
 The bind-mount detection logic (lines 67–78 of `run_deepseek_v3.sh`) auto-
 discovers any modified `.py` under `3rdparty/Megatron-LM/` and mounts it
@@ -146,9 +163,16 @@ over the container's editable install at
   bind-mount auto-detection.
 - `patches/megatron-lm-dsv3-hybridep-determinism.patch` — combined
   Megatron-LM patch (per-manager buffer + custom_allgather=False + sync +
-  RACE_NOISE wrapper). Apply with `git -C 3rdparty/Megatron-LM apply`.
+  RACE_NOISE wrapper), as fallback if the personal fork isn't reachable.
 - `SUMMARY.md` — this doc.
 
-The submodule pointer is intentionally **not** advanced — patches are
-applied to the working tree and bind-mounted, leaving the public submodule
-hash (`d7288711b`) untouched.
+Submodule branch (preferred migration source):
+
+- `git@github.com:ZhiyuLi-Nvidia/Megatron-LM.git` branch
+  `zhiyul/per_manager_hybridep_fix` — based on `d7288711b` with two commits:
+  the per-manager HybridEP buffer fix and the
+  `custom_allgather=False` + sync + `RACE_NOISE` follow-up.
+
+The submodule pointer in this main-repo branch is intentionally **not**
+advanced — bind-mount workflow is preserved, leaving the public submodule
+hash (`d7288711b`) untouched in `.gitmodules`-recorded state.
