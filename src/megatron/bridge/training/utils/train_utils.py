@@ -525,6 +525,14 @@ def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcess
     return bool(input.item())
 
 
+def _print_memory_report(iteration: int, memory_keys: Optional[dict[str, str]], dp_group: Any) -> None:
+    memory_string = f"(after {iteration} iterations) memory (GB)"
+    for metric, value in report_memory(memory_keys).items():
+        memory_string += f" | {metric}: {value}"
+    if torch.distributed.get_rank(group=dp_group) == 0:
+        logger.info("[Rank %s] %s", torch.distributed.get_rank(), memory_string)
+
+
 def reduce_max_memory_across_pp_group(
     memory_report: dict[str, Union[int, float]],
     pp_group: "TorchProcessGroup",
@@ -1069,6 +1077,7 @@ def training_log(
             mtp_loss_scale, iteration, mtp_metric_writer, wandb_writer, total_loss_dict
         )
 
+    reported_memory_in_this_iteration = False
     if iteration % logger_config.log_interval == 0:
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
@@ -1197,16 +1206,20 @@ def training_log(
             if torch.distributed.get_rank() == 0:
                 num_microbatches = get_num_microbatches()
                 report_theoretical_memory(config, num_microbatches=num_microbatches, verbose=True)
-            memory_string = f"(after {iteration} iterations) memory (GB)"
-            for metric, value in report_memory(logger_config.memory_keys).items():
-                memory_string += f" | {metric}: {value}"
-            if torch.distributed.get_rank(group=pg_collection.dp) == 0:
-                print("[Rank {}] {}".format(torch.distributed.get_rank(), memory_string), flush=True)
+            _print_memory_report(iteration, logger_config.memory_keys, pg_collection.dp)
+            reported_memory_in_this_iteration = True
             if iteration > (loaded_iteration + 1):
                 # Make sure the memory after the second iteration is reported
                 # to include optimizer state memory.
                 report_memory_flag = False
         timers.log(timers_to_log, normalizer=logger_config.log_interval)
+
+    if (
+        logger_config.log_memory_interval is not None
+        and iteration % logger_config.log_memory_interval == 0
+        and not reported_memory_in_this_iteration
+    ):
+        _print_memory_report(iteration, logger_config.memory_keys, pg_collection.dp)
 
     return report_memory_flag
 
