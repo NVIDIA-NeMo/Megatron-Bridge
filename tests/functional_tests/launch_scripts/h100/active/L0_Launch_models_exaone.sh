@@ -1,4 +1,4 @@
-# CI_TIMEOUT=50
+# CI_TIMEOUT=15
 #!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -17,9 +17,9 @@
 set -xeuo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
-export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 
 uv run coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/models/qwen3_omni
+  tests/functional_tests/test_groups/models/exaone
 coverage combine -q

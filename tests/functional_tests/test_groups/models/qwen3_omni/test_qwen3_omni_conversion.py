@@ -157,7 +157,7 @@ class TestQwen3OmniConversion:
             pytest.skip("Qwen3-Omni conversion test requires at least 2 GPUs.")
         output_dir = tmp_path / "qwen3_omni_test"
         output_dir.mkdir(exist_ok=True)
-        repo_root = Path(__file__).resolve().parents[4]
+        repo_root = Path(__file__).resolve().parents[5]
         env = os.environ.copy()
         env["PYTHONPATH"] = f"{repo_root / 'src'}:{repo_root / '3rdparty' / 'Megatron-LM'}"
 
