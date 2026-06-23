@@ -4,9 +4,9 @@ This page lists known issues and limitations in the current release.
 
 ## 26.06
 
-- Moonlight and Nemotron v3 Nano model training recipe shows performance degradation with TP > 1 . As a workaround, set TP=1 and use HybridEP. We have root caused this regression to the base PyTorch image upgrade from 26.02 to 26.04. We are actively investigating and looking to fix this regression soon.
+- Moonlight and Nemotron v3 Nano model training recipe shows performance degradation with TP > 1. As a workaround, set TP=1 and use HybridEP. We have root caused this regression to the base PyTorch image upgrade from 26.02 to 26.04. We are actively investigating and looking to fix this regression soon.
 - Step-3.7-Flash forward-pass outputs have not been fully verified.
-- Some examples/ scripts have known minor issues: MiniMax M2 (conversion/export saving), GLM-4.5V (exported tokenizer artifacts), FLUX (tokenizer setup), and WAN (inference setup/dependencies).
+- Some examples/scripts have known minor issues: MiniMax M2 (conversion/export saving), GLM-4.5V (exported tokenizer artifacts), FLUX (tokenizer setup), and WAN (inference setup/dependencies).
 
 ## 26.04
 
