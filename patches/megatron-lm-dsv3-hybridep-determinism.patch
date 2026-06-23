@@ -1,0 +1,448 @@
+diff --git a/megatron/core/transformer/moe/fused_a2a.py b/megatron/core/transformer/moe/fused_a2a.py
+index 39f50a4a6..967102497 100644
+--- a/megatron/core/transformer/moe/fused_a2a.py
++++ b/megatron/core/transformer/moe/fused_a2a.py
+@@ -13,10 +13,23 @@ try:
+ except ImportError:
+     HAVE_DEEP_EP = False
+ 
++import os
+ import torch
+ 
+ _buffer = None
+ 
++# HYBRIDEP_SYNC env knob (default "1" = sync after every dispatch/combine).
++# At 8-GPU GB200 the synchronize was needed to avoid cudaErrorIllegalAddress
++# in backward after the custom_allgather=False patch unmasked a cross-stream
++# race. Set HYBRIDEP_SYNC=0 to test whether the race fires at 256-GPU too,
++# or whether it's masked at scale by NCCL-collective barriers / DP averaging.
++_HYBRIDEP_SYNC_ENABLED = os.environ.get("HYBRIDEP_SYNC", "1").strip() != "0"
++
++
++def _hybridep_maybe_sync():
++    if _HYBRIDEP_SYNC_ENABLED:
++        torch.cuda.synchronize()
++
+ 
+ def get_hidden_bytes(x: torch.Tensor) -> int:
+     """Calculate the number of hidden bytes for a tensor.
+@@ -272,10 +285,15 @@ try:
+ except ImportError:
+     HAVE_HYBRIDEP = False
+ 
+-_hybrid_ep_buffer = None
++# Per-manager keyed buffers (one HybridEPBuffer per _HybridEPManager instance).
++# Replaces the prior singleton, which was shared across VP chunks and caused
++# DeepEP "negative dimension" / non-determinism when forward and backward A2A
++# interleaved on a single buffer in steady-state 1F1B (2602 dsv3 investigation).
++_hybrid_ep_buffers: dict = {}
+ 
+ 
+ def init_hybrid_ep_buffer(
++    buffer_key: int,
+     group: torch.distributed.ProcessGroup,
+     hidden_dim: int,
+     seq_len: int,
+@@ -285,32 +303,22 @@ def init_hybrid_ep_buffer(
+     fp8_dispatch: bool,
+ ) -> None:
+     '''
+-    Initialize the HybridEP buffer, including buffer allocation and metadata
+-    initialization.
+-
+-    If a runtime dispatch/combine requires a larger buffer than the one
+-    initialized, the buffer will be reallocated at runtime,
+-    incuring extra run-time overhead.
++    Initialize the HybridEP buffer for the given buffer_key.
+ 
+     Args:
+-        group (torch.distributed.ProcessGroup):
+-            Process group for HybridEP all-to-all communication.
+-        hidden_dim (int):
+-            Hidden dimension of the input tensor.
+-        seq_len (int):
+-            Maximum sequence length of the input tensor.
+-        num_local_experts (int):
+-            Number of local experts.
+-        num_sms_dispatch_api (int):
+-            Number of SMs used by the dispatch API.
+-        num_sms_combine_api (int):
+-            Number of SMs used by the combine API.
+-        fp8_dispatch (bool):
+-            Whether to use FP8 communication during the dispatch phase.
++        buffer_key (int): Identity key (typically id(_HybridEPManager)) selecting which
++            per-manager buffer to (re)initialize.
++        ...
+     '''
+     assert not fp8_dispatch, "HybridEP dispatcher does not support fp8 dispatch now"
+-    global _hybrid_ep_buffer
+-    _hybrid_ep_buffer = HybridEPBuffer(
++    # enable_custom_allgather: 26.02 container's DeepEP defaulted this to False;
++    # 26.04 flipped the default to True. The custom-allgather path is the new
++    # culprit for the -4 dim crash under torch.use_deterministic_algorithms(True)
++    # — it appears to skip populating num_dispatched_tokens_tensor before
++    # executor.cu's `.item<int>()` blocking read, leaving uninitialized memory
++    # that reads as -4 (or 0xFFFFFFFC). Force False to match 26.02 behavior
++    # where HybridEP+det reached iter 6 successfully (per 2602 doc).
++    _hybrid_ep_buffers[buffer_key] = HybridEPBuffer(
+         group=group,
+         hidden_dim=hidden_dim,
+         max_num_of_tokens_per_rank=seq_len,
+@@ -318,15 +326,13 @@ def init_hybrid_ep_buffer(
+         use_fp8=fp8_dispatch,
+         num_sms_dispatch_api=num_sms_dispatch_api,
+         num_sms_combine_api=num_sms_combine_api,
++        enable_custom_allgather=False,
+     )
+ 
+ 
+ def reset_hybrid_ep_buffer():
+-    '''
+-    Reset the HybridEP buffer
+-    '''
+-    global _hybrid_ep_buffer
+-    _hybrid_ep_buffer = None
++    '''Reset all per-manager HybridEP buffers.'''
++    _hybrid_ep_buffers.clear()
+ 
+ 
+ class HybridEPDispatch(torch.autograd.Function):
+@@ -342,6 +348,7 @@ class HybridEPDispatch(torch.autograd.Function):
+         probs,
+         group,
+         num_local_experts,
++        buffer_key,
+         num_sms_dispatch_api=24,
+         num_sms_combine_api=24,
+         num_permuted_tokens=None,
+@@ -350,10 +357,11 @@ class HybridEPDispatch(torch.autograd.Function):
+         '''
+         Forward pass of fused dispatch of the HybridEP backend
+         '''
+-        if _hybrid_ep_buffer is None:
++        if buffer_key not in _hybrid_ep_buffers:
+             seq_len, hidden_dim = x.shape[-2:]
+             fp8_dispatch = False  # Currently, we do not support fp8 dispatch
+             init_hybrid_ep_buffer(
++                buffer_key,
+                 group,
+                 hidden_dim,
+                 seq_len,
+@@ -362,17 +370,15 @@ class HybridEPDispatch(torch.autograd.Function):
+                 num_sms_combine_api,
+                 fp8_dispatch,
+             )
+-        # If we provide the num_permuted_tokens, we do not need to use sync to
+-        # wait for the data in pinned memory ready
++        buffer = _hybrid_ep_buffers[buffer_key]
+         non_blocking = num_permuted_tokens is not None
+-        # Process the dispatch
+         (
+             dispatched_hidden,
+             dispatched_probs,
+             dispatched_scaling_factor,
+             tokens_per_expert,
+             handle,
+-        ) = _hybrid_ep_buffer.dispatch_with_permute(
++        ) = buffer.dispatch_with_permute(
+             hidden=x,
+             routing_map=routing_map,
+             probs=probs,
+@@ -382,9 +388,28 @@ class HybridEPDispatch(torch.autograd.Function):
+             num_permuted_tokens=num_permuted_tokens,
+             non_blocking=non_blocking,
+         )
++        # When non_blocking=True the HybridEP runtime writes the dispatch outputs on
++        # its internal comm stream and returns before the write completes.  Any CUDA
++        # operation on the returned tensors that is launched on the current (default)
++        # stream will race against that still-in-flight write → cudaErrorIllegalAddress.
++        # Inserting a full device synchronize here is the simplest safe fix: it ensures
++        # every in-flight comm-stream kernel has completed before autograd or the expert
++        # matmuls touch the output storage.
++        # NOTE: this is intentionally heavier than record_stream — record_stream only
++        # prevents the *allocator* from recycling the buffer, it does not prevent the
++        # current stream from reading a partially-written tensor.
++        if non_blocking:
++            _hybridep_maybe_sync()
+ 
+         ctx.handle = handle
+         ctx.pad_multiple = pad_multiple
++        ctx.buffer = buffer
++        # record_stream: belt-and-suspenders on top of the synchronize above; keeps
++        # the allocator from recycling the storage across future stream events.
++        _cur = torch.cuda.current_stream()
++        for _t in (dispatched_hidden, dispatched_probs, dispatched_scaling_factor, tokens_per_expert):
++            if isinstance(_t, torch.Tensor) and _t.is_cuda:
++                _t.record_stream(_cur)
+         return (
+             dispatched_hidden,
+             dispatched_probs,
+@@ -399,10 +424,18 @@ class HybridEPDispatch(torch.autograd.Function):
+         Backward pass of fused dispatch of the HybridEP backend
+         '''
+         handle = ctx.handle
+-        combined_hidden, combined_probs = _hybrid_ep_buffer.combine_with_unpermute(
++        combined_hidden, combined_probs = ctx.buffer.combine_with_unpermute(
+             hidden=grad_x, probs=grad_probs, handle=handle, pad_multiple=ctx.pad_multiple
+         )
+-        return combined_hidden, None, combined_probs, None, None, None, None, None, None, None
++        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
++        # before the upstream autograd nodes (running on current stream) read the result.
++        _hybridep_maybe_sync()
++        # record_stream: belt-and-suspenders after the synchronize.
++        _cur = torch.cuda.current_stream()
++        for _t in (combined_hidden, combined_probs):
++            if isinstance(_t, torch.Tensor) and _t.is_cuda:
++                _t.record_stream(_cur)
++        return combined_hidden, None, combined_probs, None, None, None, None, None, None, None, None
+ 
+ 
+ @internal_api
+@@ -412,16 +445,24 @@ class HybridEPCombine(torch.autograd.Function):
+     '''
+ 
+     @staticmethod
+-    def forward(ctx, x, handle, num_permuted_tokens=None, pad_multiple=None):
++    def forward(ctx, x, handle, buffer_key, num_permuted_tokens=None, pad_multiple=None):
+         '''
+         Forward pass of fused combine of the HybridEP backend
+         '''
+-        combined_hidden, _ = _hybrid_ep_buffer.combine_with_unpermute(
++        buffer = _hybrid_ep_buffers[buffer_key]
++        combined_hidden, _ = buffer.combine_with_unpermute(
+             hidden=x, handle=handle, pad_multiple=pad_multiple
+         )
++        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
++        # before downstream computation (running on current stream) reads the result.
++        _hybridep_maybe_sync()
+         ctx.handle = handle
+         ctx.pad_multiple = pad_multiple
+         ctx.num_permuted_tokens = num_permuted_tokens
++        ctx.buffer = buffer
++        # record_stream: belt-and-suspenders after the synchronize.
++        if isinstance(combined_hidden, torch.Tensor) and combined_hidden.is_cuda:
++            combined_hidden.record_stream(torch.cuda.current_stream())
+         return combined_hidden
+ 
+     @staticmethod
+@@ -430,14 +471,22 @@ class HybridEPCombine(torch.autograd.Function):
+         Backward pass of fused combine of the HybridEP backend
+         '''
+         handle = ctx.handle
+-        dispatched_hidden, _, _, _, _ = _hybrid_ep_buffer.dispatch_with_permute(
++        _non_blocking = ctx.num_permuted_tokens is not None
++        dispatched_hidden, _, _, _, _ = ctx.buffer.dispatch_with_permute(
+             hidden=grad_x,
+             scaling_factor=None,
+             handle=handle,
+             pad_multiple=ctx.pad_multiple,
+             num_permuted_tokens=ctx.num_permuted_tokens,
+         )
+-        return dispatched_hidden, None, None, None, None
++        # Same sync rationale as HybridEPDispatch.forward: if dispatch was async, the
++        # backward comm stream must be drained before the upstream grad computation
++        # (which runs on the current stream) reads dispatched_hidden.
++        if _non_blocking:
++            _hybridep_maybe_sync()
++        if isinstance(dispatched_hidden, torch.Tensor) and dispatched_hidden.is_cuda:
++            dispatched_hidden.record_stream(torch.cuda.current_stream())
++        return dispatched_hidden, None, None, None, None, None
+ 
+ 
+ if HAVE_HYBRIDEP:
+@@ -449,37 +498,17 @@ if HAVE_HYBRIDEP:
+         probs,
+         group,
+         num_local_experts,
++        buffer_key,
+         num_sms_dispatch_api=24,
+         num_sms_combine_api=24,
+         num_permuted_tokens=None,
+         pad_multiple=None,
+     ):
+-        '''
+-        Perform fused dispatch for "permute + dispatch a2a + permute" using the
+-        HybridEP backend.
++        '''Perform fused dispatch for the HybridEP backend.
+ 
+         Args:
+-            x (torch.Tensor):
+-                Input hidden states to dispatch.
+-            routing_map (torch.Tensor):
+-                Map indicating which expert each token is routed to.
+-            probs (torch.Tensor):
+-                Routing probabilities for each token-expert pair.
+-            group (torch.distributed.ProcessGroup):
+-                Process group used for communication.
+-            num_local_experts (int):
+-                Number of local experts.
+-            num_sms_dispatch_api (int):
+-                Number of SMs used by the dispatch API.
+-            num_sms_combine_api (int):
+-                Number of SMs used by the combine API.
+-            num_permuted_tokens (int):
+-                Number of tokens after permute. HybridEP uses this to allocate buffers.
+-                If not provided, HybridEP obtains the size from a GPU tensor,
+-                which causes a D2H synchronization.
+-            pad_multiple (int):
+-                Alignment multiple required for FP8 GEMM. If not provided, no padding
+-                is performed.
++            buffer_key (int): Identity key selecting the per-manager HybridEPBuffer.
++            (other args unchanged)
+         '''
+         return HybridEPDispatch.apply(
+             x,
+@@ -487,6 +516,7 @@ if HAVE_HYBRIDEP:
+             probs,
+             group,
+             num_local_experts,
++            buffer_key,
+             num_sms_dispatch_api,
+             num_sms_combine_api,
+             num_permuted_tokens,
+@@ -494,24 +524,14 @@ if HAVE_HYBRIDEP:
+         )
+ 
+     @internal_api
+-    def hybrid_ep_combine(x, handle, num_permuted_tokens, pad_multiple):
+-        '''
+-        Perform fused combine operation for unpermute + combine a2a + unpermute
+-        using the HybridEP backend
+-
+-        args:
+-            x (torch.Tensor):
+-                Input hidden states to combine
+-            handle (EventHandle):
+-                Communication handle from dispatch operation
+-            num_permuted_tokens (int): The number of tokens before unpermute. HybridEP uses this
+-                to allocate buffers. If not provided, HybridEP obtains the size from a GPU tensor,
+-                which causes a D2H synchronization.
+-            pad_multiple (int):
+-                The alignment multiple required for FP8 GEMM. If not provided, no padding
+-                is performed.
++    def hybrid_ep_combine(x, handle, buffer_key, num_permuted_tokens, pad_multiple):
++        '''Perform fused combine for the HybridEP backend.
++
++        Args:
++            buffer_key (int): Identity key selecting the per-manager HybridEPBuffer.
++            (other args unchanged)
+         '''
+-        return HybridEPCombine.apply(x, handle, num_permuted_tokens, pad_multiple)
++        return HybridEPCombine.apply(x, handle, buffer_key, num_permuted_tokens, pad_multiple)
+ 
+ else:
+     hybrid_ep_dispatch = None
+diff --git a/megatron/core/transformer/moe/token_dispatcher.py b/megatron/core/transformer/moe/token_dispatcher.py
+index 2466ffc08..f67bf03fd 100644
+--- a/megatron/core/transformer/moe/token_dispatcher.py
++++ b/megatron/core/transformer/moe/token_dispatcher.py
+@@ -997,6 +997,9 @@ class _HybridEPManager(_DispatchManager):
+         self.handle = None
+         # Used for padding the output for each expert
+         self.pad_multiple = None
++        # Per-manager HybridEPBuffer key — avoids the shared-singleton race
++        # between VP chunks under interleaved 1F1B (see fused_a2a.py).
++        self._buffer_key = id(self)
+ 
+         if hybrid_ep_dispatch is None:
+             raise ImportError(
+@@ -1046,6 +1049,7 @@ class _HybridEPManager(_DispatchManager):
+                 probs=self.token_probs,
+                 group=self.group,
+                 num_local_experts=self.num_local_experts,
++                buffer_key=self._buffer_key,
+                 num_sms_dispatch_api=self.config.moe_hybridep_num_sms,
+                 num_sms_combine_api=self.config.moe_hybridep_num_sms,
+                 num_permuted_tokens=self.num_permuted_tokens,
+@@ -1069,6 +1073,7 @@ class _HybridEPManager(_DispatchManager):
+         hidden_states = hybrid_ep_combine(
+             x=hidden_states,
+             handle=self.handle,
++            buffer_key=self._buffer_key,
+             num_permuted_tokens=self.num_permuted_tokens,
+             pad_multiple=self.pad_multiple,
+         )
+diff --git a/megatron/training/training.py b/megatron/training/training.py
+index c505858cb..4725a4839 100644
+--- a/megatron/training/training.py
++++ b/megatron/training/training.py
+@@ -1780,8 +1780,78 @@ def dummy_train_step(data_iterator):
+             batch = get_batch_on_this_cp_rank(batch)
+ 
+ 
++# ---------------------------------------------------------------------------
++# RACE_NOISE: scheduling-noise injection for determinism reproducer tests.
++#
++# When env var ``RACE_NOISE=1`` is set, ``train_step`` is wrapped with a
++# per-rank seeded side-stream GEMM noise generator. Same design as the
++# standalone determinism-tests branch's ``RacingStreams`` in
++# ``tests/unit_tests/determinism/utils.py`` — fresh instance per step so
++# paired runs A and B see IDENTICAL noise per rank (different across ranks).
++# Effective only with ``CUDA_DEVICE_MAX_CONNECTIONS > 1``.
++#
++# No-op when ``RACE_NOISE`` is unset/0 — production training path is
++# unchanged.
++# ---------------------------------------------------------------------------
++class _RaceNoiseStreams:
++    _SIZE_CHOICES = (1024, 2048, 3072)
++    _RANK_STREAM_CYCLE = 4
++    _STREAM_PRIORITIES = (-1, 0)
++    _BASE_SEED = 0xC0FFEE
++
++    def __init__(self, num_streams: int = 4, num_iters: int = 200):
++        rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
++        self.num_streams = num_streams + (rank % self._RANK_STREAM_CYCLE)
++        self.num_iters = num_iters
++        self._gen = torch.Generator()
++        self._gen.manual_seed(self._BASE_SEED + rank)
++        self.streams: list = []
++        self._noise: list = []
++
++    def __enter__(self):
++        self.streams = [
++            torch.cuda.Stream(priority=self._STREAM_PRIORITIES[i % len(self._STREAM_PRIORITIES)])
++            for i in range(self.num_streams)
++        ]
++        for stream in self.streams:
++            with torch.cuda.stream(stream):
++                size_indices = torch.randint(
++                    0, len(self._SIZE_CHOICES), (self.num_iters,), generator=self._gen
++                ).tolist()
++                result = None
++                for idx in size_indices:
++                    sz = self._SIZE_CHOICES[idx]
++                    a = torch.ones(sz, sz, device="cuda", dtype=torch.bfloat16)
++                    b = torch.ones(sz, sz, device="cuda", dtype=torch.bfloat16)
++                    result = a @ b
++                if result is not None:
++                    self._noise.append(result)
++        return self
++
++    def __exit__(self, *args):
++        for stream in self.streams:
++            stream.synchronize()
++        self.streams.clear()
++        self._noise.clear()
++
++
++def _maybe_race_noise():
++    if os.environ.get("RACE_NOISE", "0").strip() != "1":
++        return nullcontext()
++    return _RaceNoiseStreams(num_streams=4)
++
++
+ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=None):
+-    """Single training step."""
++    """Single training step.
++
++    When ``RACE_NOISE=1`` env var is set, wraps the step body with per-rank
++    seeded side-stream GEMM noise (see ``_maybe_race_noise``).
++    """
++    with _maybe_race_noise():
++        return _train_step_inner(forward_step_func, data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=iteration)
++
++
++def _train_step_inner(forward_step_func, data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=None):
+     args = get_args()
+     timers = get_timers()
+ 
