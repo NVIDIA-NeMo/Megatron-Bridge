@@ -234,6 +234,11 @@ class Step35Bridge(MegatronModelBridge):
         """
         provider = super().provider_bridge(hf_pretrained)
 
+        if provider.head_wise_attn_gate and getattr(provider, "attention_output_gate", False):
+            # MCore dev treats the full-head-dim output gate and Step-3.5's
+            # scalar per-head gate as separate, mutually exclusive layouts.
+            provider.attention_output_gate = False
+
         hf_config = hf_pretrained.config
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
         if provider.layer_types is not None and mtp_layer_types:
@@ -377,8 +382,9 @@ class Step35Bridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
-                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and expand
-                # the scalar g_proj rows into MCore's attention_output_gate layout.
+                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and
+                # append the scalar g_proj rows for MCore's head_wise_attn_gate
+                # layout.
                 QKVGMapping(
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",
