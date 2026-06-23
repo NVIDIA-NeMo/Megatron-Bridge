@@ -102,10 +102,20 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         else:
             self.k_layernorm = None
 
-    def get_query_key_value_tensors(self, hidden_states, key_value_states=None, output_gate=None, split_qkv=True):
+    def get_query_key_value_tensors(
+        self,
+        hidden_states,
+        key_value_states=None,
+        output_gate=None,
+        split_qkv=True,
+        head_wise_gate=False,
+    ):
         """
         Derives `query`, `key` and `value` tensors from `hidden_states`.
         """
+        if head_wise_gate:
+            raise ValueError("DiTSelfAttention does not support head_wise_attn_gate.")
+
         # Attention heads [sq, b, h] --> [sq, b, ng * (np/ng + 2) * hn)]
         mixed_qkv, _ = self.linear_qkv(hidden_states)
 
@@ -256,14 +266,25 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             name=(name + ".linear_kv") if name is not None else None,
         )
 
-    def get_query_key_value_tensors(self, hidden_states, key_value_states, output_gate=None, split_qkv=True):
+    def get_query_key_value_tensors(
+        self,
+        hidden_states,
+        key_value_states,
+        output_gate=None,
+        split_qkv=True,
+        head_wise_gate=False,
+    ):
         """
         Derives `query` tensor from `hidden_states`, and `key`/`value` tensors
         from `key_value_states`.
         """
 
         query, key, value = super().get_query_key_value_tensors(
-            hidden_states, key_value_states, output_gate=output_gate, split_qkv=split_qkv
+            hidden_states,
+            key_value_states,
+            output_gate=output_gate,
+            split_qkv=split_qkv,
+            head_wise_gate=head_wise_gate,
         )
 
         # gather query and key heads across TP ranks if self.layernorm_across_heads is True
