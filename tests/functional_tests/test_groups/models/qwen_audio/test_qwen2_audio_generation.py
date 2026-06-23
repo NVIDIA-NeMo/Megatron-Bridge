@@ -17,10 +17,10 @@ Functional tests for Qwen2 Audio HF to Megatron generation.
 
 Example run commands:
     # Run all generation tests
-    pytest tests/functional_tests/models/qwen_audio/test_qwen2_audio_generation.py
+    pytest tests/functional_tests/test_groups/models/qwen_audio/test_qwen2_audio_generation.py
 
     # Run specific test
-    pytest tests/functional_tests/models/qwen_audio/test_qwen2_audio_generation.py::TestQwen2AudioGeneration::test_qwen2_audio_generation
+    pytest tests/functional_tests/test_groups/models/qwen_audio/test_qwen2_audio_generation.py::TestQwen2AudioGeneration::test_qwen2_audio_generation
 
 Note: These tests use small proxy/toy models for fast generation testing.
 """
