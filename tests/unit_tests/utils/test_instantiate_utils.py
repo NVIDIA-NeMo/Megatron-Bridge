@@ -796,7 +796,7 @@ class TestTargetPrefixValidation:
                 "torch.utils.cpp_extension.load_inline",
                 {
                     "name": "mb_inline_payload",
-                    "cpp_sources": ['#include <cstdlib>\n__attribute__((constructor)) static void init() {}'],
+                    "cpp_sources": ["#include <cstdlib>\n__attribute__((constructor)) static void init() {}"],
                     "functions": [],
                 },
             ),
