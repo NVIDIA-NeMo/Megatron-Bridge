@@ -73,19 +73,20 @@ class TestExaone4ProviderMapping:
             num_hidden_layers=30,
             num_key_value_heads=8,
             rms_norm_eps=1e-5,
-            rope_scaling={
-                "rope_type": "llama3",
-                "factor": 16.0,
-                "low_freq_factor": 1.0,
-                "high_freq_factor": 4.0,
-                "original_max_position_embeddings": 8192,
-            },
             rope_theta=1000000.0,
             tie_word_embeddings=True,
             torch_dtype=torch.bfloat16,
             vocab_size=102400,
             head_dim=64,
         )
+        # Generic PretrainedConfig standardizes RoPE kwargs before setting custom EXAONE attributes.
+        cfg.rope_scaling = {
+            "rope_type": "llama3",
+            "factor": 16.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+        }
 
         bridge = AutoBridge.from_hf_config(cfg)
         converted_provider = bridge.to_megatron_provider(load_weights=False)
