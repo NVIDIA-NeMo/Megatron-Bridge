@@ -29,7 +29,7 @@ class TestMambaModelBuilderCompatibility:
 
         assert isinstance(builder, HybridModelBuilder)
 
-    @patch("megatron.bridge.models.hybrid.hybrid_builder.MCoreHybridModel")
+    @patch("megatron.training.models.hybrid.HybridModel")
     def test_mamba_stack_spec_maps_to_hybrid_model_kwarg(self, mock_model):
         module_spec = ModuleSpec(module=object)
         config = MambaModelConfig(
@@ -59,7 +59,7 @@ class TestMambaModelBuilderCompatibility:
 
     def test_old_serialized_targets_resolve(self):
         config = MambaModelConfig(transformer=_make_transformer(), vocab_size=32000)
-        data = config.to_cfg_dict()
+        data = config.as_dict()
         data["_target_"] = "megatron.bridge.models.mamba.MambaModelConfig"
         data["_builder_"] = "megatron.bridge.models.mamba.MambaModelBuilder"
 
@@ -96,7 +96,7 @@ class TestMambaModelBuilderCompatibility:
 
     def test_old_serialized_module_targets_resolve(self):
         config = MambaModelConfig(transformer=_make_transformer(), vocab_size=32000)
-        data = config.to_cfg_dict()
+        data = config.as_dict()
         data["_target_"] = "megatron.bridge.models.mamba.mamba_builder.MambaModelConfig"
         data["_builder_"] = "megatron.bridge.models.mamba.mamba_builder.MambaModelBuilder"
 
