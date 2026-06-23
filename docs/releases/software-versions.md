@@ -17,7 +17,7 @@
 | CUDA | 13.2.1.009 |
 | cuDNN | 9.21.1.3-1 |
 | vLLM | 0.20.1 |
-| Transformers | >=5.8.1,<5.9.0 |
+| Transformers | 5.8.1 |
 
 ```{note}
 NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 26.04 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
