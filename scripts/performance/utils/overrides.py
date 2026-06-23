@@ -129,6 +129,8 @@ def _set_cuda_graph_overrides(
     if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False
 
+    recipe.logger.log_memory_interval = 1
+
     return recipe
 
 
