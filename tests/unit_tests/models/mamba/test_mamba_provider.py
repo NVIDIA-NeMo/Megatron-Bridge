@@ -73,5 +73,10 @@ class TestMambaModelProviderCompatibility:
 
         data = provider.to_cfg_dict()
 
-        assert data["hybrid_stack_spec"] is module_spec
+        hybrid_stack_spec = data["hybrid_stack_spec"]
+        assert hybrid_stack_spec["_target_"] == "megatron.core.transformer.spec_utils.ModuleSpec"
+        assert hybrid_stack_spec["module"] is object
+        assert hybrid_stack_spec["params"] == {}
+        assert hybrid_stack_spec["submodules"] is None
+        assert hybrid_stack_spec["metainfo"] == {}
         assert "mamba_stack_spec" not in data

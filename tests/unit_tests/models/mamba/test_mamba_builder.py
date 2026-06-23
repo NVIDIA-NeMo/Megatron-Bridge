@@ -82,7 +82,7 @@ class TestMambaModelBuilderCompatibility:
         assert isinstance(restored, MambaModelConfig)
         assert restored.get_builder_cls() is MambaModelBuilder
 
-    def test_serialized_mamba_config_uses_hybrid_stack_spec(self):
+    def test_serialized_mamba_config_omits_deprecated_mamba_stack_spec(self):
         module_spec = ModuleSpec(module=object)
         config = MambaModelConfig(
             transformer=_make_transformer(),
@@ -92,7 +92,7 @@ class TestMambaModelBuilderCompatibility:
 
         data = config.as_dict()
 
-        assert data["hybrid_stack_spec"] is module_spec
+        assert "hybrid_stack_spec" not in data
         assert "mamba_stack_spec" not in data
 
     def test_old_serialized_mamba_stack_spec_converts_to_hybrid_stack_spec(self):
