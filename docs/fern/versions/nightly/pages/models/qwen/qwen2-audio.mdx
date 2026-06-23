@@ -1,0 +1,23 @@
+# Qwen2-Audio
+
+[Qwen2-Audio](https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct) is an audio-language model from the Qwen family. Megatron Bridge supports Qwen2-Audio through a dedicated audio model bridge and provider.
+
+## Supported Variants
+
+- Qwen2-Audio-7B-Instruct: https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct
+
+## Architecture Notes
+
+- Uses a Qwen2 language backbone with an audio encoder path.
+- The bridge maps Hugging Face `Qwen2AudioForConditionalGeneration` checkpoints to the Megatron audio-language model.
+- Inference supports remote audio URLs and local audio files through the audio generation helper.
+
+## Examples
+
+For runnable audio inference commands and expected output, see the [Qwen2-Audio examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen2_audio/README.md).
+
+## Related Implementation
+
+- Bridge implementation: [`src/megatron/bridge/models/qwen_audio`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/qwen_audio)
+- Recipes: [`src/megatron/bridge/recipes/qwen2_audio`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/qwen2_audio)
+- Examples: [`examples/models/qwen/qwen2_audio`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen/qwen2_audio)
