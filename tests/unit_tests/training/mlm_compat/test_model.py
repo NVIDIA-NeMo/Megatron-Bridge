@@ -25,6 +25,7 @@ from megatron.bridge.training.mlm_compat.model import (
     _hybrid_provider,
     _mamba_provider,
 )
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 def common_mock_args() -> argparse.Namespace:
@@ -467,6 +468,24 @@ class TestHybridModelProvider:
 
         with pytest.raises(AssertionError, match="You must provide a valid Hybrid layer spec!"):
             _hybrid_provider(mock_args)
+
+    @patch("megatron.bridge.training.mlm_compat.model.import_module")
+    @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
+    def test_mamba_provider_rejects_untrusted_stack_spec(
+        self,
+        mock_config_func,
+        mock_import,
+        mock_args,
+        mock_transformer_config,
+    ):
+        """Test that legacy checkpoint args cannot import untrusted Hybrid specs."""
+        mock_config_func.return_value = mock_transformer_config
+        mock_args.spec = "attacker_pkg.hybrid_spec.payload_spec"
+
+        with pytest.raises(InstantiationException, match="not in the allowlist"):
+            _mamba_provider(mock_args)
+
+        mock_import.assert_not_called()
 
     @patch("megatron.bridge.training.mlm_compat.model.import_module")
     @patch("megatron.bridge.training.mlm_compat.model._transformer_config_from_args")
