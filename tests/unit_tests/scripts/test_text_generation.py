@@ -218,7 +218,7 @@ def test_build_inference_config_clamps_learned_absolute_sequence_length(text_gen
     assert config.kwargs["materialize_only_last_token_logits"] is False
 
 
-def test_megatron_checkpoint_overrides_explicit_for_divisible_batch(text_generation):
+def test_build_inference_config_explicit_for_divisible_batch(text_generation):
     """max_batch_size already divisible by tp must not raise."""
     model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
     config = text_generation.build_inference_config(
@@ -234,3 +234,45 @@ def test_megatron_checkpoint_overrides_explicit_for_divisible_batch(text_generat
         enable_chunked_prefill=False,
     )
     assert config.kwargs["max_requests"] == 4
+
+
+def test_resolve_hf_model_path_prefers_explicit(text_generation):
+    assert text_generation.resolve_hf_model_path("meta-llama/Llama-3.2-1B", None) == "meta-llama/Llama-3.2-1B"
+
+
+def test_resolve_hf_model_path_falls_back_to_checkpoint_metadata(text_generation, monkeypatch):
+    monkeypatch.setattr(text_generation, "get_hf_model_id_from_checkpoint", lambda path: "org/model-from-ckpt")
+    assert text_generation.resolve_hf_model_path(None, "/ckpt") == "org/model-from-ckpt"
+
+
+def test_resolve_hf_model_path_raises_when_unresolvable(text_generation):
+    # stub get_hf_model_id_from_checkpoint returns None
+    with pytest.raises(ValueError, match="--hf_model_path is required"):
+        text_generation.resolve_hf_model_path(None, "/ckpt")
+
+
+def test_load_prompts_explicit_and_default(text_generation):
+    assert text_generation.load_prompts(["a", "b"], None, None, ["default"]) == ["a", "b"]
+    assert text_generation.load_prompts([], None, None, ["default"]) == ["default"]
+
+
+def test_load_prompts_from_file_with_jsonl_and_truncate(text_generation, tmp_path):
+    prompt_file = tmp_path / "prompts.txt"
+    prompt_file.write_text('{"text": "json prompt"}\nraw prompt\n\nthird\n', encoding="utf-8")
+
+    # JSONL `text` field is extracted; blank lines skipped; raw lines passed through.
+    assert text_generation.load_prompts(None, str(prompt_file), None, ["d"]) == [
+        "json prompt",
+        "raw prompt",
+        "third",
+    ]
+    # truncation caps the count
+    assert text_generation.load_prompts(None, str(prompt_file), 2, ["d"]) == ["json prompt", "raw prompt"]
+
+
+def test_validate_sequence_length(text_generation):
+    # fits -> no raise
+    text_generation.validate_sequence_length(longest_prompt_tokens=100, num_new_tokens=28, max_seq_length=4096)
+    # exceeds -> raise
+    with pytest.raises(ValueError, match="Longest prompt plus generation needs"):
+        text_generation.validate_sequence_length(longest_prompt_tokens=4090, num_new_tokens=30, max_seq_length=4096)

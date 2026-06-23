@@ -435,6 +435,7 @@ class TestMaybeInitializeDistributed:
         mock_init_pg.assert_not_called()
         mock_set_device.assert_not_called()
 
+    @patch.dict(os.environ, {}, clear=True)
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.init_process_group")
@@ -455,9 +456,7 @@ class TestMaybeInitializeDistributed:
         mock_init_pg,
         *_,
     ):
-        for key in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT"):
-            os.environ.pop(key, None)
-
+        # @patch.dict(clear=True) isolates os.environ so the vars set below do not leak.
         maybe_initialize_distributed(timeout_minutes=11)
 
         assert os.environ["RANK"] == "7"
