@@ -11,6 +11,8 @@
 </div>
 
 ## 📣 News
+- [06/22/2026] **Megatron Bridge 0.5.0 released!** Highlights include expanded LLM and multimodal support (Qwen3.5, DeepSeek V4, Ernie 4.5, GLM-5/4.7, StepFun Step-3.5/3.7, MiMo-V2, Gemma 4, Falcon H1, Ling MoE V2, Nemotron-3 Nano Omni, Qwen3-Omni, Qwen3-ASR, and Nemotron Diffusion), MegatronMIMO and Energon v7 training updates, evaluator backend integration, eval-time context parallelism, deterministic recipes, quantized FP8/MXFP4 export, CUDA graph/performance improvements, and Megatron Inference/tokenizer unification with Megatron-LM. Huge thanks to our community contributors: [@HowardZorn](https://github.com/HowardZorn), [@hy2826](https://github.com/hy2826), [@bo-ke](https://github.com/bo-ke), [@beccohov](https://github.com/beccohov), [@dhiaEddineRhaiem](https://github.com/dhiaEddineRhaiem), [@pavelgein](https://github.com/pavelgein), [@ccclyu](https://github.com/ccclyu), [@hbhflw2000](https://github.com/hbhflw2000), and [@HollowMan6](https://github.com/HollowMan6)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.5.0).
+
 - [06/16/2026] NVIDIA topped [MLPerf Training v6.0](https://developer.nvidia.com/blog/nvidia-blackwell-tops-mlperf-training-6-0-with-industry-leading-scale-and-performance/) across every benchmark, including the new DeepSeek-V3 and GPT-OSS MoE training workloads. Megatron Bridge serves as the packaging layer for the NeMo 26.06 training stack that integrates full-iteration CUDA graphs, HybridEP/router optimizations, all-to-all overlap, MXFP8 attention, and pipeline-layout balancing; the blog highlights [DeepSeek-V3 training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance/configs/deepseek) at **1,648 TFLOPS/GPU** (**6,338 tokens/sec/GPU**) on GB300. To try related runs, start from the [performance recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance); the corresponding container is expected with the NeMo 26.06 release soon.
 
 - [06/04/2026] [**NVIDIA Nemotron 3 Ultra**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) is now public! Day-0 support for the 550B-A55B hybrid Mamba-Transformer MoE model is available on the [`nemotron_3_ultra`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_ultra) branch, including checkpoint conversion, inference, SFT, PEFT (LoRA), and pretraining examples. Read the [NVIDIA Technical Blog](https://developer.nvidia.com/blog/nvidia-nemotron-3-ultra-powers-faster-more-efficient-reasoning-for-long-running-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_ultra/examples/models/nemotron/nemotron_3/ultra/README.md) for the full walkthrough.
@@ -212,23 +214,25 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 | Family | Supported variants |
 |----------------|--------------------|
-| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 (Bailing) |
-| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 |
+| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 / V4 Flash |
+| [**Diffusion**](src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
+| **Ernie** | [Ernie 4.5 MoE](src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](src/megatron/bridge/models/ernie_vl) |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
 | [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
 | [**Mistral**](docs/models/mistral/index.md) | Mistral, Ministral 3 (3B/8B/14B) |
-| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo |
+| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H, Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
-| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
-| [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash |
+| [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash, Step-3.7-Flash |
 
 ### Launching Recipes
 
