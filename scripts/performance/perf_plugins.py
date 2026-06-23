@@ -350,6 +350,9 @@ class PerfEnvPlugin(Plugin):
             if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
+        if gpu == "b300":
+            executor.env_vars["NCCL_IGNORE_CPU_AFFINITY"] = "1"
+
     def _set_layernorm_sm_margin(
         self,
         task: Union["run.Partial", "run.Script"],
