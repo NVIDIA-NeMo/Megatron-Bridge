@@ -307,7 +307,7 @@ def build_inference_config(
     model: torch.nn.Module,
     max_sequence_length: int,
     max_batch_size: int | None,
-    num_prompts: int,
+    num_prompts: int | None,
     tp: int,
     block_size_tokens: int,
     kv_cache_buffer_size_gb: float,
@@ -317,8 +317,12 @@ def build_inference_config(
 ) -> InferenceConfig:
     """Construct the runtime ``megatron.core.inference.config.InferenceConfig``.
 
-    Centralizes the KV-cache / batching translation so both the sync and async scripts share
+    Centralizes the KV-cache / batching translation so the offline scripts and the server share
     one source of truth. Pure: never mutates caller state.
+
+    ``max_requests`` resolves to ``max_batch_size`` if set, else ``num_prompts``. When both are
+    ``None`` (e.g. a server that should auto-size to the KV-cache memory buffer), ``max_requests``
+    is left as ``None`` for the engine to size.
     """
     effective_block_size = block_size_tokens
     if getattr(getattr(model, "config", None), "cache_mla_latents", False) and block_size_tokens != 64:
@@ -329,7 +333,7 @@ def build_inference_config(
         effective_block_size = 64
 
     max_requests = max_batch_size or num_prompts
-    if max_requests % tp != 0:
+    if max_requests is not None and max_requests % tp != 0:
         rounded = ((max_requests + tp - 1) // tp) * tp
         if max_batch_size is not None:
             raise ValueError(
