@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for ``scripts/inference/text_generation.py``."""
+"""Unit tests for ``megatron.bridge.inference.text_generation`` (shared helpers)."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ import pytest
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_SCRIPT_PATH = _REPO_ROOT / "scripts" / "inference" / "text_generation.py"
+_MODULE_PATH = _REPO_ROOT / "src" / "megatron" / "bridge" / "inference" / "text_generation.py"
 
 
 class _AttnBackend(Enum):
@@ -55,19 +55,6 @@ class _PassthroughInit:
         self.kwargs = kwargs
 
 
-class _MegatronLLM(_PassthroughInit):
-    is_primary_rank = True
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, traceback):
-        return None
-
-    def generate(self, prompts, sampling_params):
-        return []
-
-
 def _module(name: str, **attrs: object) -> types.ModuleType:
     module = types.ModuleType(name)
     for attr_name, value in attrs.items():
@@ -75,11 +62,10 @@ def _module(name: str, **attrs: object) -> types.ModuleType:
     return module
 
 
-def _install_text_generation_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+def _install_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     stubs = {
         "megatron.core.inference.apis": _module(
             "megatron.core.inference.apis",
-            MegatronLLM=_MegatronLLM,
             SamplingParams=_SamplingParams,
         ),
         "megatron.core.inference.config": _module(
@@ -87,25 +73,13 @@ def _install_text_generation_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
             InferenceConfig=_PassthroughInit,
             MambaInferenceStateConfig=_MambaInferenceStateConfig,
         ),
-        "megatron.core.inference.contexts": _module(
-            "megatron.core.inference.contexts",
-            StaticInferenceContext=_PassthroughInit,
-        ),
-        "megatron.core.inference.engines.static_engine": _module(
-            "megatron.core.inference.engines.static_engine",
-            StaticInferenceEngine=_PassthroughInit,
-        ),
-        "megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper": _module(
-            "megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper",
-            GPTInferenceWrapper=_PassthroughInit,
-        ),
-        "megatron.core.inference.text_generation_controllers.text_generation_controller": _module(
-            "megatron.core.inference.text_generation_controllers.text_generation_controller",
-            TextGenerationController=_PassthroughInit,
-        ),
         "megatron.core.transformer.enums": _module(
             "megatron.core.transformer.enums",
             AttnBackend=_AttnBackend,
+        ),
+        "megatron.core.utils": _module(
+            "megatron.core.utils",
+            get_attr_wrapped_model=lambda model, attr: getattr(model, attr),
         ),
         "transformers": _module(
             "transformers",
@@ -139,8 +113,8 @@ def _install_text_generation_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def text_generation(monkeypatch):
-    _install_text_generation_stubs(monkeypatch)
-    spec = importlib.util.spec_from_file_location("text_generation_under_test", _SCRIPT_PATH)
+    _install_stubs(monkeypatch)
+    spec = importlib.util.spec_from_file_location("bridge_text_generation_under_test", _MODULE_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -172,7 +146,7 @@ def test_maybe_initialize_distributed_populates_env_from_safe_helpers(monkeypatc
         lambda backend, timeout: init_calls.append({"backend": backend, "timeout": timeout}),
     )
 
-    text_generation._maybe_initialize_distributed(timeout_minutes=11)
+    text_generation.maybe_initialize_distributed(timeout_minutes=11)
 
     assert (
         dict(
@@ -202,25 +176,22 @@ def test_maybe_initialize_distributed_is_noop_when_dist_unavailable(monkeypatch,
         lambda device: pytest.fail("set_device should not be called"),
     )
 
-    text_generation._maybe_initialize_distributed(timeout_minutes=1)
+    text_generation.maybe_initialize_distributed(timeout_minutes=1)
 
 
 def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generation):
     provider = types.SimpleNamespace(cache_mla_latents=True)
-    args = types.SimpleNamespace(
+
+    overrides = text_generation._megatron_checkpoint_overrides(
+        provider,
         tp=2,
         pp=2,
         ep=4,
         etp=1,
         sequence_parallel=True,
+        dtype=text_generation.torch.bfloat16,
         attention_backend="local",
         inference_moe_token_dispatcher_type="nvls",
-    )
-
-    overrides = text_generation._build_megatron_checkpoint_overrides(
-        provider,
-        args,
-        text_generation.torch.bfloat16,
     )
 
     assert overrides["attention_backend"] is text_generation.AttnBackend.local
@@ -235,3 +206,64 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
+
+
+def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=None,
+        num_prompts=3,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+
+    # 3 prompts rounded up to a multiple of tp=2 -> 4; rope is pass-through for max_sequence_length.
+    assert config.kwargs["max_requests"] == 4
+    assert config.kwargs["max_sequence_length"] == 4096
+    assert config.kwargs["materialize_only_last_token_logits"] is True
+
+
+def test_build_inference_config_clamps_learned_absolute_sequence_length(text_generation):
+    model = types.SimpleNamespace(position_embedding_type="learned_absolute", max_sequence_length=1024)
+
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=4096,
+        max_batch_size=2,
+        num_prompts=2,
+        tp=1,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=True,
+        enable_chunked_prefill=False,
+    )
+
+    # learned_absolute clamps to the model's table size (1024), not the requested 4096.
+    assert config.kwargs["max_sequence_length"] == 1024
+    assert config.kwargs["materialize_only_last_token_logits"] is False
+
+
+def test_megatron_checkpoint_overrides_explicit_for_divisible_batch(text_generation):
+    """max_batch_size already divisible by tp must not raise."""
+    model = types.SimpleNamespace(position_embedding_type="rope", max_sequence_length=8192)
+    config = text_generation.build_inference_config(
+        model=model,
+        max_sequence_length=2048,
+        max_batch_size=4,
+        num_prompts=10,
+        tp=2,
+        block_size_tokens=256,
+        kv_cache_buffer_size_gb=20.0,
+        max_tokens=None,
+        return_log_probs=False,
+        enable_chunked_prefill=False,
+    )
+    assert config.kwargs["max_requests"] == 4
