@@ -64,6 +64,10 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
     micro_batch_size=2,
     use_megatron_fsdp=True,
     cpu_offloading_num_layers=20,
+    # nccl_ub: symmetric kernels for DP all-reduce, same as BF16. _set_nccl_ub_overrides
+    # auto-sets fsdp_manual_registration=True and average_in_collective=False (required for
+    # NCCL symmetric kernels). DP all-reduce is orthogonal to FP8 TP comms — safe to enable.
+    nccl_ub=True,
 )
 
 
@@ -213,6 +217,8 @@ LLAMA3_70B_PRETRAIN_CONFIG_GB300_FP8_CS_V2 = replace(
     micro_batch_size=2,
     use_megatron_fsdp=True,
     cpu_offloading_num_layers=20,
+    # nccl_ub: see V1 comment above.
+    nccl_ub=True,
 )
 
 
