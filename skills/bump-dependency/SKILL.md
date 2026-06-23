@@ -105,7 +105,7 @@ Title and labels per @CONTRIBUTING.md. Two bump-specific requirements:
 
 The PR body template — this is the durable record of the bump:
 
-```markdown
+````markdown
 <details><summary>Claude summary</summary>
 
 ## What
@@ -125,7 +125,7 @@ Updated <package> <old> -> <new>
 _None yet — will be appended as flakes are identified during CI iteration._
 
 </details>
-```
+````
 
 To update the PR title or body later, use `gh api -X PATCH
 "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" -F "body=@/tmp/pr-body.md"`
