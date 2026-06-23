@@ -16,6 +16,7 @@ import pytest
 import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+import megatron.bridge.models.gemma_vl.data.collate_fn as gemma_vl_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
@@ -42,6 +43,16 @@ class _DummyProcessor:
         pad_token = "<pad>"
         added_tokens_decoder = {}
         chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def encode(self, text, add_special_tokens=False):
+            return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {
+                "<|im_start|>assistant\n": [102],
+                "<|im_end|>": [103],
+            }
+            return {"input_ids": mapping.get(text, [1])}
 
     def __init__(self):
         self.tokenizer = self._Tok()
@@ -556,9 +567,38 @@ def test_gemma4_processor_registered_in_collate_fns():
     assert "Gemma4Processor" in collate.COLLATE_FNS
 
 
-def test_gemma4_vl_collate_fn_is_ministral3_alias():
-    """gemma4_vl_collate_fn is an alias for ministral3_collate_fn."""
-    assert collate.gemma4_vl_collate_fn is collate.ministral3_collate_fn
+def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
+    """Gemma4 wraps Ministral3 collation with explicit Gemma4 assistant boundaries."""
+    captured = {}
+
+    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None):
+        captured["examples"] = examples
+        captured["processor"] = processor
+        captured["boundary_config"] = assistant_mask_boundary_config
+        return {"input_ids": torch.tensor([[1]])}
+
+    class _Processor:
+        class _Tok:
+            def __call__(self, text, add_special_tokens=False):
+                mapping = {
+                    "<|turn>model\n": [202],
+                    "<turn|>": [203],
+                }
+                return {"input_ids": mapping[text]}
+
+        tokenizer = _Tok()
+
+    examples = [{"conversation": []}]
+    processor = _Processor()
+    monkeypatch.setattr(gemma_vl_collate, "ministral3_collate_fn", _fake_ministral3_collate_fn)
+
+    batch = collate.gemma4_vl_collate_fn(examples, processor)
+
+    assert batch["input_ids"].tolist() == [[1]]
+    assert captured["examples"] == examples
+    assert captured["processor"] is processor
+    assert captured["boundary_config"].role_start_tokens == {"assistant": [202]}
+    assert captured["boundary_config"].role_end_tokens == {"assistant": [203]}
 
 
 def test_gemma4_registered_fn_matches_alias():
@@ -669,6 +709,12 @@ class _NemotronOmniTokenizer:
         return "user <|audio_1|> assistant"
 
     def __call__(self, texts, padding=True, truncation=True, return_tensors="pt", **kwargs):
+        if isinstance(texts, str):
+            marker_tokens = {
+                "<|im_start|>assistant\n": [101],
+                "<|im_end|>": [102],
+            }
+            return {"input_ids": marker_tokens.get(texts, [1])}
         self.tokenized_texts = list(texts)
         max_len = max(len(row) for row in self.tokenized_rows)
         out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)
@@ -707,7 +753,13 @@ class _NemotronOmniProcessor:
         return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
 
 
-def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+def _zero_assistant_loss_mask(
+    example,
+    input_ids,
+    processor,
+    skipped_tokens,
+    **kwargs,
+):  # noqa: ARG001 - test helper signature
     return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
 
 

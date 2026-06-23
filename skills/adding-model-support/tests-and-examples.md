@@ -115,7 +115,7 @@ class TestMyMoEBridge:
 
 ## Functional Tests
 
-Location: `tests/functional_tests/models/<model>/`
+Location: `tests/functional_tests/test_groups/models/<model>/`
 
 ### Conversion Functional Test
 
