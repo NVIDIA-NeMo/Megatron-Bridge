@@ -332,10 +332,6 @@ def train(
         forward_backward_func = PagedStashRunner(
             model_config, copy_main_params, model, optimizer, forward_backward_func
         )
-    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
-        optimizer.step = OptimizerCudaGraphWrapper(
-            optimizer.step, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
-        )
 
     start_iteration = global_state.train_state.step
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
