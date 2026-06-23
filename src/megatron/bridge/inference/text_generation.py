@@ -29,8 +29,8 @@ import json
 from pathlib import Path
 
 import torch
-from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
 from megatron.core.inference.apis import SamplingParams
+from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.utils import get_attr_wrapped_model
 from transformers import AutoConfig, AutoTokenizer
@@ -39,8 +39,8 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.inference._tokenizer import HFTokenizerAdapter
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.activation_map import str_to_dtype
 from megatron.bridge.utils.common_utils import disable_mtp_for_inference, print_rank_0
+
 
 __all__ = [
     "HFTokenizerAdapter",
@@ -73,9 +73,7 @@ def resolve_hf_model_path(hf_model_path: str | None, megatron_model_path: str | 
         resolved = get_hf_model_id_from_checkpoint(megatron_model_path)
         if resolved:
             return resolved
-    raise ValueError(
-        "--hf_model_path is required when checkpoint metadata does not include model.hf_model_id"
-    )
+    raise ValueError("--hf_model_path is required when checkpoint metadata does not include model.hf_model_id")
 
 
 def _get_prompt_from_json_line(line: str) -> str | None:
@@ -197,8 +195,7 @@ def _megatron_checkpoint_overrides(
 def _prepare_model_list(model_list: list[torch.nn.Module]) -> torch.nn.Module:
     if len(model_list) != 1:
         raise ValueError(
-            "MCore high-level inference supports one local model stage; "
-            "virtual pipeline parallelism is not supported."
+            "MCore high-level inference supports one local model stage; virtual pipeline parallelism is not supported."
         )
     model = model_list[0].cuda()
     model.eval()
@@ -280,8 +277,7 @@ def validate_sequence_length(
     required = longest_prompt_tokens + num_new_tokens
     if required > max_seq_length:
         raise ValueError(
-            f"Longest prompt plus generation needs {required} tokens, "
-            f"but --max_seq_length is {max_seq_length}."
+            f"Longest prompt plus generation needs {required} tokens, but --max_seq_length is {max_seq_length}."
         )
 
 
@@ -397,16 +393,14 @@ def add_model_loading_args(parser: argparse.ArgumentParser) -> argparse.Argument
         "--hf-model-path",
         dest="hf_model_path",
         default=None,
-        help="Hugging Face model id/path for config and tokenizer. Required unless checkpoint "
-        "metadata records it.",
+        help="Hugging Face model id/path for config and tokenizer. Required unless checkpoint metadata records it.",
     )
     group.add_argument(
         "--megatron_model_path",
         "--megatron-model-path",
         dest="megatron_model_path",
         default=None,
-        help="Optional Megatron Bridge checkpoint path. If omitted, load and convert HF weights "
-        "in-process.",
+        help="Optional Megatron Bridge checkpoint path. If omitted, load and convert HF weights in-process.",
     )
     group.add_argument(
         "--trust-remote-code",
@@ -448,8 +442,7 @@ def add_prompt_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
         "--prompt",
         action="append",
         default=[],
-        help="Prompt text. May be provided multiple times. Defaults to a short prompt if no "
-        "prompt file is set.",
+        help="Prompt text. May be provided multiple times. Defaults to a short prompt if no prompt file is set.",
     )
     group.add_argument(
         "--prompt_file",

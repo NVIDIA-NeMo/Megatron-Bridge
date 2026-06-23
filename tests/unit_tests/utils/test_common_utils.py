@@ -16,11 +16,10 @@
 """Tests for common_utils module."""
 
 import os
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
-
-from datetime import timedelta
 
 from megatron.bridge.utils.common_utils import (
     get_local_rank_preinit,
