@@ -254,7 +254,13 @@ def kimi_k25_vl_collate_fn(
     else:
         target_len = batch_max
 
-    # Pad/truncate to target_len
+    if batch_max > target_len:
+        raise ValueError(
+            f"Kimi VL collate refuses to truncate: max length {batch_max} > target {target_len}. "
+            "Filter oversized records before collation."
+        )
+
+    # Pad to target_len
     padded_input_ids = []
     padded_attention_mask = []
     padded_loss_mask = []
@@ -275,11 +281,6 @@ def kimi_k25_vl_collate_fn(
                 [attention_mask, torch.zeros(pad_len, dtype=attention_mask.dtype, device=attention_mask.device)]
             )
             loss_mask = torch.cat([loss_mask, torch.zeros(pad_len, dtype=loss_mask.dtype, device=loss_mask.device)])
-        elif seq_len > target_len:
-            # Truncate
-            input_ids = input_ids[:target_len]
-            attention_mask = attention_mask[:target_len]
-            loss_mask = loss_mask[:target_len]
 
         padded_input_ids.append(input_ids)
         padded_attention_mask.append(attention_mask)
