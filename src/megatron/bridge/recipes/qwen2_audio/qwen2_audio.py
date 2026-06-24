@@ -18,7 +18,7 @@ from typing import Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -92,7 +92,7 @@ def _qwen2_audio_common(
     peft: Optional[Union[str, PEFT]] = None,
     finetune_lr: Optional[float] = None,
     # Dataset
-    maker_name: str = "make_default_audio_dataset",
+    maker_name: str = "make_cv17_dataset",
     maker_kwargs: Optional[dict] = None,  # defaults applied below
     val_maker_kwargs: Optional[dict] = None,  # per-split overrides for validation
     test_maker_kwargs: Optional[dict] = None,  # per-split overrides for test
@@ -136,16 +136,14 @@ def _qwen2_audio_common(
     # Dataset: HF conversation provider with audio maker
     if maker_kwargs is None:
         maker_kwargs = {
-            "path_or_dataset": "yuekai/aishell",
-            "subset": "train",
+            "path_or_dataset": "ysdede/commonvoice_17_tr_fixed",
             "split": "train",
         }
     if val_maker_kwargs is None:
         val_maker_kwargs = {
-            "subset": "dev",
-            "split": "test",
+            "split": "validation",
         }
-    dataset_cfg = HFDatasetConversationProvider(
+    dataset_cfg = HFConversationDatasetProvider(
         seq_length=seq_length,
         hf_processor_path=hf_path,
         maker_name=maker_name,

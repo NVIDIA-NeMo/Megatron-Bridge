@@ -1,0 +1,311 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+navigation:
+- page: NeMo Megatron Bridge
+  path: ./nightly/pages/index.mdx
+  slug: ""
+- section: Performance
+  contents:
+  - page: Performance
+    path: ./nightly/pages/performance-summary.mdx
+  - page: Performance Archive
+    path: ./nightly/pages/performance-summary-archive.mdx
+- section: Guides
+  contents:
+  - page: Parallelisms Guide
+    path: ./nightly/pages/parallelisms.mdx
+  - page: Performance Tuning Guide
+    path: ./nightly/pages/performance-guide.mdx
+  - page: Using Recipes
+    path: ./nightly/pages/recipe-usage.mdx
+  - page: NeMo 2.0 to Megatron Bridge Migration Guide
+    path: ./nightly/pages/nemo2-migration-guide.mdx
+  - page: Megatron-LM to Megatron Bridge Guide
+    path: ./nightly/pages/megatron-lm-to-megatron-bridge.mdx
+- section: Bridge with 🤗 Hugging Face
+  contents:
+  - page: Get Started with 🤗 Hugging Face Conversion
+    path: ./nightly/pages/bridge-guide.mdx
+  - page: Megatron Bridge Conversion Technical Details
+    path: ./nightly/pages/bridge-tech-details.mdx
+- section: Supported Models
+  contents:
+  - page: Supported Models
+    path: ./nightly/pages/models/README.mdx
+  - contents:
+    - page: Ling 2.0
+      path: ./nightly/pages/models/bailing/ling-2.mdx
+    section: Bailing
+  - contents:
+    - page: DeepSeek V2
+      path: ./nightly/pages/models/deepseek/deepseek-v2.mdx
+    - page: DeepSeek V3
+      path: ./nightly/pages/models/deepseek/deepseek-v3.mdx
+    - page: DeepSeek V4
+      path: ./nightly/pages/models/deepseek/deepseek-v4.mdx
+    section: DeepSeek
+  - contents:
+    - page: Falcon H1
+      path: ./nightly/pages/models/falcon/falcon-h1.mdx
+    section: Falcon
+  - contents:
+    - page: Gemma
+      path: ./nightly/pages/models/gemma/gemma.mdx
+    - page: Gemma 2
+      path: ./nightly/pages/models/gemma/gemma2.mdx
+    - page: Gemma 3
+      path: ./nightly/pages/models/gemma/gemma3.mdx
+    - page: Gemma 3 VL (Vision-Language)
+      path: ./nightly/pages/models/gemma/gemma3-vl.mdx
+    - page: Gemma 4 VL (26B-A4B MoE)
+      path: ./nightly/pages/models/gemma/gemma4-vl.mdx
+    section: Gemma
+  - contents:
+    - page: GLM 4.5
+      path: ./nightly/pages/models/glm/glm45.mdx
+    - page: GLM-4.5V
+      path: ./nightly/pages/models/glm/glm-45v.mdx
+    - page: GLM-4.7 and GLM-4.7-Flash
+      path: ./nightly/pages/models/glm/glm47.mdx
+    - page: GLM-5 and GLM-5.1
+      path: ./nightly/pages/models/glm/glm5.mdx
+    section: GLM
+  - contents:
+    - page: GPT OSS
+      path: ./nightly/pages/models/gpt_oss/gpt-oss.mdx
+    section: GPT-OSS
+  - contents:
+    - page: Kimi K2
+      path: ./nightly/pages/models/kimi/kimi-k2.mdx
+    - page: Kimi-K2.5-VL
+      path: ./nightly/pages/models/kimi/kimi-k25-vl.mdx
+    section: Kimi
+  - contents:
+    - page: Llama 2
+      path: ./nightly/pages/models/llama/llama2.mdx
+    - page: Llama 3
+      path: ./nightly/pages/models/llama/llama3.mdx
+    section: Llama
+  - contents:
+    - page: MiniMax-M2
+      path: ./nightly/pages/models/minimax/minimax-m2.mdx
+    section: MiniMax
+  - contents:
+    - page: Mistral
+      path: ./nightly/pages/models/mistral/mistral.mdx
+    - page: Ministral 3
+      path: ./nightly/pages/models/mistral/ministral3.mdx
+    section: Mistral
+  - contents:
+    - page: Xiaomi-MiMo
+      path: ./nightly/pages/models/mimo/mimo.mdx
+    section: Xiaomi-MiMo
+  - contents:
+    - page: Moonlight
+      path: ./nightly/pages/models/moonlight/moonlight.mdx
+    section: Moonlight
+  - contents:
+    - page: Llama Nemotron
+      path: ./nightly/pages/models/nemotron/llama-nemotron.mdx
+    - page: Nemotron H and Nemotron Nano v2
+      path: ./nightly/pages/models/nemotron/nemotronh.mdx
+    - page: Nemotron 3 Nano
+      path: ./nightly/pages/models/nemotron/nemotron3-nano.mdx
+    - page: Nemotron 3 Super
+      path: ./nightly/pages/models/nemotron/nemotron3-super.mdx
+    - page: Nemotron Nano V2 VL
+      path: ./nightly/pages/models/nemotron/nemotron-nano-v2-vl.mdx
+    - page: Nemotron-3 Nano Omni
+      path: ./nightly/pages/models/nemotron/nemotron-3-omni.mdx
+    section: Nemotron
+  - contents:
+    - page: OLMoE
+      path: ./nightly/pages/models/olmoe/olmoe.mdx
+    section: OLMoE
+  - contents:
+    - page: Qwen
+      path: ./nightly/pages/models/qwen/qwen.mdx
+    - page: Qwen3-MoE
+      path: ./nightly/pages/models/qwen/qwen3-moe.mdx
+    - page: Qwen3-Next
+      path: ./nightly/pages/models/qwen/qwen3-next.mdx
+    - page: Qwen2.5-VL
+      path: ./nightly/pages/models/qwen/qwen2.5-vl.mdx
+    - page: Qwen3-VL
+      path: ./nightly/pages/models/qwen/qwen3-vl.mdx
+    - page: Qwen 3.5 / 3.6
+      path: ./nightly/pages/models/qwen/qwen35-vl.mdx
+    - page: Qwen2-Audio
+      path: ./nightly/pages/models/qwen/qwen2-audio.mdx
+    - page: Qwen2.5-Omni
+      path: ./nightly/pages/models/qwen/qwen25-omni.mdx
+    - page: Qwen3-Omni
+      path: ./nightly/pages/models/qwen/qwen3-omni.mdx
+    - page: Qwen3-ASR
+      path: ./nightly/pages/models/qwen/qwen3-asr.mdx
+    section: Qwen
+  - contents:
+    - page: Sarvam
+      path: ./nightly/pages/models/sarvam/sarvam.mdx
+    section: Sarvam
+  - contents:
+    - page: Step-3.5-Flash
+      path: ./nightly/pages/models/stepfun/step35.mdx
+    section: StepFun
+- section: Training and Customization
+  contents:
+  - page: Configuration Overview
+    path: ./nightly/pages/training/config-container-overview.mdx
+  - page: Training Entry Points
+    path: ./nightly/pages/training/entry-points.mdx
+  - page: Data Preparation
+    path: ./nightly/pages/training/data-preparation.mdx
+  - page: Training Loop Configuration
+    path: ./nightly/pages/training/training-loop-settings.mdx
+  - page: Optimizer and Scheduler Configuration
+    path: ./nightly/pages/training/optimizer-scheduler.mdx
+  - page: Logging and Monitoring
+    path: ./nightly/pages/training/logging.mdx
+  - page: Profiling
+    path: ./nightly/pages/training/profiling.mdx
+  - page: Theoretical Memory Estimator
+    path: ./nightly/pages/training/memory-estimator.mdx
+  - page: Checkpointing
+    path: ./nightly/pages/training/checkpointing.mdx
+  - page: Megatron FSDP
+    path: ./nightly/pages/training/megatron-fsdp.mdx
+  - page: Resiliency
+    path: ./nightly/pages/training/resiliency.mdx
+  - page: Mixed Precision Training
+    path: ./nightly/pages/training/mixed-precision.mdx
+  - page: CUDA Graphs
+    path: ./nightly/pages/training/cuda-graphs.mdx
+  - page: Hierarchical Context Parallel
+    path: ./nightly/pages/training/hierarchical-context-parallel.mdx
+  - page: Communication Overlap
+    path: ./nightly/pages/training/communication-overlap.mdx
+  - page: Attention Optimizations
+    path: ./nightly/pages/training/attention-optimizations.mdx
+  - page: Activation Recomputation
+    path: ./nightly/pages/training/activation-recomputation.mdx
+  - page: CPU Offloading
+    path: ./nightly/pages/training/cpu-offloading.mdx
+  - page: MoE Training Optimization
+    path: ./nightly/pages/training/moe-optimization.mdx
+  - page: Parameter-Efficient Fine-Tuning (PEFT)
+    path: ./nightly/pages/training/peft.mdx
+  - page: Packed Sequences
+    path: ./nightly/pages/training/packed-sequences.mdx
+  - page: Multi-Token Prediction (MTP)
+    path: ./nightly/pages/training/multi-token-prediction.mdx
+  - page: Callbacks
+    path: ./nightly/pages/training/callbacks.mdx
+- section: Model Optimization with ModelOpt
+  contents:
+  - page: Quantization
+    path: ./nightly/pages/modelopt/quantization.mdx
+  - page: Knowledge Distillation
+    path: ./nightly/pages/modelopt/distillation.mdx
+  - page: Pruning
+    path: ./nightly/pages/modelopt/pruning.mdx
+- section: Development
+  contents:
+  - page: Contribute a New Model to Megatron Bridge
+    path: ./nightly/pages/adding-new-models.mdx
+  - page: Adapting Megatron Bridge in Reinforcement Learning Frameworks
+    path: ./nightly/pages/bridge-rl-integration.mdx
+  - page: Documentation Development
+    path: ./nightly/pages/documentation.mdx
+- section: Releases
+  contents:
+  - page: Release Developer Guide
+    path: ./nightly/pages/releases/release-process.mdx
+  - page: Cherrypick Policy
+    path: ./nightly/pages/releases/cherrypick-policy.mdx
+  - page: Software Component Versions
+    path: ./nightly/pages/releases/software-versions.mdx
+  - page: Changelog
+    path: ./nightly/pages/releases/changelog.mdx
+  - page: Known Issues
+    path: ./nightly/pages/releases/known-issues.mdx
+- section: Agent Skills
+  contents:
+  - contents:
+    - page: Build and Dependency
+      path: ../../../skills/build-and-dependency/SKILL.md
+    - page: Bump Dependency
+      path: ../../../skills/bump-dependency/SKILL.md
+    - page: Testing
+      path: ../../../skills/testing/SKILL.md
+    - page: CI/CD
+      path: ../../../skills/cicd/SKILL.md
+    - page: Review PR
+      path: ../../../skills/review-pr/SKILL.md
+    - page: MLM vs Bridge Training
+      path: ../../../skills/nemo-mbridge-mlm-bridge-training/SKILL.md
+    - page: Auto Recipe — Recipe Index & Recommendation
+      path: ../../../skills/nemo-mbridge-recipe-recommender/SKILL.md
+    - page: Adding New Model Support in Megatron-Bridge
+      path: ../../../skills/adding-model-support/SKILL.md
+    - page: Llm Patterns
+      path: ../../../skills/adding-model-support/llm-patterns.md
+    - page: Vlm Patterns
+      path: ../../../skills/adding-model-support/vlm-patterns.md
+    - page: Recipe Patterns
+      path: ../../../skills/adding-model-support/recipe-patterns.md
+    - page: Tests And Examples
+      path: ../../../skills/adding-model-support/tests-and-examples.md
+    - page: verl E2E Testing
+      path: ../../../skills/verl-e2e-testing/SKILL.md
+    - page: NeMo-RL E2E Testing
+      path: ../../../skills/nemo-rl-e2e-testing/SKILL.md
+    - page: CPU Offloading
+      path: ../../../skills/nemo-mbridge-perf-cpu-offloading/SKILL.md
+    - page: MoE Long-Context Training
+      path: ../../../skills/nemo-mbridge-perf-moe-long-context/SKILL.md
+    - page: MoE Training Optimization Workflow
+      path: ../../../skills/nemo-mbridge-perf-moe-optimization-workflow/SKILL.md
+    - page: MoE VLM Training
+      path: ../../../skills/nemo-mbridge-perf-moe-vlm-training/SKILL.md
+    - page: Memory Tuning
+      path: ../../../skills/nemo-mbridge-perf-memory-tuning/SKILL.md
+    - page: MoE Dispatcher Selection Guide
+      path: ../../../skills/nemo-mbridge-perf-moe-dispatcher-selection/SKILL.md
+    - page: MoE Hardware Configuration Reference
+      path: ../../../skills/nemo-mbridge-perf-moe-hardware-configs/SKILL.md
+    - page: Parallelism Strategy Selection Skill
+      path: ../../../skills/nemo-mbridge-perf-parallelism-strategies/SKILL.md
+    - page: CUDA Graphs
+      path: ../../../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
+    - page: TP / DP / PP Communication Overlap Skill
+      path: ../../../skills/nemo-mbridge-perf-tp-dp-comm-overlap/SKILL.md
+    - page: Megatron FSDP Skill
+      path: ../../../skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md
+    - page: Sequence Packing Skill
+      path: ../../../skills/nemo-mbridge-perf-sequence-packing/SKILL.md
+    - page: Hierarchical Context Parallel Skill
+      path: ../../../skills/nemo-mbridge-perf-hierarchical-context-parallel/SKILL.md
+    - page: MoE Expert-Parallel Overlap Skill
+      path: ../../../skills/nemo-mbridge-perf-expert-parallel-overlap/SKILL.md
+    - page: MoE Communication Overlap
+      path: ../../../skills/nemo-mbridge-perf-moe-comm-overlap/SKILL.md
+    - page: Activation Recompute
+      path: ../../../skills/nemo-mbridge-perf-activation-recompute/SKILL.md
+    - page: Multi-Node Slurm
+      path: ../../../skills/nemo-mbridge-multi-node-slurm/SKILL.md
+    - page: Templates
+      path: ../../../skills/nemo-mbridge-multi-node-slurm/references/templates.md
+    - page: Resiliency
+      path: ../../../skills/nemo-mbridge-resiliency/SKILL.md
+    section: Agent Skills Reference
+- section: Directory Readme Files
+  contents:
+  - page: Megatron Bridge Documentation
+    path: ./nightly/pages/README.mdx
+  - page: Releases
+    path: ./nightly/pages/releases/README.mdx
+  - page: Training and Customization
+    path: ./nightly/pages/training/README.mdx
+  - page: Model Optimization
+    path: ./nightly/pages/modelopt/README.mdx

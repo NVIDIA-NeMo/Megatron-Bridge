@@ -96,10 +96,6 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if recipe.optimizer.use_precision_aware_optimizer:
-        recipe.optimizer.use_precision_aware_optimizer = False
-        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
-
     recipe.checkpoint.load = None
     return recipe
 
@@ -254,6 +250,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
 
         cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
+
+    if settings.fine_grained_activation_offloading is not None:
+        cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
+    if settings.offload_modules is not None:
+        cfg.model.offload_modules = settings.offload_modules
+
+    if settings.outer_dp_sharding_strategy is not None:
+        cfg.ddp.outer_dp_sharding_strategy = settings.outer_dp_sharding_strategy
+    if settings.num_distributed_optimizer_instances is not None:
+        cfg.ddp.num_distributed_optimizer_instances = settings.num_distributed_optimizer_instances
 
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
@@ -436,7 +442,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             persistent_workers=recipe.dataset.persistent_workers,
         )
         if recipe.model.cuda_graph_impl != "none":
-            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+            recipe.dataset.offline_packing_specs.pad_cu_seqlens = True
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")

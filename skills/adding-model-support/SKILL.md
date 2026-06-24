@@ -56,15 +56,15 @@ weight dtypes such as `float8_e4m3fn` (FP8) or `uint8`/`uint4` with accompanying
 loads raw quantized values as-is. This produces a silently broken model (random-level loss, huge
 grad norms) instead of raising an error.
 
-**Fix:** Dequantize before conversion. Two approaches:
+**Fix:** Dequantize before or during conversion. The current in-repo pattern is to
+use a bridge hook plus the shared helpers in
+`src/megatron/bridge/models/conversion/quantization_utils.py`. Existing examples
+include `src/megatron/bridge/models/ministral3/ministral3_bridge.py`,
+`src/megatron/bridge/models/deepseek/deepseek_v3_bridge.py`, and
+`src/megatron/bridge/models/minimax_m2/minimax_m2_bridge.py`.
 
-1. **Standalone script** (recommended for user-facing models) — Write a
-   `dequant_fp8_for_bridge.py` in the model's examples folder.
-   Reference: `examples/models/mistral/ministral3/dequant_fp8_for_bridge.py`.
-   The pattern is: `w_bf16 = fp8_weight.to(bfloat16) * weight_scale_inv`.
-
-2. **In-bridge hook** — Override `maybe_modify_loaded_hf_weight()` in the bridge class to
-   dequantize on the fly during import:
+Override `maybe_modify_loaded_hf_weight()` in the bridge class to dequantize on
+the fly during import:
 
    ```python
    def maybe_modify_loaded_hf_weight(self, hf_param, hf_state_dict):
@@ -77,6 +77,8 @@ grad norms) instead of raising an error.
 
 Always add a sanity check in the verification workflow (e.g., print `std` of a weight tensor —
 quantized models typically have `std ≈ 13` before dequantization vs `std ≈ 0.006` after).
+Also add or update focused tests when touching export/import quantization paths; see
+`tests/unit_tests/models/test_fp8_param_export.py` for current FP8 export coverage.
 
 ## Phase 2: Bridge Support
 
@@ -344,7 +346,7 @@ tests/unit_tests/models/<model>/
 ### Functional tests (GPU)
 
 ```text
-tests/functional_tests/models/<model>/
+tests/functional_tests/test_groups/models/<model>/
 ├── __init__.py
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
 └── test_<model>_provider.py    # compare_provider_configs (optional)
@@ -433,7 +435,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 ```bash
 uv run python -m pytest tests/unit_tests/models/<model>/ -v
-uv run python -m pytest tests/functional_tests/models/<model>/ -v --run-gpu
+uv run python -m pytest tests/functional_tests/test_groups/models/<model>/ -v --run-gpu
 ```
 
 ## Quick Decision Tree

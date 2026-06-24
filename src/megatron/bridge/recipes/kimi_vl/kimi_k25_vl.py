@@ -94,7 +94,7 @@ def kimi_k25_vl_sft_config() -> ConfigContainer:
     cfg.dataset.blend = None
     cfg.dataset.sequence_length = 4096
     cfg.dataset.num_workers = 8
-    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.enable_in_batch_packing = False
     cfg.dataset.hf_processor_path = "moonshotai/Kimi-K2.5"
 
     # MoE Token Dispatcher settings

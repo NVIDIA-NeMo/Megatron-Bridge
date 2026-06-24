@@ -90,6 +90,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
 )
 from megatron.bridge.utils.import_utils import safe_import
+from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -753,6 +754,11 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Invalid custom_manager_class format: '{checkpoint_config.custom_manager_class}'. "
                 f"Expected fully qualified class name like 'mypackage.module.ClassName'."
             ) from err
+
+        _validate_target_prefix(
+            target=checkpoint_config.custom_manager_class,
+            full_key="checkpoint.custom_manager_class",
+        )
 
         try:
             module = importlib.import_module(module_path)
@@ -1890,8 +1896,10 @@ def generate_state_dict(
         _generate_model_state_dict(model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection)
     )
 
-    # Optimizer stuff.
-    if ckpt_cfg.save_optim:
+    # Optimizer stuff. During load, optimizer sharded-state scaffolding is
+    # required even if the next checkpoint should not save optimizer state.
+    include_optimizer_state = ckpt_cfg.save_optim or bool((optim_sd_kwargs or {}).get("is_loading"))
+    if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
             if ckpt_cfg.ckpt_format == "torch_dist":
                 state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))

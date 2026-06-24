@@ -46,7 +46,15 @@ from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_local_rank_preinit, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_local_rank_preinit,
+    get_master_addr_safe,
+    get_master_port_safe,
+    get_rank_safe,
+    get_world_size_safe,
+    print_rank_0,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -258,11 +266,12 @@ def _maybe_initialize_distributed(timeout_minutes: int) -> None:
     if not dist.is_available() or dist.is_initialized():
         return
 
-    os.environ["RANK"] = os.environ.get("RANK", "0")
-    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", "1")
-    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", "localhost")
-    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "12355")
-    torch.cuda.set_device(get_local_rank_preinit())
+    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
     dist.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
 
 
@@ -349,6 +358,29 @@ def _apply_provider_parallelism(provider: object, args: argparse.Namespace, dtyp
         setattr(provider, "inference_moe_token_dispatcher_type", args.inference_moe_token_dispatcher_type)
 
 
+def _build_megatron_checkpoint_overrides(
+    provider: object, args: argparse.Namespace, dtype: torch.dtype
+) -> dict[str, object]:
+    mp_overrides = {
+        "tensor_model_parallel_size": args.tp,
+        "pipeline_model_parallel_size": args.pp,
+        "expert_model_parallel_size": args.ep,
+        "expert_tensor_parallel_size": args.etp,
+        "sequence_parallel": args.sequence_parallel,
+        "params_dtype": dtype,
+        "pipeline_dtype": dtype,
+        "bf16": dtype == torch.bfloat16,
+        "fp16": dtype == torch.float16,
+    }
+    if args.attention_backend is not None:
+        mp_overrides["attention_backend"] = AttnBackend[args.attention_backend]
+    if hasattr(provider, "cache_mla_latents"):
+        mp_overrides["cache_mla_latents"] = bool(getattr(provider, "cache_mla_latents"))
+    if args.inference_moe_token_dispatcher_type is not None:
+        mp_overrides["inference_moe_token_dispatcher_type"] = args.inference_moe_token_dispatcher_type
+    return mp_overrides
+
+
 def _prepare_model_list(model_list: list[torch.nn.Module]) -> torch.nn.Module:
     if len(model_list) != 1:
         raise ValueError("MegatronLLM supports one local model stage; virtual pipeline parallelism is not supported.")
@@ -370,21 +402,7 @@ def _load_model(args: argparse.Namespace, hf_model_path: str, dtype: torch.dtype
         _apply_provider_parallelism(provider, args, dtype)
         provider.finalize()
         provider.initialize_model_parallel(seed=args.seed)
-        mp_overrides = {
-            "tensor_model_parallel_size": args.tp,
-            "pipeline_model_parallel_size": args.pp,
-            "expert_model_parallel_size": args.ep,
-            "expert_tensor_parallel_size": args.etp,
-            "sequence_parallel": args.sequence_parallel,
-            "params_dtype": dtype,
-            "pipeline_dtype": dtype,
-            "bf16": dtype == torch.bfloat16,
-            "fp16": dtype == torch.float16,
-        }
-        if hasattr(provider, "cache_mla_latents"):
-            mp_overrides["cache_mla_latents"] = bool(getattr(provider, "cache_mla_latents"))
-        if args.inference_moe_token_dispatcher_type is not None:
-            mp_overrides["inference_moe_token_dispatcher_type"] = args.inference_moe_token_dispatcher_type
+        mp_overrides = _build_megatron_checkpoint_overrides(provider, args, dtype)
         model_list = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides=mp_overrides,

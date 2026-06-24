@@ -469,10 +469,12 @@ class TestCheckpointUtils:
 
     # ===== ADVANCED TEST SCENARIOS =====
 
-    def test_concurrent_access_to_cached_functions(self):
+    def test_concurrent_access_to_cached_functions(self, tmp_path):
         """Test concurrent access to cached functions for thread safety."""
         config_data = {"model": {"type": "concurrent_test"}}
-        config_yaml = yaml.dump(config_data)
+        config_file = tmp_path / "concurrent_config.yaml"
+        with open(config_file, "w") as f:
+            yaml.dump(config_data, f)
 
         results = []
         errors = []
@@ -485,9 +487,8 @@ class TestCheckpointUtils:
                         "megatron.bridge.training.utils.checkpoint_utils.torch.distributed.is_initialized",
                         return_value=False,
                     ),
-                    patch("builtins.open", mock_open(read_data=config_yaml)),
                 ):
-                    result = read_run_config("concurrent_config.yaml")
+                    result = read_run_config(str(config_file))
                     results.append(result)
             except Exception as e:
                 errors.append(e)

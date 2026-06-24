@@ -58,6 +58,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class _DummyClass:
@@ -3202,6 +3203,38 @@ class TestFSDPDTensorFunctionality:
             mock_model.sharded_state_dict.assert_called_once()
             assert "model" in result
 
+    def test_generate_state_dict_includes_optimizer_scaffold_when_loading(self):
+        """Load-time optimizer scaffolding should not depend on save_optim."""
+        from unittest.mock import Mock
+
+        from megatron.bridge.training.checkpointing import generate_state_dict
+        from megatron.bridge.training.config import CheckpointConfig
+
+        mock_model = Mock()
+        mock_model.sharded_state_dict.return_value = {"test_param": torch.tensor([1.0])}
+        mock_optimizer = Mock()
+        mock_optimizer.is_stub_optimizer = False
+        mock_optimizer.sharded_state_dict.return_value = {"optimizer": {"param_groups": []}}
+        mock_scheduler = Mock()
+        mock_scheduler.state_dict.return_value = {"scheduler": "state"}
+
+        ckpt_cfg = CheckpointConfig(ckpt_format="torch_dist", save_optim=False, save_rng=False)
+        result = generate_state_dict(
+            ckpt_cfg=ckpt_cfg,
+            model=[mock_model],
+            optimizer=mock_optimizer,
+            opt_param_scheduler=mock_scheduler,
+            rng_state=None,
+            optim_sd_kwargs={
+                "is_loading": True,
+                "metadata": {"distrib_optim_sharding_type": "dp_zero_gather_scatter"},
+            },
+        )
+
+        assert result["optimizer"] == {"optimizer": {"param_groups": []}}
+        assert result["opt_param_scheduler"] == {"scheduler": "state"}
+        mock_optimizer.sharded_state_dict.assert_called_once()
+
 
 class TestCheckpointPathOverride:
     """Test checkpoint_path_override parameter in loading functions."""
@@ -3530,7 +3563,7 @@ class TestCheckpointManager:
 
     def test_create_checkpoint_manager_missing_module_raises(self):
         """Test create_checkpoint_manager raises ImportError for non-existent module."""
-        config = CheckpointConfig(custom_manager_class="nonexistent.module.ClassName")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.nonexistent_module.ClassName")
 
         with pytest.raises(ImportError, match="Could not import module"):
             create_checkpoint_manager(config)
@@ -3538,10 +3571,20 @@ class TestCheckpointManager:
     def test_create_checkpoint_manager_missing_class_raises(self):
         """Test create_checkpoint_manager raises AttributeError for non-existent class."""
         # Use a real module but non-existent class
-        config = CheckpointConfig(custom_manager_class="os.path.NonExistentClass")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.training.checkpointing.NonExistentClass")
 
         with pytest.raises(AttributeError, match="does not have class"):
             create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_rejects_unallowed_custom_class_before_import(self):
+        """Test custom manager class paths are allowlist-validated before import."""
+        config = CheckpointConfig(custom_manager_class="attacker_pkg.manager.PayloadManager")
+
+        with patch("importlib.import_module") as mock_import:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                create_checkpoint_manager(config)
+
+        mock_import.assert_not_called()
 
     def test_create_checkpoint_manager_custom_class(self):
         """Test create_checkpoint_manager loads and instantiates a custom class."""
@@ -3567,7 +3610,7 @@ class TestCheckpointManager:
             mock_module.CustomTestManager = CustomTestManager
             mock_import.return_value = mock_module
 
-            config = CheckpointConfig(custom_manager_class="test.module.CustomTestManager")
+            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
             manager = create_checkpoint_manager(config)
 
             assert isinstance(manager, CustomTestManager)

@@ -275,7 +275,9 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "illegal memory access" in log
         or "illegal instruction" in log
         or "torch.distributed.DistNetworkError" in log
+        or "torch.distributed.DistBackendError" in log
         or "ncclRemoteError" in log
+        or "Watchdog caught collective operation timeout" in log
         or "Segmentation fault" in log
         or "found NaN in" in log
         or "For debugging consider passing CUDA_LAUNCH_BLOCKING=1" in log
@@ -373,7 +375,7 @@ def maybe_increase_n_attempts_on_flaky_failure(
         return n_attempts
     if is_long_convergence_run and made_progress:
         return n_attempts
-    if is_flaky_failure(log_file_paths[-1]):
+    if any(is_flaky_failure(p) for p in log_file_paths):
         n_attempts += 1  # flaky: retry, bounded by max_retries
     else:
         # non-flaky: give up now. max_retries + 1 (not max_retries) so the outer
@@ -495,6 +497,7 @@ def main(
             and config_variant != "large_scale"
         )
         or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
+        or (model_family_name == "kimi" and task == "pretrain" and gpu == "b300")
     ):
         enable_pct_binding = False
 

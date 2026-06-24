@@ -14,6 +14,7 @@
 
 import json
 import logging
+import math
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -28,6 +29,7 @@ from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
 from megatron.core.optimizer import (
     ParamGroupOverride,
     ParamKey,
+    get_standard_config_overrides,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
@@ -46,8 +48,8 @@ from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -249,62 +251,16 @@ class OptimizerConfigOverrideProvider:
     def build_config_overrides(
         self, context: OptimizerConfigOverrideProviderContext
     ) -> dict[ParamKey, ParamGroupOverride] | None:
-        """Build config overrides for weight decay based on scheduler configuration.
-
-        This function creates parameter-specific overrides for weight decay behavior.
-        By default, weight decay is skipped for bias parameters and 1D parameters.
-        For Qwen3-Next models, weight decay is applied to q_layernorm and k_layernorm.
+        """Build optimizer parameter-group overrides.
 
         Args:
-            context: OptimizerConfigOverrideProviderContext which packages the scheduler
-                configuration, optimizer configuration, and model.
+            context: Scheduler, optimizer, and model context for override construction.
 
         Returns:
-            Dictionary of ParamKey to ParamGroupOverride for the optimizer
+            Mapping from ``ParamKey`` matchers to per-group optimizer overrides, or ``None``
+            if no overrides are needed.
         """
-        model = context.model
-        scheduler_config = context.scheduler_config
-        optimizer_config = context.optimizer_config
-
-        config_overrides: dict[ParamKey, ParamGroupOverride] = {}
-
-        # Collect param names that should skip weight decay
-        # NOTE: this can be simplified once https://github.com/NVIDIA/Megatron-LM/pull/2753
-        #  is merged into dev. Then we can re-use megatron's apply_wd_to_qk_layernorm option
-        #  and call megatron.core.optimizer.get_standard_config_overrides(optimizer_config)
-        #  directly for standard settings, replacing the custom logic below for qwen3-next.
-        no_wd_names: list[str] = []
-        is_qwen3_next = scheduler_config.no_weight_decay_cond_type == "qwen3_next"
-
-        model_list = model if isinstance(model, list) else [model]
-        for model_chunk in model_list:
-            for name, param in model_chunk.named_parameters():
-                # Skip weight decay for bias parameters
-                if name.endswith(".bias"):
-                    no_wd_names.append(name)
-                    continue
-
-                # Skip weight decay for 1D parameters
-                if len(param.shape) == 1:
-                    if is_qwen3_next:
-                        # Qwen3-Next: apply weight decay to qk layernorm (don't add to skip list)
-                        if "q_layernorm" in name or "k_layernorm" in name:
-                            continue
-                    no_wd_names.append(name)
-
-        # Create a single ParamKey with all names that should skip weight decay
-        if no_wd_names:
-            no_wd_key = ParamKey(name=tuple(no_wd_names))
-            config_overrides[no_wd_key] = ParamGroupOverride(wd_mult=0.0)
-
-        # Now handle decoupled LR:
-        if optimizer_config.decoupled_lr is not None:
-            decoupled_lr_config: ParamGroupOverride = {"max_lr": optimizer_config.decoupled_lr}
-            decoupled_param_key = ParamKey(attr="is_embedding_or_output_parameter")
-            if optimizer_config.decoupled_min_lr is not None:
-                decoupled_lr_config["min_lr"] = optimizer_config.decoupled_min_lr
-            config_overrides[decoupled_param_key] = decoupled_lr_config
-
+        config_overrides = get_standard_config_overrides(config=context.optimizer_config)
         return config_overrides if config_overrides else None
 
 
@@ -533,7 +489,8 @@ class FinetuningDatasetConfig(DataloaderConfig):
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: Optional[int] = None
-    packed_sequence_specs: Optional[PackedSequenceSpecs] = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: Optional[PackedSequenceSpecs] = None
     dataset_kwargs: Optional[dict[str, Any]] = None
     do_validation: bool = True
     do_test: bool = True
@@ -1082,10 +1039,10 @@ class ConfigContainer(Container):
     model: (
         GPTModelProvider
         | T5ModelProvider
-        | MambaModelProvider
+        | HybridModelProvider
         | MegatronMIMOProvider
         | GPTModelConfig
-        | MambaModelConfig
+        | HybridModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -1239,10 +1196,28 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
+        enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+
+        if enable_offline_packing and enable_in_batch_packing:
+            raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if enable_offline_packing and offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if offline_packing_specs is not None and not enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if getattr(self.dataset, "pack_sequences_in_batch", False):
-            self.model._pack_sequences_in_batch = True
+        if enable_in_batch_packing:
+            self.model._enable_in_batch_packing = True
+            if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
+                cp_size = getattr(self.model, "context_parallel_size", 1)
+                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+                has_sp = getattr(self.model, "sequence_parallel", False)
+                cp_multiple = 2 * cp_size if cp_size > 1 else 1
+                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1411,29 +1386,28 @@ class ConfigContainer(Container):
 
         self._validate_cp_comm_type()
 
-        if (
-            isinstance(self.dataset, FinetuningDatasetConfig)
-            and self.dataset.packed_sequence_specs is not None
-            and self.dataset.packed_sequence_specs.packed_sequence_size > 0
-            and self.train.micro_batch_size > 1
-        ):
-            packed_sequence_size = self.dataset.packed_sequence_specs.packed_sequence_size
-            raise ValueError(
-                "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
-                f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting for "
-                f"a packed dataset. Please update your config to the following: \n"
-                f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
-                f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
-                f"(currently {self.train.global_batch_size}) \n"
-                f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
-                f"(currently {packed_sequence_size}) \n"
-                f"For details please visit "
-                f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
-            )
+        if enable_offline_packing:
+            assert offline_packing_specs is not None
+            if offline_packing_specs.packed_sequence_size <= 0:
+                raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+            packed_sequence_size = offline_packing_specs.packed_sequence_size
+            if self.train.micro_batch_size > 1:
+                raise ValueError(
+                    "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
+                    f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting "
+                    f"for a packed dataset. Please update your config to the following: \n"
+                    f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
+                    f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
+                    f"(currently {self.train.global_batch_size}) \n"
+                    f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
+                    f"(currently {packed_sequence_size}) \n"
+                    f"For details please visit "
+                    f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
+                )
 
-        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+        if enable_in_batch_packing and self.train.micro_batch_size == 1:
             raise ValueError(
-                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "micro_batch_size should be greater than 1 when using enable_in_batch_packing=True. "
                 "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
                 "are required per micro-batch."
             )
@@ -1458,7 +1432,7 @@ class ConfigContainer(Container):
                 )
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
             validate_flex_dispatcher_backend(self.model)
@@ -1597,7 +1571,7 @@ class ConfigContainer(Container):
         For configs that don't inherit from Mcore, key values are logged via
         `_get_key_config_values`, which excludes None values and callables.
         """
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             transformer_cfg = self.model.transformer
         else:
             transformer_cfg = self.model

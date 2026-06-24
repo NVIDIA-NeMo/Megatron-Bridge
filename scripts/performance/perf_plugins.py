@@ -350,6 +350,9 @@ class PerfEnvPlugin(Plugin):
             if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
 
+        if gpu == "b300":
+            executor.env_vars["NCCL_IGNORE_CPU_AFFINITY"] = "1"
+
     def _set_layernorm_sm_margin(
         self,
         task: Union["run.Partial", "run.Script"],
@@ -506,6 +509,9 @@ class PerfEnvPlugin(Plugin):
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
+
+        if getattr(workload_base_config, "fine_grained_activation_offloading", False):
+            executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
 
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
