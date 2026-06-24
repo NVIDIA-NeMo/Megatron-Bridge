@@ -44,9 +44,9 @@ _CANONICAL_DUMP_CHECKPOINT_LOAD = "/nemo_run/nemo_experiments/default/checkpoint
 
 
 # ---------------------------------------------------------------------------
-# All (family, recipe, task, num_gpus, gpu, precision) combos that exist in
-# both the old scripts/performance/configs/ and the new flat perf recipes.
-# Add entries here whenever a new recipe is added to either path.
+# All (family, recipe, task, num_gpus, gpu, precision[, config_variant]) combos
+# that exist in both the old scripts/performance/configs/ and the new flat perf
+# recipes. Add entries here whenever a new recipe is added to either path.
 # ---------------------------------------------------------------------------
 COMBOS = [
     # Llama 3 8B
@@ -164,6 +164,8 @@ COMBOS = [
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "fp8_mx"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb300", "nvfp4"),
+    ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "bf16", "fsdp"),
+    ("deepseek", "deepseek_v3", "pretrain", 64, "gb300", "fp8_mx", "fsdp"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "bf16"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 256, "gb200", "fp8_mx"),
@@ -246,6 +248,11 @@ COMBOS = [
     ("kimi", "kimi_k2", "pretrain", 256, "gb200", "bf16"),
     ("kimi", "kimi_k2", "pretrain", 256, "gb200", "fp8_cs"),
     ("kimi", "kimi_k2", "pretrain", 256, "gb200", "fp8_mx"),
+    ("kimi", "kimi_k2", "pretrain", 256, "vr200", "bf16"),
+    ("kimi", "kimi_k2", "pretrain", 256, "vr200", "fp8_mx"),
+    ("kimi", "kimi_k2", "pretrain", 256, "b300", "bf16"),
+    ("kimi", "kimi_k2", "pretrain", 256, "b300", "fp8_cs"),
+    ("kimi", "kimi_k2", "pretrain", 256, "b300", "fp8_mx"),
     ("kimi", "kimi_k2", "pretrain", 256, "b200", "bf16"),
     ("kimi", "kimi_k2", "pretrain", 256, "b200", "fp8_cs"),
     ("kimi", "kimi_k2", "pretrain", 256, "b200", "fp8_mx"),
@@ -288,6 +295,24 @@ COMBOS = [
     ("nemotronh", "nemotronh_56b", "pretrain", 64, "b200", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 64, "h100", "fp8_cs"),
+    # GPT-OSS 20B
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "nvfp4", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "fp8_mx", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "fp8_mx", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "fp8_mx", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx", "v3"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "fp8_mx", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "fp8_mx", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb300", "fp8_mx", "v3"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "nvfp4", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "fp8_mx", "v1"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "vr200", "nvfp4", "v2"),
     # GPT-OSS 120B
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "bf16"),
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "fp8_mx"),
@@ -446,7 +471,6 @@ def load_new_recipe(
     config_variant: str,
 ):
     """Load recipe using the NEW flat perf recipe path (PR branch)."""
-    del config_variant
     precision_map = {
         "bf16": "bf16",
         "fp8_cs": "fp8cs",
@@ -455,7 +479,8 @@ def load_new_recipe(
         "nvfp4": "nvfp4",
     }
     prec = precision_map.get(precision.lower(), precision.lower())
-    fn_name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{prec}_config"
+    variant_suffix = f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2"} else ""
+    fn_name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
     mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
     fn = getattr(mod, fn_name, None)
@@ -464,17 +489,32 @@ def load_new_recipe(
     return _apply_flat_recipe_runtime_overrides(fn(), precision)
 
 
-def dump_configs(mode: str, out_dir: Path, combos: list[tuple[str, str, str, int, str, str]], config_variant: str):
+def _resolve_combo(combo: tuple, default_config_variant: str):
+    """Return normalized combo fields plus the effective config variant."""
+    if len(combo) == 6:
+        family, recipe, task, num_gpus, gpu, precision = combo
+        return family, recipe, task, num_gpus, gpu, precision, default_config_variant
+    if len(combo) == 7:
+        family, recipe, task, num_gpus, gpu, precision, combo_config_variant = combo
+        return family, recipe, task, num_gpus, gpu, precision, combo_config_variant
+    raise ValueError(f"Invalid combo length {len(combo)} for {combo!r}")
+
+
+def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: str):
     """Generate and dump all configs as YAML files."""
     out_dir.mkdir(parents=True, exist_ok=True)
     load_fn = load_old_recipe if mode == "old" else load_new_recipe
 
     passed, failed = [], []
-    for family, recipe, task, num_gpus, gpu, precision in combos:
-        name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{precision}"
+    for combo in combos:
+        family, recipe, task, num_gpus, gpu, precision, combo_config_variant = _resolve_combo(combo, config_variant)
+        variant_suffix = (
+            f"_{combo_config_variant}" if combo_config_variant and combo_config_variant not in {"v1", "v2"} else ""
+        )
+        name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{precision}{variant_suffix}"
         yaml_path = out_dir / f"{name}.yaml"
         try:
-            cfg = load_fn(family, recipe, task, num_gpus, gpu, precision, config_variant)
+            cfg = load_fn(family, recipe, task, num_gpus, gpu, precision, combo_config_variant)
             _dump_config_to_yaml(cfg, yaml_path)
             print(f"  OK  {name}")
             passed.append(name)
@@ -510,7 +550,7 @@ def main():
 
     combos = COMBOS
     if args.family:
-        combos = [(f, r, t, n, g, p) for (f, r, t, n, g, p) in combos if f == args.family]
+        combos = [combo for combo in combos if combo[0] == args.family]
 
     dump_configs(args.mode, args.out, combos, args.config_variant)
 
