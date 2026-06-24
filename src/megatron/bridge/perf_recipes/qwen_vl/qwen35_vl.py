@@ -47,7 +47,7 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 
 
-def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
+def _qwen35_vl_common(cfg: ConfigContainer) -> None:
     """Apply VLM-specific performance benchmark settings for Qwen3.5-VL.
 
     Must be called before ``_benchmark_common`` and after setting precision.
@@ -71,7 +71,7 @@ def _qwen35_vl_perf_common(cfg: ConfigContainer) -> None:
     cfg.model.freeze_vision_model = False
 
 
-def _qwen35_vl_perf_post(cfg: ConfigContainer) -> None:
+def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
     Qwen3.5-VL disables RoPE fusion and CUDA graphs for VLM variable-length
@@ -82,15 +82,15 @@ def _qwen35_vl_perf_post(cfg: ConfigContainer) -> None:
     cfg.optimizer.overlap_param_gather = False
 
 
-def _qwen35_vl_perf_post_with_overlap(cfg: ConfigContainer) -> None:
+def _qwen35_vl_post_with_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3.5-VL post-overrides and optimizer-step param-gather overlap."""
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
-def _qwen35_vl_perf_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
+def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3.5-VL post-overrides, clear graph scope, and enable overlap."""
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     cfg.model.cuda_graph_scope = []
     _enable_overlap_param_gather_with_optimizer_step(cfg)
 
@@ -104,7 +104,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× GB300, BF16, EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -129,7 +129,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -156,7 +156,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× B300, BF16, EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -181,7 +181,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -208,7 +208,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, BF16, EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -233,7 +233,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -261,7 +261,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× B200, BF16, EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -283,7 +283,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -310,7 +310,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, BF16, PP=2 VP=12 EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -336,7 +336,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_with_overlap(cfg)
+    _qwen35_vl_post_with_overlap(cfg)
     return cfg
 
 
@@ -344,7 +344,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -367,7 +367,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
 
@@ -380,7 +380,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× GB300, BF16, EP=32."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -405,7 +405,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -432,7 +432,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× B300, BF16, EP=32."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -457,7 +457,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -484,7 +484,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× GB200, BF16, PP=4 EP=8."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -509,7 +509,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -536,7 +536,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× B200, BF16, PP=4 VP=4 EP=8."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -559,7 +559,7 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
 
@@ -588,7 +588,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 128× H100, BF16, TP=2 PP=8 VP=4 EP=16."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -611,7 +611,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
 
@@ -631,7 +631,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB300, BF16, EP=64."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -656,7 +656,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -683,7 +683,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× B300, BF16, EP=64."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -708,7 +708,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -735,7 +735,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB200, BF16, PP=8 EP=8."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -760,7 +760,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post(cfg)
+    _qwen35_vl_post(cfg)
     return cfg
 
 
@@ -787,7 +787,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× B200, BF16, PP=8 VP=4 EP=8."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -810,7 +810,7 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
 
@@ -839,7 +839,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _qwen35_vl_perf_common(cfg)
+    _qwen35_vl_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -862,7 +862,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     )
 
     _benchmark_common(cfg)
-    _qwen35_vl_perf_post_clear_scope_with_overlap(cfg)
+    _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
 
