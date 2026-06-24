@@ -1,4 +1,4 @@
-from megatron.bridge.perf_recipes.qwen.qwen3_moe_perf import (
+from megatron.bridge.perf_recipes.qwen.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_b200_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config,

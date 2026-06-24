@@ -1,4 +1,4 @@
-from megatron.bridge.perf_recipes.gpt_oss.gpt_oss_perf import (
+from megatron.bridge.perf_recipes.gpt_oss.gpt_oss import (
     gpt_oss_20b_pretrain_8gpu_b300_fp8mx_config,
     gpt_oss_20b_pretrain_8gpu_b300_nvfp4_config,
     gpt_oss_20b_pretrain_8gpu_gb200_fp8mx_config,
