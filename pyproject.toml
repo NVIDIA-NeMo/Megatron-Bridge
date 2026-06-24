@@ -214,9 +214,9 @@ build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "
 # them at test time with scripts/install_diffusion_deps.sh. This group is kept for
 # documentation only; `uv sync --group diffusion` will NOT install them on Linux.
 diffusion = ["imageio", "imageio-ffmpeg", "av"]
-# flash-mla has no PyPI wheel and is built from source in the image. Megatron-LM keeps it in its
-# own no_pypi_wheels group, but uv does not install a path dependency's groups, so it is declared
-# here as well and installed by the image build's `uv sync --all-groups`.
+# flash-mla has no PyPI wheel and is built from source by uv (no-build-isolation) during the
+# image's `uv sync --all-groups`. Megatron-LM declares it in the same group, but uv does not
+# install a path dependency's groups, so it is declared here too.
 no_pypi_wheels = ["flash_mla"]
 
 [project.entry-points."nemo_run.cli"]
