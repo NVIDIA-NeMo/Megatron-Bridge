@@ -130,11 +130,31 @@ def gemma3_vl_collate_fn(
     return batch
 
 
-def gemma4_vl_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def gemma4_vl_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    pack_sequences: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Gemma4 VL models."""
     return ministral3_collate_fn(
         examples,
         processor,
+        visual_keys=visual_keys,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        pack_sequences=pack_sequences,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         assistant_mask_boundary_config=assistant_mask_boundary_config_from_markers(
             processor,
             assistant_start="<|turn>model\n",

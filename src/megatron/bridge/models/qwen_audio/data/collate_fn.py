@@ -44,7 +44,7 @@ def qwen2_audio_collate_fn(
     - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
     - Loss mask derived directly from active label positions
     """
-    del visual_keys, min_pixels, max_pixels
+    del visual_keys, min_pixels, max_pixels, pack_sequences
 
     texts = []
     audio_inputs = []
@@ -140,7 +140,7 @@ def qwen2_audio_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        pack_sequences=pack_sequences,
+        pack_sequences=False,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         pad_token_id=int(pad_token_id or 0),
         ignore_index=IGNORE_INDEX,

@@ -41,6 +41,7 @@ class ConversationDataset(torch.utils.data.Dataset):
         pad_to_max_length: bool = False,
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
+        defer_in_batch_packing_to_step: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
@@ -64,7 +65,7 @@ class ConversationDataset(torch.utils.data.Dataset):
             "sequence_length": sequence_length,
             "pad_to_max_length": pad_to_max_length,
             "pad_to_multiple_of": pad_to_multiple_of,
-            "pack_sequences": enable_in_batch_packing,
+            "pack_sequences": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
 

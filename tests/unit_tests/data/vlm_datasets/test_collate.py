@@ -192,6 +192,44 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     assert "feature_attention_mask" not in batch
 
 
+def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "dummy"
+
+        def __call__(self, text=None, audio=None, return_tensors="pt", padding=True, **kwargs):
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
+    ]
+
+    batch = collate.qwen2_audio_collate_fn(examples, _AudioProcessor(), sequence_length=128, pack_sequences=True)
+
+    assert batch["input_ids"].shape == (2, 128)
+    assert "cu_seqlens" not in batch
+    assert "max_seqlen" not in batch
+
+
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
@@ -641,10 +679,11 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     """Gemma4 wraps Ministral3 collation with explicit Gemma4 assistant boundaries."""
     captured = {}
 
-    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None):
+    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None, **kwargs):
         captured["examples"] = examples
         captured["processor"] = processor
         captured["boundary_config"] = assistant_mask_boundary_config
+        captured["kwargs"] = kwargs
         return {"input_ids": torch.tensor([[1]])}
 
     class _Processor:
@@ -662,18 +701,79 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     processor = _Processor()
     monkeypatch.setattr(gemma_vl_collate, "ministral3_collate_fn", _fake_ministral3_collate_fn)
 
-    batch = collate.gemma4_vl_collate_fn(examples, processor)
+    batch = collate.gemma4_vl_collate_fn(
+        examples,
+        processor,
+        sequence_length=256,
+        pad_to_max_length=True,
+        pad_to_multiple_of=32,
+        pack_sequences=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
 
     assert batch["input_ids"].tolist() == [[1]]
     assert captured["examples"] == examples
     assert captured["processor"] is processor
     assert captured["boundary_config"].role_start_tokens == {"assistant": [202]}
     assert captured["boundary_config"].role_end_tokens == {"assistant": [203]}
+    assert captured["kwargs"]["sequence_length"] == 256
+    assert captured["kwargs"]["pad_to_max_length"] is True
+    assert captured["kwargs"]["pad_to_multiple_of"] == 32
+    assert captured["kwargs"]["pack_sequences"] is True
+    assert captured["kwargs"]["in_batch_packing_pad_to_multiple_of"] == 8
 
 
 def test_gemma4_registered_fn_matches_alias():
     """The registered function for Gemma4Processor equals the alias."""
     assert collate.COLLATE_FNS["Gemma4Processor"] is collate.gemma4_vl_collate_fn
+
+
+class _Ministral3InstructionProcessor:
+    """Minimal Ministral3 processor stub without HF generation mask support."""
+
+    chat_template = "{{ messages }}"
+
+    class _Tok:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        eos_token = "</s>"
+        added_tokens_decoder = {}
+        chat_template = "{{ messages }}"
+
+        def encode(self, text, add_special_tokens=False):
+            return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+        def __call__(self, text, add_special_tokens=False, **kwargs):
+            mapping = {
+                "[/INST]": [30],
+                "</s>": [2],
+            }
+            return {"input_ids": mapping.get(text, [99])}
+
+    def __init__(self):
+        self.tokenizer = self._Tok()
+
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        if not tokenize:
+            return "<s>[INST]question[/INST]answer</s>"
+        return {"input_ids": torch.tensor([[1, 11, 30, 31, 2]], dtype=torch.long)}
+
+
+def test_ministral3_collate_uses_declared_instruction_boundaries_without_generation_template():
+    """Ministral3 templates lack HF generation blocks, so the collator must declare boundaries."""
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = collate.ministral3_collate_fn(examples, _Ministral3InstructionProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, 31, 2, -100]]
 
 
 class _Gemma4ProcessorBase:

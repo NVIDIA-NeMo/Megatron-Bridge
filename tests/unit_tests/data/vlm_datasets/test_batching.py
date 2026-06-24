@@ -62,6 +62,23 @@ def test_prepare_vlm_batch_for_training_pads_to_model_length_when_required():
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0, 0]]
 
 
+def test_prepare_vlm_batch_for_training_handles_rectangular_4d_attention_mask():
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "labels": torch.tensor([[2, 3, -100]]),
+        "loss_mask": torch.tensor([[1.0, 1.0, 0.0]]),
+        "position_ids": torch.tensor([[0, 1, 2]]),
+        "attention_mask": torch.ones((1, 1, 3, 2), dtype=torch.bool),
+    }
+
+    prepare_vlm_batch_for_training(batch, sequence_length=4, pad_to_max_length=True)
+
+    assert batch["attention_mask"].shape == (1, 1, 4, 4)
+    assert batch["attention_mask"][0, 0, :3, :2].all()
+    assert not batch["attention_mask"][0, 0, 3, :].any()
+    assert not batch["attention_mask"][0, 0, :, 2:].any()
+
+
 def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
     batch = {
         "input_ids": torch.tensor(

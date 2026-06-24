@@ -110,7 +110,9 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
     assert encoder.max_visual_tokens == 999
     assert encoder.pad_to_max_length is True
     assert encoder.pad_to_multiple_of == 64
-    assert encoder.enable_in_batch_packing is True
+    assert provider.enable_in_batch_packing is True
+    assert provider.defer_in_batch_packing_to_step is True
+    assert encoder.enable_in_batch_packing is False
     assert encoder.in_batch_packing_pad_to_multiple_of == 8
 
 

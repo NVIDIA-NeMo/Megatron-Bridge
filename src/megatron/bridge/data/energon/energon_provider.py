@@ -35,6 +35,7 @@ class EnergonProvider(DatasetProvider):
     task_encoder: Optional[Any] = None
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
@@ -44,7 +45,9 @@ class EnergonProvider(DatasetProvider):
             return
         self.task_encoder.pad_to_max_length = self.pad_to_max_length
         self.task_encoder.pad_to_multiple_of = self.pad_to_multiple_of
-        self.task_encoder.enable_in_batch_packing = self.enable_in_batch_packing
+        self.task_encoder.enable_in_batch_packing = (
+            self.enable_in_batch_packing and not self.defer_in_batch_packing_to_step
+        )
         self.task_encoder.in_batch_packing_pad_to_multiple_of = self.in_batch_packing_pad_to_multiple_of
 
     def build_datasets(self, context: DatasetBuildContext):

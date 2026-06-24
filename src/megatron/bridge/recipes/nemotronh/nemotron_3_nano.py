@@ -16,7 +16,7 @@
 import torch
 from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -38,7 +38,7 @@ def nemotron_3_nano_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (MoE)
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
         hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,
@@ -208,7 +208,7 @@ def nemotron_3_nano_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - Nemotron 3 Nano
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
         hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,
@@ -397,7 +397,7 @@ def nemotron_3_nano_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses same parallelism as SFT
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron 3 Nano 30B-A3B)
         hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
         num_layers=52,

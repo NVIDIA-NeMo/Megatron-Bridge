@@ -986,29 +986,21 @@ class TestPackBatchSequences:
         assert cu_seqlens.tolist() == [0, 4, 12]
         assert max_seqlen.item() == 8
 
-    def test_packing_none_labels_empty_batch(self, caplog):
-        """Test empty batch with None labels/loss_mask returns None for those fields."""
+    def test_packing_none_labels_empty_batch(self):
+        """Test empty batch with None labels/loss_mask raises like other all-padding batches."""
         tokens = torch.tensor([[0, 0, 0, 0]])
         position_ids = torch.arange(4).unsqueeze(0)
 
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=None,
-            loss_mask=None,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels is None
-        assert packed_loss_mask is None
-        assert packed_pos.shape == (1, 0)
-        assert cu_seqlens.tolist() == [0]
-        assert max_seqlen.item() == 0
+        with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
+            pack_batch_sequences(
+                tokens=tokens,
+                labels=None,
+                loss_mask=None,
+                attention_mask=None,
+                position_ids=position_ids,
+                pad_token_id=0,
+                pad_to_multiple_of=1,
+            )
 
     def test_packing_gpu_tensor(self):
         """Test packing works on GPU if available."""

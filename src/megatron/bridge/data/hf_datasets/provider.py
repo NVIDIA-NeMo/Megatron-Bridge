@@ -87,6 +87,7 @@ class HFConversationDatasetProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
 
     # Collate-time VLM padding controls. ConfigContainer sets pad_to_max_length
     # for PP/EP fixed-shape cases; otherwise collate pads to an efficient multiple
@@ -127,6 +128,7 @@ class HFConversationDatasetProvider(DatasetProvider):
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             enable_in_batch_packing=self.enable_in_batch_packing,
+            defer_in_batch_packing_to_step=self.defer_in_batch_packing_to_step,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 

@@ -91,11 +91,10 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
             return attention_mask[:, :target_len].contiguous()
         return attention_mask.contiguous()
     if attention_mask.dim() == 4:
+        attention_mask = attention_mask[:, :, :target_len, :target_len]
         _, _, query_len, key_len = attention_mask.shape
-        if query_len < target_len:
+        if query_len < target_len or key_len < target_len:
             return F.pad(attention_mask, (0, target_len - key_len, 0, target_len - query_len), value=pad_value)
-        if query_len > target_len:
-            return attention_mask[:, :, :target_len, :target_len].contiguous()
         return attention_mask.contiguous()
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 

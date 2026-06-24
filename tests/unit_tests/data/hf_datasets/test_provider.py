@@ -561,3 +561,31 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
 
     assert train_ds is not None
     assert train_ds.collate_fn([_example()])["pack_sequences"] is True
+
+
+def test_hf_provider_can_defer_in_batch_packing_to_training_step(monkeypatch):
+    import transformers
+
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+
+    def _fake_get_maker(self):
+        return lambda **kwargs: [_example(), _example()]
+
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        maker_name="rdr",
+        collate_impl=_packable_collate,
+        enable_in_batch_packing=True,
+        defer_in_batch_packing_to_step=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    assert train_ds.collate_fn([_example()])["pack_sequences"] is False

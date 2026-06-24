@@ -158,11 +158,11 @@ def text_chat_collate_fn(
     max_length: int | None = None,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
-    pad_to_multiple_of: int = 128,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
     pack_sequences: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
 
@@ -176,20 +176,21 @@ def text_chat_collate_fn(
             conversation-dataset providers.
         pad_to_max_length: If set with ``max_length``, pad every row to
             ``max_length`` instead of the longest row in the batch.
-        pad_to_multiple_of: Accepted for parity with VLM collate functions.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
         pack_sequences: If True, flatten the padded microbatch and emit
             packed-sequence metadata for GPT-style training steps.
         in_batch_packing_pad_to_multiple_of: Optional per-sequence length multiple
             used when ``pack_sequences`` inserts padding for CP/SP constraints.
+        **kwargs: Additional common collate kwargs accepted for parity with
+            VLM collate functions and ignored by the text-only path.
 
     Returns:
         Batch dictionary with VLM-style ``input_ids`` and GPT-style ``tokens``
         aliases, shifted ``labels`` and ``loss_mask``, ``position_ids``, and
         optional tokenizer fields such as ``attention_mask``.
     """
-    del pad_to_multiple_of
+    del kwargs
 
     max_length = max_length if max_length is not None else sequence_length
     tokenizer = get_processor_tokenizer(processor)
