@@ -30,6 +30,13 @@ def build_hypercomm_grids(
 
     grids: Dict[str, HyperCommGrid] = {}
     for module_name, parallelism in megatron_mimo_parallelism_config.module_parallelisms.items():
+        if parallelism.expert_model_parallel_size != 1 or parallelism.expert_tensor_parallel_size != 1:
+            raise ValueError(
+                "MegatronMIMO MoE expert parallelism requires Phase 2 dual-view grids; "
+                f"module '{module_name}' has expert_model_parallel_size="
+                f"{parallelism.expert_model_parallel_size}, expert_tensor_parallel_size="
+                f"{parallelism.expert_tensor_parallel_size}."
+            )
         shape = [
             parallelism.tensor_model_parallel_size,
             parallelism.context_parallel_size,

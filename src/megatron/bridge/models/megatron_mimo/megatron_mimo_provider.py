@@ -197,6 +197,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ("tensor_model_parallel_size", language_parallelism.tensor_model_parallel_size),
             ("pipeline_model_parallel_size", language_parallelism.pipeline_model_parallel_size),
             ("context_parallel_size", language_parallelism.context_parallel_size),
+            ("expert_model_parallel_size", language_parallelism.expert_model_parallel_size),
             ("expert_tensor_parallel_size", language_parallelism.expert_tensor_parallel_size),
         ):
             if hasattr(standard_provider, attr):

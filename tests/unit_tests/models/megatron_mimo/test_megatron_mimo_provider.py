@@ -25,6 +25,7 @@ class FakeStandardProvider:
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.context_parallel_size = 1
+        self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
         self.build_language_model_spec_calls = []
 
@@ -79,7 +80,7 @@ class TestMegatronMIMOProvider:
         assert provider.freeze_modality_encoders == {"images": True}
 
     def test_from_standard_provider_applies_language_parallelism(self):
-        """Test standard-provider specs inherit language component TP/PP."""
+        """Test standard-provider specs inherit language component parallelism."""
         standard_provider = FakeStandardProvider()
         megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
             module_parallelisms={
@@ -87,7 +88,8 @@ class TestMegatronMIMOProvider:
                     tensor_model_parallel_size=2,
                     pipeline_model_parallel_size=3,
                     context_parallel_size=4,
-                    expert_tensor_parallel_size=1,
+                    expert_model_parallel_size=5,
+                    expert_tensor_parallel_size=6,
                     data_parallel_size=1,
                 ),
             },
@@ -101,6 +103,8 @@ class TestMegatronMIMOProvider:
         assert standard_provider.tensor_model_parallel_size == 2
         assert standard_provider.pipeline_model_parallel_size == 3
         assert standard_provider.context_parallel_size == 4
+        assert standard_provider.expert_model_parallel_size == 5
+        assert standard_provider.expert_tensor_parallel_size == 6
         assert standard_provider.build_language_model_spec_calls == [0]
 
         spec = provider._build_standard_language_model_spec(pp_rank=2)

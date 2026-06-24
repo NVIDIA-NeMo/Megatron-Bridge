@@ -3,6 +3,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import build_hypercomm_grids
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -140,7 +142,6 @@ class TestBuildHypercommGrids:
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     context_parallel_size=2,
-                    expert_tensor_parallel_size=2,
                     pipeline_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
@@ -167,6 +168,25 @@ class TestBuildHypercommGrids:
         assert ["dp"] in create_pg_calls
         # Verify composite group created
         assert ["dp", "cp"] in create_pg_calls
+
+    @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
+    def test_build_rejects_expert_parallelism_until_dual_view_phase(self, mock_grid_class):
+        """Phase 1 keeps the single-grid path guarded for non-default EP/ETP."""
+        megatron_mimo_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=2,
+                    expert_model_parallel_size=2,
+                    expert_tensor_parallel_size=1,
+                    data_parallel_size=1,
+                ),
+            }
+        )
+
+        with pytest.raises(ValueError, match="requires Phase 2 dual-view grids"):
+            build_hypercomm_grids(megatron_mimo_config)
+
+        mock_grid_class.assert_not_called()
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_uses_nccl_backend(self, mock_grid_class):
