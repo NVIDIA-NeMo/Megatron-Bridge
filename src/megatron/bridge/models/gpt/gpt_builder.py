@@ -191,10 +191,10 @@ class GPTModelConfig(ModelConfig):
         try:
             transformer = object.__getattribute__(self, "transformer")
         except AttributeError:
-            raise AttributeError(f"MambaModelConfig has no attribute '{name}'")
+            raise AttributeError(f"GPTModelConfig has no attribute '{name}'")
         if hasattr(transformer, name):
             return getattr(transformer, name)
-        raise AttributeError(f"Neither MambaModelConfig nor TransformerConfig has any attribute '{name}'.")
+        raise AttributeError(f"Neither GPTModelConfig nor TransformerConfig has any attribute '{name}'.")
 
     @override
     def __setattr__(self, name: str, value: Any, /) -> None:
@@ -274,7 +274,7 @@ class GPTModelBuilder(ModelBuilder[MCoreGPTModel, GPTModelConfig]):
             The constructed model
 
         Note:
-            Virtual pipeline model parallelism is not supported for Mamba models.
+            Virtual pipeline model parallelism is not supported for GPT models.
         """
         transformer_layer_spec = self._model_config.transformer_layer_spec
         if not isinstance(transformer_layer_spec, ModuleSpec):

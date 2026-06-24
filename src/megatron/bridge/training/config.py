@@ -47,8 +47,8 @@ from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -1027,10 +1027,10 @@ class ConfigContainer(Container):
     model: (
         GPTModelProvider
         | T5ModelProvider
-        | MambaModelProvider
+        | HybridModelProvider
         | MegatronMIMOProvider
         | GPTModelConfig
-        | MambaModelConfig
+        | HybridModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -1403,7 +1403,7 @@ class ConfigContainer(Container):
                 )
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
             validate_flex_dispatcher_backend(self.model)
@@ -1542,7 +1542,7 @@ class ConfigContainer(Container):
         For configs that don't inherit from Mcore, key values are logged via
         `_get_key_config_values`, which excludes None values and callables.
         """
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             transformer_cfg = self.model.transformer
         else:
             transformer_cfg = self.model
