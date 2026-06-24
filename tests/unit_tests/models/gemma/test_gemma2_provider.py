@@ -205,7 +205,7 @@ def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 
     config = Mock()
     config.context_parallel_size = context_parallel_size
     config.window_size = window_size
-    config.kv_channels = 256
+    config.kv_channels = 32  # matches head_dim=32 used in forward() tests
     config.num_attention_heads = 8
     config.num_query_groups = 8
     config.tensor_model_parallel_size = 1
