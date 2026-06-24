@@ -45,75 +45,23 @@ def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> Con
     return cfg
 
 
-def _nemotron_3_super_precision(compute_dtype: str) -> MixedPrecisionConfig:
-    """Return the precision config used by Nemotron 3 Super perf recipes."""
-    if compute_dtype == "nvfp4":
-        cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
-        # Disabled until MCore PR 4358 lands.
-        cfg.fp4_param_gather = False
-        return cfg
-    return _perf_precision(compute_dtype)
+def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
+    """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
+    cfg = nemotron_3_super_bf16_with_nvfp4_mixed()
+    # Disabled until MCore PR 4358 lands.
+    cfg.fp4_param_gather = False
+    return cfg
 
 
-def _finalize_nemotron_3_super_perf(cfg: ConfigContainer, compute_dtype: str) -> None:
-    """Apply Nemotron 3 Super perf defaults after recipe-specific overrides."""
+def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.checkpoint.async_save = False
 
-    if compute_dtype in {"fp8_mx", "nvfp4"}:
-        cfg.model.moe_router_padding_for_quantization = True
-    if compute_dtype == "nvfp4":
-        cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
-
     _benchmark_common(cfg)
-
-
-def _nemotron_3_super_pretrain_64gpu_config(compute_dtype: str, gpu: str) -> ConfigContainer:
-    """Build a Nemotron 3 Super pretrain config for 64 GPUs."""
-    cfg = nemotron_3_super_pretrain_config()
-    cfg.mixed_precision = _nemotron_3_super_precision(compute_dtype)
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.sequence_parallel = False
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_shared_expert_overlap = False
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
-
-    if gpu == "gb200":
-        cfg.model.tensor_model_parallel_size = 2
-    elif gpu == "b300":
-        cfg.model.expert_model_parallel_size = 8
-        if compute_dtype in {"bf16", "nvfp4"}:
-            cfg.model.recompute_modules = ["moe_act", "layernorm"]
-    elif gpu == "b200":
-        cfg.model.cuda_graph_impl = "none"
-        cfg.model.recompute_modules = ["moe_act", "layernorm"]
-        if compute_dtype == "bf16":
-            cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
-        elif compute_dtype == "nvfp4":
-            cfg.model.tensor_model_parallel_size = 2
-            cfg.model.cuda_graph_impl = "transformer_engine"
-            cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
-            cfg.model.recompute_modules = None
-    elif gpu != "gb300":
-        raise ValueError(f"Unsupported Nemotron 3 Super 64-GPU target: {gpu}")
-
-    _finalize_nemotron_3_super_perf(cfg, compute_dtype)
-    return cfg
 
 
 # =============================================================================
@@ -248,17 +196,83 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, BF16."""
-    return _nemotron_3_super_pretrain_64gpu_config("bf16", "gb300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
-    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "gb300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, NVFP4."""
-    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "gb300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 # =============================================================================
@@ -268,17 +282,83 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, BF16."""
-    return _nemotron_3_super_pretrain_64gpu_config("bf16", "gb200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, MXFP8."""
-    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "gb200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, NVFP4."""
-    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "gb200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 # =============================================================================
@@ -288,17 +368,85 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B300, BF16."""
-    return _nemotron_3_super_pretrain_64gpu_config("bf16", "b300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B300, MXFP8."""
-    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "b300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B300, NVFP4."""
-    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "b300")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 # =============================================================================
@@ -308,17 +456,84 @@ def nemotron_3_super_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, BF16."""
-    return _nemotron_3_super_pretrain_64gpu_config("bf16", "b200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+
+    cfg.model.cuda_graph_impl = "none"
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, MXFP8."""
-    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "b200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+
+    cfg.model.cuda_graph_impl = "none"
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, NVFP4."""
-    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "b200")
+    cfg = nemotron_3_super_pretrain_config()
+    cfg.mixed_precision = _nemotron_3_super_nvfp4_precision()
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = True
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.recompute_modules = None
+    cfg.model.quant_recipe = load_quantization_recipe(str(Path(__file__).with_name("te_quant.cfg")))
+
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
+
+    _apply_nemotron_3_super_perf_defaults(cfg)
+    return cfg
 
 
 # =============================================================================
