@@ -21,7 +21,7 @@ with default settings. These tests verify the default configurations are correct
 
 import pytest
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh import (
     nemotronh_4b_pretrain_config,
     nemotronh_8b_pretrain_config,
@@ -40,7 +40,7 @@ class TestNemotronH4B:
         config = nemotronh_4b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 1
@@ -75,7 +75,7 @@ class TestNemotronH8B:
         config = nemotronh_8b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 2
@@ -101,7 +101,7 @@ class TestNemotronH47B:
         config = nemotronh_47b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
@@ -133,7 +133,7 @@ class TestNemotronH56B:
         config = nemotronh_56b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
         assert config.model.tensor_model_parallel_size == 8
@@ -163,10 +163,10 @@ class TestNemotronHCommon:
     @pytest.mark.parametrize(
         "recipe_fn,provider_cls",
         [
-            (nemotronh_4b_pretrain_config, MambaModelProvider),
-            (nemotronh_8b_pretrain_config, MambaModelProvider),
-            (nemotronh_47b_pretrain_config, MambaModelProvider),
-            (nemotronh_56b_pretrain_config, MambaModelProvider),
+            (nemotronh_4b_pretrain_config, HybridModelProvider),
+            (nemotronh_8b_pretrain_config, HybridModelProvider),
+            (nemotronh_47b_pretrain_config, HybridModelProvider),
+            (nemotronh_56b_pretrain_config, HybridModelProvider),
         ],
     )
     def test_config_container_structure(self, recipe_fn, provider_cls):

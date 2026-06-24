@@ -911,8 +911,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index."""
-        del task
+        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
+
+        When ``task.weight_dtype`` is set, skip requantization and return the weights
+        unchanged — the generic export path casts the dtype.
+        """
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

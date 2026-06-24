@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-uv run python -m torch.distributed.run --nproc_per_node=1 -m pytest tests/functional_tests/models/test_qwen3_vl_conversion.py::TestQwen3VLConversion::test_toy_model_creation
+uv run python -m torch.distributed.run --nproc_per_node=1 -m pytest tests/functional_tests/test_groups/models/qwen_vl/test_qwen3_vl_conversion.py::TestQwen3VLConversion::test_toy_model_creation
 """
 
 import json
