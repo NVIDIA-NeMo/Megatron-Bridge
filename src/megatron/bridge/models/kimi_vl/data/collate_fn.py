@@ -21,8 +21,81 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, chat_template_kwargs_from_example
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+def _expand_image_tokens_and_aligned_mask(
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    loss_mask: torch.Tensor | None,
+    grid_thws: torch.Tensor,
+    media_token_id: int,
+    merge_kernel_size: tuple[int, int] = (2, 2),
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    """Expand image placeholder tokens and any aligned per-token loss mask."""
+    merge_h, merge_w = merge_kernel_size
+
+    # Calculate number of image tokens for each image: t * (h // merge_h) * (w // merge_w)
+    feature_counts = []
+    for grid_thw in grid_thws:
+        t, h, w = (int(x) for x in grid_thw.tolist())
+        feature_counts.append(t * (h // merge_h) * (w // merge_w))
+
+    # Find placeholder positions
+    placeholder_positions = (input_ids == media_token_id).nonzero(as_tuple=True)[0]
+    if len(placeholder_positions) == 0:
+        # No placeholder found, return as-is
+        return input_ids, attention_mask, loss_mask
+
+    if len(placeholder_positions) != len(feature_counts):
+        warnings.warn(
+            "Mismatch between image placeholder count and grid_thws rows during Kimi token expansion; "
+            "expanding as many placeholders as have corresponding grid metadata.",
+            stacklevel=2,
+        )
+
+    expanded_input_ids = []
+    expanded_attention_mask = []
+    expanded_loss_mask = [] if loss_mask is not None else None
+    feature_idx = 0
+
+    loss_mask_values = loss_mask.tolist() if loss_mask is not None else [None] * input_ids.shape[0]
+    for token_id, mask_value, loss_mask_value in zip(input_ids.tolist(), attention_mask.tolist(), loss_mask_values):
+        if token_id == media_token_id and feature_idx < len(feature_counts):
+            expanded_input_ids.extend([media_token_id] * feature_counts[feature_idx])
+            expanded_attention_mask.extend([1] * feature_counts[feature_idx])
+            if expanded_loss_mask is not None:
+                expanded_loss_mask.extend([loss_mask_value] * feature_counts[feature_idx])
+            feature_idx += 1
+            continue
+
+        expanded_input_ids.append(token_id)
+        expanded_attention_mask.append(mask_value)
+        if expanded_loss_mask is not None:
+            expanded_loss_mask.append(loss_mask_value)
+
+    expanded_input_ids = torch.tensor(
+        expanded_input_ids,
+        dtype=input_ids.dtype,
+        device=input_ids.device,
+    )
+    expanded_attention_mask = torch.tensor(
+        expanded_attention_mask,
+        dtype=attention_mask.dtype,
+        device=attention_mask.device,
+    )
+    expanded_loss_mask_tensor = (
+        torch.tensor(
+            expanded_loss_mask,
+            dtype=loss_mask.dtype,
+            device=loss_mask.device,
+        )
+        if expanded_loss_mask is not None and loss_mask is not None
+        else None
+    )
+
+    return expanded_input_ids, expanded_attention_mask, expanded_loss_mask_tensor
 
 
 def _expand_image_tokens(
@@ -48,52 +121,14 @@ def _expand_image_tokens(
         expanded_input_ids: Input IDs with placeholder expanded to N tokens
         expanded_attention_mask: Attention mask expanded accordingly
     """
-    merge_h, merge_w = merge_kernel_size
-
-    # Calculate number of image tokens for each image: t * (h // merge_h) * (w // merge_w)
-    feature_counts = []
-    for grid_thw in grid_thws:
-        t, h, w = (int(x) for x in grid_thw.tolist())
-        feature_counts.append(t * (h // merge_h) * (w // merge_w))
-
-    # Find placeholder positions
-    placeholder_positions = (input_ids == media_token_id).nonzero(as_tuple=True)[0]
-    if len(placeholder_positions) == 0:
-        # No placeholder found, return as-is
-        return input_ids, attention_mask
-
-    if len(placeholder_positions) != len(feature_counts):
-        warnings.warn(
-            "Mismatch between image placeholder count and grid_thws rows during Kimi token expansion; "
-            "expanding as many placeholders as have corresponding grid metadata.",
-            stacklevel=2,
-        )
-
-    expanded_input_ids = []
-    expanded_attention_mask = []
-    feature_idx = 0
-
-    for token_id, mask_value in zip(input_ids.tolist(), attention_mask.tolist()):
-        if token_id == media_token_id and feature_idx < len(feature_counts):
-            expanded_input_ids.extend([media_token_id] * feature_counts[feature_idx])
-            expanded_attention_mask.extend([1] * feature_counts[feature_idx])
-            feature_idx += 1
-            continue
-
-        expanded_input_ids.append(token_id)
-        expanded_attention_mask.append(mask_value)
-
-    expanded_input_ids = torch.tensor(
-        expanded_input_ids,
-        dtype=input_ids.dtype,
-        device=input_ids.device,
+    expanded_input_ids, expanded_attention_mask, _ = _expand_image_tokens_and_aligned_mask(
+        input_ids,
+        attention_mask,
+        None,
+        grid_thws,
+        media_token_id,
+        merge_kernel_size,
     )
-    expanded_attention_mask = torch.tensor(
-        expanded_attention_mask,
-        dtype=attention_mask.dtype,
-        device=attention_mask.device,
-    )
-
     return expanded_input_ids, expanded_attention_mask
 
 
@@ -111,7 +146,6 @@ def kimi_k25_vl_collate_fn(
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
     skipped_tokens = extract_skipped_token_ids(processor)
-    conversations = [example["conversation"] for example in examples]
 
     # Get media token ID
     media_token_id = getattr(processor, "media_placeholder_token_id", None)
@@ -134,7 +168,8 @@ def kimi_k25_vl_collate_fn(
     all_pixel_values = []
     all_grid_thws = []
 
-    for i, conversation in enumerate(conversations):
+    for i, example in enumerate(examples):
+        conversation = example["conversation"]
         # Collect medias for this conversation
         medias = []
         for message in conversation:
@@ -144,7 +179,12 @@ def kimi_k25_vl_collate_fn(
                     if isinstance(item, dict) and item.get("type") == "image":
                         medias.append({"type": "image", "image": item.get("image")})
 
-        text = processor.apply_chat_template(conversation, add_generation_prompt=False, tokenize=False)
+        text = processor.apply_chat_template(
+            conversation,
+            add_generation_prompt=False,
+            tokenize=False,
+            **chat_template_kwargs_from_example(example),
+        )
 
         processor_kwargs = {
             "text": text,
@@ -157,13 +197,14 @@ def kimi_k25_vl_collate_fn(
 
         input_ids = sample_batch["input_ids"][0]
         attention_mask = sample_batch["attention_mask"][0]
+        loss_mask = build_assistant_loss_mask(examples[i], input_ids, processor, skipped_tokens)
 
         # Pre-expand image tokens if we have grid_thws
         if "grid_thws" in sample_batch and sample_batch["grid_thws"] is not None:
             grid_thws = sample_batch["grid_thws"]
 
-            input_ids, attention_mask = _expand_image_tokens(
-                input_ids, attention_mask, grid_thws, media_token_id, merge_kernel_size
+            input_ids, attention_mask, loss_mask = _expand_image_tokens_and_aligned_mask(
+                input_ids, attention_mask, loss_mask, grid_thws, media_token_id, merge_kernel_size
             )
             all_grid_thws.append(grid_thws)
 
@@ -174,6 +215,7 @@ def kimi_k25_vl_collate_fn(
             {
                 "input_ids": input_ids,
                 "attention_mask": attention_mask,
+                "loss_mask": loss_mask,
             }
         )
 
@@ -189,24 +231,33 @@ def kimi_k25_vl_collate_fn(
     # Pad/truncate to target_len
     padded_input_ids = []
     padded_attention_mask = []
+    padded_loss_mask = []
 
     for batch in all_expanded:
         input_ids = batch["input_ids"]
         attention_mask = batch["attention_mask"]
+        loss_mask = batch["loss_mask"]
         seq_len = input_ids.shape[0]
 
         if seq_len < target_len:
             # Pad
             pad_len = target_len - seq_len
-            input_ids = torch.cat([input_ids, torch.full((pad_len,), pad_token_id, dtype=input_ids.dtype)])
-            attention_mask = torch.cat([attention_mask, torch.zeros(pad_len, dtype=attention_mask.dtype)])
+            input_ids = torch.cat(
+                [input_ids, torch.full((pad_len,), pad_token_id, dtype=input_ids.dtype, device=input_ids.device)]
+            )
+            attention_mask = torch.cat(
+                [attention_mask, torch.zeros(pad_len, dtype=attention_mask.dtype, device=attention_mask.device)]
+            )
+            loss_mask = torch.cat([loss_mask, torch.zeros(pad_len, dtype=loss_mask.dtype, device=loss_mask.device)])
         elif seq_len > target_len:
             # Truncate
             input_ids = input_ids[:target_len]
             attention_mask = attention_mask[:target_len]
+            loss_mask = loss_mask[:target_len]
 
         padded_input_ids.append(input_ids)
         padded_attention_mask.append(attention_mask)
+        padded_loss_mask.append(loss_mask)
 
     result = {
         "input_ids": torch.stack(padded_input_ids),
@@ -228,12 +279,7 @@ def kimi_k25_vl_collate_fn(
             .contiguous()
         )
 
-    loss_mask = torch.stack(
-        [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
-            for example, input_ids in zip(examples, result["input_ids"])
-        ]
-    ).to(device=result["input_ids"].device, dtype=torch.float32)
+    loss_mask = torch.stack(padded_loss_mask).to(device=result["input_ids"].device, dtype=torch.float32)
     labels = result["input_ids"].clone()[:, 1:].contiguous()
     labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
     if skipped_tokens.numel() > 0:

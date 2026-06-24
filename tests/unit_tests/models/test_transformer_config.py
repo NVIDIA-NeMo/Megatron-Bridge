@@ -16,6 +16,7 @@
 
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from megatron.bridge.models.transformer_config import (
@@ -126,6 +127,11 @@ class TestTransformerConfigFinalize:
         import torch.nn.functional as F
 
         assert cfg.activation_func is F.silu
+
+    def test_finalize_rejects_unregistered_activation_func(self):
+        cfg = _make_config(activation_func="attacker_pkg.payload.fn")
+        with pytest.raises(ValueError, match="attacker_pkg.payload.fn"):
+            cfg.finalize()
 
     def test_finalize_resolves_string_params_dtype(self):
         cfg = _make_config()

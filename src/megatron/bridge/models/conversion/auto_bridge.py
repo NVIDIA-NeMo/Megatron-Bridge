@@ -577,6 +577,7 @@ class AutoBridge(Generic[MegatronModelT]):
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> Iterable["HFWeightTuple"]:
         """
         Export Megatron model weights to HuggingFace format.
@@ -600,6 +601,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 carefully adjust based on your needs.*
             merge_adapter_weights: Whether to gather and merge LoRA adapter weights into the base
                 tensors during export (defaults to True). Set to False to export only the base tensors.
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
 
 
         Yields:
@@ -632,6 +634,7 @@ class AutoBridge(Generic[MegatronModelT]):
             show_progress=show_progress,
             conversion_tasks=conversion_tasks,
             merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
         )
 
     def export_hf_weights_modelopt(
@@ -899,6 +902,7 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """
         Save a Megatron model in HuggingFace format.
@@ -935,6 +939,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
                 This is useful for reducing I/O pressure when dealing with large-scale distributed
                 training. Only effective when distributed_save=True. Default is 1 (all ranks save).
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
 
         Example:
             >>> # Save model after training
@@ -1011,6 +1016,7 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights=merge_adapter_weights,
             distributed_save=distributed_save,
             save_every_n_ranks=save_every_n_ranks,
+            weight_dtype=weight_dtype,
         )
 
     def save_hf_weights(
@@ -1022,6 +1028,7 @@ class AutoBridge(Generic[MegatronModelT]):
         merge_adapter_weights: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> None:
         """
         Save Megatron model weights in HuggingFace safetensors format.
@@ -1047,6 +1054,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            weight_dtype: Plain export dtype; skips quantized *.scale companions when set.
 
         Raises:
             ValueError: If the state source doesn't support streaming save
@@ -1074,6 +1082,7 @@ class AutoBridge(Generic[MegatronModelT]):
             cpu=True,
             show_progress=show_progress,
             merge_adapter_weights=merge_adapter_weights,
+            weight_dtype=weight_dtype,
         )
         model_instance = self._get_model_instance(model)
         quant_tensors = None
