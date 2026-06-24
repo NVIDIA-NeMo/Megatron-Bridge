@@ -78,8 +78,8 @@ def gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_v3_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 512× GB300, MXFP8, v3."""
+def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 20B pretrain: 512× GB300, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
     cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
 

@@ -89,6 +89,11 @@ def _find_perf_recipe(name: str) -> Callable[[], ConfigContainer] | None:
     return None
 
 
+def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
+    """Return the suffix used in flat perf recipe function names."""
+    return f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2", "v3"} else ""
+
+
 def get_perf_recipe_by_name(
     model_recipe_name: str,
     task: str,
@@ -99,8 +104,8 @@ def get_perf_recipe_by_name(
 ) -> ConfigContainer:
     """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name.
 
-    Non-default ``config_variant`` (anything other than ``v1``/``v2``) is appended
-    to the function name. E.g. ``config_variant="large_scale"`` resolves to
+    Non-canonical ``config_variant`` values are appended to the function name.
+    E.g. ``config_variant="large_scale"`` resolves to
     ``{model}_{task}_{N}gpu_{gpu}_{prec}_large_scale_config``.
     """
     precision_map = {
@@ -112,7 +117,7 @@ def get_perf_recipe_by_name(
     }
     prec = precision_map.get(precision.lower(), precision.lower().replace("_", ""))
 
-    variant_suffix = f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2"} else ""
+    variant_suffix = _flat_recipe_variant_suffix(config_variant)
     name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
     recipe_fn = _find_perf_recipe(name)

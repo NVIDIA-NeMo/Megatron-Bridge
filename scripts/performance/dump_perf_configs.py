@@ -303,6 +303,7 @@ COMBOS = [
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4", "v1"),
     ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4", "v2"),
     # GPT-OSS 20B GB200/GB300 FP8-MX v3 supersedes the older v1/v2 presets.
+    # Keep "v3" here for legacy lookup; flat recipe names omit the suffix.
     ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx", "v3"),
     ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4", "v1"),
     ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4", "v2"),
@@ -533,6 +534,11 @@ def load_old_recipe(
     )
 
 
+def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
+    """Return the suffix used in flat perf recipe function names."""
+    return f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2", "v3"} else ""
+
+
 def load_new_recipe(
     family: str,
     recipe: str,
@@ -551,7 +557,7 @@ def load_new_recipe(
         "nvfp4": "nvfp4",
     }
     prec = precision_map.get(precision.lower(), precision.lower())
-    variant_suffix = f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2"} else ""
+    variant_suffix = _flat_recipe_variant_suffix(config_variant)
     fn_name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
     mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
@@ -580,9 +586,7 @@ def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: 
     passed, failed = [], []
     for combo in combos:
         family, recipe, task, num_gpus, gpu, precision, combo_config_variant = _resolve_combo(combo, config_variant)
-        variant_suffix = (
-            f"_{combo_config_variant}" if combo_config_variant and combo_config_variant not in {"v1", "v2"} else ""
-        )
+        variant_suffix = _flat_recipe_variant_suffix(combo_config_variant)
         name = f"{recipe}_{task}_{num_gpus}gpu_{gpu}_{precision}{variant_suffix}"
         yaml_path = out_dir / f"{name}.yaml"
         try:
