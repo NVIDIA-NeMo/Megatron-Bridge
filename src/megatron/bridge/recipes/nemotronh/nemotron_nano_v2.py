@@ -16,7 +16,7 @@
 import torch
 from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -35,7 +35,7 @@ def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config - Nemotron Nano 9B v2
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 9B v2)
         hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
@@ -170,7 +170,7 @@ def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config - Nemotron Nano 12B v2
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 12B v2)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
@@ -307,7 +307,7 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - Nemotron Nano 9B v2
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 9B v2)
         hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
@@ -394,7 +394,7 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     # _sft_common already sets seq_length=2048 and packed_sequence=True
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - Nemotron Nano v2 uses specific optimizer settings
     cfg.optimizer.adam_beta2 = 0.95
@@ -433,7 +433,7 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - Nemotron Nano 12B v2
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 12B v2)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
@@ -519,7 +519,7 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -568,7 +568,7 @@ def nemotron_nano_9b_v2_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 9B v2)
         hybrid_layer_pattern="M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
         num_layers=56,
@@ -671,7 +671,7 @@ def nemotron_nano_9b_v2_peft_config(
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -715,7 +715,7 @@ def nemotron_nano_12b_v2_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (Nemotron Nano 12B v2)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M*-M-M-M-M-",
         num_layers=62,
@@ -818,7 +818,7 @@ def nemotron_nano_12b_v2_peft_config(
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95

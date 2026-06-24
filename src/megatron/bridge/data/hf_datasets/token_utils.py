@@ -18,6 +18,8 @@ Tokenizer-related helpers and common special-token utilities.
 
 import torch
 
+from megatron.bridge.data.vlm_processing import get_processor_tokenizer
+
 
 # Common special tokens across VLM models
 QWEN_TOKENS = [
@@ -67,7 +69,7 @@ def extract_skipped_token_ids(processor):
     """
     if processor is None:
         return torch.IntTensor([])
-    tokenizer = getattr(processor, "tokenizer", processor)
+    tokenizer = get_processor_tokenizer(processor)
 
     skipped_token_ids = []
     for key, val in tokenizer.added_tokens_decoder.items():

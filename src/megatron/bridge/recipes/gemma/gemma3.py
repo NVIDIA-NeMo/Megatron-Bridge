@@ -176,11 +176,11 @@ def gemma3_1b_sft_config() -> ConfigContainer:
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -300,7 +300,7 @@ def gemma3_1b_peft_config(
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # PEFT config - Gemma3 uses dim=8, alpha=16 for LoRA/DoRA
     peft_cfg = default_peft_config(peft_scheme)
@@ -313,7 +313,7 @@ def gemma3_1b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None

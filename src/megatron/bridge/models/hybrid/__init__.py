@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-HuggingFace dataset processors for use with HFDatasetBuilder.
-
-This module contains processing functions that conform to the ProcessExampleFn protocol
-and are designed to work with the HFDatasetConfig and HFDatasetBuilder classes.
-"""
-
-from .gsm8k import process_gsm8k_example
-from .openmathinstruct2 import process_openmathinstruct2_example
-from .squad import process_squad_example
+from megatron.bridge.models.hybrid.hybrid_builder import (
+    HybridModelBuilder,
+    HybridModelConfig,
+    get_default_hybrid_stack_spec,
+    modelopt_hybrid_stack_spec,
+    transformer_engine_hybrid_stack_spec,
+)
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
 
 __all__ = [
-    "process_gsm8k_example",
-    "process_openmathinstruct2_example",
-    "process_squad_example",
+    "HybridModelBuilder",
+    "HybridModelConfig",
+    "HybridModelProvider",
+    "get_default_hybrid_stack_spec",
+    "modelopt_hybrid_stack_spec",
+    "transformer_engine_hybrid_stack_spec",
 ]

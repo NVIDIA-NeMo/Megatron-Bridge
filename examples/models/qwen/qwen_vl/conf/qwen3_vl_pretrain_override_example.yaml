@@ -76,7 +76,7 @@ logger:
 dataset:
   sequence_length: 4096
   # maker_name: make_cv17_dataset
-  pack_sequences_in_batch: true
+  enable_in_batch_packing: true
 
 rng:
   seed: 42

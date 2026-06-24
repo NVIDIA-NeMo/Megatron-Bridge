@@ -14,18 +14,199 @@
 
 """
 Built-in maker functions that transform HuggingFace datasets into
-conversation-style examples consumable by VLM processors.
+Bridge chat or multimodal conversation examples.
 """
 
 import json
 import random
+import re
 from pathlib import Path
 from typing import Any, Dict, List
 
 from datasets import concatenate_datasets, load_dataset
 
-from megatron.bridge.data.vlm_datasets.token_utils import json2token
+from megatron.bridge.data.hf_datasets.token_utils import json2token
 from megatron.bridge.utils.common_utils import resolve_path
+
+
+HF_MAKER_ALIASES = {
+    "rdr": "make_rdr_dataset",
+    "cord_v2": "make_cord_v2_dataset",
+    "medpix": "make_medpix_dataset",
+    "text_chat": "make_text_chat_dataset",
+    "chat": "make_text_chat_dataset",
+    "squad": "make_squad_dataset",
+    "gsm8k": "make_gsm8k_dataset",
+    "openmathinstruct2": "make_openmathinstruct2_dataset",
+    "openmathinstruct2_thinking": "make_openmathinstruct2_thinking_dataset",
+    "cv17": "make_cv17_dataset",
+    "raven": "make_raven_dataset",
+    "llava_video_178k": "make_llava_video_178k_dataset",
+    "default_audio": "make_default_audio_dataset",
+    "valor32k_avqa": "make_valor32k_avqa_dataset",
+}
+
+
+def _load_hf_dataset(
+    path_or_dataset: str,
+    subset: str | None = None,
+    split: str = "train",
+    **kwargs,
+) -> Any:
+    """Load a Hugging Face dataset with optional subset."""
+    if subset is None:
+        return load_dataset(path_or_dataset, split=split, **kwargs)
+    return load_dataset(path_or_dataset, subset, split=split, **kwargs)
+
+
+def _make_messages_example(
+    prompt: str,
+    answer: str,
+    original_answers: list[str] | None = None,
+) -> Dict[str, Any]:
+    """Create a text-only chat example with optional evaluation answers."""
+    example: Dict[str, Any] = {
+        "messages": [
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": answer},
+        ],
+    }
+    if original_answers is not None:
+        example["original_answers"] = original_answers
+    return example
+
+
+def _extract_final_answer(answer: str) -> str:
+    """Extract the final numerical answer after the ``####`` delimiter."""
+    if "####" in answer:
+        return answer.split("####")[-1].strip()
+    return answer.strip()
+
+
+def _strip_intermediate_boxed(text: str) -> str:
+    """Replace all ``\\boxed{content}`` occurrences in text with ``content``."""
+    marker = r"\boxed{"
+    result = []
+    i = 0
+    while i < len(text):
+        idx = text.find(marker, i)
+        if idx == -1:
+            result.append(text[i:])
+            break
+        result.append(text[i:idx])
+        depth = 0
+        end = -1
+        for j in range(idx + len(marker) - 1, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = j
+                    break
+        if end == -1:
+            result.append(text[idx:])
+            break
+        result.append(text[idx + len(marker) : end])
+        i = end + 1
+    return "".join(result)
+
+
+def make_squad_dataset(
+    path_or_dataset: str = "rajpurkar/squad",
+    subset: str | None = None,
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess SQuAD into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Context: {example['context']} Question: {example['question']} Answer:"
+        answers = example["answers"]["text"]
+        return _make_messages_example(prompt=prompt, answer=answers[0], original_answers=answers)
+
+    return [format_example(example) for example in dataset]
+
+
+def make_gsm8k_dataset(
+    path_or_dataset: str = "openai/gsm8k",
+    subset: str | None = "main",
+    split: str = "train",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess GSM8K into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Question: {example['question']} Answer:"
+        answer = example["answer"]
+        return _make_messages_example(prompt=prompt, answer=answer, original_answers=[_extract_final_answer(answer)])
+
+    return [format_example(example) for example in dataset]
+
+
+def make_openmathinstruct2_dataset(
+    path_or_dataset: str = "nvidia/OpenMathInstruct-2",
+    subset: str | None = None,
+    split: str = "train_1M",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load and preprocess OpenMathInstruct-2 into text chat examples."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        prompt = f"Problem: {example['problem']} Solution:"
+        return _make_messages_example(
+            prompt=prompt,
+            answer=example["generated_solution"],
+            original_answers=[str(example["expected_answer"])],
+        )
+
+    return [format_example(example) for example in dataset]
+
+
+def make_openmathinstruct2_thinking_dataset(
+    path_or_dataset: str = "nvidia/OpenMathInstruct-2",
+    subset: str | None = None,
+    split: str = "train_1M",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load OpenMathInstruct-2 with reasoning in ``thinking`` and final answer in content."""
+    dataset = _load_hf_dataset(path_or_dataset, subset=subset, split=split, **kwargs)
+
+    def format_example(example):
+        solution = example["generated_solution"]
+        expected_answer = str(example["expected_answer"])
+
+        marker = r"\boxed{"
+        idx = solution.rfind(marker)
+        if idx != -1:
+            depth = 0
+            end = -1
+            for i in range(idx + len(marker) - 1, len(solution)):
+                if solution[i] == "{":
+                    depth += 1
+                elif solution[i] == "}":
+                    depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+            thinking = re.sub(r"\$?\s*$", "", solution[:idx]).rstrip() if end != -1 else solution.rstrip()
+        else:
+            thinking = solution.rstrip()
+
+        thinking = _strip_intermediate_boxed(thinking)
+
+        return {
+            "messages": [
+                {"role": "user", "content": example["problem"]},
+                {"role": "assistant", "thinking": thinking, "content": f"#### {expected_answer}"},
+            ],
+            "original_answers": [expected_answer],
+        }
+
+    return [format_example(example) for example in dataset]
 
 
 def make_rdr_dataset(
@@ -111,6 +292,45 @@ def make_medpix_dataset(
         }
 
     return [format(example) for example in dataset]
+
+
+def make_text_chat_dataset(
+    path_or_dataset: str,
+    subset: str | None = None,
+    split: str = "train",
+    messages_column: str = "messages",
+    conversation_column: str = "conversation",
+    conversations_column: str = "conversations",
+    **kwargs,
+) -> List[Dict[str, Any]]:
+    """Load a text-only HF chat dataset into the conversation-provider schema.
+
+    The input dataset must already contain OpenAI-style ``messages``, a
+    processor-ready ``conversation`` column, or a legacy ``conversations``
+    column. Extra fields are preserved so collators can consume metadata such
+    as tool schemas.
+    """
+    if subset is None:
+        dataset = load_dataset(path_or_dataset, split=split, **kwargs)
+    else:
+        dataset = load_dataset(path_or_dataset, subset, split=split, **kwargs)
+
+    schema_columns = {messages_column, conversation_column, conversations_column}
+
+    def format_example(example):
+        extra = {key: value for key, value in example.items() if key not in schema_columns}
+        if messages_column in example and example[messages_column] is not None:
+            return {"messages": example[messages_column], **extra}
+        if conversation_column in example and example[conversation_column] is not None:
+            return {"conversation": example[conversation_column], **extra}
+        if conversations_column in example and example[conversations_column] is not None:
+            return {"conversations": example[conversations_column], **extra}
+        raise ValueError(
+            f"Text chat dataset rows must contain '{messages_column}', '{conversation_column}', "
+            f"or '{conversations_column}' columns."
+        )
+
+    return [format_example(example) for example in dataset]
 
 
 def make_raven_dataset(
@@ -463,3 +683,27 @@ def make_cv17_dataset(
         }
 
     return [format(example) for example in dataset]
+
+
+def get_hf_dataset_maker(maker_name: str):
+    """Return a built-in Hugging Face dataset maker by name or alias."""
+    registry = {
+        "make_rdr_dataset": make_rdr_dataset,
+        "make_cord_v2_dataset": make_cord_v2_dataset,
+        "make_medpix_dataset": make_medpix_dataset,
+        "make_text_chat_dataset": make_text_chat_dataset,
+        "make_squad_dataset": make_squad_dataset,
+        "make_gsm8k_dataset": make_gsm8k_dataset,
+        "make_openmathinstruct2_dataset": make_openmathinstruct2_dataset,
+        "make_openmathinstruct2_thinking_dataset": make_openmathinstruct2_thinking_dataset,
+        "make_cv17_dataset": make_cv17_dataset,
+        "make_raven_dataset": make_raven_dataset,
+        "make_llava_video_178k_dataset": make_llava_video_178k_dataset,
+        "make_default_audio_dataset": make_default_audio_dataset,
+        "make_valor32k_avqa_dataset": make_valor32k_avqa_dataset,
+    }
+    resolved_name = HF_MAKER_ALIASES.get(maker_name, maker_name)
+    try:
+        return registry[resolved_name]
+    except KeyError as err:
+        raise ValueError(f"Unknown maker_name: {maker_name}") from err

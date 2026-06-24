@@ -16,6 +16,7 @@ import pytest
 import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
+import megatron.bridge.models.gemma_vl.data.collate_fn as gemma_vl_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
@@ -30,11 +31,28 @@ def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
     assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
 
 
+def test_vlm_collate_keeps_qwen_vl_registration():
+    assert collate.COLLATE_FNS["Qwen2_5_VLProcessor"] is collate.qwen2_5_collate_fn
+
+
 class _DummyProcessor:
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
     class _Tok:
         pad_token_id = 0
         pad_token = "<pad>"
         added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def encode(self, text, add_special_tokens=False):
+            return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {
+                "<|im_start|>assistant\n": [102],
+                "<|im_end|>": [103],
+            }
+            return {"input_ids": mapping.get(text, [1])}
 
     def __init__(self):
         self.tokenizer = self._Tok()
@@ -46,13 +64,18 @@ class _DummyProcessor:
             # Return dict mimicking HF processor output when tokenize=True
             # Minimal keys used by gemma3_vl_collate_fn
             input_ids = torch.tensor([[1, 2, 3]])
-            pixel_values = torch.randn(1, 1, 3, 4, 4)
-            return {
+            output = {
                 "input_ids": input_ids,
-                "pixel_values": pixel_values,
-                "image_grid_thw": torch.tensor([[[1, 2, 2]]]),
-                "image_sizes": torch.tensor([[4, 4]]),
             }
+            if kwargs.get("return_assistant_tokens_mask"):
+                output["input_ids"] = [1, 2, 3]
+                output["assistant_masks"] = [0, 0, 0]
+                return output
+            pixel_values = torch.randn(1, 1, 3, 4, 4)
+            output["pixel_values"] = pixel_values
+            output["image_grid_thw"] = torch.tensor([[[1, 2, 2]]])
+            output["image_sizes"] = torch.tensor([[4, 4]])
+            return output
         # Non-tokenized: just a string
         return "dummy"
 
@@ -99,8 +122,9 @@ def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
         max_pixels=128,
     )
 
-    assert proc.template_kwargs[-1]["min_pixels"] == 16
-    assert proc.template_kwargs[-1]["max_pixels"] == 128
+    collate_template_kwargs = next(kwargs for kwargs in proc.template_kwargs if kwargs.get("return_tensors") == "pt")
+    assert collate_template_kwargs["min_pixels"] == 16
+    assert collate_template_kwargs["max_pixels"] == 128
     assert batch["visual_inputs"].pixel_values is not None
     assert batch["visual_inputs"].image_sizes is not None
     assert batch["visual_inputs"].image_grid_thw is None
@@ -221,10 +245,13 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
     class _PadAwareProcessor:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
             added_tokens_decoder = {}
+            chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
             def __call__(self, text, add_special_tokens=False):
                 return {"input_ids": [1]}
@@ -233,7 +260,14 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
             self.tokenizer = self._Tok()
 
         def apply_chat_template(self, conversation, tokenize=False, **kwargs):
-            return conversation[0]["content"][-1]["text"]
+            rendered = conversation[0]["content"][-1]["text"]
+            if tokenize and kwargs.get("return_assistant_tokens_mask"):
+                length = 3 if "short" in rendered else 5
+                return {
+                    "input_ids": list(range(1, length + 1)),
+                    "assistant_masks": [0] * (length - 1) + [1],
+                }
+            return rendered
 
         def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
             texts = text if isinstance(text, list) else [text]
@@ -278,6 +312,50 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0], [1, 1, 1, 1, 1]]
 
 
+def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generation_template(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _ChatMLProcessor:
+        chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+
+        class _Tok:
+            pad_token_id = 0
+            pad_token = "<pad>"
+            added_tokens_decoder = {}
+            chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+
+            def __call__(self, text, add_special_tokens=False):
+                mapping = {
+                    "<|im_start|>assistant\n": [102],
+                    "<|im_end|>": [103],
+                }
+                return {"input_ids": mapping.get(text, [42])}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "rendered"
+
+        def __call__(self, text=None, padding=True, return_tensors="pt", **kwargs):
+            return {"input_ids": torch.tensor([[100, 7, 101, 102, 3, 4, 103]])}
+
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = collate.qwen2_5_collate_fn(examples, _ChatMLProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
+
+
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     image_token_id = 163605
     input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
@@ -308,6 +386,7 @@ class _KimiDummyTokenizer:
 
     pad_token_id = 0
     added_tokens_decoder = {}
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def convert_tokens_to_ids(self, token):
         return MEDIA_TOKEN_ID
@@ -320,13 +399,23 @@ class _KimiDummyTokenizer:
 class _KimiDummyProcessor:
     """Minimal processor mock that mimics KimiK25Processor behaviour."""
 
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
     media_placeholder_token_id = MEDIA_TOKEN_ID
 
     def __init__(self, *, include_image: bool = False):
         self.tokenizer = _KimiDummyTokenizer()
         self._include_image = include_image
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
+        self.template_kwargs.append(kwargs)
+        if tokenize and kwargs.get("return_assistant_tokens_mask"):
+            if self._include_image:
+                return {
+                    "input_ids": [1, 2, MEDIA_TOKEN_ID, 10, 11, 12, 3],
+                    "assistant_masks": [0, 0, 0, 1, 1, 1, 0],
+                }
+            return {"input_ids": [1, 10, 11, 12, 3], "assistant_masks": [0, 1, 1, 1, 0]}
         return "dummy text"
 
     def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
@@ -413,6 +502,7 @@ def test_kimi_k25_vl_collate_fn_pads_to_max_length():
 
     assert batch["input_ids"].shape[1] == max_length
     assert batch["attention_mask"].shape[1] == max_length
+    assert batch["loss_mask"].shape[1] == max_length
 
 
 def test_kimi_k25_vl_collate_fn_multi_sample_batch():
@@ -439,6 +529,24 @@ def test_kimi_k25_vl_collate_fn_multi_sample_batch():
     assert batch["input_ids"].shape[1] == batch["labels"].shape[1]
 
 
+def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
+    proc = _KimiDummyProcessor(include_image=False)
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+            "tools": tools,
+        },
+    ]
+
+    collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["tools"] == tools
+
+
 # ---------------------------------------------------------------------------
 # Gemma collates — registration and image_position_ids passthrough
 # ---------------------------------------------------------------------------
@@ -459,9 +567,38 @@ def test_gemma4_processor_registered_in_collate_fns():
     assert "Gemma4Processor" in collate.COLLATE_FNS
 
 
-def test_gemma4_vl_collate_fn_is_ministral3_alias():
-    """gemma4_vl_collate_fn is an alias for ministral3_collate_fn."""
-    assert collate.gemma4_vl_collate_fn is collate.ministral3_collate_fn
+def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
+    """Gemma4 wraps Ministral3 collation with explicit Gemma4 assistant boundaries."""
+    captured = {}
+
+    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None):
+        captured["examples"] = examples
+        captured["processor"] = processor
+        captured["boundary_config"] = assistant_mask_boundary_config
+        return {"input_ids": torch.tensor([[1]])}
+
+    class _Processor:
+        class _Tok:
+            def __call__(self, text, add_special_tokens=False):
+                mapping = {
+                    "<|turn>model\n": [202],
+                    "<turn|>": [203],
+                }
+                return {"input_ids": mapping[text]}
+
+        tokenizer = _Tok()
+
+    examples = [{"conversation": []}]
+    processor = _Processor()
+    monkeypatch.setattr(gemma_vl_collate, "ministral3_collate_fn", _fake_ministral3_collate_fn)
+
+    batch = collate.gemma4_vl_collate_fn(examples, processor)
+
+    assert batch["input_ids"].tolist() == [[1]]
+    assert captured["examples"] == examples
+    assert captured["processor"] is processor
+    assert captured["boundary_config"].role_start_tokens == {"assistant": [202]}
+    assert captured["boundary_config"].role_end_tokens == {"assistant": [203]}
 
 
 def test_gemma4_registered_fn_matches_alias():
@@ -469,20 +606,65 @@ def test_gemma4_registered_fn_matches_alias():
     assert collate.COLLATE_FNS["Gemma4Processor"] is collate.gemma4_vl_collate_fn
 
 
+class _Ministral3InstructionProcessor:
+    """Minimal Ministral3 processor stub without HF generation mask support."""
+
+    chat_template = "{{ messages }}"
+
+    class _Tok:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        eos_token = "</s>"
+        added_tokens_decoder = {}
+        chat_template = "{{ messages }}"
+
+        def encode(self, text, add_special_tokens=False):
+            return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+        def __call__(self, text, add_special_tokens=False, **kwargs):
+            mapping = {
+                "[/INST]": [30],
+                "</s>": [2],
+            }
+            return {"input_ids": mapping.get(text, [99])}
+
+    def __init__(self):
+        self.tokenizer = self._Tok()
+
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        if not tokenize:
+            return "<s>[INST]question[/INST]answer</s>"
+        return {"input_ids": torch.tensor([[1, 11, 30, 31, 2]], dtype=torch.long)}
+
+
+def test_ministral3_collate_uses_declared_instruction_boundaries_without_generation_template():
+    """Ministral3 templates lack HF generation blocks, so the collator must declare boundaries."""
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = collate.ministral3_collate_fn(examples, _Ministral3InstructionProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, 31, 2, -100]]
+
+
 class _Gemma4ProcessorBase:
-    """Minimal Gemma4Processor stub for ministral3_collate_fn tests.
+    """Minimal Gemma4Processor stub for ministral3_collate_fn tests."""
 
-    build_assistant_loss_mask calls tokenizer(text, add_special_tokens=False)
-    so _Tok must be callable.
-    """
-
-    chat_template = "dummy"
+    chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     class _Tok:
         pad_token_id = 0
         pad_token = "<pad>"
         added_tokens_decoder = {}
         eos_token = "<eos>"
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
         def __call__(self, text, add_special_tokens=True, **kwargs):
             # Return minimal tokenized output: each word → one token id
@@ -498,6 +680,8 @@ class _Gemma4ProcessorBase:
             return "dummy text"
         seq_len = 8
         batch_size = len(conversations)
+        if kwargs.get("return_assistant_tokens_mask"):
+            return {"input_ids": [1] * seq_len, "assistant_masks": [0, 0, 0, 1, 1, 1, 1, 0]}
         result = {
             "input_ids": torch.ones(batch_size, seq_len, dtype=torch.long),
             "pixel_values": torch.randn(batch_size, 3, 224, 224),
@@ -573,6 +757,12 @@ class _NemotronOmniTokenizer:
         return "user <|audio_1|> assistant"
 
     def __call__(self, texts, padding=True, truncation=True, return_tensors="pt", **kwargs):
+        if isinstance(texts, str):
+            marker_tokens = {
+                "<|im_start|>assistant\n": [101],
+                "<|im_end|>": [102],
+            }
+            return {"input_ids": marker_tokens.get(texts, [1])}
         self.tokenized_texts = list(texts)
         max_len = max(len(row) for row in self.tokenized_rows)
         out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)
@@ -611,7 +801,13 @@ class _NemotronOmniProcessor:
         return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
 
 
-def _zero_assistant_loss_mask(example, input_ids, processor, skipped_tokens):  # noqa: ARG001 - test helper signature
+def _zero_assistant_loss_mask(
+    example,
+    input_ids,
+    processor,
+    skipped_tokens,
+    **kwargs,
+):  # noqa: ARG001 - test helper signature
     return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
 
 
