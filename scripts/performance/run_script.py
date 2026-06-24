@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
+import importlib
 import logging
 import os
+import pkgutil
 import re
 import sys
+from collections.abc import Callable
+from typing import cast
 
 import torch
 from argument_parser import parse_cli_args
@@ -23,7 +28,7 @@ from utils.overrides import set_cli_overrides, set_user_overrides
 
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.training.config import runtime_config_update
+from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -62,15 +67,42 @@ def _dump_env_rank0() -> None:
         logger.warning(f"Failed to write environment dump to {env_path}: {e}")
 
 
-def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, config_variant=None):
+@functools.lru_cache(maxsize=1)
+def _perf_recipe_family_modules() -> tuple[str, ...]:
+    """Return import paths for perf recipe family packages."""
+    import megatron.bridge.perf_recipes as perf_recipes
+
+    module_names = [
+        f"{perf_recipes.__name__}.{module_info.name}"
+        for module_info in pkgutil.iter_modules(perf_recipes.__path__)
+        if module_info.ispkg and not module_info.name.startswith("_")
+    ]
+    return tuple(sorted(module_names))
+
+
+def _find_perf_recipe(name: str) -> Callable[[], ConfigContainer] | None:
+    """Find a flat perf recipe function exported by any perf recipe family package."""
+    for module_name in _perf_recipe_family_modules():
+        recipe_fn = getattr(importlib.import_module(module_name), name, None)
+        if callable(recipe_fn):
+            return cast(Callable[[], ConfigContainer], recipe_fn)
+    return None
+
+
+def get_perf_recipe_by_name(
+    model_recipe_name: str,
+    task: str,
+    num_gpus: int,
+    gpu: str,
+    precision: str,
+    config_variant: str | None = None,
+) -> ConfigContainer:
     """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name.
 
     Non-default ``config_variant`` (anything other than ``v1``/``v2``) is appended
     to the function name. E.g. ``config_variant="large_scale"`` resolves to
     ``{model}_{task}_{N}gpu_{gpu}_{prec}_large_scale_config``.
     """
-    import importlib
-
     precision_map = {
         "bf16": "bf16",
         "fp8_cs": "fp8cs",
@@ -83,38 +115,10 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
     variant_suffix = f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2"} else ""
     name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
 
-    family_map = {
-        "llama3_8b": "llama",
-        "llama3_70b": "llama",
-        "llama31_405b": "llama",
-        "qwen3_235b_a22b": "qwen",
-        "qwen3_30b_a3b": "qwen",
-        "qwen3_next_80b_a3b": "qwen",
-        "deepseek_v3": "deepseek",
-        "nemotronh_56b": "nemotronh",
-        "nemotron_3_nano": "nemotronh",
-        "nemotron_3_super": "nemotronh",
-        "kimi_k2": "kimi",
-        "gpt_oss_20b": "gpt_oss",
-        "gpt_oss_120b": "gpt_oss",
-        "qwen3_vl_235b_a22b": "qwen_vl",
-        "qwen3_vl_30b_a3b": "qwen_vl",
-        "qwen35_vl_35b_a3b": "qwen_vl",
-        "qwen35_vl_122b_a10b": "qwen_vl",
-        "qwen35_vl_397b_a17b": "qwen_vl",
-        "wan_14b": "wan",
-    }
-
-    family = family_map.get(model_recipe_name)
-    if not family:
-        raise ValueError(
-            f"Unknown model_recipe_name {model_recipe_name!r}. Add it to family_map in get_perf_recipe_by_name."
-        )
-
-    mod = importlib.import_module(f"megatron.bridge.perf_recipes.{family}")
-    recipe_fn = getattr(mod, name, None)
+    recipe_fn = _find_perf_recipe(name)
     if recipe_fn is None:
-        raise ValueError(f"No perf recipe {name!r} found in megatron.bridge.perf_recipes.{family}.")
+        searched_modules = ", ".join(_perf_recipe_family_modules()) or "none"
+        raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
     return recipe_fn()
 
 
