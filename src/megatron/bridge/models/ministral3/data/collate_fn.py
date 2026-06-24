@@ -21,7 +21,11 @@ from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import (
+    AssistantMaskBoundaryConfig,
+    build_assistant_loss_mask,
+    infer_assistant_mask_boundary_config,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -37,11 +41,13 @@ def ministral3_collate_fn(
     pad_to_multiple_of: int = 128,
     pack_sequences: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
+    assistant_mask_boundary_config: AssistantMaskBoundaryConfig | None = None,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Ministral 3 VL model."""
     del visual_keys, min_pixels, max_pixels
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = assistant_mask_boundary_config or infer_assistant_mask_boundary_config(processor)
 
     if processor.chat_template is not None:
         batch = processor.apply_chat_template(
@@ -99,7 +105,13 @@ def ministral3_collate_fn(
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)

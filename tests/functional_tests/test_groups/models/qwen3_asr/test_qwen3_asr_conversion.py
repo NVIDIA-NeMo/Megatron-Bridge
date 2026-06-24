@@ -16,10 +16,10 @@
 Functional tests for Qwen3-ASR model conversion.
 
 Run toy model creation test:
-    python -m pytest tests/functional_tests/models/qwen3_asr/test_qwen3_asr_conversion.py::TestQwen3ASRConversion::test_toy_model_creation
+    python -m pytest tests/functional_tests/test_groups/models/qwen3_asr/test_qwen3_asr_conversion.py::TestQwen3ASRConversion::test_toy_model_creation
 
 Run full conversion roundtrip (requires 2 GPUs):
-    bash tests/functional_tests/L0_Launch_models_qwen3_asr.sh
+    bash tests/functional_tests/launch_scripts/h100/flaky/L0_Launch_models_qwen3_asr.sh
 """
 
 import json

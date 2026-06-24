@@ -374,6 +374,43 @@ def chat_template_kwargs_from_example(
     return kwargs
 
 
+def _as_token_id_list(token_ids: Any) -> list[int]:
+    if token_ids is None:
+        return []
+    if isinstance(token_ids, torch.Tensor):
+        token_ids = token_ids.detach().cpu().tolist()
+    if isinstance(token_ids, (list, tuple)) and token_ids and isinstance(token_ids[0], torch.Tensor):
+        token_ids = [item.detach().cpu().tolist() for item in token_ids]
+    if isinstance(token_ids, (list, tuple)) and token_ids and isinstance(token_ids[0], (list, tuple)):
+        if len(token_ids) != 1:
+            return []
+        token_ids = token_ids[0]
+    return [int(token_id) for token_id in token_ids]
+
+
+def _conversation_from_example(
+    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+) -> Sequence[Mapping[str, Any]]:
+    if isinstance(example_or_conversation, Mapping):
+        conversation = example_or_conversation.get("conversation", [])
+        return conversation if isinstance(conversation, Sequence) and not isinstance(conversation, str) else []
+    return example_or_conversation
+
+
+def chat_template_kwargs_from_example(
+    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Return optional HF chat-template kwargs stored alongside a conversation."""
+    if not isinstance(example_or_conversation, Mapping):
+        return {}
+
+    kwargs: dict[str, Any] = {}
+    tools = example_or_conversation.get("tools")
+    if tools is not None:
+        kwargs["tools"] = tools
+    return kwargs
+
+
 def find_token_span(sequence: Sequence[int] | torch.Tensor, pattern: Sequence[int], start: int = 0) -> tuple[int, int]:
     """Find the first ``[start, end)`` token span matching ``pattern``.
 
@@ -435,6 +472,60 @@ def tokenize_text_without_special_tokens(tokenizer: Any, text: str) -> list[int]
     return _as_token_id_list(tokens)
 
 
+def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig | None:
+    """Infer assistant role boundaries from known HF chat-template formats."""
+    tokenizer = get_processor_tokenizer(processor)
+    template = _get_chat_template(tokenizer, processor)
+    if template is None:
+        return None
+
+    candidates = (
+        ("<|im_start|>assistant\n", "<|im_end|>"),
+        ("<|turn>model\n", "<turn|>"),
+        ("<start_of_turn>model\n", "<end_of_turn>"),
+    )
+    for assistant_start, assistant_end in candidates:
+        if assistant_start.rstrip("\n") not in template or assistant_end not in template:
+            continue
+        start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
+        end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
+        if start_tokens and end_tokens:
+            return AssistantMaskBoundaryConfig(
+                role_start_tokens={CHATML_ASSISTANT_ROLE: start_tokens},
+                role_end_tokens={CHATML_ASSISTANT_ROLE: end_tokens},
+            )
+    return None
+
+
+def assistant_mask_boundary_config_from_markers(
+    processor: Any,
+    *,
+    assistant_start: str,
+    assistant_end: str,
+    loss_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
+    include_start_tokens_for_roles: Sequence[str] = (),
+    include_end_tokens_for_roles: Sequence[str] = (CHATML_ASSISTANT_ROLE,),
+    trim_leading_token_ids: Sequence[int] = (),
+) -> AssistantMaskBoundaryConfig:
+    """Build explicit assistant boundary config from model-declared marker strings."""
+    tokenizer = get_processor_tokenizer(processor)
+    start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
+    end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
+    if not start_tokens or not end_tokens:
+        raise ValueError(
+            "Unable to tokenize assistant loss-mask boundary markers. "
+            "Check the model collator's assistant_start and assistant_end markers."
+        )
+    return AssistantMaskBoundaryConfig(
+        role_start_tokens={CHATML_ASSISTANT_ROLE: start_tokens},
+        role_end_tokens={CHATML_ASSISTANT_ROLE: end_tokens},
+        loss_roles=loss_roles,
+        include_start_tokens_for_roles=include_start_tokens_for_roles,
+        include_end_tokens_for_roles=include_end_tokens_for_roles,
+        trim_leading_token_ids=trim_leading_token_ids,
+    )
+
+
 def _apply_skipped_tokens(mask: torch.Tensor, ids: Sequence[int], skipped_tokens: torch.Tensor | None) -> None:
     if skipped_tokens is None or skipped_tokens.numel() == 0:
         return
@@ -459,7 +550,7 @@ def _warn_if_all_masked(
 def _get_chat_template(*objects: Any) -> str | None:
     for obj in objects:
         template = getattr(obj, "chat_template", None)
-        if isinstance(template, str):
+        if isinstance(template, str) and template:
             return template
     return None
 

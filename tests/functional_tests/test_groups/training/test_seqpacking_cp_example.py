@@ -45,11 +45,11 @@ def _make_functional_test_model_small(model: object) -> None:
     # not the full Llama 3.2 1B model shape.
     for name, value in {
         "num_layers": 2,
-        "hidden_size": 128,
-        "ffn_hidden_size": 512,
+        "hidden_size": 256,
+        "ffn_hidden_size": 1024,
         "num_attention_heads": 4,
         "num_query_groups": 4,
-        "kv_channels": 32,
+        "kv_channels": 64,
         "seq_length": 256,
     }.items():
         _set_existing_attr(model, name, value)
@@ -109,9 +109,6 @@ class TestPeftSftExample:
         cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
         cfg.model.calculate_per_token_loss = True
         cfg.ddp.average_in_collective = False
-        cfg.ddp.grad_reduce_in_fp32 = False
-        cfg.ddp.use_distributed_optimizer = False
-        cfg.optimizer.use_distributed_optimizer = False
 
         # Keep the world-size math simple: tp=1, pp=1, cp=2 -> dp derived from env.
         cfg.model.tensor_model_parallel_size = 1
@@ -142,7 +139,6 @@ class TestPeftSftExample:
             offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
-                num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
         )
