@@ -34,7 +34,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import (
 from megatron.bridge.training.config import ConfigContainer
 
 
-def _deepseek_v3_perf_common(cfg: ConfigContainer) -> None:
+def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     """Apply DeepSeek V3 perf defaults shared by the legacy workload configs."""
     cfg.dataset.seq_length = cfg.model.seq_length
     cfg.model.moe_router_fusion = True
@@ -52,7 +52,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -82,7 +82,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -110,7 +110,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -137,7 +137,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -169,7 +169,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -199,7 +199,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -229,7 +229,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -263,7 +263,7 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
@@ -289,7 +289,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
@@ -315,7 +315,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
@@ -346,7 +346,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
@@ -372,7 +372,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
@@ -398,7 +398,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
@@ -429,7 +429,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -461,7 +461,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
     cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -535,7 +535,7 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, BF16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -565,7 +565,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -595,7 +595,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -624,7 +624,7 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
@@ -690,7 +690,7 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× H100, FP8 current-scaling (standard tensorwise)."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
@@ -721,7 +721,7 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
 def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     """Apply shared DeepSeek V3 64-GPU GB300 Megatron FSDP settings."""
-    _deepseek_v3_perf_common(cfg)
+    _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
