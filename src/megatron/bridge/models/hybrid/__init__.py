@@ -1,4 +1,3 @@
-# CI_TIMEOUT=50
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#!/bin/bash
-set -xeuo pipefail
+from megatron.bridge.models.hybrid.hybrid_builder import (
+    HybridModelBuilder,
+    HybridModelConfig,
+    get_default_hybrid_stack_spec,
+    modelopt_hybrid_stack_spec,
+    transformer_engine_hybrid_stack_spec,
+)
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
-export CUDA_VISIBLE_DEVICES="0,1"
 
-uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/megatron_mimo
-
-coverage combine -q
+__all__ = [
+    "HybridModelBuilder",
+    "HybridModelConfig",
+    "HybridModelProvider",
+    "get_default_hybrid_stack_spec",
+    "modelopt_hybrid_stack_spec",
+    "transformer_engine_hybrid_stack_spec",
+]

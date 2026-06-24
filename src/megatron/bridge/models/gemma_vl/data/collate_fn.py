@@ -22,7 +22,7 @@ import torch
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS, THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import assistant_mask_boundary_config_from_markers, build_assistant_loss_mask
 from megatron.bridge.models.ministral3.data.collate_fn import ministral3_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -104,5 +104,14 @@ def gemma3_vl_collate_fn(
     return batch
 
 
-# Gemma4 VL uses apply_chat_template and returns image_position_ids — same path as ministral3
-gemma4_vl_collate_fn = ministral3_collate_fn
+def gemma4_vl_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+    """Collate function for Gemma4 VL models."""
+    return ministral3_collate_fn(
+        examples,
+        processor,
+        assistant_mask_boundary_config=assistant_mask_boundary_config_from_markers(
+            processor,
+            assistant_start="<|turn>model\n",
+            assistant_end="<turn|>",
+        ),
+    )

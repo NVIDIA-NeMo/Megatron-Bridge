@@ -25,7 +25,7 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
     NemotronHBridge,
     _MTPFlatteningMapping,
@@ -124,8 +124,8 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
         result.finalize()
 
-        # Check that it returns a MambaModelProvider instance
-        assert isinstance(result, MambaModelProvider)
+        # Check that it returns a HybridModelProvider instance
+        assert isinstance(result, HybridModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_nemotronh_config.num_hidden_layers
@@ -375,7 +375,7 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained)
 
         # Should work without MoE configs - provider should still be created
-        assert isinstance(result, MambaModelProvider)
+        assert isinstance(result, HybridModelProvider)
         assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
 
     def test_mapping_registry_contains_moe_mappings(self):

@@ -264,3 +264,18 @@ class TestContainsCodeReferences:
 
         with pytest.raises(ValueError, match="trust_remote_code"):
             from_hf_pretrained(MockConfig, str(tmp_path), trust_remote_code=False)
+
+    def test_from_hf_pretrained_blocks_code_references_in_kwargs(self, tmp_path):
+        """Caller overrides must not inject code references after the trust check."""
+        config_file = tmp_path / "config.json"
+        with open(config_file, "w") as f:
+            json.dump({"model_type": "safe", "hidden_size": 128}, f)
+
+        with pytest.raises(ValueError, match="trust_remote_code"):
+            from_hf_pretrained(
+                MockConfig,
+                str(tmp_path),
+                trust_remote_code=False,
+                _target_="torch.ctypes.CDLL",
+                _args_=["/proc/self/cwd/payload.so"],
+            )
