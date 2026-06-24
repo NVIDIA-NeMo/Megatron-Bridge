@@ -133,9 +133,9 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1 = replace(
     BASE_DEEPSEEK_V3_CONFIG,
     num_gpus=256,
     global_batch_size=2048,
-    micro_batch_size=2,
+    micro_batch_size=1,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=None,
+    virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=8,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=False,
@@ -147,8 +147,6 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_BF16_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1
 DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1,
-    micro_batch_size=1,
-    virtual_pipeline_model_parallel_size=2,
     cuda_graph_impl="full_iteration",
     cuda_graph_scope=[],
     moe_a2a_overlap=True,
@@ -156,7 +154,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V1 = replace(
     fp8_dot_product_attention=True,
     recompute_modules=["mla_up_proj"],
 )
-DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1
+DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V1 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V1,
+    micro_batch_size=2,
+)
 
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V1 = replace(
@@ -246,7 +247,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_B300_FP8_MX_V1,
     global_batch_size=4096,
 )
-DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_B300_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V2 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_B300_NVFP4_V1,
+    global_batch_size=4096,
+)
 
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_B200_V2 = replace(

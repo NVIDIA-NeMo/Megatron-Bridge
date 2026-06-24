@@ -200,7 +200,7 @@ def deepseek_v3_pretrain_config_b300(
     cfg = pretrain_config()
     cfg.mixed_precision = precision_config
 
-    if precision_config.fp8_recipe == "mxfp8":
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
         cfg.model.fp8_output_proj = True
 
     # Apply model-specific settings that were previously passed as constructor args
