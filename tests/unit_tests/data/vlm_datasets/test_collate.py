@@ -606,6 +606,54 @@ def test_gemma4_registered_fn_matches_alias():
     assert collate.COLLATE_FNS["Gemma4Processor"] is collate.gemma4_vl_collate_fn
 
 
+class _Ministral3InstructionProcessor:
+    """Minimal Ministral3 processor stub without HF generation mask support."""
+
+    chat_template = "{{ messages }}"
+
+    class _Tok:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        eos_token = "</s>"
+        added_tokens_decoder = {}
+        chat_template = "{{ messages }}"
+
+        def encode(self, text, add_special_tokens=False):
+            return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+        def __call__(self, text, add_special_tokens=False, **kwargs):
+            mapping = {
+                "[/INST]": [30],
+                "</s>": [2],
+            }
+            return {"input_ids": mapping.get(text, [99])}
+
+    def __init__(self):
+        self.tokenizer = self._Tok()
+
+    def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+        if not tokenize:
+            return "<s>[INST]question[/INST]answer</s>"
+        return {"input_ids": torch.tensor([[1, 11, 30, 31, 2]], dtype=torch.long)}
+
+
+def test_ministral3_collate_uses_declared_instruction_boundaries_without_generation_template():
+    """Ministral3 templates lack HF generation blocks, so the collator must declare boundaries."""
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+    ]
+
+    batch = collate.ministral3_collate_fn(examples, _Ministral3InstructionProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, 31, 2, -100]]
+
+
 class _Gemma4ProcessorBase:
     """Minimal Gemma4Processor stub for ministral3_collate_fn tests."""
 

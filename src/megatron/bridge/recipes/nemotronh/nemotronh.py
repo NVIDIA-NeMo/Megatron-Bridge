@@ -16,7 +16,7 @@
 import torch
 from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -35,7 +35,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -169,7 +169,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -303,7 +303,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -439,7 +439,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
@@ -581,7 +581,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 4B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -711,7 +711,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 8B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -837,7 +837,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 47B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -965,7 +965,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 56B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
@@ -1103,7 +1103,7 @@ def nemotronh_4b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses same parallelism as SFT for 4B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -1251,7 +1251,7 @@ def nemotronh_8b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -1397,7 +1397,7 @@ def nemotronh_47b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -1545,7 +1545,7 @@ def nemotronh_56b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
