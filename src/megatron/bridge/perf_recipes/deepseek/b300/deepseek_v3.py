@@ -48,6 +48,7 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -72,6 +73,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, MXFP8."""
@@ -98,6 +100,7 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, NVFP4 (PP=16 matching base layout)."""
     cfg = deepseek_v3_pretrain_256gpu_b300_bf16_config()
@@ -106,6 +109,7 @@ def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B300, MXFP8, large-scale proxy (GBS=256)."""

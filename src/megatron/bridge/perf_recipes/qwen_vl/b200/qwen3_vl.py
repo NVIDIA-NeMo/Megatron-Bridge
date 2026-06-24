@@ -58,6 +58,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     _finalize_qwen3_vl_with_overlap(cfg)
     return cfg
 
+
 def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× B200, FP8 current-scaling, PP=8 VP=4 EP=8."""
     cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
@@ -90,6 +91,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _finalize_qwen3_vl_with_overlap(cfg)
     return cfg
+
 
 def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× B200, MXFP8, PP=8 VP=4 EP=8."""
@@ -125,6 +127,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     _finalize_qwen3_vl(cfg)
     return cfg
 
+
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, BF16, EP=8."""
     cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
@@ -159,6 +162,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     _finalize_qwen3_vl(cfg)
     return cfg
 
+
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, FP8 current-scaling, EP=8."""
     cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
@@ -192,6 +196,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _finalize_qwen3_vl(cfg)
     return cfg
+
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× B200, MXFP8, EP=8."""

@@ -57,6 +57,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
     return cfg
 
+
 def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 256× H100, FP8 current-scaling, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
@@ -89,6 +90,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
     return cfg
+
 
 def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 16× H100, BF16, PP=2 VP=12 EP=8."""
@@ -125,6 +127,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg)
     return cfg
+
 
 def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12 EP=8."""

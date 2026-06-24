@@ -47,6 +47,7 @@ def nemotronh_56b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, BF16."""
     cfg = nemotron_3_super_pretrain_config()
@@ -71,6 +72,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
+
 
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, MXFP8."""
@@ -97,6 +99,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
+
 
 def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, NVFP4."""
@@ -126,6 +129,7 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
 
+
 def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -150,6 +154,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, MXFP8."""
@@ -176,6 +181,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, NVFP4."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -201,11 +207,13 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 256× B200, BF16 (same layout as FP8-CS)."""
     cfg = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("bf16")
     return cfg
+
 
 def nemotronh_56b_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 256× B200, FP8 current-scaling, legacy-scaled GBS."""

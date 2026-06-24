@@ -52,6 +52,7 @@ def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 192
     return cfg
 
+
 def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× VR200, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -76,6 +77,7 @@ def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.validation.eval_iters = 43
     cfg.scheduler.lr_warmup_iters = 192
     return cfg
+
 
 def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 64× VR200, NVFP4."""
@@ -102,6 +104,7 @@ def gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 64
     return cfg
 
+
 def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× VR200, BF16."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -125,6 +128,7 @@ def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× VR200, FP8-MX."""

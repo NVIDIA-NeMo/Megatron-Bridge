@@ -54,6 +54,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -81,6 +82,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -106,6 +108,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
@@ -133,12 +136,14 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, BF16, Megatron FSDP."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
     return cfg
+
 
 def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP."""
@@ -152,6 +157,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     cfg.model.fp8_param = True
     cfg.model.moe_router_dtype = "bf16"
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, large-scale proxy (BF16_V1 layout, GBS=256)."""

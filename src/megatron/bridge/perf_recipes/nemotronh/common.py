@@ -28,9 +28,11 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemot
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 
+
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
     return cfg
+
 
 def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     """Return the NVFP4 precision config used by Nemotron 3 Super perf recipes."""
@@ -38,6 +40,7 @@ def _nemotron_3_super_nvfp4_precision() -> MixedPrecisionConfig:
     # Disabled until MCore PR 4358 lands.
     cfg.fp4_param_gather = False
     return cfg
+
 
 def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     """Apply shared Nemotron 3 Super perf defaults after recipe-specific overrides."""

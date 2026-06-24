@@ -58,6 +58,7 @@ def kimi_k2_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def kimi_k2_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB200, FP8 current-scaling."""
     cfg = kimi_k2_pretrain_config()
@@ -93,6 +94,7 @@ def kimi_k2_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def kimi_k2_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB200, MXFP8."""

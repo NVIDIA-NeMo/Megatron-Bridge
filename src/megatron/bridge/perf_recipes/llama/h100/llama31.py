@@ -49,6 +49,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 1024× H100, FP8 current-scaling, TP=8 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
@@ -73,9 +74,11 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def llama31_405b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_bf16_config(), 768)
+
 
 def llama31_405b_pretrain_512gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, FP8 current-scaling, legacy-scaled GBS."""

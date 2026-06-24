@@ -30,21 +30,26 @@ def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, BF16 (alias of GB200)."""
     return nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
 
+
 def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, FP8-MX (alias of GB200)."""
     return nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config()
+
 
 def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, NVFP4 (alias of GB200)."""
     return nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config()
 
+
 def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, BF16 (alias of GB200)."""
     return nemotron_3_super_pretrain_64gpu_gb200_bf16_config()
 
+
 def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, FP8-MX (alias of GB200)."""
     return nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config()
+
 
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 (alias of GB200)."""

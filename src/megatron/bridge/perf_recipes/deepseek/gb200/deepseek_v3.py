@@ -53,6 +53,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -82,6 +83,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -110,6 +112,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16, mlp recompute)."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
@@ -118,6 +121,7 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256)."""

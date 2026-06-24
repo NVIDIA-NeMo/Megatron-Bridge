@@ -48,6 +48,7 @@ def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
 
+
 def _gpt_oss_20b_fp8mx_precision():
     """Return legacy GPT-OSS 20B MXFP8 perf precision settings."""
     precision_config = _perf_precision("fp8_mx")
@@ -59,6 +60,7 @@ def _gpt_oss_20b_fp8mx_precision():
     precision_config.first_last_layers_bf16 = False
     precision_config.num_layers_at_start_in_bf16 = 0
     return precision_config
+
 
 def _gpt_oss_20b_nvfp4_precision():
     """Return legacy GPT-OSS 20B NVFP4 perf precision settings."""
@@ -72,6 +74,7 @@ def _gpt_oss_20b_nvfp4_precision():
     precision_config.num_layers_at_start_in_bf16 = 0
     precision_config.num_layers_at_end_in_bf16 = 4
     return precision_config
+
 
 def _apply_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     """Apply legacy GPT-OSS 20B perf defaults."""
@@ -119,10 +122,12 @@ def _apply_gpt_oss_20b_common_configs(cfg: ConfigContainer) -> None:
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.override_opt_param_scheduler = False
 
+
 def _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg: ConfigContainer) -> None:
     """Apply GPT-OSS 20B Transformer Engine graph capture defaults."""
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
 
 def _apply_gpt_oss_20b_local_graph_configs(cfg: ConfigContainer) -> None:
     """Apply GPT-OSS 20B local full-iteration graph capture defaults."""

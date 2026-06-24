@@ -46,6 +46,7 @@ def nemotronh_56b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, BF16."""
     cfg = nemotron_3_super_pretrain_config()
@@ -70,6 +71,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
+
 
 def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, MXFP8."""
@@ -96,6 +98,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
+
 
 def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB200, NVFP4."""
@@ -124,6 +127,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
 
+
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -149,6 +153,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, MXFP8."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -173,6 +178,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, NVFP4."""
