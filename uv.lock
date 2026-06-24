@@ -16,7 +16,7 @@ overrides = [
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.9.0" },
     { name = "nvidia-cudnn-frontend", specifier = "==1.24.0" },
-    { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'", specifier = "==4.5.0" },
+    { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.44.0rc5", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
@@ -25,6 +25,10 @@ overrides = [
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
+
+[[manifest.dependency-metadata]]
+name = "flash-mla"
+version = "1.0.0+9edee0c"
 
 [[package]]
 name = "absl-py"
@@ -1102,6 +1106,11 @@ wheels = [
 ]
 
 [[package]]
+name = "flash-mla"
+version = "1.0.0+9edee0c"
+source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19#9edee0c022cd0938148a18e334203b0aab43aa19" }
+
+[[package]]
 name = "flashinfer-cubin"
 version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
@@ -2151,6 +2160,9 @@ docs = [
     { name = "sphinx-copybutton" },
     { name = "sphinxcontrib-mermaid" },
 ]
+no-pypi-wheels = [
+    { name = "flash-mla" },
+]
 test = [
     { name = "click" },
     { name = "coverage" },
@@ -2233,6 +2245,7 @@ docs = [
     { name = "sphinx-copybutton", specifier = ">=0.5.2" },
     { name = "sphinxcontrib-mermaid" },
 ]
+no-pypi-wheels = [{ name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19" }]
 test = [
     { name = "click" },
     { name = "coverage", specifier = ">=7.8.1" },

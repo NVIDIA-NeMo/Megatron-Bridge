@@ -139,16 +139,24 @@ override-dependencies = [
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
     "nvidia-cudnn-frontend==1.24.0",
-    "nvidia-cutlass-dsl[cu13]==4.5.0; sys_platform == 'never'"     # Rely on system site packages install
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
 ]
 
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
+# flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
+# resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
+[[tool.uv.dependency-metadata]]
+name = "flash-mla"
+version = "1.0.0+9edee0c"
+requires-dist = []
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
+flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "9edee0c022cd0938148a18e334203b0aab43aa19" }
 
 [project.optional-dependencies]
 recipes = [
@@ -206,6 +214,10 @@ build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "
 # them at test time with scripts/install_diffusion_deps.sh. This group is kept for
 # documentation only; `uv sync --group diffusion` will NOT install them on Linux.
 diffusion = ["imageio", "imageio-ffmpeg", "av"]
+# flash-mla has no PyPI wheel and is built from source in the image. Megatron-LM keeps it in its
+# own no_pypi_wheels group, but uv does not install a path dependency's groups, so it is declared
+# here as well and installed by the image build's `uv sync --all-groups`.
+no_pypi_wheels = ["flash_mla"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"
