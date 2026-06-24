@@ -16,6 +16,7 @@ import logging
 from typing import List, Optional
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
@@ -28,6 +29,26 @@ from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_gra
 
 
 logger = logging.getLogger(__name__)
+
+
+def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim: int) -> Optional[Tensor]:
+    """Slice a tensor along ``seq_dim`` into this context-parallel rank's zigzag chunks.
+
+    The image merge runs on the full sequence because every ``<|media_pad|>`` placeholder must
+    align with its image features across the whole batch. Kimi VL therefore slices embeddings,
+    labels, and loss masks for CP only after the merge.
+    """
+    if val is None or cp_size <= 1:
+        return val
+    val = val.view(
+        *val.shape[:seq_dim],
+        2 * cp_size,
+        val.shape[seq_dim] // (2 * cp_size),
+        *val.shape[seq_dim + 1 :],
+    )
+    index = torch.tensor([cp_rank, 2 * cp_size - cp_rank - 1], device=val.device)
+    val = val.index_select(seq_dim, index)
+    return val.view(*val.shape[:seq_dim], -1, *val.shape[seq_dim + 2 :])
 
 
 def _configure_kimi_vision_attention(vision_tower_config, vision_tower_cls) -> None:
@@ -384,6 +405,8 @@ class KimiK25VLModel(MegatronModule):
                where N = number of image features. Does simple 1:1 replacement.
             2. Dynamic expansion: input_ids has 1 placeholder per image, expands to N tokens.
         """
+        cp_size = parallel_state.get_context_parallel_world_size()
+        cp_rank = parallel_state.get_context_parallel_rank() if cp_size > 1 else 0
         if self.pre_process:
             if inputs_embeds is None:
                 inputs_embeds = self.language_model.embedding(
@@ -423,9 +446,16 @@ class KimiK25VLModel(MegatronModule):
             # Transpose back to (T, B, D) for Megatron language model
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
+            if cp_size > 1:
+                inputs_embeds = _split_on_cp_rank(inputs_embeds, cp_size, cp_rank, seq_dim=0)
+
             if self.config.sequence_parallel:
                 tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
+
+        if cp_size > 1:
+            labels = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1)
+            loss_mask = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1)
 
         outputs = self.language_model.forward(
             input_ids=None,
@@ -437,6 +467,8 @@ class KimiK25VLModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
         )
+        if cp_size > 1:
+            return outputs, loss_mask
         return outputs
 
     def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):

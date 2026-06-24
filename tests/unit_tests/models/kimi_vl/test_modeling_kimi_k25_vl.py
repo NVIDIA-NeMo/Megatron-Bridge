@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+import torch.nn.functional as F
 
 
 # Constants matching Kimi K2.5 defaults
@@ -98,6 +99,88 @@ def _make_inputs(batch_size, seq_len, hidden_dim=HIDDEN_DIM):
 def _make_image_features(num_features, hidden_dim=HIDDEN_DIM):
     """Create a single image's features."""
     return torch.randn(num_features, hidden_dim)
+
+
+def _reassemble_cp_seq_dim1(shards: list[torch.Tensor], cp_size: int) -> torch.Tensor:
+    """Invert the 2*CP zigzag when shards are split along sequence dim 1."""
+    total_chunks = 2 * cp_size
+    per_shard = shards[0].shape[1]
+    chunk_size = per_shard // 2
+    chunks: list[torch.Tensor | None] = [None] * total_chunks
+    for cp_rank, shard in enumerate(shards):
+        chunks[cp_rank] = shard[:, :chunk_size]
+        chunks[total_chunks - cp_rank - 1] = shard[:, chunk_size:]
+    return torch.cat(chunks, dim=1)
+
+
+def test_cp_split_selects_matching_embedding_and_label_positions():
+    """Embeddings and labels slice different dims but must choose the same global token positions."""
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_on_cp_rank
+
+    for cp_size in (2, 4, 8):
+        seq_len = 2 * cp_size * 5
+        positions = torch.arange(seq_len)
+        embeddings = positions.view(seq_len, 1, 1).float()
+        labels = positions.view(1, seq_len)
+
+        for cp_rank in range(cp_size):
+            embedding_positions = _split_on_cp_rank(embeddings, cp_size, cp_rank, seq_dim=0).reshape(-1)
+            label_positions = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1).reshape(-1)
+
+            assert torch.equal(embedding_positions.long(), label_positions)
+
+
+def test_cp_split_zigzag_is_an_exact_partition():
+    """The union of all CP ranks covers every token exactly once."""
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_on_cp_rank
+
+    for cp_size in (2, 4, 8):
+        seq_len = 2 * cp_size * 7
+        labels = torch.arange(seq_len).view(1, seq_len)
+        seen: list[int] = []
+        for cp_rank in range(cp_size):
+            seen.extend(_split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1).reshape(-1).tolist())
+
+        assert sorted(seen) == list(range(seq_len))
+
+
+def test_cp_split_preserves_full_sequence_cross_entropy_after_reassembly():
+    """CP-sliced per-token CE is bit-identical to full-sequence CE after reassembly."""
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_on_cp_rank
+
+    torch.manual_seed(0)
+    vocab_size = 128
+    for cp_size in (2, 4, 8):
+        seq_len = 2 * cp_size * 6
+        logits = torch.randn(seq_len, 1, vocab_size, dtype=torch.float64)
+        labels = torch.randint(0, vocab_size, (1, seq_len))
+        loss_mask = (torch.rand(1, seq_len) > 0.3).double()
+
+        def ce_per_token(logits_tbd: torch.Tensor, labels_bt: torch.Tensor) -> torch.Tensor:
+            logits_btd = logits_tbd.transpose(0, 1)
+            flat = F.cross_entropy(logits_btd.reshape(-1, vocab_size), labels_bt.reshape(-1), reduction="none")
+            return flat.view(labels_bt.shape)
+
+        full = ce_per_token(logits, labels) * loss_mask
+
+        cp_shards = []
+        for cp_rank in range(cp_size):
+            logits_rank = _split_on_cp_rank(logits, cp_size, cp_rank, seq_dim=0)
+            labels_rank = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1)
+            loss_mask_rank = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1)
+            cp_shards.append(ce_per_token(logits_rank, labels_rank) * loss_mask_rank)
+
+        reassembled = _reassemble_cp_seq_dim1(cp_shards, cp_size)
+        assert torch.equal(full, reassembled)
+        assert torch.equal(full.sum(), reassembled.sum())
+
+
+def test_cp_split_size_one_is_identity():
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_on_cp_rank
+
+    tensor = torch.arange(24).view(1, 24)
+    assert torch.equal(_split_on_cp_rank(tensor, 1, 0, seq_dim=1), tensor)
+    assert _split_on_cp_rank(None, 4, 0, seq_dim=1) is None
 
 
 # ===========================================================================
