@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import logging
 from typing import Optional
 
 import megatron.core.parallel_state as mpu
@@ -33,7 +34,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
     get_gpt_heterogeneous_layer_spec,
 )
-from megatron.core.models.mamba import MambaModel
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
 from megatron.core.transformer import MegatronModule, ModuleSpec, TransformerConfig
 from megatron.core.transformer.module import Float16Module
@@ -42,6 +43,9 @@ from megatron.core.utils import get_model_config
 
 from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
 from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+
+
+logger = logging.getLogger(__name__)
 
 
 def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitchen: bool) -> ModuleSpec:
@@ -141,23 +145,23 @@ def _gpt_provider(
     )
 
 
-def _mamba_provider(
+def _hybrid_provider(
     args: argparse.Namespace,
     config: Optional[TransformerConfig] = None,
     pre_process: bool = True,
     post_process: bool = True,
     vp_stage: Optional[int] = None,
-) -> MambaModel:
-    """Provide the MambaModel exactly as done by MLM using an argparse args object.
+) -> HybridModel:
+    """Provide the HybridModel exactly as done by MLM using an argparse args object.
 
     May need to set `args` and `config` with functools.partial.
     """
     if config is None:
         config = _transformer_config_from_args(args)
 
-    assert args.spec is not None, "You must provide a valid Mamba layer spec!"
+    assert args.spec is not None, "You must provide a valid Hybrid layer spec!"
     _validate_target_prefix(target=args.spec, full_key="args.spec")
-    mamba_stack_spec = import_module(args.spec)
+    hybrid_stack_spec = import_module(args.spec)
 
     # Migrate deprecated hybrid_override_pattern → hybrid_layer_pattern
     if getattr(args, "hybrid_override_pattern", None) is not None and args.hybrid_layer_pattern is None:
@@ -175,7 +179,7 @@ def _mamba_provider(
         mtp_pattern = args.mtp_hybrid_override_pattern
         args.hybrid_layer_pattern = main_pattern + sep + sep.join([mtp_pattern] * args.mtp_num_layers)
         args.mtp_hybrid_override_pattern = None
-        print(f"Converted legacy MTP pattern to unified: {args.hybrid_layer_pattern}")
+        logger.info("Converted legacy MTP pattern to unified: %s", args.hybrid_layer_pattern)
 
     # Infer mtp_num_layers from unified pattern
     if args.hybrid_layer_pattern and sep in args.hybrid_layer_pattern:
@@ -185,11 +189,13 @@ def _mamba_provider(
             if args.mtp_num_layers is None:
                 args.mtp_num_layers = inferred_mtp_num_layers
             elif args.mtp_num_layers != inferred_mtp_num_layers:
-                print(
-                    f"--mtp-num-layers ({args.mtp_num_layers}) conflicts with "
-                    f"MTP depth count ({inferred_mtp_num_layers}) in pattern '{args.hybrid_layer_pattern}'. "
-                    f"Using the inferred value ({inferred_mtp_num_layers}).",
-                    args.rank,
+                logger.warning(
+                    "--mtp-num-layers (%s) conflicts with MTP depth count (%s) in pattern '%s'. "
+                    "Using the inferred value (%s).",
+                    args.mtp_num_layers,
+                    inferred_mtp_num_layers,
+                    args.hybrid_layer_pattern,
+                    inferred_mtp_num_layers,
                 )
                 args.mtp_num_layers = inferred_mtp_num_layers
 
@@ -201,9 +207,9 @@ def _mamba_provider(
             + "The supported position embedding types are rope and none."
         )
 
-    model = MambaModel(
+    model = HybridModel(
         config=config,
-        mamba_stack_spec=mamba_stack_spec,
+        hybrid_stack_spec=hybrid_stack_spec,
         vocab_size=args.padded_vocab_size,
         max_sequence_length=args.max_position_embeddings,
         pre_process=pre_process,
@@ -219,6 +225,17 @@ def _mamba_provider(
     )
 
     return model
+
+
+def _mamba_provider(
+    args: argparse.Namespace,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
+    vp_stage: Optional[int] = None,
+) -> HybridModel:
+    """Backward-compatible wrapper for ``_hybrid_provider``."""
+    return _hybrid_provider(args, config=config, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
 
 
 def _get_model(
@@ -273,13 +290,11 @@ def _get_model(
     # Print number of parameters.
     num_parameters = sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model])
     if mpu.get_data_parallel_rank() == 0 and mpu.get_context_parallel_rank() == 0:
-        print(
-            " > number of parameters on (tensor, pipeline) model parallel rank ({}, {}): {}".format(
-                mpu.get_tensor_model_parallel_rank(),
-                mpu.get_pipeline_model_parallel_rank(),
-                num_parameters,
-            ),
-            flush=True,
+        logger.info(
+            " > number of parameters on (tensor, pipeline) model parallel rank (%s, %s): %s",
+            mpu.get_tensor_model_parallel_rank(),
+            mpu.get_pipeline_model_parallel_rank(),
+            num_parameters,
         )
 
     if not args.init_model_with_meta_device:

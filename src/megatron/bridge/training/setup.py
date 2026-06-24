@@ -32,7 +32,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training import fault_tolerance
@@ -321,7 +321,7 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, MambaModelConfig)) else cfg.model,
+        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, HybridModelConfig)) else cfg.model,
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
