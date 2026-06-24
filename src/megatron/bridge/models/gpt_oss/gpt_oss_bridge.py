@@ -96,9 +96,7 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.softmax_type = "learnable"
         provider.window_size = (hf_pretrained.config.sliding_window - 1, 0)
         provider.window_attn_skip_freq = [
-            flag
-            for layer_idx in range(num_hf_layers)
-            for flag in ((layer_idx + 1) % 2 != 0, False)
+            flag for layer_idx in range(num_hf_layers) for flag in ((layer_idx + 1) % 2 != 0, False)
         ]
 
         # GPT-OSS uses intermediate_size for MoE FFN hidden size
@@ -206,8 +204,7 @@ class GPTOSSBridge(MegatronModelBridge):
                         AutoMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.input_layernorm.weight",
                             megatron_param=(
-                                f"decoder.layers.{attention_layer_idx}."
-                                "self_attention.linear_qkv.layer_norm_weight"
+                                f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.layer_norm_weight"
                             ),
                         ),
                         AutoMapping(
@@ -221,8 +218,7 @@ class GPTOSSBridge(MegatronModelBridge):
                         AutoMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.self_attn.sinks",
                             megatron_param=(
-                                f"decoder.layers.{attention_layer_idx}."
-                                "self_attention.core_attention.softmax_offset"
+                                f"decoder.layers.{attention_layer_idx}.self_attention.core_attention.softmax_offset"
                             ),
                         ),
                         QKVMapping(
@@ -272,29 +268,25 @@ class GPTOSSBridge(MegatronModelBridge):
                         GPTOSSMLPDownProjMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj",
                             megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}."
-                                "mlp.experts.local_experts.*.linear_fc2.weight"
+                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.weight"
                             ),
                         ),
                         GPTOSSMLPDownProjMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
                             megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}."
-                                "mlp.experts.local_experts.*.linear_fc2.bias"
+                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.bias"
                             ),
                         ),
                         GPTOSSMLPGateUpProjMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
                             megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}."
-                                "mlp.experts.local_experts.*.linear_fc1.weight"
+                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.weight"
                             ),
                         ),
                         GPTOSSMLPGateUpProjMapping(
                             hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
                             megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}."
-                                "mlp.experts.local_experts.*.linear_fc1.bias"
+                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.bias"
                             ),
                         ),
                     ]
