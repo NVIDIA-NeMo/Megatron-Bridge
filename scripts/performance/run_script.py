@@ -95,6 +95,7 @@ def get_perf_recipe_by_name(model_recipe_name, task, num_gpus, gpu, precision, c
         "nemotron_3_nano": "nemotronh",
         "nemotron_3_super": "nemotronh",
         "kimi_k2": "kimi",
+        "gpt_oss_20b": "gpt_oss",
         "gpt_oss_120b": "gpt_oss",
         "qwen3_vl_235b_a22b": "qwen_vl",
         "qwen3_vl_30b_a3b": "qwen_vl",

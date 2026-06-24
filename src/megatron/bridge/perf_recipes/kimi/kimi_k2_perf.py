@@ -306,6 +306,21 @@ def kimi_k2_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
 
 # =============================================================================
+# Kimi K2 pretrain — 256 GPU, VR200
+# =============================================================================
+
+
+def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB200)."""
+    return kimi_k2_pretrain_256gpu_gb200_bf16_config()
+
+
+def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB200)."""
+    return kimi_k2_pretrain_256gpu_gb200_fp8mx_config()
+
+
+# =============================================================================
 # Kimi K2 pretrain — 256 GPU, B200
 # =============================================================================
 
@@ -405,6 +420,35 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap.overlap_grad_reduce = True
 
     _benchmark_common(cfg)
+    return cfg
+
+
+# =============================================================================
+# Kimi K2 pretrain — 256 GPU, B300
+# =============================================================================
+
+
+def kimi_k2_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× B300, BF16."""
+    cfg = kimi_k2_pretrain_256gpu_b200_bf16_config()
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
+def kimi_k2_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× B300, FP8 current-scaling."""
+    cfg = kimi_k2_pretrain_256gpu_b200_fp8cs_config()
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 2
+    return cfg
+
+
+def kimi_k2_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
+    """Kimi K2 pretrain: 256× B300, MXFP8."""
+    cfg = kimi_k2_pretrain_256gpu_b200_fp8mx_config()
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 2
     return cfg
 
 

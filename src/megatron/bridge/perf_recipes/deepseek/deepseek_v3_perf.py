@@ -663,6 +663,76 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 # =============================================================================
+# DeepSeek V3 pretrain — 64 GPU, GB300, Megatron FSDP
+# =============================================================================
+
+
+def _deepseek_v3_pretrain_64gpu_gb300_fsdp_config(precision: str) -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× GB300, Megatron FSDP."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision(precision)
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.moe_router_fusion = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.model.moe_router_force_load_balancing = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 2
+
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.average_in_collective = False
+    cfg.model.init_model_with_meta_device = True
+    cfg.model.gradient_accumulation_fusion = True
+    cfg.checkpoint.load = None
+
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.cuda_graph_scope = []
+    cfg.model.recompute_modules = ["layernorm", "mla_up_proj", "moe_act"]
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    cfg.comm_overlap.overlap_grad_reduce = True
+
+    _benchmark_common(cfg)
+
+    if precision == "fp8_mx":
+        cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+        cfg.ddp.num_distributed_optimizer_instances = 1
+        cfg.model.fp8_param_gather = True
+        cfg.model.fp8_param = True
+        cfg.model.moe_router_dtype = "bf16"
+
+    return cfg
+
+
+def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× GB300, BF16, Megatron FSDP."""
+    return _deepseek_v3_pretrain_64gpu_gb300_fsdp_config("bf16")
+
+
+def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP."""
+    return _deepseek_v3_pretrain_64gpu_gb300_fsdp_config("fp8_mx")
+
+
+# =============================================================================
 # DeepSeek V3 — Large-scale proxy variants
 # =============================================================================
 # Pre-refactor large_scale configs in workload_base_configs.py used distinct
