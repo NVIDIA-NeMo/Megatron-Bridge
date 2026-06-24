@@ -374,7 +374,7 @@ def evaluate_and_print_results(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
-) -> None:
+) -> Optional[dict[str, torch.Tensor]]:
     """Helper function to evaluate and dump results on screen.
 
     Args:
@@ -395,6 +395,10 @@ def evaluate_and_print_results(
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
+
+    Returns:
+        Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary, or
+        None if evaluation exited early due to a configured time limit.
     """
     # Determine callback event names based on whether this is test or eval
     start_event = "on_test_start" if is_test else "on_eval_start"
@@ -436,7 +440,10 @@ def evaluate_and_print_results(
 
     # Timelimit hit during evaluation
     if timelimit:
-        return
+        return None
+    if total_loss_dict is None:
+        return None
+
     string = f" validation loss at {prefix} | "
     for key in total_loss_dict:
         string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
@@ -493,3 +500,5 @@ def evaluate_and_print_results(
                 total_loss_dict=total_loss_dict,
             ),
         )
+
+    return total_loss_dict

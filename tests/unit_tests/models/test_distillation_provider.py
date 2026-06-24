@@ -19,7 +19,7 @@ import torch
 
 from megatron.bridge.models.distillation_provider import DistillationProvider, convert_to_distillation_provider
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.training.post_training.distillation import ModelOptDistillConfig
 
 
@@ -345,11 +345,11 @@ class TestDistillationProvider:
             # Restore original bases since it was modified globally for the entire class
             DistillationProvider.__bases__ = original_bases
 
-    def test_convert_mamba_provider_to_distillation_provider(self):
-        """Test that MambaModelProvider can be converted to DistillationProvider."""
+    def test_convert_hybrid_provider_to_distillation_provider(self):
+        """Test that HybridModelProvider can be converted to DistillationProvider."""
         from megatron.bridge.models.distillation_provider import DistillationProvider
 
-        teacher = MambaModelProvider(
+        teacher = HybridModelProvider(
             num_layers=48,
             hidden_size=4096,
             num_attention_heads=32,
@@ -360,7 +360,7 @@ class TestDistillationProvider:
             seq_length=1024,
             pipeline_dtype=None,
         )
-        student_base = MambaModelProvider(
+        student_base = HybridModelProvider(
             num_layers=24,
             hidden_size=2048,
             num_attention_heads=16,
@@ -379,7 +379,7 @@ class TestDistillationProvider:
             # Verify conversion succeeded
             assert converted is student_base
             assert isinstance(converted, DistillationProvider)
-            assert isinstance(converted, MambaModelProvider)
+            assert isinstance(converted, HybridModelProvider)
             assert converted.teacher is teacher
             assert converted.num_layers == 24
             assert converted.hidden_size == 2048

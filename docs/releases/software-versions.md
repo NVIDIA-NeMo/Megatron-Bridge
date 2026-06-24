@@ -1,5 +1,28 @@
 # Software Component Versions
 
+## NeMo Framework 26.06
+
+| Software Component | Version |
+|-------------------|---------|
+| PyTorch | 2.12.0a0+0291f960b6 |
+| Megatron Core | 0.18.0 |
+| Transformer Engine | 2.16 |
+| Megatron-Bridge | 0.5.0 |
+| Megatron-FSDP | 0.5.0 |
+| Export-Deploy | 0.6.0 |
+| Evaluator | 0.2.8 |
+| NeMo Run | 0.10.0 |
+| Nvidia-ModelOpt | 0.44.0 |
+| NVRX | 0.6.0 |
+| CUDA | 13.2.1.009 |
+| cuDNN | 9.21.1.3-1 |
+| vLLM | 0.20.1 |
+| Transformers | 5.8.1 |
+
+```{note}
+NVIDIA NeMo™ Framework Training container is built on top of NVIDIA Optimized Frameworks PyTorch 26.04 container: https://docs.nvidia.com/deeplearning/frameworks/pytorch-release-notes/index.html
+```
+
 ## NeMo Framework 26.04
 
 | Software Component | Version |
