@@ -71,8 +71,8 @@ def _finalize_nemotron_3_super_perf(cfg: ConfigContainer, compute_dtype: str) ->
     _benchmark_common(cfg)
 
 
-def _nemotron_3_super_pretrain_64gpu_gb300_config(compute_dtype: str) -> ConfigContainer:
-    """Build a Nemotron 3 Super pretrain config for 64x GB300."""
+def _nemotron_3_super_pretrain_64gpu_config(compute_dtype: str, gpu: str) -> ConfigContainer:
+    """Build a Nemotron 3 Super pretrain config for 64 GPUs."""
     cfg = nemotron_3_super_pretrain_config()
     cfg.mixed_precision = _nemotron_3_super_precision(compute_dtype)
 
@@ -92,6 +92,25 @@ def _nemotron_3_super_pretrain_64gpu_gb300_config(compute_dtype: str) -> ConfigC
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+
+    if gpu == "gb200":
+        cfg.model.tensor_model_parallel_size = 2
+    elif gpu == "b300":
+        cfg.model.expert_model_parallel_size = 8
+        if compute_dtype in {"bf16", "nvfp4"}:
+            cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    elif gpu == "b200":
+        cfg.model.cuda_graph_impl = "none"
+        cfg.model.recompute_modules = ["moe_act", "layernorm"]
+        if compute_dtype == "bf16":
+            cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+        elif compute_dtype == "nvfp4":
+            cfg.model.tensor_model_parallel_size = 2
+            cfg.model.cuda_graph_impl = "transformer_engine"
+            cfg.model.cuda_graph_scope = ["mamba", "attn", "moe_router", "moe_preprocess"]
+            cfg.model.recompute_modules = None
+    elif gpu != "gb300":
+        raise ValueError(f"Unsupported Nemotron 3 Super 64-GPU target: {gpu}")
 
     _finalize_nemotron_3_super_perf(cfg, compute_dtype)
     return cfg
@@ -229,17 +248,77 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
 def nemotron_3_super_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, BF16."""
-    return _nemotron_3_super_pretrain_64gpu_gb300_config("bf16")
+    return _nemotron_3_super_pretrain_64gpu_config("bf16", "gb300")
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, MXFP8."""
-    return _nemotron_3_super_pretrain_64gpu_gb300_config("fp8_mx")
+    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "gb300")
 
 
 def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× GB300, NVFP4."""
-    return _nemotron_3_super_pretrain_64gpu_gb300_config("nvfp4")
+    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "gb300")
+
+
+# =============================================================================
+# Nemotron 3 Super pretrain — 64 GPU, GB200
+# =============================================================================
+
+
+def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB200, BF16."""
+    return _nemotron_3_super_pretrain_64gpu_config("bf16", "gb200")
+
+
+def nemotron_3_super_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB200, MXFP8."""
+    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "gb200")
+
+
+def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× GB200, NVFP4."""
+    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "gb200")
+
+
+# =============================================================================
+# Nemotron 3 Super pretrain — 64 GPU, B300
+# =============================================================================
+
+
+def nemotron_3_super_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B300, BF16."""
+    return _nemotron_3_super_pretrain_64gpu_config("bf16", "b300")
+
+
+def nemotron_3_super_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B300, MXFP8."""
+    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "b300")
+
+
+def nemotron_3_super_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B300, NVFP4."""
+    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "b300")
+
+
+# =============================================================================
+# Nemotron 3 Super pretrain — 64 GPU, B200
+# =============================================================================
+
+
+def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B200, BF16."""
+    return _nemotron_3_super_pretrain_64gpu_config("bf16", "b200")
+
+
+def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B200, MXFP8."""
+    return _nemotron_3_super_pretrain_64gpu_config("fp8_mx", "b200")
+
+
+def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 64× B200, NVFP4."""
+    return _nemotron_3_super_pretrain_64gpu_config("nvfp4", "b200")
 
 
 # =============================================================================
