@@ -129,7 +129,20 @@ COMBOS = [
     ("kimi", "kimi_k2", "pretrain", 256, "b200", "fp8_mx"),
     ("kimi", "kimi_k2", "pretrain", 1024, "h100", "bf16"),
     ("kimi", "kimi_k2", "pretrain", 1024, "h100", "fp8_cs"),
-    # NemotronH
+    # Nemotron 3 Super
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb300", "bf16"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb300", "fp8_mx"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb300", "nvfp4"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb200", "bf16"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb200", "fp8_mx"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "gb200", "nvfp4"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b300", "bf16"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b300", "fp8_mx"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b300", "nvfp4"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "bf16"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "fp8_mx"),
+    ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "nvfp4"),
+    # NemotronH 56B
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "fp8_cs"),
     # GPT-OSS 120B
