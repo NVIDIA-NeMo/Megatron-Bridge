@@ -300,7 +300,7 @@ CMD=(
     dataset.test_data_path="${TEST_JSONL}"
     dataset.num_workers="${DATASET_NUM_WORKERS}"
     dataset.persistent_workers="${DATASET_PERSISTENT_WORKERS}"
-    dataset.pack_sequences_in_batch=False
+    dataset.enable_in_batch_packing=False
 )
 
 if [[ -n "${RECOMPUTE_GRANULARITY}" ]]; then

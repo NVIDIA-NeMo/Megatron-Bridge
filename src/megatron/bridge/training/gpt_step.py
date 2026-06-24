@@ -52,12 +52,12 @@ logger = logging.getLogger(__name__)
 def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
     """Return whether the dataset is expected to provide packed sequence metadata."""
     dataset_cfg = getattr(cfg, "dataset", None)
-    packed_sequence_specs = getattr(dataset_cfg, "packed_sequence_specs", None)
-    if packed_sequence_specs is not None:
-        packed_sequence_size = getattr(packed_sequence_specs, "packed_sequence_size", None)
+    offline_packing_specs = getattr(dataset_cfg, "offline_packing_specs", None)
+    if getattr(dataset_cfg, "enable_offline_packing", False):
+        packed_sequence_size = getattr(offline_packing_specs, "packed_sequence_size", None)
         return packed_sequence_size is None or packed_sequence_size > 0
 
-    return getattr(dataset_cfg, "pack_sequences_in_batch", False)
+    return getattr(dataset_cfg, "enable_in_batch_packing", False)
 
 
 def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:

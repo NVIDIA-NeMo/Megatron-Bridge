@@ -17,7 +17,7 @@
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import assistant_mask_boundary_config_from_markers, build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 

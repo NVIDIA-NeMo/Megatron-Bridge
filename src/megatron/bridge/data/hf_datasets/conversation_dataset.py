@@ -12,19 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Core dataset types for conversation-style VLM examples.
-"""
+"""Core dataset types for HF conversation-style examples."""
 
-import random
 from typing import Any, Callable, Dict, List, Optional
 
 import torch
 
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 
-
-class VLMConversationDataset(torch.utils.data.Dataset):
+class ConversationDataset(torch.utils.data.Dataset):
     """Repeating wrapper over a list of HF-style conversation examples.
 
     - Each base example is expected to contain a "conversation" key following
@@ -32,8 +27,6 @@ class VLMConversationDataset(torch.utils.data.Dataset):
       "audio" are passed through and consumed by the collate function.
     - Dataset length is set to a target length and indexes wrap around the
       underlying list to meet the requested size.
-    - Examples are shuffled on construction to ensure diverse batches when
-      used with sequential samplers (e.g. MegatronPretrainingSampler).
     - A `collate_fn` attribute is exposed so the framework can pass it to the
       DataLoader.
     """
@@ -44,14 +37,10 @@ class VLMConversationDataset(torch.utils.data.Dataset):
         target_length: int,
         processor: Any,
         collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None,
-        shuffle: bool = True,
-        seed: int = 42,
         pack_sequences: bool = False,
+        pack_sequences_pad_to_multiple_of: int = 1,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
-        if shuffle:
-            base_examples = list(base_examples)
-            random.Random(seed).shuffle(base_examples)
         self._base_examples = base_examples
         self._length = int(max(0, target_length))
         self._processor = processor
@@ -60,9 +49,11 @@ class VLMConversationDataset(torch.utils.data.Dataset):
         if collate_impl is not None:
             selected_impl = collate_impl
         else:
+            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
+
             if collate_key not in COLLATE_FNS:
                 raise ValueError(
-                    f"No VLM collate function registered for processor type '{collate_key}'. "
+                    f"No conversation collate function registered for processor type '{collate_key}'. "
                     "Add it to COLLATE_FNS or pass collate_impl explicitly."
                 )
             selected_impl = COLLATE_FNS[collate_key]
@@ -75,7 +66,10 @@ class VLMConversationDataset(torch.utils.data.Dataset):
 
             sig = inspect.signature(selected_impl)
             if "pack_sequences" in sig.parameters:
-                selected_impl = partial(selected_impl, pack_sequences=True)
+                pack_kwargs: dict[str, Any] = {"pack_sequences": True}
+                if "pack_sequences_pad_to_multiple_of" in sig.parameters:
+                    pack_kwargs["pack_sequences_pad_to_multiple_of"] = pack_sequences_pad_to_multiple_of
+                selected_impl = partial(selected_impl, **pack_kwargs)
             else:
                 raise ValueError(
                     f"Collate function {getattr(selected_impl, '__name__', selected_impl)} "

@@ -78,7 +78,8 @@ def _as_nocuda(tensor):
 
 def _make_cfg(
     *,
-    packed_sequence_specs=None,
+    enable_offline_packing=False,
+    offline_packing_specs=None,
     skip_getting_attention_mask_from_dataset=True,
     pipeline_model_parallel_layout=None,
     pipeline_model_parallel_size=1,
@@ -90,7 +91,8 @@ def _make_cfg(
         "D",
         (),
         {
-            "packed_sequence_specs": packed_sequence_specs,
+            "enable_offline_packing": enable_offline_packing,
+            "offline_packing_specs": offline_packing_specs,
             "skip_getting_attention_mask_from_dataset": skip_getting_attention_mask_from_dataset,
         },
     )()
@@ -205,7 +207,7 @@ class TestGetBatch:
             out_cu_seqlens_unpadded_argmin,
         ) = get_batch(
             _Iterator(batch),
-            _make_cfg(packed_sequence_specs=object()),
+            _make_cfg(enable_offline_packing=True, offline_packing_specs=object()),
             use_mtp=False,
             pg_collection=_MockPGCollection(),
         )
@@ -228,7 +230,7 @@ class TestGetBatch:
 
         result = get_batch(
             data_iterator,
-            _make_cfg(packed_sequence_specs=None),
+            _make_cfg(offline_packing_specs=None),
             use_mtp=False,
             pg_collection=_MockPGCollection(),
         )
@@ -498,7 +500,7 @@ class TestGetBatch:
         max_seqlen = torch.tensor([[5]], dtype=torch.int32)
         model = Mock(return_value=torch.tensor(1.0))
         state = Mock()
-        state.cfg = _make_cfg(packed_sequence_specs=object())
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
         state.timers = _NoopTimer()
         state.straggler_timer = _NoopTimer()
         config = type(

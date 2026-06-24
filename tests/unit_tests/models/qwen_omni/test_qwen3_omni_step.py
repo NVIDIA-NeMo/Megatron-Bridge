@@ -636,7 +636,7 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
             "dataset": type(
                 "D",
                 (),
-                {"skip_getting_attention_mask_from_dataset": False, "pack_sequences_in_batch": True},
+                {"skip_getting_attention_mask_from_dataset": False, "enable_in_batch_packing": True},
             )(),
             "model": type("M", (), {"pipeline_model_parallel_size": 1, "seq_length": 8})(),
             "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),

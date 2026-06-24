@@ -164,9 +164,9 @@ def nemotron_3_ultra_sft_openmathinstruct2_packed_config(
 
     cfg.tokenizer.tokenizer_model = model_source
     cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, packed_sequence=True)
-    if cfg.dataset.packed_sequence_specs is not None:
-        cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
-        cfg.dataset.packed_sequence_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
+    if cfg.dataset.offline_packing_specs is not None:
+        cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+        cfg.dataset.offline_packing_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
 
     cfg.train.train_iters = 1000
     cfg.train.global_batch_size = 128
@@ -268,9 +268,9 @@ def nemotron_3_ultra_peft_openmathinstruct2_packed_config(
 
     cfg.tokenizer.tokenizer_model = model_source
     cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, packed_sequence=True)
-    if cfg.dataset.packed_sequence_specs is not None:
-        cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
-        cfg.dataset.packed_sequence_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
+    if cfg.dataset.offline_packing_specs is not None:
+        cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+        cfg.dataset.offline_packing_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
 
     cfg.train.train_iters = 1000
     cfg.train.global_batch_size = 128
