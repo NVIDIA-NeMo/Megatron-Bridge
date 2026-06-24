@@ -35,11 +35,7 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-def _finalize_qwen3_vl_perf(
-    cfg: ConfigContainer,
-    *,
-    overlap_param_gather_with_optimizer_step: bool = False,
-) -> None:
+def _finalize_qwen3_vl_perf(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults that must override generic benchmark defaults."""
     # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
     # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
@@ -55,13 +51,25 @@ def _finalize_qwen3_vl_perf(
     cfg.comm_overlap.overlap_param_gather = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
-    if getattr(cfg.model, "moe_a2a_overlap", False):
-        cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
-        cfg.comm_overlap.delay_wgrad_compute = True
-        cfg.model.moe_shared_expert_overlap = False
 
-    if overlap_param_gather_with_optimizer_step:
-        _enable_overlap_param_gather_with_optimizer_step(cfg)
+def _finalize_qwen3_vl_perf_with_overlap(cfg: ConfigContainer) -> None:
+    """Apply Qwen3-VL perf defaults with optimizer-step param-gather overlap."""
+    _finalize_qwen3_vl_perf(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
+
+
+def _finalize_qwen3_vl_perf_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
+    """Apply Qwen3-VL perf defaults with MoE A2A overlap enabled."""
+    _finalize_qwen3_vl_perf(cfg)
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.model.moe_shared_expert_overlap = False
+
+
+def _finalize_qwen3_vl_perf_with_moe_a2a_and_overlap(cfg: ConfigContainer) -> None:
+    """Apply Qwen3-VL perf defaults with MoE A2A and optimizer-step overlap."""
+    _finalize_qwen3_vl_perf_with_moe_a2a_overlap(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
 
 
 # =============================================================================
@@ -337,7 +345,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_overlap(cfg)
     return cfg
 
 
@@ -371,7 +379,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_overlap(cfg)
     return cfg
 
 
@@ -445,7 +453,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_moe_a2a_and_overlap(cfg)
     return cfg
 
 
@@ -479,7 +487,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_moe_a2a_and_overlap(cfg)
     return cfg
 
 
@@ -869,7 +877,7 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_moe_a2a_and_overlap(cfg)
     return cfg
 
 
@@ -903,5 +911,5 @@ def qwen3_vl_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_perf(cfg, overlap_param_gather_with_optimizer_step=True)
+    _finalize_qwen3_vl_perf_with_moe_a2a_and_overlap(cfg)
     return cfg

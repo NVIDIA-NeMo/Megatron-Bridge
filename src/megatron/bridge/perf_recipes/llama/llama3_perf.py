@@ -1320,8 +1320,7 @@ def llama3_70b_sft_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
@@ -1356,8 +1355,7 @@ def llama3_70b_sft_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
@@ -1397,8 +1395,7 @@ def llama3_70b_sft_32gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
@@ -1430,8 +1427,7 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
@@ -1468,8 +1464,7 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 4
@@ -1542,8 +1537,7 @@ def llama3_70b_lora_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1576,8 +1570,7 @@ def llama3_70b_lora_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1610,8 +1603,7 @@ def llama3_70b_lora_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1649,8 +1641,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 2048
@@ -1683,8 +1674,7 @@ def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1717,8 +1707,7 @@ def llama3_70b_lora_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1756,8 +1745,7 @@ def llama3_70b_lora_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1790,8 +1778,7 @@ def llama3_70b_lora_8gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1824,8 +1811,7 @@ def llama3_70b_lora_8gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1863,8 +1849,7 @@ def llama3_70b_lora_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1897,8 +1882,7 @@ def llama3_70b_lora_8gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1931,8 +1915,7 @@ def llama3_70b_lora_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
@@ -1970,8 +1953,7 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.disable_parameter_transpose_cache = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.optimizer.use_distributed_optimizer = True
-    if cfg.comm_overlap is None:
-        cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096

@@ -719,13 +719,8 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 # =============================================================================
 
 
-def _deepseek_v3_pretrain_64gpu_gb300_fsdp_config(precision: str) -> ConfigContainer:
-    """DeepSeek V3 pretrain: 64× GB300, Megatron FSDP."""
-    cfg = deepseek_v3_pretrain_config()
-    cfg.mixed_precision = _perf_precision(precision)
-    if cfg.mixed_precision.fp8_recipe == "mxfp8":
-        cfg.model.fp8_output_proj = True
-
+def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
+    """Apply shared DeepSeek V3 64-GPU GB300 Megatron FSDP settings."""
     _deepseek_v3_perf_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
@@ -759,24 +754,27 @@ def _deepseek_v3_pretrain_64gpu_gb300_fsdp_config(precision: str) -> ConfigConta
 
     _benchmark_common(cfg)
 
-    if precision == "fp8_mx":
-        cfg.ddp.outer_dp_sharding_strategy = "no_shard"
-        cfg.ddp.num_distributed_optimizer_instances = 1
-        cfg.model.fp8_param_gather = True
-        cfg.model.fp8_param = True
-        cfg.model.moe_router_dtype = "bf16"
-
-    return cfg
-
 
 def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, BF16, Megatron FSDP."""
-    return _deepseek_v3_pretrain_64gpu_gb300_fsdp_config("bf16")
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
+    return cfg
 
 
 def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP."""
-    return _deepseek_v3_pretrain_64gpu_gb300_fsdp_config("fp8_mx")
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.model.fp8_output_proj = True
+    _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.model.fp8_param_gather = True
+    cfg.model.fp8_param = True
+    cfg.model.moe_router_dtype = "bf16"
+    return cfg
 
 
 # =============================================================================
