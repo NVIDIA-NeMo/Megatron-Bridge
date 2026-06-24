@@ -679,6 +679,28 @@ def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def gpt_oss_120b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× VR200, BF16 (alias of GB200)."""
+    return gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+
+
+def gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """GPT-OSS 120B pretrain: 64× VR200, FP8-MX."""
+    cfg = gpt_oss_120b_pretrain_64gpu_gb200_bf16_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_a2a_overlap = True
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = []
+    return cfg
+
+
 def gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B300, FP8-MX."""
     cfg = gpt_oss_120b_pretrain_64gpu_b300_bf16_config()

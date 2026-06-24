@@ -2052,6 +2052,26 @@ def llama3_8b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 
 # =============================================================================
+# LLaMA 3 70B — VR200 aliases: identical config to GB200 counterparts
+# =============================================================================
+
+
+def llama3_70b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
+    """LLaMA 3 70B pretrain: 64× VR200, BF16 (alias of GB200)."""
+    return llama3_70b_pretrain_64gpu_gb200_bf16_config()
+
+
+def llama3_70b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """LLaMA 3 70B pretrain: 64× VR200, FP8-MX (alias of GB200)."""
+    return llama3_70b_pretrain_64gpu_gb200_fp8mx_config()
+
+
+def llama3_70b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """LLaMA 3 70B pretrain: 64× VR200, NVFP4 (alias of GB200)."""
+    return llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
+
+
+# =============================================================================
 # LLaMA 3 8B SFT — FP8-MX alias
 # =============================================================================
 
