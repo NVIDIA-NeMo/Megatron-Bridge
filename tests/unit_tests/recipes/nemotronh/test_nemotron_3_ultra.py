@@ -103,8 +103,9 @@ def test_openmath_sft_uses_initial_parallelism_values() -> None:
     assert cfg.checkpoint.async_save is True
     assert cfg.checkpoint.async_strategy == "mcore"
     assert cfg.dataset.dataset_name == "nvidia/OpenMathInstruct-2"
-    assert cfg.dataset.packed_sequence_specs.packed_sequence_size == 4096
-    assert cfg.dataset.packed_sequence_specs.tokenizer_model_name == NEMOTRON_3_ULTRA_TOKENIZER_NAME
+    assert cfg.dataset.offline_packing_specs is not None
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 4096
+    assert cfg.dataset.offline_packing_specs.tokenizer_model_name == NEMOTRON_3_ULTRA_TOKENIZER_NAME
 
 
 @pytest.mark.unit
