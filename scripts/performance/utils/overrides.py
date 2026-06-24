@@ -421,6 +421,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             recipe.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
             recipe.model.moe_router_force_load_balancing = False
+            recipe.checkpoint.load_optim = False
+            recipe.checkpoint.load_rng = False
 
     elif args.data == "squad":
         if not args.dataset_root:
