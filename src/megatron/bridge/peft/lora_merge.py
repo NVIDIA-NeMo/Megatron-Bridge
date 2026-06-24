@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
-
 import torch
 import torch.distributed as dist
 
@@ -31,9 +29,8 @@ class LoRAMerge:
         alpha: int,
         dim: int,
         *,
-        tp_size: int,
-        tp_group: Optional[torch.distributed.ProcessGroup],
-        scale: Optional[float] = None,
+        tp_group: dist.ProcessGroup | None,
+        scale: float | None = None,
     ) -> torch.Tensor:
         """
         Merges the LoRA adapter weights with the base model weights.
@@ -57,7 +54,6 @@ class LoRAMerge:
             linear_in (torch.Tensor): LoRA's A matrix.
             alpha (int): Weighting factor for the low-rank projection.
             dim (int): Dimension of the low-rank projection space.
-            tp_size (int): Tensor-parallel world size for the adapter shard.
             tp_group: Tensor-parallel process group for the adapter shard.
             scale: Optional precomputed LoRA scale. Defaults to alpha / dim.
 
@@ -66,6 +62,7 @@ class LoRAMerge:
         """
 
         lora_scale = alpha / dim if scale is None else scale
+        tp_size = 1 if tp_group is None else tp_group.size()
 
         if tp_size == 1:
             lora_weight = lora_scale * (linear_out @ linear_in)

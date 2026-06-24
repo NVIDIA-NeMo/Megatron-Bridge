@@ -39,6 +39,16 @@ from megatron.bridge.peft.utils import (
 )
 
 
+class MockProcessGroup:
+    """Process group test double exposing the size used by LoRAMerge."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+
+    def size(self) -> int:
+        return self._size
+
+
 class SimpleModel(nn.Module):
     """Simple test model with various linear layers."""
 
@@ -853,7 +863,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -895,7 +904,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -951,8 +959,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights
@@ -1008,8 +1015,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights

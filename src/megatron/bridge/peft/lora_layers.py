@@ -49,12 +49,6 @@ class LoRALinear(AdapterWrapper):
 
         linear_in_weight = self.adapter.linear_in.weight
         linear_out_weight = self.adapter.linear_out.weight
-        tp_size = 1
-        if getattr(self.adapter, "input_is_parallel", False):
-            if linear_out_weight.shape[0] != base_weight.shape[0]:
-                tp_size = base_weight.shape[0] // linear_out_weight.shape[0]
-        elif linear_in_weight.shape[0] != linear_out_weight.shape[1]:
-            tp_size = linear_out_weight.shape[1] // linear_in_weight.shape[0]
 
         merged_weight = LoRAMerge().merge(
             base_weight,
@@ -62,7 +56,6 @@ class LoRALinear(AdapterWrapper):
             linear_in_weight,
             self.adapter.alpha,
             self.adapter.dim,
-            tp_size=tp_size,
             tp_group=getattr(self.adapter, "tp_group", None),
             scale=getattr(self.adapter, "scale", None),
         )
