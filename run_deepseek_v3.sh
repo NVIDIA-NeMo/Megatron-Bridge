@@ -91,25 +91,45 @@ export DET_DEBUG=${DET_DEBUG:-false}
 export NVTE_DEBUG=1
 export NVTE_DEBUG_LEVEL=2
 
+# MINIMAL=true: strict-minimum-override mode for testing whether the stock
+# v0.4.x recipe + `model.deterministic_mode=true` alone is enough. Drops all
+# other Hydra overrides (attention_backend, cross_entropy_loss_fusion,
+# tp_comm_overlap) and only keeps determinism-required env vars.
+MINIMAL=${MINIMAL:-false}
+
 if [ "$BACKEND" = "flash" ]; then
     export NVTE_FUSED_ATTN=0 NVTE_UNFUSED_ATTN=0 NVTE_FLASH_ATTN=1
-    additional_args="model.attention_backend=flash"
 elif [ "$BACKEND" = "fused" ]; then
     export NVTE_FUSED_ATTN=1 NVTE_UNFUSED_ATTN=0 NVTE_FLASH_ATTN=0
-    additional_args="model.attention_backend=fused"
 else
     echo "Invalid BACKEND=$BACKEND"; exit 1
+fi
+
+if [ "$MINIMAL" = "true" ]; then
+    additional_args=""
+else
+    additional_args="model.attention_backend=${BACKEND}"
 fi
 
 if [ "$DETERMINISTIC" = "true" ]; then
     export NCCL_ALGO="Ring"
     export NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
     export CUBLAS_WORKSPACE_CONFIG=:4096:8
-    additional_args="${additional_args} \
-        model.deterministic_mode=true \
-        model.cross_entropy_loss_fusion=false \
-        comm_overlap.tp_comm_overlap=false"
-    EXP_NAME="deterministic-${BACKEND}-${GPU}"
+    if [ "$MINIMAL" = "true" ]; then
+        # Per _validate_and_apply_deterministic_mode in src/megatron/bridge/training/config.py:
+        #   - deterministic_mode=true is the toggle (auto-calls torch.use_deterministic_algorithms)
+        #   - cross_entropy_loss_fusion=false is asserted (REQUIRED)
+        # tp_comm_overlap=false is defensive: the DSv3 recipe already sets it False, but
+        # asserting here makes the determinism contract explicit and resilient to recipe drift.
+        additional_args="model.deterministic_mode=true model.cross_entropy_loss_fusion=false comm_overlap.tp_comm_overlap=false"
+        EXP_NAME="deterministic-minimal-${GPU}"
+    else
+        additional_args="${additional_args} \
+            model.deterministic_mode=true \
+            model.cross_entropy_loss_fusion=false \
+            comm_overlap.tp_comm_overlap=false"
+        EXP_NAME="deterministic-${BACKEND}-${GPU}"
+    fi
 else
     EXP_NAME="non-deterministic-${BACKEND}-${GPU}"
 fi

@@ -2,7 +2,7 @@
 
 Branch: `zhiyul/deterministics_gb200_2604_dsv3`
 Submodule base: `NVIDIA/Megatron-LM@d7288711b` (v0.4.1 pin)
-Investigation period: Jun 2 – Jun 23, 2026
+Investigation period: Jun 2 – Jun 24, 2026
 
 ---
 
@@ -67,14 +67,44 @@ Applied to `3rdparty/Megatron-LM` (bind-mounted, submodule pointer unchanged):
   50 iterations **bit-identical** loss curves, with steady-state forward/
   backward overlap. The patch stack is sufficient at this scale.
 
+## 256-GPU production-scale findings (Jun 23–24)
+
+- **Full patch stack OOMs**: job `2192660` ran 21 minutes then crashed in
+  `grouped_linear.py:193 torch.empty(...)` during the first MoE forward.
+  No `-4 dim` crash, no `cudaErrorIllegalAddress`. Memory breakdown:
+  process held 184.05 GiB; only 238 MiB free at crash. Hypothesis: the
+  per-manager `_hybrid_ep_buffers: dict` allocates one buffer per
+  `_HybridEPManager` instance — at DSv3 production scale (61 layers,
+  PP=4 → ~14 MoE managers per rank, each holding a ~900 MiB
+  HybridEPBuffer), that's ~12 GiB of patch-induced memory pressure
+  vs. the original singleton.
+- **`MINIMAL=true` knob added to `run_deepseek_v3.sh`**: strips the
+  patch bind-mounts (uses stock `d7288711b`) and reduces Hydra overrides
+  to the codebase's actual determinism contract. The contract is
+  defined in `src/megatron/bridge/training/config.py:1002-1026`
+  (`_validate_and_apply_deterministic_mode`): exactly two overrides
+  are asserted-required (`model.deterministic_mode=true` plus
+  `model.cross_entropy_loss_fusion=false`), plus three required env
+  vars (`NCCL_ALGO=Ring`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`,
+  `NVTE_ALLOW_NONDETERMINISTIC_ALGO=0`). `comm_overlap.tp_comm_overlap=false`
+  is kept as a defensive override even though the DSv3 recipe already
+  pins it False — guards against recipe drift.
+
 ## What's still open
 
+- **256-GPU + MINIMAL outcome**: still PENDING in the Slurm queue at
+  doc time. Pending result: if vanilla 26.04 + the 3 codebase-required
+  determinism overrides runs cleanly at production scale, the entire
+  patch stack was unnecessary at scale. If it crashes with `-4 dim`
+  / illegal-address, we know the minimum needed patch is the
+  `enable_custom_allgather=False` flip (the smallest single-line fix
+  in the stack).
 - **16-GPU EP=8 (NUM_LAYERS=8, NUM_EXPERTS=32, GBS=256):** jobs `2188676`,
   `2188677` still hit the `-4 dim` crash. The `custom_allgather=False`
   fix is necessary but not sufficient — 26.04's new `intranode.cu` path
-  has its own uninitialised-tensor bug at EP ≥ 8. This is the production
-  blocker. Next step: bisect 26.02 → 26.04 DeepEP changes; the failing
-  symbol surfaces in `intranode.cu`'s metadata exchange, not `internode.cu`.
+  has its own uninitialised-tensor bug at EP ≥ 8. Next step: bisect 26.02
+  → 26.04 DeepEP changes; the failing symbol surfaces in `intranode.cu`'s
+  metadata exchange, not `internode.cu`.
 
 ---
 
@@ -96,8 +126,9 @@ DETERMINISTIC=true BACKEND=fused GPU=gb200 \
 
 | Var | Default | Effect |
 |-----|---------|--------|
-| `HYBRIDEP_SYNC` | `1` | `0` to disable the `torch.cuda.synchronize()` calls in `fused_a2a.py`. Use to test whether the cross-stream race fires at 256-GPU too, or is masked by NCCL barriers at scale. |
-| `RACE_NOISE` | `0` | `1` activates `_RaceNoiseStreams` around `train_step`. Per-rank seed = `0xC0FFEE + rank`. Paired runs A/B see identical noise per rank → if loss curves diverge, the race is real. |
+| `MINIMAL` | `false` | `true`: strips the patch bind-mounts and reduces Hydra overrides to the codebase's actual determinism contract (3 args). Use for the "does stock 26.04 + the 3 required overrides work?" baseline test. |
+| `HYBRIDEP_SYNC` | `1` | `0` to disable the `torch.cuda.synchronize()` calls in `fused_a2a.py`. Use to test whether the cross-stream race fires at 256-GPU too, or is masked by NCCL barriers at scale. Has no effect when `MINIMAL=true` (no patches loaded). |
+| `RACE_NOISE` | `0` | `1` activates `_RaceNoiseStreams` around `train_step`. Per-rank seed = `0xC0FFEE + rank`. Paired runs A/B see identical noise per rank → if loss curves diverge, the race is real. Has no effect when `MINIMAL=true`. |
 | `CUDA_LAUNCH_BLOCKING` | `0` | Leave at 0; setting to 1 only serialises everything and doesn't expose the real race. |
 | `NUM_LAYERS`, `NUM_EXPERTS`, `PP_SIZE`, `VP_SIZE`, `EP_SIZE`, `TP_SIZE`, `NUM_GPUS`, `GBS`, `FLEX_BACKEND` | (PerfConfig prod) | Small-scale reproducer overrides. |
 | `DETERMINISTIC` | `false` | `true` enables `model.deterministic_mode=true`, `NCCL_ALGO=Ring`, `CUBLAS_WORKSPACE_CONFIG=:4096:8`, etc. |
@@ -112,7 +143,7 @@ The submodule changes are pushed to a personal fork
 `patches/megatron-lm-dsv3-hybridep-determinism.patch` for cases where the
 fork isn't reachable.
 
-On the new cluster (fork-based, preferred):
+On the new cluster:
 
 ```bash
 # 1. clone main repo + checkout this branch
@@ -123,22 +154,28 @@ cd Megatron-Bridge
 # 2. init submodule (pulls v0.4.1 pin = d7288711b)
 git submodule update --init --recursive
 
-# 3a. (preferred) check out the fix branch from the personal fork:
+# 3. update secrets.sh and PYTHON path at the top of run_deepseek_v3.sh
+#    for the new cluster (HF_TOKEN, WANDB_API_KEY, container path).
+
+# 4. BASELINE TEST FIRST: stock 26.04 + codebase-required determinism overrides.
+#    No patches, no bind-mounts. This is the "does v0.4.x actually need the
+#    patches?" test. Submodule stays at d7288711b.
+MINIMAL=true DETERMINISTIC=true BACKEND=fused GPU=gb200 \
+    ./run_deepseek_v3.sh
+
+# 5. (if 4 fails with -4 dim / cudaErrorIllegalAddress) load the fix branch
+#    from the personal fork and rerun with full patches:
 git -C 3rdparty/Megatron-LM remote add fork \
     git@github.com:ZhiyuLi-Nvidia/Megatron-LM.git
 git -C 3rdparty/Megatron-LM fetch fork zhiyul/per_manager_hybridep_fix
 git -C 3rdparty/Megatron-LM checkout zhiyul/per_manager_hybridep_fix
-
-# 3b. (fallback) apply the bundled patch instead:
+# Fallback if the fork isn't reachable:
 # git -C 3rdparty/Megatron-LM apply ../../patches/megatron-lm-dsv3-hybridep-determinism.patch
 
-# 4. confirm bind-mounts will be detected by run_deepseek_v3.sh
+# 6. Confirm bind-mount detection (step 5 path):
 git -C 3rdparty/Megatron-LM diff --name-only d7288711b
 
-# 5. update secrets.sh and PYTHON path at the top of run_deepseek_v3.sh
-#    for the new cluster (HF_TOKEN, WANDB_API_KEY, container path).
-
-# 6. small-scale repro to validate the new cluster:
+# 7. small-scale repro (8 GPUs) to validate the patches before re-burning 256 GPUs:
 NUM_GPUS=8 PP_SIZE=2 VP_SIZE=2 EP_SIZE=4 NUM_LAYERS=8 NUM_EXPERTS=32 \
 FLEX_BACKEND=hybridep GBS=64 \
 DETERMINISTIC=true BACKEND=fused GPU=gb200 \
