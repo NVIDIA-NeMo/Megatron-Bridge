@@ -55,6 +55,7 @@ def _qwen35_vl_common(cfg: ConfigContainer) -> None:
     cfg.model.freeze_language_model = False
     cfg.model.freeze_vision_model = False
 
+
 def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     """VLM post-overrides that must run after ``_benchmark_common``.
 
@@ -65,16 +66,19 @@ def _qwen35_vl_post(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_impl = "none"
     cfg.optimizer.overlap_param_gather = False
 
+
 def _qwen35_vl_post_with_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3.5-VL post-overrides and optimizer-step param-gather overlap."""
     _qwen35_vl_post(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+
 
 def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3.5-VL post-overrides, clear graph scope, and enable overlap."""
     _qwen35_vl_post(cfg)
     cfg.model.cuda_graph_scope = []
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+
 
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults that must override generic benchmark defaults."""
@@ -92,10 +96,12 @@ def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_param_gather = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
+
 def _finalize_qwen3_vl_with_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with optimizer-step param-gather overlap."""
     _finalize_qwen3_vl(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+
 
 def _finalize_qwen3_vl_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with MoE A2A overlap enabled."""
@@ -103,6 +109,7 @@ def _finalize_qwen3_vl_with_moe_a2a_overlap(cfg: ConfigContainer) -> None:
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     cfg.comm_overlap.delay_wgrad_compute = True
     cfg.model.moe_shared_expert_overlap = False
+
 
 def _finalize_qwen3_vl_with_moe_a2a_and_overlap(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults with MoE A2A and optimizer-step overlap."""

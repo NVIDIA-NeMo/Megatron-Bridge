@@ -30,12 +30,14 @@ def kimi_k2_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 2
     return cfg
 
+
 def kimi_k2_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× B300, FP8 current-scaling."""
     cfg = kimi_k2_pretrain_256gpu_b200_fp8cs_config()
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 2
     return cfg
+
 
 def kimi_k2_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× B300, MXFP8."""

@@ -52,31 +52,6 @@ def gpt_oss_20b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 192
     return cfg
 
-def gpt_oss_20b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 8× GB300, MXFP8."""
-    cfg = gpt_oss_20b_pretrain_config()
-    cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 24
-    cfg.train.micro_batch_size = 3
-
-    _benchmark_common(cfg)
-    _apply_gpt_oss_20b_common_configs(cfg)
-    _apply_gpt_oss_20b_local_graph_configs(cfg)
-
-    cfg.model.moe_expert_rank_capacity_factor = 2
-    cfg.ddp.average_in_collective = True
-    cfg.optimizer.lr = 0.0005
-    cfg.optimizer.min_lr = 0.0005
-    cfg.validation.eval_interval = 512
-    cfg.validation.eval_iters = 43
-    cfg.scheduler.lr_warmup_iters = 256
-    return cfg
 
 def gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 72× GB300, NVFP4."""
@@ -102,30 +77,6 @@ def gpt_oss_20b_pretrain_72gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 64
     return cfg
 
-def gpt_oss_20b_pretrain_72gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """GPT-OSS 20B pretrain: 72× GB300, MXFP8."""
-    cfg = gpt_oss_20b_pretrain_config()
-    cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.context_parallel_size = 2
-    cfg.model.expert_model_parallel_size = 4
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 36
-    cfg.train.micro_batch_size = 1
-
-    _benchmark_common(cfg)
-    _apply_gpt_oss_20b_common_configs(cfg)
-    _apply_gpt_oss_20b_local_graph_configs(cfg)
-
-    cfg.model.moe_expert_rank_capacity_factor = 5
-    cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
-    cfg.validation.eval_interval = 341
-    cfg.validation.eval_iters = 29
-    cfg.scheduler.lr_warmup_iters = 256
-    return cfg
 
 def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_v3_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 512× GB300, MXFP8, v3."""
@@ -153,6 +104,7 @@ def gpt_oss_20b_pretrain_512gpu_gb300_fp8mx_v3_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 32
     return cfg
 
+
 def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× GB300, BF16, GBS=1280."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -172,6 +124,7 @@ def gpt_oss_120b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def gpt_oss_120b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× GB300, FP8-MX."""

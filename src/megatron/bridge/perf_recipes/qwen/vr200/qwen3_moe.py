@@ -32,6 +32,7 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, BF16 (alias of GB200)."""
     return qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config()
 
+
 def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, FP8-MX."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config()
@@ -39,13 +40,16 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = 3
     return cfg
 
+
 def qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× VR200, NVFP4 (alias of GB200)."""
     return qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config()
 
+
 def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, BF16 (alias of GB200)."""
     return qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config()
+
 
 def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX."""

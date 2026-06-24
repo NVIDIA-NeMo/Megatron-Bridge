@@ -48,6 +48,7 @@ def deepseek_v3_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -72,6 +73,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8."""
@@ -98,11 +100,13 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, NVFP4 (same layout as BF16)."""
     cfg = deepseek_v3_pretrain_256gpu_b200_bf16_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     return cfg
+
 
 def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""

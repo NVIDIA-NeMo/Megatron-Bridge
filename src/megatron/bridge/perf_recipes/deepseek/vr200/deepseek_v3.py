@@ -59,6 +59,7 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -88,6 +89,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -115,6 +117,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, NVFP4."""
@@ -144,17 +147,21 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB200)."""
     return deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-CS (alias of GB200)."""
     return deepseek_v3_pretrain_256gpu_gb200_fp8cs_config()
 
+
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB200)."""
     return deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
+
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB200)."""

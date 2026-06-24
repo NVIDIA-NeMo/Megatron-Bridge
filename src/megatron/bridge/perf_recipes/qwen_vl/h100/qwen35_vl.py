@@ -60,6 +60,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     _qwen35_vl_post_with_overlap(cfg)
     return cfg
 
+
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
@@ -89,6 +90,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
+
 
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 128× H100, BF16, TP=2 PP=8 VP=4 EP=16."""
@@ -120,11 +122,13 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
 
+
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 128× H100, FP8 current-scaling."""
     cfg = qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     return cfg
+
 
 def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
@@ -155,6 +159,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _qwen35_vl_post_clear_scope_with_overlap(cfg)
     return cfg
+
 
 def qwen35_vl_397b_a17b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 256× H100, FP8 current-scaling."""

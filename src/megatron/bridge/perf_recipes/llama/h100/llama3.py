@@ -52,6 +52,7 @@ def llama3_8b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_8b_pretrain_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× H100, FP8 current-scaling, recompute."""
     cfg = llama3_8b_pretrain_config()
@@ -78,6 +79,7 @@ def llama3_8b_pretrain_8gpu_h100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× H100, BF16, TP=4 PP=4 CP=2, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -100,6 +102,7 @@ def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
+
 
 def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× H100, FP8 current-scaling, TP=4 PP=8, GBS=256."""
@@ -124,6 +127,7 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
+
 def llama3_8b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 8B SFT: 8× H100, BF16, seq_length=4096."""
     cfg = llama3_8b_sft_config()
@@ -147,6 +151,7 @@ def llama3_8b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def llama3_8b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 8B SFT: 8× H100, FP8 current-scaling, seq_length=4096."""
@@ -174,6 +179,7 @@ def llama3_8b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 70B SFT: 32× H100, BF16, TP=4 PP=4 VP=5."""
@@ -205,6 +211,7 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 70B SFT: 32× H100, FP8 current-scaling, TP=4 PP=4 VP=5."""
@@ -241,6 +248,7 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× H100, BF16, PP=4 VP=20, recompute."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -275,6 +283,7 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× H100, FP8 current-scaling, TP=2 PP=4 VP=20."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -305,9 +314,11 @@ def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_8b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 64× H100, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_h100_bf16_config(), 1024)
+
 
 def llama3_8b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 64× H100, FP8 current-scaling, legacy-scaled GBS."""

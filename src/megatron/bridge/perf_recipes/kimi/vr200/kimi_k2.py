@@ -26,6 +26,7 @@ def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB200)."""
     return kimi_k2_pretrain_256gpu_gb200_bf16_config()
 
+
 def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB200)."""
     return kimi_k2_pretrain_256gpu_gb200_fp8mx_config()

@@ -58,11 +58,13 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     _qwen35_vl_post(cfg)
     return cfg
 
+
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, FP8 current-scaling."""
     cfg = qwen35_vl_35b_a3b_pretrain_8gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     return cfg
+
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 8× GB200, MXFP8 (no attn CUDA graph)."""
@@ -70,6 +72,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
     return cfg
+
 
 def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× GB200, BF16, PP=4 EP=8."""
@@ -103,17 +106,20 @@ def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     _qwen35_vl_post(cfg)
     return cfg
 
+
 def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× GB200, FP8 current-scaling."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     return cfg
 
+
 def qwen35_vl_122b_a10b_pretrain_32gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 32× GB200, MXFP8."""
     cfg = qwen35_vl_122b_a10b_pretrain_32gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     return cfg
+
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB200, BF16, PP=8 EP=8."""
@@ -147,11 +153,13 @@ def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     _qwen35_vl_post(cfg)
     return cfg
 
+
 def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB200, FP8 current-scaling."""
     cfg = qwen35_vl_397b_a17b_pretrain_64gpu_gb200_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     return cfg
+
 
 def qwen35_vl_397b_a17b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 64× GB200, MXFP8."""

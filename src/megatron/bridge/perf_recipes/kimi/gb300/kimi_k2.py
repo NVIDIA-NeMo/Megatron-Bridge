@@ -57,6 +57,7 @@ def kimi_k2_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.rng.te_rng_tracker = True
     return cfg
 
+
 def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB300, FP8 current-scaling."""
     cfg = kimi_k2_pretrain_config()
@@ -91,6 +92,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     cfg.rng.te_rng_tracker = True
     return cfg
+
 
 def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB300, MXFP8."""
@@ -128,6 +130,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     cfg.rng.te_rng_tracker = True
     return cfg
+
 
 def kimi_k2_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× GB300, NVFP4."""

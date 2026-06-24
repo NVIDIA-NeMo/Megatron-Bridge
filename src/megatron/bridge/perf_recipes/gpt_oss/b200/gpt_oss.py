@@ -41,6 +41,7 @@ def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B200, FP8-MX."""
     cfg = gpt_oss_120b_pretrain_config()

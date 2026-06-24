@@ -34,6 +34,7 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
 
+
 def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     """Apply shared DeepSeek V3 64-GPU GB300 Megatron FSDP settings."""
     _deepseek_v3_common(cfg)

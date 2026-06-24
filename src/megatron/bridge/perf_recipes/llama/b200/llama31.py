@@ -53,6 +53,7 @@ def llama31_405b_pretrain_128gpu_b200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama31_405b_pretrain_128gpu_b200_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 128× B200, FP8 current-scaling, TP=4 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
@@ -77,6 +78,7 @@ def llama31_405b_pretrain_128gpu_b200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama31_405b_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 128× B200, MXFP8, TP=4 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
@@ -98,6 +100,7 @@ def llama31_405b_pretrain_128gpu_b200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def llama31_405b_pretrain_128gpu_b200_nvfp4_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 128× B200, NVFP4, TP=4 PP=16."""
@@ -127,6 +130,7 @@ def llama31_405b_pretrain_128gpu_b200_nvfp4_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 llama31_405b_pretrain_256gpu_b200_bf16_config = llama31_405b_pretrain_256gpu_gb200_bf16_config
 

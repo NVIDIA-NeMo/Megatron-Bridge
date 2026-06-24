@@ -60,6 +60,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× GB200, FP8 current-scaling, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -92,6 +93,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× GB200, MXFP8, PP=8 EP=8."""
@@ -126,6 +128,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB200, BF16, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -158,6 +161,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB200, FP8 current-scaling, EP=8."""
@@ -192,6 +196,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB200, MXFP8, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -224,6 +229,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB200, BF16, PP=8 EP=8."""
@@ -258,6 +264,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB200, FP8 current-scaling, PP=8 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -290,6 +297,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB200, MXFP8, PP=8 EP=32."""
@@ -324,11 +332,13 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB200, FP8-MX, large-scale proxy (GBS=512)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config()
     cfg.train.global_batch_size = 512
     return cfg
+
 
 def qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 64× GB200, NVFP4 (same layout as FP8-CS)."""
@@ -336,25 +346,30 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("nvfp4")
     return cfg
 
+
 def qwen3_235b_a22b_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB200, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     return cfg
 
+
 def qwen3_30b_a3b_pretrain_32gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32× GB200, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config(), 2048)
 
+
 def qwen3_30b_a3b_pretrain_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32× GB200, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config(), 2048)
+
 
 def qwen3_next_80b_a3b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB200, BF16 (GB300 layout, MBS=2)."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()
     cfg.train.micro_batch_size = 2
     return cfg
+
 
 def qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB200, MXFP8 (same layout as BF16)."""

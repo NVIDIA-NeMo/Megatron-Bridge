@@ -47,6 +47,7 @@ def llama3_8b_pretrain_8gpu_r100_bf16_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_8b_pretrain_8gpu_r100_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, FP8 current-scaling."""
     cfg = llama3_8b_pretrain_config()
@@ -72,6 +73,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8cs_config() -> ConfigContainer:
     _benchmark_common(cfg)
     return cfg
 
+
 def llama3_8b_pretrain_8gpu_r100_fp8mx_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, MXFP8."""
     cfg = llama3_8b_pretrain_config()
@@ -96,6 +98,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     return cfg
+
 
 def llama3_8b_pretrain_8gpu_r100_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, NVFP4."""
