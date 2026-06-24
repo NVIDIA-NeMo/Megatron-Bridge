@@ -341,6 +341,24 @@ class MegatronPeftBridge:
         except ValueError:
             return None
 
+    def _strip_hf_expert_index(self, hf_name: str) -> str:
+        """Drop the ``experts.<idx>`` index from an HF MoE weight name.
+
+        A shared-outer adapter's shared side is replicated across experts, so it
+        is exported under the expert-agnostic name (``experts.gate_proj`` rather
+        than ``experts.0.gate_proj``) that the serving loader keys its 3D-shared
+        branch on. Mirrors :meth:`_infer_hf_expert_idx`'s name parsing.
+        """
+
+        parts = hf_name.split(".")
+        try:
+            experts_idx = parts.index("experts")
+        except ValueError:
+            return hf_name
+        if experts_idx + 1 < len(parts) and parts[experts_idx + 1].isdigit():
+            del parts[experts_idx + 1]
+        return ".".join(parts)
+
     def _split_qkv_linear_out_weight(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -856,6 +874,20 @@ class MegatronPeftBridge:
             linear_out_tensor = adapter_weight.linear_out_weight.weight
             is_expert = is_expert_linear(adapter_task.global_base_prefix)
             is_grouped_expert = is_expert and ".local_experts." not in adapter_task.global_base_prefix
+            is_shared_outer_lora = is_grouped_expert and linear_in_tensor.ndim != linear_out_tensor.ndim
+
+            if is_shared_outer_lora:
+                yield from self._stream_shared_outer_adapter_weights(
+                    megatron_model,
+                    mapping_registry,
+                    adapter_task,
+                    linear_in_tensor,
+                    linear_out_tensor,
+                    num_moe_experts,
+                    cpu,
+                )
+                continue
+
             expert_linear_in_gathered = None
             expert_linear_out_gathered = None
             if is_grouped_expert:
@@ -982,6 +1014,68 @@ class MegatronPeftBridge:
 
                 yield HFWeightTuple(linear_in_hf_names[0], current_linear_in_tensor)
                 yield HFWeightTuple(linear_out_hf_names[0], current_linear_out_tensor)
+
+    def _stream_shared_outer_adapter_weights(
+        self,
+        megatron_model: List[MegatronModel],
+        mapping_registry: "MegatronMappingRegistry",
+        adapter_task: AdapterWeightConversionTask,
+        linear_in_tensor: torch.Tensor,
+        linear_out_tensor: torch.Tensor,
+        num_moe_experts: int,
+        cpu: bool,
+    ) -> Iterable["HFWeightTuple"]:
+        """Stream a shared-outer grouped-expert LoRA adapter (SGLang PR #21466).
+
+        One side is a 2D LoRA matrix replicated across local experts; the other
+        is a per-expert 3D pack. The shared side is emitted once as a ``[1, ...]``
+        tensor under the expert-agnostic HF name (so the serving loader takes its
+        3D-shared branch); the per-expert side is gathered across EP ranks and
+        emitted once per global expert.
+        """
+
+        from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
+
+        is_expert = is_expert_linear(adapter_task.global_base_prefix)
+        for side_tensor, side_suffix in (
+            (linear_in_tensor, ".linear_in.weight"),
+            (linear_out_tensor, ".linear_out.weight"),
+        ):
+            if side_tensor.ndim == 2:
+                current = side_tensor.cpu() if cpu else side_tensor
+                current = current.unsqueeze(0)
+
+                base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+                    mapping_registry, adapter_task.global_base_prefix, adapter_task.adapter_key, ".weight0"
+                )
+                for base_name in base_hf_weight_names:
+                    hf_name = self._make_lora_param_name(self._strip_hf_expert_index(base_name), side_suffix)
+                    yield HFWeightTuple(hf_name, current)
+                continue
+
+            gathered = self._gather_expert_adapter_weight(side_tensor)
+            for expert_idx in range(num_moe_experts):
+                current = self._select_expert_adapter_weight(side_tensor, gathered, expert_idx, num_moe_experts)
+                if cpu:
+                    current = current.cpu()
+
+                base_hf_weight_names = self._get_base_hf_param_names_for_adapter(
+                    mapping_registry, adapter_task.global_base_prefix, adapter_task.adapter_key, f".weight{expert_idx}"
+                )
+                side_hf_names = [self._make_lora_param_name(name, side_suffix) for name in base_hf_weight_names]
+
+                per_base = None
+                if side_suffix == ".linear_out.weight" and adapter_task.adapter_key is None:
+                    per_base = self._get_fused_adapter_linear_out_slices(
+                        megatron_model, base_hf_weight_names, current, is_expert=is_expert
+                    )
+                if per_base is None:
+                    yield HFWeightTuple(side_hf_names[0], current)
+                    continue
+                for index, base_name in enumerate(base_hf_weight_names):
+                    chunk = per_base.get(base_name)
+                    assert chunk is not None, f"unknown projection name: {base_name!r}"
+                    yield HFWeightTuple(side_hf_names[index], chunk)
 
     def _get_fused_adapter_linear_out_slices(
         self,
