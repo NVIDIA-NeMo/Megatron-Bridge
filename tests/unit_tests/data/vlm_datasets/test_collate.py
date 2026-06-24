@@ -516,6 +516,7 @@ class _KimiDummyProcessor:
         self.tokenizer = _KimiDummyTokenizer()
         self._include_image = include_image
         self.template_kwargs = []
+        self.processor_kwargs = []
 
     def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
         self.template_kwargs.append(kwargs)
@@ -529,6 +530,7 @@ class _KimiDummyProcessor:
         return "dummy text"
 
     def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
+        self.processor_kwargs.append({"text": text, "medias": medias, "return_tensors": return_tensors, **kwargs})
         # Build minimal processor output with or without image data.
         seq = [1, 2, MEDIA_TOKEN_ID, 10, 11, 12, 3] if self._include_image else [1, 10, 11, 12, 3]
         input_ids = torch.tensor([seq])
@@ -655,6 +657,40 @@ def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
     collate.kimi_k25_vl_collate_fn(examples, proc)
 
     assert proc.template_kwargs[0]["tools"] == tools
+
+
+def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
+    proc = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "reasoning_content": "think", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["preserve_thinking"] is True
+    assert proc.processor_kwargs[0]["medias"] == []
+
+
+def test_kimi_k25_vl_collate_fn_keeps_loss_mask_selected_special_tokens():
+    proc = _KimiDummyProcessor(include_image=False)
+    proc.tokenizer.added_tokens_decoder = {10: "<|im_end|>"}
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert batch["labels"][0, 0].item() == 10
 
 
 # ---------------------------------------------------------------------------

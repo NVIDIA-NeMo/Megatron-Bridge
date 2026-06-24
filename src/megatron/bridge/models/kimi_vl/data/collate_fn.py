@@ -20,7 +20,6 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
@@ -161,7 +160,10 @@ def kimi_k25_vl_collate_fn(
     """
     del visual_keys, min_pixels, max_pixels
 
-    skipped_tokens = extract_skipped_token_ids(processor)
+    # Kimi SFT supervision is defined by the assistant-span loss mask. Do not
+    # globally drop special tokens such as <|im_end|>, which the assistant must
+    # learn to emit.
+    skipped_tokens = torch.empty(0, dtype=torch.long)
     boundary_config = infer_assistant_mask_boundary_config(processor)
 
     # Get media token ID
@@ -196,19 +198,20 @@ def kimi_k25_vl_collate_fn(
                     if isinstance(item, dict) and item.get("type") == "image":
                         medias.append({"type": "image", "image": item.get("image")})
 
+        template_kwargs = chat_template_kwargs_from_example(example)
+        template_kwargs.setdefault("preserve_thinking", True)
         text = processor.apply_chat_template(
             conversation,
             add_generation_prompt=False,
             tokenize=False,
-            **chat_template_kwargs_from_example(example),
+            **template_kwargs,
         )
 
         processor_kwargs = {
             "text": text,
+            "medias": medias,
             "return_tensors": "pt",
         }
-        if medias:
-            processor_kwargs["medias"] = medias
 
         sample_batch = processor(**processor_kwargs)
 
