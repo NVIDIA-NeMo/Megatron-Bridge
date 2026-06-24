@@ -201,6 +201,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
@@ -231,6 +232,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
             enable_in_batch_packing=self.enable_in_batch_packing,
+            defer_in_batch_packing_to_step=self.defer_in_batch_packing_to_step,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 

@@ -374,43 +374,6 @@ def chat_template_kwargs_from_example(
     return kwargs
 
 
-def _as_token_id_list(token_ids: Any) -> list[int]:
-    if token_ids is None:
-        return []
-    if isinstance(token_ids, torch.Tensor):
-        token_ids = token_ids.detach().cpu().tolist()
-    if isinstance(token_ids, (list, tuple)) and token_ids and isinstance(token_ids[0], torch.Tensor):
-        token_ids = [item.detach().cpu().tolist() for item in token_ids]
-    if isinstance(token_ids, (list, tuple)) and token_ids and isinstance(token_ids[0], (list, tuple)):
-        if len(token_ids) != 1:
-            return []
-        token_ids = token_ids[0]
-    return [int(token_id) for token_id in token_ids]
-
-
-def _conversation_from_example(
-    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
-) -> Sequence[Mapping[str, Any]]:
-    if isinstance(example_or_conversation, Mapping):
-        conversation = example_or_conversation.get("conversation", [])
-        return conversation if isinstance(conversation, Sequence) and not isinstance(conversation, str) else []
-    return example_or_conversation
-
-
-def chat_template_kwargs_from_example(
-    example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
-) -> dict[str, Any]:
-    """Return optional HF chat-template kwargs stored alongside a conversation."""
-    if not isinstance(example_or_conversation, Mapping):
-        return {}
-
-    kwargs: dict[str, Any] = {}
-    tools = example_or_conversation.get("tools")
-    if tools is not None:
-        kwargs["tools"] = tools
-    return kwargs
-
-
 def find_token_span(sequence: Sequence[int] | torch.Tensor, pattern: Sequence[int], start: int = 0) -> tuple[int, int]:
     """Find the first ``[start, end)`` token span matching ``pattern``.
 
