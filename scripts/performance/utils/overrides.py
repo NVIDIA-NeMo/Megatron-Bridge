@@ -413,6 +413,15 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             pin_memory=recipe.dataset.pin_memory,
             persistent_workers=recipe.dataset.persistent_workers,
         )
+
+        if args.model_family_name == "deepseek" and args.model_recipe_name == "deepseek_v3":
+            recipe.model.moe_paged_stash = True
+            recipe.model.moe_expert_rank_capacity_factor = 4
+            recipe.model.moe_paged_stash_buffer_size_factor_cuda = 1.5
+            recipe.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+
+            recipe.model.moe_router_force_load_balancing = False
+
     elif args.data == "squad":
         if not args.dataset_root:
             raise ValueError("--dataset-root is required for squad dataset")
