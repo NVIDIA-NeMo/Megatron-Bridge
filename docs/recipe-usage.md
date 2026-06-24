@@ -6,7 +6,7 @@ This guide will cover the next steps to make use of a training recipe, including
 ## Overview
 
 - **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
-- **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point. 
+- **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point.
 - **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
 
@@ -125,7 +125,7 @@ final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True
 apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 ```
 
-After the above snippet, `cfg` will be updated with all CLI-provided overrides. 
+After the above snippet, `cfg` will be updated with all CLI-provided overrides.
 A script containing the above code could be called like so:
 
 ```sh
@@ -204,8 +204,8 @@ if __name__ == "__main__":
     run.run(train_script, executor=executor)
 ```
 
-NeMo-Run supports launching on several different platforms, including [SLURM clusters](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#slurmexecutor).
-For more details, please see the NeMo-Run [documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#) for a list of supported platforms, their corresponding executors, and configuration instructions.
+NeMo-Run supports launching on several different platforms, including [SLURM clusters](https://docs.nvidia.com/nemo/run/latest/guides/executors/slurm.html).
+For more details, please see the NeMo-Run [documentation](https://docs.nvidia.com/nemo/run/latest/guides/execution.html) for a list of supported platforms, their corresponding executors, and configuration instructions.
 
 You can also forward arguments from the NeMo-Run launch script to the target script:
 
