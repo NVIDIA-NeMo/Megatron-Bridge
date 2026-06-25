@@ -74,7 +74,7 @@ def _packable_collate(
     sequence_length=None,
     pad_to_max_length=False,
     pad_to_multiple_of=128,
-    pack_sequences=False,
+    enable_in_batch_packing=False,
     in_batch_packing_pad_to_multiple_of=1,
 ):
     del (
@@ -85,7 +85,7 @@ def _packable_collate(
         pad_to_multiple_of,
         in_batch_packing_pad_to_multiple_of,
     )
-    return {"pack_sequences": pack_sequences}
+    return {"enable_in_batch_packing": enable_in_batch_packing}
 
 
 def _legacy_collate(examples, processor):
@@ -165,7 +165,7 @@ def test_conversation_dataset_preserves_legacy_custom_collate_contract():
 def test_conversation_dataset_rejects_legacy_custom_collate_when_packing_requested():
     from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 
-    with pytest.raises(ValueError, match="does not accept pack_sequences=True"):
+    with pytest.raises(ValueError, match="does not accept enable_in_batch_packing=True"):
         ConversationDataset(
             base_examples=[_example()],
             target_length=1,
@@ -593,7 +593,7 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
     train_ds, _, _ = provider.build_datasets(ctx)
 
     assert train_ds is not None
-    assert train_ds.collate_fn([_example()])["pack_sequences"] is True
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is True
 
 
 def test_hf_provider_can_defer_in_batch_packing_to_training_step(monkeypatch):
@@ -621,4 +621,4 @@ def test_hf_provider_can_defer_in_batch_packing_to_training_step(monkeypatch):
     train_ds, _, _ = provider.build_datasets(ctx)
 
     assert train_ds is not None
-    assert train_ds.collate_fn([_example()])["pack_sequences"] is False
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is False

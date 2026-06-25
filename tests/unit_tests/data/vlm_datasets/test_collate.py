@@ -223,7 +223,9 @@ def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
     ]
 
-    batch = collate.qwen2_audio_collate_fn(examples, _AudioProcessor(), sequence_length=128, pack_sequences=True)
+    batch = collate.qwen2_audio_collate_fn(
+        examples, _AudioProcessor(), sequence_length=128, enable_in_batch_packing=True
+    )
 
     assert batch["input_ids"].shape == (2, 128)
     assert "cu_seqlens" not in batch
@@ -453,7 +455,7 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         examples,
         _PackableProcessor(),
         sequence_length=16,
-        pack_sequences=True,
+        enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
 
@@ -707,7 +709,7 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
         sequence_length=256,
         pad_to_max_length=True,
         pad_to_multiple_of=32,
-        pack_sequences=True,
+        enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=8,
     )
 
@@ -719,7 +721,7 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     assert captured["kwargs"]["sequence_length"] == 256
     assert captured["kwargs"]["pad_to_max_length"] is True
     assert captured["kwargs"]["pad_to_multiple_of"] == 32
-    assert captured["kwargs"]["pack_sequences"] is True
+    assert captured["kwargs"]["enable_in_batch_packing"] is True
     assert captured["kwargs"]["in_batch_packing_pad_to_multiple_of"] == 8
 
 

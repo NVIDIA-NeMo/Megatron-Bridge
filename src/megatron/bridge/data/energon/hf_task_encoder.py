@@ -168,7 +168,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             sequence_length=self.seq_length,
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
-            pack_sequences=self.enable_in_batch_packing,
+            enable_in_batch_packing=self.enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 

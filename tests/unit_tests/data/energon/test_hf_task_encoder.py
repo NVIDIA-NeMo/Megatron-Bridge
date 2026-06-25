@@ -85,7 +85,7 @@ def _make_collate_fn(pixel_values=None, seen_examples=None):
         sequence_length=None,  # noqa: ARG001 - generic HF collate contract
         pad_to_max_length=False,  # noqa: ARG001 - generic HF collate contract
         pad_to_multiple_of=128,  # noqa: ARG001 - generic HF collate contract
-        pack_sequences=False,  # noqa: ARG001 - generic HF collate contract
+        enable_in_batch_packing=False,  # noqa: ARG001 - generic HF collate contract
         in_batch_packing_pad_to_multiple_of=1,  # noqa: ARG001 - generic HF collate contract
     ):
         if seen_examples is not None:
@@ -251,14 +251,14 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
             sequence_length=None,
             pad_to_max_length=False,
             pad_to_multiple_of=128,
-            pack_sequences=False,
+            enable_in_batch_packing=False,
             in_batch_packing_pad_to_multiple_of=1,
         ):
             del (
                 sequence_length,
                 pad_to_max_length,
                 pad_to_multiple_of,
-                pack_sequences,
+                enable_in_batch_packing,
                 in_batch_packing_pad_to_multiple_of,
             )
             seen_kwargs.update(

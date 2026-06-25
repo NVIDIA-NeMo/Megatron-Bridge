@@ -35,7 +35,7 @@ def nemotron_omni_collate_fn(
     visual_keys: object = None,
     min_pixels: int | None = None,
     max_pixels: int | None = None,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
@@ -48,7 +48,7 @@ def nemotron_omni_collate_fn(
     Audio is converted to mel spectrograms and added to the batch as
     ``sound_clips`` / ``sound_length`` tensors consumed by LLaVAModel.forward().
 
-    When ``pack_sequences=True``, samples in the microbatch are concatenated
+    When ``enable_in_batch_packing=True``, samples in the microbatch are concatenated
     along the sequence dim into a single ``[1, sum(L_i)]`` batch, and
     ``cu_seqlens`` / ``cu_seqlens_argmin`` / ``max_seqlen`` are emitted so
     TE's THD attention kernels handle per-sample masking without an attention
@@ -405,7 +405,7 @@ def nemotron_omni_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        pack_sequences=pack_sequences,
+        enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
     )

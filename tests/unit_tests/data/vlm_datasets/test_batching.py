@@ -112,7 +112,7 @@ def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
     prepare_vlm_batch_for_training(
         batch,
         sequence_length=16,
-        pack_sequences=True,
+        enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
 
@@ -158,7 +158,7 @@ def test_prepare_vlm_batch_for_training_packs_with_legacy_unpadded_aliases_witho
     prepare_vlm_batch_for_training(
         batch,
         sequence_length=16,
-        pack_sequences=True,
+        enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=1,
     )
 

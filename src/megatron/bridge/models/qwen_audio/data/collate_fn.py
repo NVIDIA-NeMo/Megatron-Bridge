@@ -34,7 +34,7 @@ def qwen2_audio_collate_fn(
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2-Audio model.
@@ -44,7 +44,7 @@ def qwen2_audio_collate_fn(
     - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
     - Loss mask derived directly from active label positions
     """
-    del visual_keys, min_pixels, max_pixels, pack_sequences
+    del visual_keys, min_pixels, max_pixels, enable_in_batch_packing
 
     texts = []
     audio_inputs = []
@@ -140,7 +140,7 @@ def qwen2_audio_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        pack_sequences=False,
+        enable_in_batch_packing=False,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         pad_token_id=int(pad_token_id or 0),
         ignore_index=IGNORE_INDEX,

@@ -160,7 +160,7 @@ def text_chat_collate_fn(
     pad_to_max_length: bool = False,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
     **kwargs: Any,
 ) -> dict[str, Any]:
@@ -178,10 +178,10 @@ def text_chat_collate_fn(
             ``max_length`` instead of the longest row in the batch.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
-        pack_sequences: If True, flatten the padded microbatch and emit
+        enable_in_batch_packing: If True, flatten the padded microbatch and emit
             packed-sequence metadata for GPT-style training steps.
         in_batch_packing_pad_to_multiple_of: Optional per-sequence length multiple
-            used when ``pack_sequences`` inserts padding for CP/SP constraints.
+            used when ``enable_in_batch_packing`` inserts padding for CP/SP constraints.
         **kwargs: Additional common collate kwargs accepted for parity with
             VLM collate functions and ignored by the text-only path.
 
@@ -233,7 +233,7 @@ def text_chat_collate_fn(
     batch["loss_mask"] = shifted_loss_mask
     batch["metadata"] = [_metadata_from_example(example) for example in examples]
     batch["token_count"] = [int(count) for count in batch["attention_mask"].sum(dim=1).tolist()]
-    if pack_sequences:
+    if enable_in_batch_packing:
         pad_token_id = getattr(tokenizer, "pad_token_id", None)
         if pad_token_id is None:
             pad_token_id = 0

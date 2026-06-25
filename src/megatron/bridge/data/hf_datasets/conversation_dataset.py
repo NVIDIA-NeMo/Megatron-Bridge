@@ -36,10 +36,10 @@ def _collate_kwargs_for_impl(
         return collate_kwargs
 
     supported_kwargs = {key: value for key, value in collate_kwargs.items() if key in parameters}
-    if require_packing_support and "pack_sequences" not in supported_kwargs:
+    if require_packing_support and "enable_in_batch_packing" not in supported_kwargs:
         raise ValueError(
             f"Collate function {getattr(collate_impl, '__name__', collate_impl)} "
-            "does not accept pack_sequences=True. Use a collate that supports in-batch packing."
+            "does not accept enable_in_batch_packing=True. Use a collate that supports in-batch packing."
         )
     return supported_kwargs
 
@@ -91,14 +91,14 @@ class ConversationDataset(torch.utils.data.Dataset):
             "sequence_length": sequence_length,
             "pad_to_max_length": pad_to_max_length,
             "pad_to_multiple_of": pad_to_multiple_of,
-            "pack_sequences": enable_in_batch_packing and not defer_in_batch_packing_to_step,
+            "enable_in_batch_packing": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
         if explicit_collate_impl:
             collate_kwargs = _collate_kwargs_for_impl(
                 collate_impl,
                 collate_kwargs,
-                require_packing_support=bool(collate_kwargs["pack_sequences"]),
+                require_packing_support=bool(collate_kwargs["enable_in_batch_packing"]),
             )
 
         def _bound_collate(batch: list) -> dict[str, torch.Tensor]:

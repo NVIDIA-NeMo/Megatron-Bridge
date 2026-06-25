@@ -105,7 +105,7 @@ def prepare_vlm_batch_for_training(
     sequence_length: int | None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
@@ -122,7 +122,7 @@ def prepare_vlm_batch_for_training(
             ``sequence_length``. This preserves the former PP/EP fixed-shape path.
         pad_to_multiple_of: Efficient non-packed length multiple used when
             ``pad_to_max_length`` is false.
-        pack_sequences: If true, flatten the microbatch and emit packed-sequence
+        enable_in_batch_packing: If true, flatten the microbatch and emit packed-sequence
             metadata instead of returning a padded attention mask.
         in_batch_packing_pad_to_multiple_of: Per-sequence packed length multiple
             for CP/SP constraints.
@@ -134,7 +134,7 @@ def prepare_vlm_batch_for_training(
     if not isinstance(tokens, torch.Tensor) or tokens.dim() != 2:
         raise ValueError("VLM batch preparation expects a 2D token tensor.")
 
-    if pack_sequences:
+    if enable_in_batch_packing:
         attention_mask = batch.get("attention_mask")
         if attention_mask is not None and (
             not isinstance(attention_mask, torch.Tensor)

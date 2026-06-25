@@ -42,7 +42,7 @@ def gemma3_vl_collate_fn(
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Gemma3 VL models."""
@@ -123,7 +123,7 @@ def gemma3_vl_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        pack_sequences=pack_sequences,
+        enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         ignore_index=IGNORE_INDEX,
     )
@@ -140,7 +140,7 @@ def gemma4_vl_collate_fn(
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
-    pack_sequences: bool = False,
+    enable_in_batch_packing: bool = False,
     in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Gemma4 VL models."""
@@ -153,7 +153,7 @@ def gemma4_vl_collate_fn(
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
-        pack_sequences=pack_sequences,
+        enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         assistant_mask_boundary_config=assistant_mask_boundary_config_from_markers(
             processor,
