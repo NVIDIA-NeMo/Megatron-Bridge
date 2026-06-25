@@ -42,6 +42,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -372,6 +373,26 @@ def _forward_step_common(
             vp_stage=_model_chunk_vp_stage(model),
         )
     timers("batch-generator").stop()
+
+    # Accumulate FLOPS metadata across micro-batches. The THD attention term Σᵢ sᵢ² is
+    # derived inline from cu_seqlens (kept on-device, sync-free); see
+    # accumulate_flops_metadata. Falls back to BSHD when cu_seqlens is absent.
+    #
+    # The cu_seqlens-driven THD path is only wired/validated for CP == 1 in this PR.
+    # Under context parallelism the batch (and its cu_seqlens) is CP-partitioned per
+    # rank, so the per-rank Σᵢ sᵢ² accounting here is not yet correct — that is the
+    # follow-up tracked in #4161. Until then, forward cu_seqlens only for CP == 1 so
+    # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
+    # change), instead of running the not-yet-CP-safe cu_seqlens path.
+    cp_use_thd = pg_collection.cp.size() == 1
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=cu_seqlens if cp_use_thd else None,
+        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
+        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
+        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
+    )
 
     forward_args = {
         "input_ids": tokens,
