@@ -16,8 +16,8 @@
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
+    _llama_benchmark_common,
     _perf_precision,
     _with_global_batch_size,
     llama3_8b_pretrain_config,
@@ -49,7 +49,7 @@ def llama3_8b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -76,7 +76,7 @@ def llama3_8b_pretrain_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -99,7 +99,7 @@ def llama3_70b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
@@ -123,7 +123,7 @@ def llama3_70b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
@@ -149,7 +149,7 @@ def llama3_8b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -177,7 +177,7 @@ def llama3_8b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = ["mlp"]
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -206,10 +206,11 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.defer_embedding_wgrad_compute = True
     cfg.comm_overlap.wgrad_deferral_limit = 22
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -242,10 +243,11 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
         wgrad_deferral_limit=22,
     )
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -277,10 +279,11 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap = False
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -308,10 +311,10 @@ def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
