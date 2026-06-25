@@ -373,6 +373,7 @@ def chat_template_kwargs_from_example(
         kwargs["tools"] = tools
     return kwargs
 
+
 def find_token_span(sequence: Sequence[int] | torch.Tensor, pattern: Sequence[int], start: int = 0) -> tuple[int, int]:
     """Find the first ``[start, end)`` token span matching ``pattern``.
 

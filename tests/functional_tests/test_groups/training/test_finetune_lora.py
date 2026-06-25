@@ -359,7 +359,8 @@ class TestLoRAFinetune:
         dataset_root = os.path.join(base_dir, "sft_data")
         if torch.distributed.get_rank() == 0:
             os.makedirs(dataset_root, exist_ok=True)
-            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(32)]
+            # Keep enough finite samples for dataloader_type="single" LoRA runs.
+            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(64)]
             with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row) + "\n")
