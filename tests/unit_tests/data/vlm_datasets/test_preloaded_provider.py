@@ -57,6 +57,48 @@ def _write_tmp_jsonl(rows):
     return path
 
 
+def test_preloaded_provider_defaults_trust_remote_code_false(monkeypatch):
+    """Test that provider-owned HF loading fails closed by default."""
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["path"] = path
+            seen["trust_remote_code"] = trust_remote_code
+            return Gemma3Processor()
+
+    monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
+
+    provider = pre.PreloadedVLMConversationProvider(seq_length=16, hf_processor_path="Qwen/attacker_processor")
+    provider.build_datasets(DatasetBuildContext(train_samples=0, valid_samples=0, test_samples=0))
+
+    assert seen == {"path": "Qwen/attacker_processor", "trust_remote_code": False}
+
+
+def test_preloaded_provider_explicit_trust_remote_code_true(monkeypatch):
+    """Test that explicit provider trust enables HF remote code loading."""
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["path"] = path
+            seen["trust_remote_code"] = trust_remote_code
+            return Gemma3Processor()
+
+    monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
+
+    provider = pre.PreloadedVLMConversationProvider(
+        seq_length=16,
+        hf_processor_path="Qwen/trusted_processor",
+        trust_remote_code=True,
+    )
+    provider.build_datasets(DatasetBuildContext(train_samples=0, valid_samples=0, test_samples=0))
+
+    assert seen == {"path": "Qwen/trusted_processor", "trust_remote_code": True}
+
+
 def test_split_text_by_placeholders_basic():
     parts = pre._split_text_by_placeholders("a<image>b<video>c", ["img.png"], ["vid.mp4"])  # noqa: SLF001
     types = [p["type"] for p in parts]

@@ -168,6 +168,31 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     assert isinstance(batch, dict)
 
 
+def test_hf_provider_defaults_trust_remote_code_false(monkeypatch):
+    """Test that HF conversation provider disables remote code by default."""
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["processor"] = (path, trust_remote_code)
+            return Gemma3Processor()
+
+    monkeypatch.setattr(dp_mod, "AutoProcessor", _AutoProcessor)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path="Qwen/attacker_processor",
+        maker_name="rdr",
+    )
+
+    provider._load_processor_or_tokenizer()  # noqa: SLF001
+
+    assert seen["processor"] == ("Qwen/attacker_processor", False)
+
+
 def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, caplog):
     import logging
 
