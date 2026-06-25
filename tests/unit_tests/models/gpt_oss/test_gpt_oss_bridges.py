@@ -64,7 +64,6 @@ class TestGptOssBridge:
         # Key fields mapped from HF config
         assert provider.num_layers == mock_pretrained.config.num_hidden_layers
         assert provider.num_moe_experts == mock_pretrained.config.num_local_experts
-        assert provider.is_hybrid_model is True
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16

@@ -105,7 +105,6 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     params_dtype: torch.dtype = torch.bfloat16
     fp16: bool = False
     bf16: bool = True
-    is_hybrid_model: bool = True
     num_layers: int | None = None
     mamba_num_groups: int = 8
     num_attention_heads: int = 1
