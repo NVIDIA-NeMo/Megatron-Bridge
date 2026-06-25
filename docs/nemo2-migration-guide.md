@@ -27,7 +27,7 @@ Megatron Bridge derives model provider settings from Hugging Face configs throug
 ### Supported Model Families
 
 Megatron Bridge supports the following model families through bridge mappings and provider classes:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `HybridModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
@@ -245,7 +245,8 @@ def create_finetune_config():
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=2048,
             ),
         ),
