@@ -55,6 +55,10 @@ HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 # three runs so the det-vs-nondet perf delta isolates determinism, not the fix.
 HYBRIDEP_SYNC="${HYBRIDEP_SYNC:-1}"
 HYBRIDEP_CUSTOM_ALLGATHER="${HYBRIDEP_CUSTOM_ALLGATHER:-0}"
+# DRYRUN=1: pass --dryrun to setup_experiment.py (build the recipe + Slurm script and
+# exit WITHOUT submitting), and skip the wait/CSV/leaderboard/bitwise steps. Use to
+# validate arg-wiring before spending 3x256 GPUs.
+DRYRUN="${DRYRUN:-0}"
 
 mkdir -p "$OUT_DIR"
 OUT_DIR=$(realpath "$OUT_DIR")
@@ -130,21 +134,17 @@ submit_run() {
     # Determinism toggle: det/det-bitwise get the 3 det env vars + deterministic_mode=true
     # + cross_entropy_loss_fusion=false; nondet drops them. (No MAMBA_DETERMINISTIC — DSv3
     # has no Mamba layers.) The HybridEP fix knobs are passed for ALL modes (crash-safety).
-    local DET_ENVS=()
-    local DET_MODE="false"
-    local CE_FUSION="true"
-    if [ "$MODE" != "nondet" ]; then
-        DET_ENVS=(
-            -E NCCL_ALGO=Ring
-            -E NVTE_ALLOW_NONDETERMINISTIC_ALGO=0
-            -E CUBLAS_WORKSPACE_CONFIG=:4096:8
-        )
-        DET_MODE="true"
-        CE_FUSION="false"
-    fi
+    # Determinism is enabled via the --deterministic FLAG, NOT positional model.*
+    # overrides: setup_experiment.py parse_known_args() silently IGNORES unknown
+    # positional args. The flag sets deterministic_mode=True + cross_entropy_loss_fusion
+    # =False + tp_comm_overlap=False in the recipe AND the NCCL/cuBLAS/TE determinism
+    # env vars via PerfEnvPlugin(deterministic=True). nondet omits the flag.
+    local DET_FLAG=()
+    [ "$MODE" != "nondet" ] && DET_FLAG=(--deterministic)
 
+    # nsys is driven entirely by these CLI flags; the NsysPlugin translates them into
+    # the profiling.* recipe overrides (positional profiling.* args would be ignored).
     local NSYS_CLI_FLAGS=()
-    local NSYS_HYDRA_OVERRIDES=()
     if [ "$ENABLE_NSYS" = "true" ]; then
         NSYS_CLI_FLAGS=(
             --enable_nsys
@@ -154,15 +154,10 @@ submit_run() {
             --nsys_trace cuda-sw,nvtx
             --export_nsys_sqlite
         )
-        NSYS_HYDRA_OVERRIDES=(
-            profiling.use_nsys_profiler=true
-            profiling.profile_step_start="$NSYS_START"
-            profiling.profile_step_end="$NSYS_STOP"
-            "profiling.profile_ranks=$PROFILE_RANKS_HYDRA"
-            profiling.nvtx_ranges=true
-            profiling.record_shapes=false
-        )
     fi
+
+    local DRYRUN_ARG=()
+    [ "$DRYRUN" = "1" ] && DRYRUN_ARG=(--dryrun)
 
     # DSv3 recipe: keep the production HybridEP dispatcher (do NOT force alltoall).
     "$PYTHON" scripts/performance/setup_experiment.py \
@@ -174,6 +169,7 @@ submit_run() {
         -ng "$NGPUS" -gn "$GN" \
         "${GRES_ARG[@]}" \
         "${SLURM_EXTRA_ARG[@]}" \
+        "${DRYRUN_ARG[@]}" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
         -hf "$HF_TOKEN" \
@@ -182,30 +178,28 @@ submit_run() {
         -wdj "$WDJ" \
         --task pretrain \
         "${NSYS_CLI_FLAGS[@]}" \
-        "${DET_ENVS[@]}" \
+        "${DET_FLAG[@]}" \
         -E HYBRIDEP_SYNC="$HYBRIDEP_SYNC" \
         -E HYBRIDEP_CUSTOM_ALLGATHER="$HYBRIDEP_CUSTOM_ALLGATHER" \
         -E RACE_NOISE=0 \
+        -E NVTE_FUSED_ATTN=1 \
+        -E NVTE_UNFUSED_ATTN=0 \
+        -E NVTE_FLASH_ATTN=0 \
         -E HF_HOME="$HF_CACHE" \
         -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
         -E TRANSFORMERS_CACHE="$HF_CACHE" \
         -E HF_HUB_OFFLINE="$HF_HUB_OFFLINE" \
         -E TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" \
-        model.attention_backend=fused \
-        model.deterministic_mode="$DET_MODE" \
-        model.cross_entropy_loss_fusion="$CE_FUSION" \
-        comm_overlap.tp_comm_overlap=false \
-        logger.tensorboard_dir=/nemo_run/tensorboard \
-        logger.log_interval=1 \
-        logger.log_throughput=true \
-        logger.log_throughput_to_tensorboard=true \
-        logger.log_memory_to_tensorboard=true \
-        logger.throughput_window_size=1 \
-        logger.tensorboard_log_interval=1 \
-        train.manual_gc=true \
-        train.manual_gc_interval=100 \
-        "${NSYS_HYDRA_OVERRIDES[@]}" 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
+        2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
 
+    if [ "$DRYRUN" = "1" ]; then
+        if grep -q "dryrun requested: exiting" "$OUT_DIR/submit-${MODE}.log"; then
+            echo "DRYRUN OK ($MODE): recipe + Slurm script built, no job submitted (wandb=$WDJ)"
+        else
+            echo "DRYRUN FAILED ($MODE): see $OUT_DIR/submit-${MODE}.log" >&2; exit 1
+        fi
+        return
+    fi
     grep -oE "Job id: [0-9]+" "$OUT_DIR/submit-${MODE}.log" | head -1 | awk '{print $3}' > "$OUT_DIR/jobid-${MODE}.txt"
     echo "$MODE job: $(cat "$OUT_DIR/jobid-${MODE}.txt")  (wandb=$WDJ)"
     echo "$WDJ" > "$OUT_DIR/wdj-${MODE}.txt"
@@ -214,6 +208,10 @@ submit_run() {
 submit_run det
 submit_run nondet
 submit_run det-bitwise
+if [ "$DRYRUN" = "1" ]; then
+    echo ""; echo "DRYRUN complete — all 3 modes built cleanly, nothing submitted. Re-run without DRYRUN=1 to launch."
+    exit 0
+fi
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
 JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
