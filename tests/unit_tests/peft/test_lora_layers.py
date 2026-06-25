@@ -44,14 +44,24 @@ from megatron.bridge.peft.utils import AdapterAttributes
 class MockLinearWithTupleReturn(nn.Module):
     """Mock linear module that returns tuples like Megatron layers."""
 
-    def __init__(self, in_features=10, out_features=10):
+    def __init__(self, in_features=10, out_features=10, bias=True):
         super().__init__()
-        self.linear = nn.Linear(in_features, out_features)
+        self.linear = nn.Linear(in_features, out_features, bias=bias)
 
     def forward(self, x, *args, **kwargs):
         """Return tuple format like Megatron linear layers."""
         output = self.linear(x)
         return output, None  # (output, bias)
+
+    @property
+    def weight(self):
+        """Return the wrapped linear weight."""
+        return self.linear.weight
+
+    @property
+    def bias(self):
+        """Return the wrapped linear bias."""
+        return self.linear.bias
 
 
 class MockParallelLinearAdapter(nn.Module):
@@ -66,6 +76,23 @@ class MockParallelLinearAdapter(nn.Module):
     def forward(self, x):
         """Forward pass returning tuple format."""
         return self.linear(x) * 0.1  # Scale down to simulate adapter
+
+
+class MockLoRAAdapter(nn.Module):
+    """Mock LoRA adapter with explicit A/B matrices for testing effective weights."""
+
+    def __init__(self, in_features=10, out_features=10, dim=2, alpha=4):
+        """Initialize mock LoRA adapter."""
+        super().__init__()
+        self.dim = dim
+        self.alpha = alpha
+        self.scale = alpha / dim
+        self.linear_in = nn.Linear(in_features, dim, bias=False)
+        self.linear_out = nn.Linear(dim, out_features, bias=False)
+
+    def forward(self, x):
+        """Return only the scaled LoRA delta."""
+        return self.linear_out(self.linear_in(x)) * self.scale
 
 
 class TestLoRALinear:
@@ -116,6 +143,65 @@ class TestLoRALinear:
         # Verify addition
         expected = base_output + adapter_output
         assert torch.allclose(lora_output, expected, atol=1e-6)
+
+    def test_lora_linear_weight_returns_effective_weight(self):
+        """Test that LoRALinear.weight includes the active LoRA delta."""
+        base = MockLinearWithTupleReturn(in_features=3, out_features=2)
+        adapter = MockLoRAAdapter(in_features=3, out_features=2, dim=2, alpha=4)
+
+        with torch.no_grad():
+            base.weight.copy_(torch.tensor([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]))
+            adapter.linear_in.weight.copy_(torch.tensor([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]))
+            adapter.linear_out.weight.copy_(torch.tensor([[0.7, 0.8], [0.9, 1.0]]))
+
+        lora_linear = LoRALinear(base, adapter)
+        expected_weight = base.weight + adapter.scale * (adapter.linear_out.weight @ adapter.linear_in.weight)
+
+        assert torch.allclose(lora_linear.weight, expected_weight)
+
+    def test_lora_linear_weight_returns_base_weight_when_disabled(self):
+        """Test that disabled adapters expose the original base weight."""
+        base = MockLinearWithTupleReturn(in_features=3, out_features=2)
+        adapter = MockLoRAAdapter(in_features=3, out_features=2, dim=2, alpha=4)
+        lora_linear = LoRALinear(base, adapter)
+
+        lora_linear.disable_adapter_layers()
+
+        assert lora_linear.weight is base.weight
+
+    def test_lora_linear_bias_returns_base_bias(self):
+        """Test that LoRALinear.bias exposes the wrapped module bias."""
+        base = MockLinearWithTupleReturn(in_features=3, out_features=2)
+        adapter = MockLoRAAdapter(in_features=3, out_features=2, dim=2, alpha=4)
+        lora_linear = LoRALinear(base, adapter)
+
+        assert lora_linear.bias is base.bias
+
+    def test_lora_linear_bias_returns_none_without_base_bias(self):
+        """Test that LoRALinear.bias is None when the wrapped module has no bias."""
+        base = MockLinearWithTupleReturn(in_features=3, out_features=2, bias=False)
+        adapter = MockLoRAAdapter(in_features=3, out_features=2, dim=2, alpha=4)
+        lora_linear = LoRALinear(base, adapter)
+
+        assert lora_linear.bias is None
+
+    def test_lora_linear_weight_matches_forward_delta(self):
+        """Test that the effective weight reproduces the LoRALinear forward output."""
+        base = MockLinearWithTupleReturn(in_features=3, out_features=2)
+        adapter = MockLoRAAdapter(in_features=3, out_features=2, dim=2, alpha=4)
+
+        with torch.no_grad():
+            adapter.linear_in.weight.copy_(torch.tensor([[0.2, -0.1, 0.3], [0.4, 0.5, -0.2]]))
+            adapter.linear_out.weight.copy_(torch.tensor([[0.6, -0.3], [0.1, 0.7]]))
+
+        lora_linear = LoRALinear(base, adapter)
+        x = torch.randn(5, 3)
+
+        output, bias = lora_linear(x)
+        expected_output = torch.nn.functional.linear(x, lora_linear.weight, base.bias)
+
+        assert bias is None
+        assert torch.allclose(output, expected_output, atol=1e-6)
 
 
 class TestLinearAdapter:
