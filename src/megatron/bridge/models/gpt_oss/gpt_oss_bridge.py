@@ -193,6 +193,7 @@ class GPTOSSBridge(MegatronModelBridge):
         # Convert each dictionary entry to AutoMapping(hf_param, megatron_param)
         for hf_param, megatron_param in param_mappings.items():
             mapping_list.append(AutoMapping(hf_param=hf_param, megatron_param=megatron_param))
+        # HybridModel names the final normalization weight differently from GPTModel.
         mapping_list.append(AutoMapping(hf_param="model.norm.weight", megatron_param="decoder.final_norm.weight"))
 
         if num_hf_layers is not None:

@@ -70,6 +70,14 @@ class TestGptOssBridge:
         assert provider.hybrid_stack_spec is None
         assert provider.hybrid_layer_pattern == "*E" * mock_pretrained.config.num_hidden_layers
         assert provider.window_attn_skip_freq[:4] == [True, False, False, False]
+        assert provider.position_embedding_type == "yarn"
+        assert provider.yarn_rotary_scaling_factor == 32.0
+        assert provider.yarn_original_max_position_embeddings == 4096
+        assert provider.yarn_beta_fast == 32.0
+        assert provider.yarn_beta_slow == 1.0
+        assert provider.yarn_correction_range_round_to_int is False
+        assert provider.yarn_mscale is None
+        assert provider.yarn_mscale_all_dim is None
 
     def test_mapping_registry_splits_hf_layer_across_attention_and_moe_layers(self, mock_pretrained):
         bridge = GPTOSSBridge()
