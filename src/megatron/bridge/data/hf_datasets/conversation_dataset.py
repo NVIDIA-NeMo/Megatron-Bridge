@@ -91,6 +91,8 @@ class ConversationDataset(torch.utils.data.Dataset):
             "sequence_length": sequence_length,
             "pad_to_max_length": pad_to_max_length,
             "pad_to_multiple_of": pad_to_multiple_of,
+            # Active deferral user: Qwen3-VL. Other VLM/HF collates should pack
+            # here when enable_in_batch_packing is set.
             "enable_in_batch_packing": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }

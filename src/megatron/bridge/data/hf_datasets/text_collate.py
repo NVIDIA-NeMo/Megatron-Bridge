@@ -24,7 +24,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _convert_to_openai_messages
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_packing import pack_padded_sequences_in_batch
+from megatron.bridge.data.sequence_packing import pack_padded_batch_to_packed_sequences
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
@@ -237,7 +237,7 @@ def text_chat_collate_fn(
         pad_token_id = getattr(tokenizer, "pad_token_id", None)
         if pad_token_id is None:
             pad_token_id = 0
-        pack_padded_sequences_in_batch(
+        pack_padded_batch_to_packed_sequences(
             batch,
             pad_token_id=int(pad_token_id),
             ignore_index=ignore_index,

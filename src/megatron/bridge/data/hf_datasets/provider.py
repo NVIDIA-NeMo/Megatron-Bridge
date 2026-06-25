@@ -87,6 +87,9 @@ class HFConversationDatasetProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     enable_in_batch_packing: bool = False
+    # Active user: Qwen3-VL. Its model step owns the packing path because it
+    # needs the original tensors before building Qwen3-VL-specific packed
+    # metadata. Qwen3.5-VL also sets this defensively while packing is off.
     defer_in_batch_packing_to_step: bool = False
 
     # Collate-time VLM padding controls. ConfigContainer sets pad_to_max_length

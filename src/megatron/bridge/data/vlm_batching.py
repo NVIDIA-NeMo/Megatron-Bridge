@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_packing import pack_padded_sequences_in_batch
+from megatron.bridge.data.sequence_packing import pack_padded_batch_to_packed_sequences
 
 
 def _ceil_to_multiple(value: int, multiple: int) -> int:
@@ -99,7 +99,7 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
-def prepare_vlm_batch_for_training(
+def prepare_vlm_batch_sequences_for_training(
     batch: MutableMapping[str, Any],
     *,
     sequence_length: int | None,
@@ -110,7 +110,7 @@ def prepare_vlm_batch_for_training(
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
 ) -> None:
-    """Prepare a VLM collate batch for the VLM training step.
+    """Prepare padded or packed VLM sequence tensors for the training step.
 
     Args:
         batch: Mutable collate batch with ``input_ids`` or ``tokens`` plus
@@ -142,7 +142,7 @@ def prepare_vlm_batch_for_training(
             or attention_mask.shape != tokens.shape
         ):
             batch["attention_mask"] = None
-        pack_padded_sequences_in_batch(
+        pack_padded_batch_to_packed_sequences(
             batch,
             pad_token_id=pad_token_id,
             ignore_index=ignore_index,

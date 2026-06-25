@@ -46,7 +46,7 @@ def _ceil_to_multiple(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
 
-def pack_padded_sequences_in_batch(
+def pack_padded_batch_to_packed_sequences(
     batch: MutableMapping[str, Any],
     *,
     pad_token_id: int = 0,
@@ -59,7 +59,7 @@ def pack_padded_sequences_in_batch(
     position_ids_key: str = "position_ids",
     attention_mask_key: str = "attention_mask",
 ) -> None:
-    """Flatten a padded microbatch and attach packed-sequence metadata.
+    """Convert a padded microbatch to packed sequence layout in place.
 
     The helper mutates ``batch`` in place. It converts text-like tensors from
     ``[B, S]`` to ``[1, sum(L_i)]`` and emits metadata consumed by
@@ -168,7 +168,7 @@ def pack_padded_sequences_in_batch(
         batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
 
 
-def pack_batch_sequences(
+def pack_padded_batch_to_legacy_tuple(
     tokens: torch.Tensor,
     labels: torch.Tensor | None,
     loss_mask: torch.Tensor | None,
@@ -186,10 +186,10 @@ def pack_batch_sequences(
     torch.Tensor,
     torch.Tensor,
 ]:
-    """Pack 2D sequence tensors and return the legacy tuple form.
+    """Convert padded sequence tensors and return the legacy tuple form.
 
-    This compatibility wrapper keeps older audio/VLM callers off the training
-    step module while reusing the collate-time packing implementation.
+    This compatibility wrapper keeps older step-time callers on their existing
+    return contract while reusing the shared packed sequence implementation.
     """
     batch: dict[str, Any] = {
         "input_ids": tokens,
@@ -198,7 +198,7 @@ def pack_batch_sequences(
         "attention_mask": padding_mask,
         "position_ids": position_ids,
     }
-    pack_padded_sequences_in_batch(
+    pack_padded_batch_to_packed_sequences(
         batch,
         pad_token_id=pad_token_id,
         pad_to_multiple_of=pad_to_multiple_of,

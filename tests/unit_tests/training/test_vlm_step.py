@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.data.sequence_packing import pack_batch_sequences
+from megatron.bridge.data.sequence_packing import pack_padded_batch_to_legacy_tuple
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 from megatron.bridge.training.vlm_step import (
     forward_step,
@@ -583,7 +583,7 @@ def test_forward_step_schedule_plan(monkeypatch):
 
 
 class TestPackBatchSequences:
-    """Tests for the pack_batch_sequences function."""
+    """Tests for the pack_padded_batch_to_legacy_tuple function."""
 
     def test_basic_packing(self):
         """Test basic sequence packing functionality."""
@@ -610,7 +610,7 @@ class TestPackBatchSequences:
         position_ids = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
         attention_mask = None
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -657,7 +657,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(10).unsqueeze(0).expand(batch_size, -1)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -697,7 +697,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -721,7 +721,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(8).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -754,7 +754,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(4).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -777,7 +777,7 @@ class TestPackBatchSequences:
         loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0, 0.0]])  # Second token masked
         position_ids = torch.arange(5).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -812,7 +812,7 @@ class TestPackBatchSequences:
             ]
         )
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -840,7 +840,7 @@ class TestPackBatchSequences:
         position_ids = torch.arange(4).unsqueeze(0)
 
         with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
-            pack_batch_sequences(
+            pack_padded_batch_to_legacy_tuple(
                 tokens=tokens,
                 labels=labels,
                 loss_mask=loss_mask,
@@ -857,7 +857,7 @@ class TestPackBatchSequences:
         loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]], dtype=torch.float32)
         position_ids = torch.tensor([[0, 1, 2, 3]], dtype=torch.long)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -883,7 +883,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.tensor([[0, 1, 2, 3]])
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -912,7 +912,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(3).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -935,7 +935,7 @@ class TestPackBatchSequences:
         )
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=None,
             loss_mask=None,
@@ -967,7 +967,7 @@ class TestPackBatchSequences:
         )
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=None,
             loss_mask=None,
@@ -992,7 +992,7 @@ class TestPackBatchSequences:
         position_ids = torch.arange(4).unsqueeze(0)
 
         with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
-            pack_batch_sequences(
+            pack_padded_batch_to_legacy_tuple(
                 tokens=tokens,
                 labels=None,
                 loss_mask=None,
@@ -1012,7 +1012,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float, device="cuda")
         position_ids = torch.arange(5, device="cuda").unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = pack_padded_batch_to_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,

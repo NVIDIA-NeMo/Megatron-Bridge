@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_sequences_for_training
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
@@ -320,7 +320,7 @@ def kimi_k25_vl_collate_fn(
     for key in ("pixel_values", "pixel_values_videos", "grid_thws", "video_grid_thw"):
         result.pop(key, None)
     result["visual_inputs"] = visual_inputs
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         result,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

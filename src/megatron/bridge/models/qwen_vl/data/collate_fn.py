@@ -19,7 +19,7 @@ import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_sequences_for_training
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
@@ -221,7 +221,7 @@ def qwen2_5_collate_fn(
     for key in THW_GRID_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

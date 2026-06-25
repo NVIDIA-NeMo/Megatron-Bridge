@@ -15,13 +15,13 @@
 import pytest
 import torch
 
-from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_sequences_for_training
 
 
 pytestmark = pytest.mark.unit
 
 
-def test_prepare_vlm_batch_for_training_pads_to_efficiency_multiple():
+def test_prepare_vlm_batch_sequences_for_training_pads_to_efficiency_multiple():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3]]),
         "labels": torch.tensor([[2, 3, -100]]),
@@ -30,7 +30,7 @@ def test_prepare_vlm_batch_for_training_pads_to_efficiency_multiple():
         "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
     }
 
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         batch,
         sequence_length=10,
         pad_to_max_length=False,
@@ -44,7 +44,7 @@ def test_prepare_vlm_batch_for_training_pads_to_efficiency_multiple():
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0]]
 
 
-def test_prepare_vlm_batch_for_training_pads_to_model_length_when_required():
+def test_prepare_vlm_batch_sequences_for_training_pads_to_model_length_when_required():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3]]),
         "labels": torch.tensor([[2, 3, -100]]),
@@ -53,7 +53,7 @@ def test_prepare_vlm_batch_for_training_pads_to_model_length_when_required():
         "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
     }
 
-    prepare_vlm_batch_for_training(batch, sequence_length=6, pad_to_max_length=True)
+    prepare_vlm_batch_sequences_for_training(batch, sequence_length=6, pad_to_max_length=True)
 
     assert batch["input_ids"].shape == (1, 6)
     assert batch["labels"].tolist() == [[2, 3, -100, -100, -100, -100]]
@@ -62,7 +62,7 @@ def test_prepare_vlm_batch_for_training_pads_to_model_length_when_required():
     assert batch["attention_mask"].tolist() == [[1, 1, 1, 0, 0, 0]]
 
 
-def test_prepare_vlm_batch_for_training_handles_rectangular_4d_attention_mask():
+def test_prepare_vlm_batch_sequences_for_training_handles_rectangular_4d_attention_mask():
     batch = {
         "input_ids": torch.tensor([[1, 2, 3]]),
         "labels": torch.tensor([[2, 3, -100]]),
@@ -71,7 +71,7 @@ def test_prepare_vlm_batch_for_training_handles_rectangular_4d_attention_mask():
         "attention_mask": torch.ones((1, 1, 3, 2), dtype=torch.bool),
     }
 
-    prepare_vlm_batch_for_training(batch, sequence_length=4, pad_to_max_length=True)
+    prepare_vlm_batch_sequences_for_training(batch, sequence_length=4, pad_to_max_length=True)
 
     assert batch["attention_mask"].shape == (1, 1, 4, 4)
     assert batch["attention_mask"][0, 0, :3, :2].all()
@@ -79,7 +79,7 @@ def test_prepare_vlm_batch_for_training_handles_rectangular_4d_attention_mask():
     assert not batch["attention_mask"][0, 0, :, 2:].any()
 
 
-def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
+def test_prepare_vlm_batch_sequences_for_training_packs_and_emits_metadata():
     batch = {
         "input_ids": torch.tensor(
             [
@@ -109,7 +109,7 @@ def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
         ),
     }
 
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         batch,
         sequence_length=16,
         enable_in_batch_packing=True,
@@ -125,7 +125,7 @@ def test_prepare_vlm_batch_for_training_packs_and_emits_metadata():
     assert batch["cu_seqlens_unpadded_argmin"].item() == 3
 
 
-def test_prepare_vlm_batch_for_training_packs_with_legacy_unpadded_aliases_without_extra_padding():
+def test_prepare_vlm_batch_sequences_for_training_packs_with_legacy_unpadded_aliases_without_extra_padding():
     batch = {
         "input_ids": torch.tensor(
             [
@@ -155,7 +155,7 @@ def test_prepare_vlm_batch_for_training_packs_with_legacy_unpadded_aliases_witho
         ),
     }
 
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         batch,
         sequence_length=16,
         enable_in_batch_packing=True,

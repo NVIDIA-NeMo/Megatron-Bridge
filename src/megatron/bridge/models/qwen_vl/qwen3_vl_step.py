@@ -156,7 +156,7 @@ def get_batch(
     )
 
 
-def pack_or_pad_batch_sequences(
+def prepare_qwen3_vl_batch_sequences_for_step(
     tokens: torch.Tensor,
     labels: torch.Tensor,
     loss_mask: torch.Tensor,
@@ -167,10 +167,10 @@ def pack_or_pad_batch_sequences(
     force_to_pad_to_seq_len: bool = False,
     seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
-    """
-    Pad or truncate the batch sequences to the target length, and build packed sequences.
-    If is_qwen3vl, return bshd tokens for be compatible with qwen3vl model.
-    Otherwise, return thd tokens and packed sequences.
+    """Prepare Qwen3-VL step-owned sequence tensors and packed metadata.
+
+    Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
+    while still building ``PackedSeqParams`` for attention boundaries.
     """
 
     batch_size, cur_len = tokens.shape
@@ -181,7 +181,7 @@ def pack_or_pad_batch_sequences(
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
 
-    # build bshd sequences with tiny padding to be compatible with qwen3vl model
+    # Keep BS-layout tensors with minimal padding for Qwen3-VL model forward.
     target_len = math.ceil(cur_len / divisible_by) * divisible_by
     if force_to_pad_to_seq_len:
         target_len = seq_length
@@ -251,20 +251,22 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, is_first_pp_stage=is_first, is_last_pp_stage=is_last)
     timers("batch-generator").stop()
 
-    # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
-    # Qwen3VL model need the original input and do cp and sp split in model.forward.
+    # Qwen3-VL keeps sequence preparation in the step because model.forward
+    # needs the original input IDs before doing model-specific CP/SP handling.
     enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
-        tokens,
-        labels,
-        loss_mask,
-        attention_mask,
-        position_ids,
-        this_pg_collection,
-        use_fp8_padding=True,
-        force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
-        seq_length=config.seq_length,
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = (
+        prepare_qwen3_vl_batch_sequences_for_step(
+            tokens,
+            labels,
+            loss_mask,
+            attention_mask,
+            position_ids,
+            this_pg_collection,
+            use_fp8_padding=True,
+            force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
+            seq_length=config.seq_length,
+        )
     )
     forward_args = {
         "input_ids": tokens,
@@ -294,8 +296,8 @@ def forward_step(
         forward_args["attention_mask"] = attention_mask
         if forward_args["loss_mask"] is not None:
             forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
-        # qwen3vl need the original input_ids and position_ids
-        # use split attention mask for calculate loss
+        # Qwen3-VL needs original input_ids and computes position_ids in model
+        # forward; the packed params preserve packed attention boundaries.
         forward_args["packed_seq_params"] = packed_seq_params
 
     # use cp split loss mask for calculate loss

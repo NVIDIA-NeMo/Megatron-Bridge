@@ -18,7 +18,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_batching import prepare_vlm_batch_for_training
+from megatron.bridge.data.vlm_batching import prepare_vlm_batch_sequences_for_training
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
@@ -94,7 +94,7 @@ def glm4v_collate_fn(
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
-    prepare_vlm_batch_for_training(
+    prepare_vlm_batch_sequences_for_training(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

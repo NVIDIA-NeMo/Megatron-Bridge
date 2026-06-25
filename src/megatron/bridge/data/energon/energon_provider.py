@@ -35,6 +35,9 @@ class EnergonProvider(DatasetProvider):
     task_encoder: Optional[Any] = None
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    # Active user: Qwen3-VL. Its step needs unpacked batch tensors and builds
+    # packed metadata after model-specific CP/SP padding, so task encoders must
+    # leave in-batch packing disabled when this flag is set.
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
