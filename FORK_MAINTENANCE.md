@@ -48,6 +48,34 @@ git rebase --signoff main
 git push --force-with-lease
 ```
 
+## Running tests locally
+
+The fork's own GitHub Actions do **not** run Bridge's unit-test suite — that job lives on upstream's self-hosted runners and only fires for PRs against `NVIDIA-NeMo/Megatron-Bridge`. To check a change on a fork branch, run the tests yourself.
+
+Plain `pytest` won't work outside a CUDA environment (Bridge needs `torch` + Megatron-Core + Transformer Engine). Instead, run inside the `kmbridge-nemo` image — it already has the full stack — and overlay your checkout via `PYTHONPATH` so your branch's code is what runs:
+
+```bash
+# kmbridge-nemo image ref; the version lives in kaiko-eng's
+# tools/docker_images/ray/uv/kmbridge/pyproject.toml (libs/kbridge/ci/get-image-ref.sh resolves it).
+IMAGE="kaikoprivate.azurecr.io/ray/kmbridge-nemo:<version>"
+az acr login --name kaikoprivate            # once, for registry access
+
+docker run --rm --platform linux/amd64 \
+  -v "$(pwd):/branch:ro" \
+  -w /branch \
+  -e PYTHONPATH=/branch/src \
+  -e PYTHONDONTWRITEBYTECODE=1 \
+  "$IMAGE" \
+  pytest tests/unit_tests/training/test_checkpointing.py -v -p no:cacheprovider
+```
+
+- `PYTHONPATH=/branch/src` makes `import megatron.bridge.*` resolve to your checkout (shadowing the image's baked-in Bridge); `megatron.core`, `torch`, and TE come from the image, so no submodule init is needed.
+- CPU-only: omit `--gpus`. The mocked unit tests don't need a GPU.
+- The read-only (`:ro`) mount keeps the run from writing `.pytest_cache` / `.pyc` into your tree.
+- On Apple Silicon the image runs under amd64 emulation: the "CPU does not support AVX → illegal instruction likely" boot warning is harmless — `torch` still imports (slowly; a few minutes, then the tests run in seconds).
+
+This mirrors how `kaiko-eng`'s `libs/kbridge/ci/test.sh` runs the kbridge tests against the same image.
+
 ## Workflow: rebasing onto a newer Bridge release
 
 When upstream cuts a release we want to move to:
