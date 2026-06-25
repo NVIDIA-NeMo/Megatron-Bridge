@@ -35,6 +35,41 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True
 
 
+def _enable_deepseek_full_iteration_mxfp8(
+    cfg: ConfigContainer,
+    *,
+    fp8_dot_product_attention: bool = False,
+    fp8_output_proj: bool = False,
+) -> None:
+    """Apply legacy DeepSeek V3 HybridEP full-iteration MXFP8 settings."""
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.fp8_output_proj = fp8_output_proj
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+
+    cfg.mixed_precision.fp8_dot_product_attention = fp8_dot_product_attention
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+
+def _enable_deepseek_transformer_engine_graph(cfg: ConfigContainer) -> None:
+    """Apply legacy DeepSeek V3 Transformer Engine graph capture settings."""
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+
+
 def _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg: ConfigContainer) -> None:
     """Apply shared DeepSeek V3 64-GPU GB300 Megatron FSDP settings."""
     _deepseek_v3_common(cfg)

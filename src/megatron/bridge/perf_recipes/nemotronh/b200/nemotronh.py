@@ -67,6 +67,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.recompute_modules = ["moe_act", "moe", "layernorm", "core_attn"]
+    cfg.model.recompute_granularity = "selective"
 
     cfg.model.cuda_graph_impl = "none"
 
@@ -94,6 +95,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_padding_for_quantization = True
     cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.recompute_granularity = "selective"
 
     cfg.model.cuda_graph_impl = "none"
 
@@ -153,6 +155,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.model.moe_hybridep_num_sms = 16
     return cfg
 
 
@@ -179,6 +182,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.model.moe_hybridep_num_sms = 16
     return cfg
 
 
@@ -205,6 +209,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.model.moe_hybridep_num_sms = 16
     return cfg
 
 

@@ -33,23 +33,23 @@ def gpt_oss_20b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision = _gpt_oss_20b_nvfp4_precision()
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
+    cfg.model.context_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 24
-    cfg.train.micro_batch_size = 3
+    cfg.train.global_batch_size = 4
+    cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
     _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
 
     cfg.model.cuda_graph_warmup_steps = 1
-    cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
-    cfg.validation.eval_interval = 512
+    cfg.optimizer.lr = 0.0006
+    cfg.optimizer.min_lr = 0.0006
+    cfg.validation.eval_interval = 384
     cfg.validation.eval_iters = 43
-    cfg.scheduler.lr_warmup_iters = 192
+    cfg.scheduler.lr_warmup_iters = 64
     return cfg
 
 
@@ -71,11 +71,11 @@ def gpt_oss_20b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
 
     cfg.model.cuda_graph_warmup_steps = 1
-    cfg.optimizer.lr = 0.0005
-    cfg.optimizer.min_lr = 0.0005
-    cfg.validation.eval_interval = 512
-    cfg.validation.eval_iters = 43
-    cfg.scheduler.lr_warmup_iters = 192
+    cfg.optimizer.lr = 0.0003
+    cfg.optimizer.min_lr = 3e-05
+    cfg.validation.eval_interval = 2000
+    cfg.validation.eval_iters = 32
+    cfg.scheduler.lr_warmup_iters = 10
     return cfg
 
 
@@ -157,8 +157,14 @@ def gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = []
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_a2a_overlap = True
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.use_transformer_engine_op_fuser = True
     cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.rng.te_rng_tracker = True
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = []
     return cfg

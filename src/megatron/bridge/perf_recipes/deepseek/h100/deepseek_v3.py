@@ -55,16 +55,11 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
-    cfg.mixed_precision.fp8_recipe = "blockwise"
-    cfg.mixed_precision.fp8_param = False
-    cfg.mixed_precision.fp8_param_gather = False
-    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
-    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
-    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = True
@@ -76,7 +71,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
-    cfg.model.pipeline_model_parallel_layout = None
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et|(tt|)*30mL")
 
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
@@ -86,6 +81,11 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8-SC (VP=2, auto-applied default PP layout)."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_fp8cs_config()
+    cfg.mixed_precision.fp8_recipe = "blockwise"
+    cfg.mixed_precision.fp8_param = False
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.model.virtual_pipeline_model_parallel_size = 2
     # DeepSeek-V3 has 61 layers; (61 // PP) % VP != 0 for (PP=8, VP=2), so a custom layout
     # is required. The helper's default layout map provides one for this (pp, vp) pair.

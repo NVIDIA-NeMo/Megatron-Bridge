@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_full_iteration_mxfp8,
     _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -37,12 +38,12 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4096
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
     cfg.model.recompute_modules = ["mla_up_proj"]
@@ -53,7 +54,7 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
@@ -67,15 +68,15 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4096
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -83,7 +84,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
@@ -97,25 +98,23 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4096
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
     cfg.model.recompute_modules = ["mla_up_proj"]
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
+    _enable_deepseek_full_iteration_mxfp8(cfg)
     return cfg
 
 
@@ -126,15 +125,15 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.virtual_pipeline_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4096
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mlp"]
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
@@ -142,7 +141,7 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
 
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
     return cfg
@@ -160,7 +159,9 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB200)."""
-    return deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
+    cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
+    cfg.model.fp8_output_proj = False
+    return cfg
 
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
