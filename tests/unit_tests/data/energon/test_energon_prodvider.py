@@ -14,6 +14,8 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.utils import DatasetBuildContext
 
@@ -70,6 +72,7 @@ class TestEnergonProvider:
             micro_batch_size=params["micro_batch_size"],
             global_batch_size=params["global_batch_size"],
             num_workers=params["num_workers"],
+            packing_buffer_size=None,
             pg_collection=context.pg_collection,
         )
 
@@ -110,3 +113,49 @@ class TestEnergonProvider:
         # Returned object is the dataloader itself, not iter(...), so save_state survives wrapping.
         assert train_iter is train_loader
         assert hasattr(train_iter, "save_state")
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_forwards_packing_buffer_size(self, mock_datamodule_cls):
+        """packing_buffer_size must reach the datamodule, otherwise Energon's sample-packing path
+        stays a silent no-op (the task encoder's packing hooks are never invoked)."""
+        mock_dataset_instance = MagicMock()
+        mock_datamodule_cls.return_value = mock_dataset_instance
+        mock_dataset_instance.val_dataloader.side_effect = lambda: iter([])
+
+        provider = EnergonProvider(
+            path="test/path",
+            image_processor=MagicMock(),
+            seq_length=2048,
+            micro_batch_size=1,
+            global_batch_size=8,
+            num_workers=1,
+            task_encoder=MagicMock(),
+            packing_buffer_size=256,
+        )
+
+        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        _, kwargs = mock_datamodule_cls.call_args
+        assert kwargs["packing_buffer_size"] == 256
+
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_rejects_simultaneous_packing(self, mock_datamodule_cls):
+        """Energon sample packing and megatron-bridge in-batch packing both concatenate samples;
+        enabling both would pack the data twice, so build_datasets must reject the combination."""
+        provider = EnergonProvider(
+            path="test/path",
+            image_processor=MagicMock(),
+            seq_length=2048,
+            micro_batch_size=1,
+            global_batch_size=8,
+            num_workers=1,
+            task_encoder=MagicMock(),
+            packing_buffer_size=256,
+            pack_sequences_in_batch=True,
+        )
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        # The datamodule must not be constructed when the config is rejected.
+        mock_datamodule_cls.assert_not_called()
