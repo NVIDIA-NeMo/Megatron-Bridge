@@ -340,7 +340,15 @@ class Gemma4Bridge(MegatronModelBridge):
         return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        if getattr(self, "_is_dense", False):
+        # `_is_dense` is set as a side effect of `provider_bridge()`. When `mapping_registry()` is
+        # reached without it having run on this instance (e.g. conversion-task building / export),
+        # fall back to the same signal `provider_bridge()` uses, so a dense model is never mapped
+        # with the MoE registry (which leaves dense params unmapped -> None tasks -> crash). NVBug 6367442.
+        is_dense = getattr(self, "_is_dense", None)
+        if is_dense is None:
+            hf_config = getattr(self, "hf_config", None)
+            is_dense = not getattr(hf_config, "enable_moe_block", False)
+        if is_dense:
             return self._dense_mapping_registry()
         return self._moe_mapping_registry()
 
