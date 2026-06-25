@@ -89,6 +89,7 @@ class Step35DecoderLayer(TransformerLayer):
         is_mtp_layer: bool = False,
         add_layer_offset: bool = True,
         pp_layer_offset: Optional[int] = None,
+        name: str | None = None,
     ):
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
@@ -139,6 +140,7 @@ class Step35DecoderLayer(TransformerLayer):
             is_mtp_layer=is_mtp_layer,
             add_layer_offset=add_layer_offset,
             pp_layer_offset=pp_layer_offset,
+            name=name,
         )
 
 
@@ -185,9 +187,9 @@ class Step35ModelProvider(GPTModelProvider):
     Adds Step3.5-specific fields on top of ``GPTModelProvider``:
 
     * ``layer_types``: 0-indexed list of attention types (e.g.
-      ``"full_attention"`` / ``"sliding_attention"``), one entry per main
-      decoder layer. Read by ``Step35DecoderLayer`` to decide whether the
-      current layer is a sliding-attention layer.
+      ``"full_attention"`` / ``"sliding_attention"``). The provider may carry
+      main decoder entries plus MTP entries because ``Step35DecoderLayer``
+      indexes MTP layers after ``config.num_layers``.
     * ``attention_other_setting``: HF dict that enables and describes the
       sliding-attention override.
     * ``sliding_attention_setting``: normalized Megatron-facing shape overrides

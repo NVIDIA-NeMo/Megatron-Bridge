@@ -93,17 +93,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
+    # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
+    # image, not the default CUDA include path) and scope the build to the target archs.
+    export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
+        CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS}" \
+        CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS}" && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
-    pip install nvidia-cutlass-dsl[cu13]==4.4.1 && \
+    pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
-        uv sync --link-mode copy --all-extras --all-groups; \
+        uv sync --link-mode copy --all-extras --all-groups --no-group diffusion; \
     else \
         uv sync --locked --only-group build && \
-        uv sync --link-mode copy --locked --all-extras --all-groups; \
+        uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
     fi && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail

@@ -91,7 +91,12 @@ class Gemma3VLModel(MegatronModule):
         self.post_process = post_process
         self.vp_stage = vp_stage
         if pre_process:
-            self.vision_tower = AutoModel.from_config(config.vision_config)
+            # Unwrap SiglipVisionModel so vision_tower params stay flat
+            # (vision_tower.embeddings.*), matching HF checkpoint keys.
+            _vc = config.vision_config
+            _vc.vision_use_head = False
+            _raw_vision = AutoModel.from_config(_vc)
+            self.vision_tower = getattr(_raw_vision, "vision_model", _raw_vision)
             self.multi_modal_projector = Gemma3VLMultimodalProjector(config.vision_projector_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
@@ -177,7 +182,8 @@ class Gemma3VLModel(MegatronModule):
         # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
         # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
         if self.config.sequence_parallel and inputs_embeds is not None:
-            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
             input_ids=None,

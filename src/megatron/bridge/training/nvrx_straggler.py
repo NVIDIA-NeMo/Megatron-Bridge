@@ -22,19 +22,30 @@ from megatron.bridge.training.config import NVRxStragglerDetectionConfig
 from megatron.bridge.utils.import_utils import MISSING_NVRX_MSG
 
 
+# NOTE: catch broadly here, not just (ImportError, ModuleNotFoundError).
+# ``nvidia-resiliency-ext`` is an optional dependency, and importing
+# ``nvidia_resiliency_ext.attribution`` eagerly pulls in a langchain-based log
+# analyzer. Its transitive dependencies can fail to import with errors *other*
+# than ImportError -- e.g. a ``pydantic.ValidationError`` raised at module load
+# when an incompatible pydantic version is resolved. Because this module is
+# imported by ``megatron.bridge.training.state`` (a core training import), a
+# narrow except would let such a failure crash unrelated training/conversion
+# code paths. Degrading to ``HAVE_NVRX = False`` keeps the optional feature
+# disabled without taking down the rest of the library.
 try:
     # Try the newer version first (nvidia-resiliency-ext >= 0.4)
     import nvidia_resiliency_ext.attribution.straggler as straggler
 
     HAVE_NVRX = True
-except (ImportError, ModuleNotFoundError):
+except Exception:
     try:
         # Fall back to the older version (nvidia-resiliency-ext < 0.4)
         import nvidia_resiliency_ext.straggler as straggler
 
         HAVE_NVRX = True
-    except (ImportError, ModuleNotFoundError):
+    except Exception as e:
         HAVE_NVRX = False
+        logging.getLogger(__name__).debug("nvidia-resiliency-ext unavailable, straggler detection disabled: %s", e)
 
 
 class NVRxStragglerDetectionManager:

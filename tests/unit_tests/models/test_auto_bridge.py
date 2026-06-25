@@ -25,7 +25,12 @@ import torch
 from transformers import LlamaConfig
 from transformers.configuration_utils import PretrainedConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge, _config_disables_mtp, _saved_config_disables_mtp
+from megatron.bridge.models.conversion.auto_bridge import (
+    AutoBridge,
+    _config_disables_mtp,
+    _drop_readonly_config_properties,
+    _saved_config_disables_mtp,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -122,6 +127,28 @@ class TestAutoBridge:
 
             assert "Model architecture not supported by AutoBridge" in str(exc_info.value)
             assert "BertForMaskedLM" in str(exc_info.value)
+
+    def test_drop_readonly_config_properties(self):
+        """Test auto-config synthesis drops properties HuggingFace configs cannot set."""
+
+        class CustomConfig(PretrainedConfig):
+            @property
+            def layers_block_type(self):
+                return ["mamba", "attention"]
+
+        config_dict = {
+            "hidden_size": 768,
+            "layers_block_type": ["mamba", "attention"],
+            "num_hidden_layers": 2,
+        }
+
+        filtered = _drop_readonly_config_properties(config_dict, CustomConfig)
+
+        assert filtered == {
+            "hidden_size": 768,
+            "num_hidden_layers": 2,
+        }
+        assert config_dict["layers_block_type"] == ["mamba", "attention"]
 
     def test_from_pretrained_config_load_failure(self):
         """Test AutoBridge handles config loading failures gracefully."""
@@ -848,6 +875,7 @@ class TestAutoBridge:
                         mock_megatron_model,
                         cpu=False,
                         show_progress=False,
+                        exclude_adapter_base_prefixes=None,
                     )
 
     def test_get_causal_lm_architecture(self):
@@ -1208,6 +1236,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             from pathlib import Path
@@ -1232,6 +1261,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
             from pathlib import Path
@@ -1271,6 +1301,7 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = False
 
         # Create model-parallel overrides
         mp_overrides = {
@@ -1311,6 +1342,29 @@ class TestAutoBridge:
                         # Check other expected arguments
                         assert call_args.args[0] == "checkpoint_path"  # path argument
                         assert "skip_temp_dist_context" in call_args.kwargs
+
+    def test_load_megatron_model_registers_prefix_when_trust_remote_code(self):
+        """Test that load_megatron_model registers transformers_modules prefix when trust_remote_code=True."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["LlamaForCausalLM"]
+        mock_hf_model.config = mock_config
+
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+        bridge.trust_remote_code = True
+
+        with patch("megatron.bridge.training.model_load_save.load_megatron_model") as mock_load_megatron_model:
+            with patch("megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix") as mock_register:
+                from pathlib import Path
+
+                with patch.object(Path, "iterdir") as mock_iterdir:
+                    mock_load_megatron_model.return_value = Mock()
+                    mock_iterdir.return_value = []
+
+                    bridge.load_megatron_model("./checkpoint_path")
+
+                    mock_register.assert_called_once_with("transformers_modules.")
 
     @patch("torch.distributed.is_available")
     @patch("torch.distributed.is_initialized")

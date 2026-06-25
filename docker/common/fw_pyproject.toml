@@ -41,7 +41,7 @@ test = ["coverage>=7.8.1"]
 
 [tool.uv.sources]
 "nemo-export-deploy" = { path = "/opt/Export-Deploy", editable = true }
-"nemo-evaluator" = { path = "/opt/Evaluator", editable = true }
+"nemo-evaluator" = { path = "/opt/Evaluator/packages/nemo-evaluator", editable = true }
 "nemo-run" = { path = "/opt/Run", editable = true }
 "lightning" = { path = "stubs/lightning" }
 
@@ -73,6 +73,10 @@ override-dependencies = [
     "protobuf==6.33.5",
     "cuda-python>=13.0.0",
     "multi-storage-client!=0.36.0",
+    # 0.1.12rc0's tvm_ffi is incompatible with the TVM that tilelang vendors and
+    # breaks `import tilelang`/`import mamba_ssm`; an explicit pin is required
+    # because prerelease="allow" would otherwise float the unlocked sync onto it.
+    "apache-tvm-ffi==0.1.11",
     "levenshtein; sys_platform == 'never'",
     "pytest==8.4.2",
     "wandb>=0.25.0",
@@ -99,7 +103,7 @@ override-dependencies = [
     "nvidia-cusparse-cu12; sys_platform == 'never'",
     "nvidia-cusparselt-cu12; sys_platform == 'never'",
     "nvidia-nccl-cu12; sys_platform == 'never'",
-    "nvidia-cudnn-frontend==1.23.0",
+    "nvidia-cudnn-frontend==1.24.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'", # Rely on system site packages install
     "tensorrt-llm; sys_platform == 'never'",
     "tensorrt; sys_platform == 'never'",

@@ -11,8 +11,11 @@ uv run python -m torch.distributed.run --nproc_per_node=1 00_quickstart_pretrain
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
+It uses the Hugging Face architecture configuration for random initialization, so it does not require converting a
+Hugging Face checkpoint to Megatron format first.
 
-For finetuning, you first need a checkpoint in Megatron format. Convert from HuggingFace using the `AutoBridge`:
+For finetuning from pretrained weights, you need a checkpoint in Megatron format. Convert from Hugging Face using
+the `AutoBridge`:
 
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
@@ -70,7 +73,7 @@ Example YAML (`conf/llama32_1b_pretrain.yaml`):
 # Each section maps to a ConfigContainer field
 dataset:                           # GPTDatasetConfig
   data_path: /path/to/training/data
-  sequence_length: 4096
+  seq_length: 4096
 
 train:                             # TrainingConfig
   train_iters: 100
@@ -81,7 +84,7 @@ checkpoint:                        # CheckpointConfig
   save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match data.sequence_length
+  seq_length: 4096                 # Must match dataset.seq_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
@@ -119,10 +122,10 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 ```yaml
 # Each section maps to a ConfigContainer field
 dataset:                           # FinetuningDatasetConfig
-  data_path: /path/to/finetuning_dataset.jsonl
+  dataset_root: /path/to/finetuning_dataset_dir
   seq_length: 4096
 
-train:                             # TrainingConfig  
+train:                             # TrainingConfig
   train_iters: 100
   global_batch_size: 128
 
@@ -136,7 +139,7 @@ peft:                             # PEFT (LoRA config)
   alpha: 16   # LoRA alpha
 
 model:                            # Model Provider
-  seq_length: 4096                # Must match data.seq_length
+  seq_length: 4096                # Must match dataset.seq_length
   
 optimizer:                        # OptimizerConfig
   lr: 0.0001

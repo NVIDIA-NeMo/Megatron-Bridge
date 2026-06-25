@@ -766,6 +766,36 @@ def test_build_adapter_conversion_tasks(monkeypatch):
     assert task.linear_out_task.param_weight.shape == torch.Size([2, 2])
 
 
+def test_build_adapter_conversion_tasks_excludes_base_prefix_before_mapping(monkeypatch):
+    bridge = DummyBridge()
+    bridge.hf_pretrained = SimpleNamespace()
+    bridge.hf_config = bridge.hf_pretrained
+
+    adapters_info = [
+        (
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj.adapter",
+            "mtp.layers.0.mtp_model_layer.layers.0.self_attention.linear_proj",
+            False,
+            False,
+            False,
+            4,
+            8,
+            0,
+            0,
+        )
+    ]
+
+    monkeypatch.setattr(bridge, "_megatron_global_adapters_info_all_pp_ranks", lambda *_: adapters_info)
+    monkeypatch.setattr(bridge, "mapping_registry", lambda: MegatronMappingRegistry())
+
+    tasks_by_base = bridge.build_adapter_conversion_tasks(
+        [Mock()],
+        exclude_adapter_base_prefixes=("mtp.layers",),
+    )
+
+    assert tasks_by_base == {}
+
+
 def test_materialize_adapter_weights(monkeypatch):
     bridge = DummyBridge()
 
@@ -1022,7 +1052,7 @@ def test_stream_adapter_weights_megatron_to_hf(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(
         bridge,
@@ -1087,7 +1117,7 @@ def test_stream_adapter_weights_megatron_to_hf_qkv(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.self_attn.linear_qkv": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.self_attn.linear_qkv": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1166,7 +1196,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1(monkeypatch):
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1236,7 +1266,7 @@ def test_stream_adapter_weights_megatron_to_hf_fused_fc1_minimax_w13(monkeypatch
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1317,7 +1347,7 @@ def test_stream_adapter_weights_megatron_to_hf_packed_expert_stacks(monkeypatch)
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1377,7 +1407,7 @@ def test_stream_adapter_weights_megatron_to_hf_grouped_expert_exports_per_expert
     monkeypatch.setattr(
         bridge,
         "build_adapter_conversion_tasks",
-        lambda *_: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
     )
     monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
     monkeypatch.setattr(
@@ -1403,6 +1433,172 @@ def test_stream_adapter_weights_megatron_to_hf_grouped_expert_exports_per_expert
     assert weights[1].param_name.endswith("down_proj.lora_B.weight")
     assert weights[0].param_name == "model.layers.0.mlp.experts.0.down_proj.lora_A.weight"
     assert weights[1].param_name == "model.layers.0.mlp.experts.0.down_proj.lora_B.weight"
+
+
+def test_stream_adapter_weights_megatron_to_hf_shared_outer_fc1_gate_up(monkeypatch):
+    # Shared-outer FC1 (SGLang PR #21466): linear_in (lora_A) is a single 2D matrix
+    # shared across experts, while linear_out (lora_B) is a per-expert 3D pack of the
+    # fused gate/up projection. The shared side is emitted once under an
+    # expert-agnostic name; the per-expert side is split into gate/up per expert.
+    bridge = DummyBridge()
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.mlp.experts.linear_fc1.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.mlp.experts.linear_fc1.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+
+    # Shared lora_A: [rank=2, hidden=3]. Per-expert lora_B: [num_experts=2, 2*inter=4, rank=2],
+    # gate = first 2 rows, up = last 2 rows, with distinct values per expert/projection.
+    shared_lora_a = torch.ones(2, 3)
+    expert0_lora_b = torch.cat([torch.full((2, 2), 10.0), torch.full((2, 2), 20.0)], dim=0)
+    expert1_lora_b = torch.cat([torch.full((2, 2), 30.0), torch.full((2, 2), 40.0)], dim=0)
+    per_expert_lora_b = torch.stack([expert0_lora_b, expert1_lora_b], dim=0)
+
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc1",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", shared_lora_a, vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", per_expert_lora_b, vp_stage=0),
+    )
+
+    def fake_base_names(_registry, _prefix, _adapter_key, base_suffix):
+        # base_suffix is ".weight0"/".weight1"/...; reflect the expert index into the
+        # HF names so the per-expert side keeps experts.<idx> and the shared side strips it.
+        idx = base_suffix[len(".weight") :]
+        return [
+            f"model.layers.0.mlp.experts.{idx}.gate_proj.weight",
+            f"model.layers.0.mlp.experts.{idx}.up_proj.weight",
+        ]
+
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc1": [adapter_task]},
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    monkeypatch.setattr(bridge, "_get_base_hf_param_names_for_adapter", fake_base_names)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    weights = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
+            cpu=False,
+            show_progress=False,
+        )
+    )
+
+    # Shared lora_A emitted once per fused projection under the expert-agnostic name,
+    # then per-expert lora_B split into gate/up for each expert.
+    assert [w.param_name for w in weights] == [
+        "model.layers.0.mlp.experts.gate_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.up_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.0.gate_proj.lora_B.weight",
+        "model.layers.0.mlp.experts.0.up_proj.lora_B.weight",
+        "model.layers.0.mlp.experts.1.gate_proj.lora_B.weight",
+        "model.layers.0.mlp.experts.1.up_proj.lora_B.weight",
+    ]
+
+    # Shared side is unsqueezed to [1, ...] and identical for gate and up.
+    assert weights[0].weight.shape == (1, 2, 3)
+    torch.testing.assert_close(weights[0].weight, shared_lora_a.unsqueeze(0))
+    torch.testing.assert_close(weights[1].weight, shared_lora_a.unsqueeze(0))
+    # Per-expert side carries each expert's gate/up halves.
+    torch.testing.assert_close(weights[2].weight, torch.full((2, 2), 10.0))
+    torch.testing.assert_close(weights[3].weight, torch.full((2, 2), 20.0))
+    torch.testing.assert_close(weights[4].weight, torch.full((2, 2), 30.0))
+    torch.testing.assert_close(weights[5].weight, torch.full((2, 2), 40.0))
+
+
+def test_stream_adapter_weights_megatron_to_hf_shared_outer_fc2_down(monkeypatch):
+    # Shared-outer FC2 is the mirror of FC1: linear_in (lora_A) is the per-expert 3D
+    # pack and linear_out (lora_B) is the shared 2D matrix. down_proj is not fused, so
+    # the per-expert side emits one weight per expert and the shared side emits once.
+    bridge = DummyBridge()
+
+    adapter_task = AdapterWeightConversionTask(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc2",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_task=WeightConversionTask(
+            param_name="local_in",
+            global_param_name="decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight",
+            mapping=Mock(),
+        ),
+        linear_out_task=WeightConversionTask(
+            param_name="local_out",
+            global_param_name="decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_out.weight",
+            mapping=Mock(),
+        ),
+    )
+
+    # Per-expert lora_A: [num_experts=2, rank=2, inter=3]. Shared lora_B: [hidden=3, rank=2].
+    per_expert_lora_a = torch.stack([torch.full((2, 3), 5.0), torch.full((2, 3), 6.0)], dim=0)
+    shared_lora_b = torch.full((3, 2), 7.0)
+
+    adapter_weight = AdapterWeight(
+        global_base_prefix="decoder.layers.0.mlp.experts.linear_fc2",
+        adapter_key=None,
+        alpha=2,
+        dim=4,
+        linear_in_weight=MegatronWeightTuple("local_in", per_expert_lora_a, vp_stage=0),
+        linear_out_weight=MegatronWeightTuple("local_out", shared_lora_b, vp_stage=0),
+    )
+
+    def fake_base_names(_registry, _prefix, _adapter_key, base_suffix):
+        idx = base_suffix[len(".weight") :]
+        return [f"model.layers.0.mlp.experts.{idx}.down_proj.weight"]
+
+    monkeypatch.setattr(
+        bridge,
+        "build_adapter_conversion_tasks",
+        lambda *_args, **_kwargs: {"decoder.layers.0.mlp.experts.linear_fc2": [adapter_task]},
+    )
+    monkeypatch.setattr(bridge, "materialize_adapter_weights", lambda *_: [adapter_weight])
+    monkeypatch.setattr(bridge, "_get_base_hf_param_names_for_adapter", fake_base_names)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.peft_bridge.parallel_state.get_expert_model_parallel_world_size",
+        lambda: 1,
+    )
+
+    weights = list(
+        bridge.stream_adapter_weights_megatron_to_hf(
+            [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
+            cpu=False,
+            show_progress=False,
+        )
+    )
+
+    # Per-expert lora_A emitted once per expert (experts.<idx>), then the shared lora_B
+    # emitted once under the expert-agnostic name.
+    assert [w.param_name for w in weights] == [
+        "model.layers.0.mlp.experts.0.down_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.1.down_proj.lora_A.weight",
+        "model.layers.0.mlp.experts.down_proj.lora_B.weight",
+    ]
+
+    torch.testing.assert_close(weights[0].weight, torch.full((2, 3), 5.0))
+    torch.testing.assert_close(weights[1].weight, torch.full((2, 3), 6.0))
+    # Shared side is unsqueezed to [1, hidden, rank].
+    assert weights[2].weight.shape == (1, 3, 2)
+    torch.testing.assert_close(weights[2].weight, shared_lora_b.unsqueeze(0))
 
 
 def test_split_gdn_in_proj_linear_out_weight_roundtrip(monkeypatch):

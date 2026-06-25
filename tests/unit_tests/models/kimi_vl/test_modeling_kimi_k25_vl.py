@@ -51,6 +51,43 @@ def helper():
     return MergeTestHelper()
 
 
+class TestKimiVisionAttentionConfig:
+    """Test Kimi vision attention backend configuration."""
+
+    def test_configures_flash_attention_when_available(self):
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _configure_kimi_vision_attention
+
+        class DummyMoonViT:
+            _supports_flash_attn_2 = True
+
+        vision_config = Mock()
+        vision_config._attn_implementation = "eager"
+
+        with patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.is_flash_attn_2_available", return_value=True):
+            _configure_kimi_vision_attention(vision_config, DummyMoonViT)
+
+        assert vision_config._attn_implementation == "flash_attention_2"
+        assert DummyMoonViT._supports_flash_attn is True
+
+    def test_falls_back_to_eager_when_flash_attention_unavailable(self):
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _configure_kimi_vision_attention
+
+        class DummyMoonViT:
+            _supports_flash_attn_2 = True
+            _supports_flash_attn = False
+
+        vision_config = Mock()
+        vision_config._attn_implementation = "flash_attention_2"
+
+        with patch(
+            "megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.is_flash_attn_2_available", return_value=False
+        ):
+            _configure_kimi_vision_attention(vision_config, DummyMoonViT)
+
+        assert vision_config._attn_implementation == "eager"
+        assert DummyMoonViT._supports_flash_attn is False
+
+
 def _make_inputs(batch_size, seq_len, hidden_dim=HIDDEN_DIM):
     """Create basic input tensors."""
     input_ids = torch.randint(1000, 2000, (batch_size, seq_len))
@@ -331,6 +368,7 @@ class TestKimiK25VLModelInit:
         """Create mock config for model init."""
         config = Mock()
         config.hf_model_path = "/path/to/model"
+        config.trust_remote_code = True
         config.share_embeddings_and_output_weights = False
         config.sequence_parallel = False
         config.media_placeholder_token_id = IMAGE_TOKEN_ID
@@ -362,7 +400,9 @@ class TestKimiK25VLModelInit:
         mock_vit = Mock()
         mock_projector = Mock()
 
-        def side_effect(name, path):
+        def side_effect(name, path, **kwargs):
+            assert path == config.hf_model_path
+            assert kwargs == {"trust_remote_code": True}
             if "MoonViT3dPretrainedModel" in name:
                 cls = Mock(return_value=mock_vit)
                 cls.__module__ = "test_module"
@@ -389,10 +429,25 @@ class TestKimiK25VLModelInit:
         assert hasattr(model, "vision_tower")
         assert hasattr(model, "mm_projector")
         assert hasattr(model, "language_model")
+        mock_safe_load.assert_called_once_with(config.hf_model_path, trust_remote_code=True)
+
+    @patch("megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl.get_class_from_dynamic_module")
+    def test_init_rejects_remote_code_without_trust(self, mock_get_class):
+        """Test initialization fails closed before loading remote Kimi vision code."""
+        config = self._make_mock_config()
+        config.trust_remote_code = False
+
+        from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+        with pytest.raises(ValueError, match="trust_remote_code=True"):
+            KimiK25VLModel(config=config, pre_process=True, post_process=True)
+
+        mock_get_class.assert_not_called()
 
     def test_init_without_pre_process(self):
         """Test initialization with pre_process=False skips vision components."""
         config = self._make_mock_config()
+        config.trust_remote_code = False
 
         from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 

@@ -21,12 +21,32 @@ from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers.utils import is_flash_attn_2_available
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_kimi_vision_attention(vision_tower_config, vision_tower_cls) -> None:
+    """Use flash attention for Kimi vision when available.
+
+    Kimi's remote MoonViT code supports ``flash_attention_2`` through its own
+    attention dispatch table, but older remote metadata only advertises
+    ``_supports_flash_attn_2``. Transformers 5.6 checks ``_supports_flash_attn``
+    before allowing the model to initialize with flash attention.
+    """
+    if is_flash_attn_2_available():
+        vision_tower_config._attn_implementation = "flash_attention_2"
+        if getattr(vision_tower_cls, "_supports_flash_attn_2", False):
+            vision_tower_cls._supports_flash_attn = True
+        return
+
+    if getattr(vision_tower_config, "_attn_implementation", None) == "flash_attention_2":
+        logger.warning("flash-attn is not available; falling back to eager attention for Kimi K2.5 vision tower.")
+        vision_tower_config._attn_implementation = "eager"
 
 
 class KimiK25VLModel(MegatronModule):
@@ -83,10 +103,18 @@ class KimiK25VLModel(MegatronModule):
             raise ValueError("hf_model_path must be set.")
 
         if pre_process:
+            trust_remote_code = bool(getattr(config, "trust_remote_code", False))
+            if not trust_remote_code:
+                raise ValueError(
+                    "Kimi K2.5 VL vision components require loading custom HuggingFace model code. "
+                    "Pass trust_remote_code=True only for trusted model repositories."
+                )
+
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
             import importlib
@@ -106,21 +134,24 @@ class KimiK25VLModel(MegatronModule):
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             ProjectorConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.ProjectorConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             VisionTowerConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.VisionTowerConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
 
             # load vision config from hf model path
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
             config.vision_config = safe_load_config_with_retry(
-                config.hf_model_path, trust_remote_code=True
+                config.hf_model_path, trust_remote_code=trust_remote_code
             ).vision_config
 
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
@@ -132,15 +163,12 @@ class KimiK25VLModel(MegatronModule):
             MoonViT3dEncoder = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dEncoder",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
                 MoonViT3dEncoder.use_deterministic_attn = False
 
-            # transformers >=5.5 strictly validates `attn_implementation` at
-            # __init__ and selects `flash_attention_2` by default when flash-attn
-            # is installed. MoonViT3dPretrainedModel doesn't declare flash-attn-2
-            # support, so force eager attention before construction.
-            self.vision_tower_config._attn_implementation = "eager"
+            _configure_kimi_vision_attention(self.vision_tower_config, MoonViT3dPretrainedModel)
             self.vision_tower = MoonViT3dPretrainedModel(self.vision_tower_config)
             self.mm_projector = PatchMergerMLP(self.projector_config)  # TODO: support different types of mm projector
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
@@ -396,7 +424,8 @@ class KimiK25VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(
             input_ids=None,
