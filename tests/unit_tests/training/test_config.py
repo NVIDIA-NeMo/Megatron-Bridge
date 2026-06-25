@@ -514,6 +514,35 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_validation_config_validate_on_start_default(self):
+        """validate_on_start is a bridge addition defaulting to False and is settable."""
+        assert ValidationConfig().validate_on_start is False
+        assert ValidationConfig(validate_on_start=True).validate_on_start is True
+        # multiple_validation_sets is inherited from Megatron-Core's ValidationConfig.
+        assert ValidationConfig().multiple_validation_sets is False
+
+    @pytest.mark.parametrize("pipeline_model_parallel_size", [1, 2])
+    def test_multiple_validation_sets_allows_pipeline_parallel(self, monkeypatch, pipeline_model_parallel_size):
+        """multiple_validation_sets validates with any PP size.
+
+        Per-set evaluation runs an identical number of fully-flushed evaluate()
+        calls on every rank, so it stays collective-balanced under PP > 1; no
+        config guard rejects it.
+        """
+        gpt_model_cfg = create_test_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=pipeline_model_parallel_size,
+            context_parallel_size=1,
+            pipeline_dtype=torch.bfloat16,
+        )
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=8, model_config=gpt_model_cfg)
+        container.validation.multiple_validation_sets = True
+
+        try:
+            container.validate()  # Should pass without error for any PP size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     @pytest.mark.parametrize(
         "world_size, expect_assertion_error",
         [

@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import textwrap
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
+from megatron.bridge.data.energon.energon_provider import EnergonProvider, _parse_val_blend_entries
 from megatron.bridge.data.utils import DatasetBuildContext
 
 
@@ -159,3 +161,93 @@ class TestEnergonProvider:
 
         # The datamodule must not be constructed when the config is rejected.
         mock_datamodule_cls.assert_not_called()
+
+    @patch("megatron.bridge.data.energon.energon_provider._parse_val_blend_entries")
+    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
+    def test_build_datasets_multiple_validation_sets(self, mock_datamodule_cls, mock_parse):
+        """With multiple_validation_sets, the validation slot is the
+        (combined_loader, [(name, loader), ...]) tuple bridge's per-set eval consumes, the test slot
+        is None, and one val-only datamodule is built per sub-blend (plus the blended one)."""
+        instance = MagicMock()
+        mock_datamodule_cls.return_value = instance
+        train_loader = MagicMock(name="train_loader")
+        instance.train_dataloader.return_value = train_loader
+        instance.val_dataloader.side_effect = lambda: iter([])
+        mock_parse.return_value = [("qa", "/data/qa"), ("conv", "/data/conv")]
+
+        provider = EnergonProvider(
+            path="meta.yaml",
+            image_processor=MagicMock(),
+            seq_length=2048,
+            micro_batch_size=1,
+            global_batch_size=8,
+            num_workers=1,
+            task_encoder=MagicMock(),
+            multiple_validation_sets=True,
+        )
+        train, valid, test = provider.build_datasets(MagicMock(spec=DatasetBuildContext))
+
+        # train returned un-wrapped (base contract for save_state/restore_state).
+        assert train is train_loader
+        # validation slot is the named-tuple shape.
+        assert isinstance(valid, tuple)
+        _combined, named = valid
+        assert [name for name, _ in named] == ["qa", "conv"]
+        # blended datamodule (self.path) + one per sub-blend, built from their paths.
+        built_paths = [kwargs["path"] for _args, kwargs in mock_datamodule_cls.call_args_list]
+        assert built_paths == ["meta.yaml", "/data/qa", "/data/conv"]
+        # test slot stays the plain blended val iterator (return type untouched, not the tuple).
+        assert test is not None
+        assert not isinstance(test, tuple)
+
+
+class TestParseValBlendEntries:
+    @staticmethod
+    def _write(tmp_path: Path, body: str) -> str:
+        path = tmp_path / "metadataset.yaml"
+        path.write_text(textwrap.dedent(body))
+        return str(path)
+
+    def test_relative_paths_resolved_and_named_by_stem(self, tmp_path: Path) -> None:
+        meta = self._write(
+            tmp_path,
+            """
+            splits:
+              val:
+                blend:
+                  - path: ./qa_blend.yaml
+                  - path: ./conversation_blend.yaml
+            """,
+        )
+        entries = _parse_val_blend_entries(meta)
+        assert [name for name, _ in entries] == ["qa_blend", "conversation_blend"]
+        assert [path for _, path in entries] == [
+            str(tmp_path / "qa_blend.yaml"),
+            str(tmp_path / "conversation_blend.yaml"),
+        ]
+
+    def test_absolute_path_kept_as_is(self, tmp_path: Path) -> None:
+        abs_blend = "/abs/data/pretrain_blend.yaml"
+        meta = self._write(
+            tmp_path,
+            f"""
+            splits:
+              val:
+                blend:
+                  - path: {abs_blend}
+            """,
+        )
+        assert _parse_val_blend_entries(meta) == [("pretrain_blend", abs_blend)]
+
+    def test_no_val_blend_raises(self, tmp_path: Path) -> None:
+        meta = self._write(
+            tmp_path,
+            """
+            splits:
+              train:
+                blend:
+                  - path: ./train_blend.yaml
+            """,
+        )
+        with pytest.raises(ValueError, match="No splits.val.blend"):
+            _parse_val_blend_entries(meta)

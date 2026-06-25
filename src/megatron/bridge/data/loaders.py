@@ -391,6 +391,23 @@ def build_train_valid_test_data_iterators(
         else:
             raise RuntimeError("unexpected dataloader type")
 
+    def _get_eval_iterator(dataloader_type, dataloader):
+        """Wrap an evaluation dataloader into iterator(s).
+
+        Multiple validation/test sets arrive as a (combined_loader,
+        [(name, loader), ...]) tuple from the data provider; wrap the combined
+        loader as the primary iterator and each named sub-blend loader alongside
+        it, keeping names bound to their loaders so per-set names can never drift
+        out of order. Any other shape is wrapped as a single iterator.
+        """
+        if isinstance(dataloader, tuple):
+            combined_loader, named_loaders = dataloader
+            return (
+                _get_iterator(dataloader_type, combined_loader),
+                [(name, _get_iterator(dataloader_type, loader)) for name, loader in named_loaders],
+            )
+        return _get_iterator(dataloader_type, dataloader)
+
     if train_dataloader is not None:
         train_data_iterator = _get_iterator(dl_type, train_dataloader)
     else:
@@ -398,12 +415,12 @@ def build_train_valid_test_data_iterators(
 
     if valid_dataloader is not None:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-        valid_data_iterator = _get_iterator(val_dataloader_type, valid_dataloader)
+        valid_data_iterator = _get_eval_iterator(val_dataloader_type, valid_dataloader)
     else:
         valid_data_iterator = None
 
     if test_dataloader is not None:
-        test_data_iterator = _get_iterator(dl_type, test_dataloader)
+        test_data_iterator = _get_eval_iterator(dl_type, test_dataloader)
     else:
         test_data_iterator = None
 

@@ -359,6 +359,108 @@ def evaluate(
     return total_loss_dict, collected_non_loss_data, False
 
 
+def evaluate_validation_sets(
+    state: GlobalState,
+    prefix: str,
+    forward_step_func: ForwardStepCallable,
+    named_data_iterators: list[tuple[str, Optional[Union[RerunDataIterator, list[RerunDataIterator]]]]],
+    model: list[MegatronModule],
+    config: ConfigContainer,
+    write_to_tensorboard: bool = True,
+    verbose: bool = False,
+    is_test: bool = False,
+) -> None:
+    """Evaluate multiple validation/test sets independently and log a loss per set.
+
+    Used when the data builder hands the combined iterator a list of named
+    per-set iterators. Each ``(name, iterator)`` pair is evaluated with a
+    separate ``evaluate()`` call and its losses are logged as
+    ``<namespace>/<key>-<name>`` (e.g. ``validation/lm loss-qa_blend``), where
+    ``<namespace>`` is ``test`` when ``is_test`` else ``validation``. The name is
+    bound to its iterator by the data builder, so there is no index-based name
+    lookup.
+
+    Args:
+        state: The global state object.
+        prefix: Prefix for the printed summary.
+        forward_step_func: The function that performs a forward step.
+        named_data_iterators: ``(name, iterator)`` pairs, one per set.
+            Each iterator has the same shape a single ``valid_data_iterator``
+            would.
+        model: list of model chunks.
+        config: Configuration container.
+        write_to_tensorboard: Whether to write results to TensorBoard.
+        verbose: Whether to print evaluation progress.
+        is_test: Whether this is test evaluation (vs validation); selects the
+            metric namespace.
+
+    Raises:
+        Exception: Any failure inside a set's ``evaluate()`` propagates and
+            crashes all ranks. This is deliberate: ``evaluate()`` runs
+            collectives, so a rank that swallowed an error and skipped ahead
+            would desync the per-set call count and deadlock the others. Failing
+            loudly preserves the collective-balance invariant described below.
+
+    Note:
+        Each set is evaluated with its own ``evaluate()`` call. Every rank runs
+        the same number of calls, each a fully-flushed pipeline schedule fronted
+        by a barrier and with the time-limit exit driven by a collective
+        all-reduce, so the loop stays collective-balanced under pipeline
+        parallelism (PP > 1). The named per-set iterators are built up front in
+        ``build_train_valid_test_data_iterators`` rather than lazily during eval,
+        avoiding per-stage divergence while ranks construct iterators.
+    """
+    writer = state.tensorboard_logger if write_to_tensorboard else None
+    wandb_writer = state.wandb_logger
+    mlflow_writer = state.mlflow_logger
+    comet_logger = state.comet_logger
+    log_ppl = state.cfg.logger.log_validation_ppl_to_tensorboard
+
+    def _log_metric(metric: str, value: float, step: int) -> None:
+        if writer:
+            writer.add_scalar(metric, value, step)
+        if wandb_writer and is_last_rank():
+            wandb_writer.log({metric: value}, step)
+        if mlflow_writer and is_last_rank():
+            mlflow_writer.log_metrics(_sanitize_mlflow_metrics({metric: value}), step=step)
+        if comet_logger and is_last_rank():
+            comet_logger.log_metrics({metric: value}, step=step)
+
+    namespace = "test" if is_test else "validation"
+    step = state.train_state.step
+    summary = f" {namespace} loss at {prefix} |"
+    # No per-set try/except: evaluate() runs collectives (all_reduce), so a
+    # rank-divergent failure (e.g. a corrupt sample on one rank) must crash all
+    # ranks rather than let the failing rank skip ahead into the next set's
+    # collective and deadlock. This matches single-dataset validation.
+    for name, data_iterator in named_data_iterators:
+        total_loss_dict, _, timelimit = evaluate(
+            state,
+            forward_step_func,
+            data_iterator,
+            model,
+            None,
+            config,
+            verbose=verbose,
+        )
+
+        if timelimit:
+            return
+        if not total_loss_dict:
+            continue
+        for key in total_loss_dict:
+            value = total_loss_dict[key].item()
+            _log_metric(f"{namespace}/{key}-{name}", value, step)
+            summary += f" {key}-{name} value: {value:.6E} |"
+            if log_ppl:
+                _log_metric(f"{namespace}/{key} ppl-{name}", math.exp(min(20, value)), step)
+
+    length = len(summary) + 1
+    print_rank_last("-" * length)
+    print_rank_last(summary)
+    print_rank_last("-" * length)
+
+
 def evaluate_and_print_results(
     state: GlobalState,
     prefix: str,
@@ -419,10 +521,21 @@ def evaluate_and_print_results(
             ),
         )
 
+    # Multiple validation sets: the validation data builder hands us a
+    # (combined_iterator, [(name, iterator), ...]) tuple. The combined iterator
+    # is evaluated and logged exactly like the single-set case below (the
+    # aggregate "lm loss validation"); the named per-set losses are appended on
+    # top afterwards. Any other shape (a single iterator, or the VPP per-chunk
+    # list) is just the combined iterator with no extra sets.
+    named_data_iterators: list = []
+    combined_data_iterator = data_iterator
+    if isinstance(data_iterator, tuple):
+        combined_data_iterator, named_data_iterators = data_iterator
+
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
         state,
         forward_step_func,
-        data_iterator,
+        combined_data_iterator,
         model,
         process_non_loss_data_func,
         config,
@@ -482,6 +595,20 @@ def evaluate_and_print_results(
     print_rank_last("-" * length)
     print_rank_last(string)
     print_rank_last("-" * length)
+
+    # Per-set losses, appended on top of the combined loss above.
+    if named_data_iterators:
+        evaluate_validation_sets(
+            state,
+            prefix,
+            forward_step_func,
+            named_data_iterators,
+            model,
+            config,
+            write_to_tensorboard=write_to_tensorboard,
+            verbose=verbose,
+            is_test=is_test,
+        )
 
     if should_fire(callback_manager, end_event):
         callback_manager.fire(

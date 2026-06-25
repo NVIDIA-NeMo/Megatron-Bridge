@@ -38,10 +38,11 @@ from megatron.training.config import DistributedInitConfig as MTrainDistributedI
 from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
+from megatron.training.config import RNGConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.config import ValidationConfig as MTrainValidationConfig
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
@@ -615,6 +616,16 @@ class TrainingConfig(MTrainTrainingConfig):
             assert self.global_batch_size is not None, "global_batch_size must be set when using train_samples"
             self.train_iters = self.train_samples // self.global_batch_size
             print_rank_0(f"Setting training iterations to {self.train_iters} based on {self.train_samples} samples")
+
+
+@dataclass(kw_only=True)
+class ValidationConfig(MTrainValidationConfig):
+    """Bridge validation config, extending Megatron-Core's with extra options."""
+
+    validate_on_start: bool = False
+    """If set, run one validation pass before the training loop starts (at the
+    current iteration, normally step 0). Useful for establishing a baseline
+    validation loss for the initial / loaded checkpoint."""
 
 
 @dataclass(kw_only=True)
