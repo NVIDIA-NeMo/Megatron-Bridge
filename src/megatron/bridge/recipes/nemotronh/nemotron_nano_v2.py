@@ -394,7 +394,7 @@ def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
     # _sft_common already sets seq_length=2048 and packed_sequence=True
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - Nemotron Nano v2 uses specific optimizer settings
     cfg.optimizer.adam_beta2 = 0.95
@@ -519,7 +519,7 @@ def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
     # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -671,7 +671,7 @@ def nemotron_nano_9b_v2_peft_config(
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -818,7 +818,7 @@ def nemotron_nano_12b_v2_peft_config(
     # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95

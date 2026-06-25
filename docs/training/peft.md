@@ -281,8 +281,8 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -307,10 +307,16 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFDatasetConfig(
-        dataset_name="rajpurkar/squad",
-        process_example_fn=process_squad_example,
+    dataset=HFTextSFTDatasetProvider(
         seq_length=512,
+        maker_name="squad",
+        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
+        val_proportion=0.1,
+        do_validation=True,
+        do_test=False,
+        dataset_kwargs={"pad_to_max_length": True},
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
     ),
     checkpoint=CheckpointConfig(
         pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT

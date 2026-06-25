@@ -91,7 +91,7 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
     # Packing requires micro_batch_size > 1; disable for MBS=1 default
-    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings — VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False

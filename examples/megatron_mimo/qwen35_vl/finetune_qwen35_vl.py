@@ -43,9 +43,9 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -223,8 +223,8 @@ def _build_mimo_provider(
     standard_provider.use_cpu_initialization = True
     if hasattr(standard_provider, "mtp_num_layers"):
         standard_provider.mtp_num_layers = None
-    if hasattr(standard_provider, "_pack_sequences_in_batch"):
-        standard_provider._pack_sequences_in_batch = False
+    if hasattr(standard_provider, "_enable_in_batch_packing"):
+        standard_provider._enable_in_batch_packing = False
 
     provider = MegatronMIMOProvider.from_standard_provider(
         standard_provider=standard_provider,
@@ -241,11 +241,11 @@ def _build_mimo_provider(
     return provider
 
 
-def _build_data_provider(args: argparse.Namespace) -> HFDatasetConversationProvider:
+def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvider:
     maker_name = args.dataset_maker
     if not maker_name.startswith("make_"):
         maker_name = f"make_{maker_name}_dataset"
-    provider = HFDatasetConversationProvider(
+    provider = HFConversationDatasetProvider(
         seq_length=args.seq_length,
         hf_processor_path=args.processor_path or args.hf_model,
         maker_name=maker_name,
@@ -254,8 +254,9 @@ def _build_data_provider(args: argparse.Namespace) -> HFDatasetConversationProvi
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
-        pack_sequences_in_batch=False,
-        skip_test=True,
+        enable_in_batch_packing=False,
+        do_validation=True,
+        do_test=False,
         trust_remote_code=args.trust_remote_code,
     )
     provider.drop_last = True
@@ -571,7 +572,7 @@ def _register_converted_checkpoint_pre_wrap_hook(
 def _build_config(
     *,
     model_provider: MegatronMIMOProvider,
-    data_provider: HFDatasetConversationProvider,
+    data_provider: HFConversationDatasetProvider,
     args: argparse.Namespace,
 ) -> ConfigContainer:
     optimizer_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

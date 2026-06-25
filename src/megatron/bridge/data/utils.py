@@ -22,7 +22,6 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
-from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
 from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
 from megatron.bridge.training.config import (
     DataloaderConfig,
@@ -86,43 +85,6 @@ def pretrain_train_valid_test_datasets_provider(
     return train_ds, valid_ds, test_ds
 
 
-def hf_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: HFDatasetConfig, tokenizer: MegatronTokenizer
-) -> tuple[Any, Any, Any]:
-    """Build train, validation, and test datasets from a Hugging Face dataset.
-
-    Uses HFDatasetBuilder to create dataset instances.
-
-    Args:
-        train_val_test_num_samples: A list containing the number of samples for
-                                    train, validation, and test datasets.
-        dataset_config: Configuration object for the Hugging Face dataset.
-        tokenizer: The MegatronTokenizer instance.
-
-    Returns:
-        A tuple containing the train, validation, and test datasets.
-    """
-    print_rank_0(
-        f"> building train, validation, and test datasets for Huggingface dataset {dataset_config.dataset_name} ..."
-    )
-
-    # Get field names from DataloaderConfig to exclude
-    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
-
-    train_ds, valid_ds, test_ds = HFDatasetBuilder(
-        tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
-    ).build()
-
-    print_rank_0(f"> finished creating Huggingface dataset {dataset_config.dataset_name} ...")
-
-    return train_ds, valid_ds, test_ds
-
-
 def finetuning_train_valid_test_datasets_provider(
     train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizer
 ) -> tuple[Any, Any, Any]:
@@ -160,17 +122,16 @@ def finetuning_train_valid_test_datasets_provider(
     return train_ds, valid_ds, test_ds
 
 
-_REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig]], Callable] = {
+_REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig]], Callable] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
-    HFDatasetConfig: hf_train_valid_test_datasets_provider,
     FinetuningDatasetConfig: finetuning_train_valid_test_datasets_provider,
 }
 
 
 def get_dataset_provider(
-    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, HFDatasetConfig, DatasetProvider],
+    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, DatasetProvider],
 ) -> Callable:
     """Get the appropriate dataset provider function based on the config type.
 

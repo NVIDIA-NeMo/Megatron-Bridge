@@ -27,7 +27,8 @@ def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, m
     builder = FinetuningDatasetBuilder(
         dataset_root=tmp_path,
         tokenizer=MagicMock(),
-        packed_sequence_specs=PackedSequenceSpecs(
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(
             packed_sequence_size=128,
             tokenizer_model_name="mock-tokenizer",
             pad_seq_to_mult=8,
