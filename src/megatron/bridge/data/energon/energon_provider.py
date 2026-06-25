@@ -69,8 +69,11 @@ class EnergonProvider(DatasetProvider):
             num_workers=self.num_workers,
             pg_collection=context.pg_collection,
         )
+        # Return the train split un-wrapped (not iter(...)) so the downstream RerunDataIterator's
+        # ``iterable`` stays the EnergonDataloader and retains ``save_state``/``restore_state`` for
+        # checkpoint save and resume. Wrapping it in iter() would strip that interface.
         return (
-            iter(dataset.train_dataloader()),
+            dataset.train_dataloader(),
             iter(dataset.val_dataloader()),
             iter(dataset.val_dataloader()),
         )

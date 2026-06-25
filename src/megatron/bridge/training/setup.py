@@ -14,6 +14,7 @@
 
 import inspect
 import logging
+import os
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -42,6 +43,8 @@ from megatron.bridge.training.checkpointing import (
     CheckpointManager,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    DATALOADER_STATE_SUBDIR,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -394,6 +397,22 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position from the loaded checkpoint so a resumed run continues
+    # over the same data (currently only Megatron Energon). Runs after the iterator is built and the
+    # model checkpoint load restored state.train_state.step. Defaults the source to an `energon`
+    # subdir of checkpoint.load; an explicit dataset.dataloader_load overrides. No-op for
+    # non-Energon dataloaders or checkpoints saved without dataloader state.
+    if should_load_checkpoint:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None and cfg.checkpoint.load:
+            dataloader_load_path = os.path.join(cfg.checkpoint.load, DATALOADER_STATE_SUBDIR)
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()
