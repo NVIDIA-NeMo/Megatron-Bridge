@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
     _benchmark_common,
+    _enable_hybridep_full_iteration_mxfp8,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -46,7 +47,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -78,9 +79,9 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -111,21 +112,17 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 3
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 1024
+    cfg.train.global_batch_size = 2048
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-
     _benchmark_common(cfg)
+    _enable_hybridep_full_iteration_mxfp8(cfg)
     return cfg
 
 
@@ -222,12 +219,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-
     _benchmark_common(cfg)
+    _enable_hybridep_full_iteration_mxfp8(cfg)
     return cfg
 
 
@@ -315,7 +308,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.virtual_pipeline_model_parallel_size = 3
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 8192
@@ -324,12 +317,8 @@ def qwen3_235b_a22b_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
-
     _benchmark_common(cfg)
+    _enable_hybridep_full_iteration_mxfp8(cfg)
     return cfg
 
 
