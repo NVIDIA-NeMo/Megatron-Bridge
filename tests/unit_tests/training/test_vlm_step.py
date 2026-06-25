@@ -15,12 +15,12 @@
 import pytest
 import torch
 
+from megatron.bridge.data.sequence_packing import _pack_padded_sequence_as_legacy_tuple
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 from megatron.bridge.training.vlm_step import (
     forward_step,
     get_batch,
     get_batch_from_iterator,
-    pack_batch_sequences,
 )
 
 
@@ -274,7 +274,7 @@ def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
     assert inner_model.received_kwargs["mm_token_type_ids"] is not None
 
 
-def test_get_batch_padding_paths(monkeypatch):
+def test_get_batch_consumes_collated_sequence_shape(monkeypatch):
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
@@ -302,7 +302,8 @@ def test_get_batch_padding_paths(monkeypatch):
     )()  # noqa: E501
     cfg.dataset = type("D", (), {"skip_getting_attention_mask_from_dataset": True})()
 
-    # Make batch shorter than 128 to trigger ceil-to-128 padding path
+    # The collate layer is now responsible for padding/truncation, so get_batch
+    # should preserve the incoming sequence length.
     short_tokens = torch.tensor([[1, 2, 3, 4]])
     vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
@@ -320,15 +321,14 @@ def test_get_batch_padding_paths(monkeypatch):
     tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(
         it, cfg, use_mtp=False, pg_collection=_MockPGCollection()
     )
-    # Length padded up to min(seq_cap, ceil_to_128(4)) == 32
-    assert tokens.shape[1] == 32
-    assert labels.shape[1] == 32
-    assert loss_mask.shape[1] == 32
-    assert position_ids.shape[1] == 32
+    assert tokens.shape[1] == 4
+    assert labels.shape[1] == 4
+    assert loss_mask.shape[1] == 4
+    assert position_ids.shape[1] == 4
 
 
-def test_get_batch_enable_packing_path(monkeypatch):
-    """Test get_batch with enable_in_batch_packing=True (enable_packing path)."""
+def test_get_batch_consumes_collated_packed_metadata(monkeypatch):
+    """Test get_batch with collate-provided packed-sequence metadata."""
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
@@ -340,7 +340,6 @@ def test_get_batch_enable_packing_path(monkeypatch):
         raising=True,
     )
 
-    # Config with packing enabled
     cfg = type("Cfg", (), {})()
     cfg.model = type(
         "M",
@@ -355,32 +354,14 @@ def test_get_batch_enable_packing_path(monkeypatch):
         (),
         {
             "skip_getting_attention_mask_from_dataset": True,
-            "enable_in_batch_packing": True,  # Enable packing
+            "enable_in_batch_packing": True,
         },
     )()
 
-    # Batch with 2 sequences of different lengths (with padding)
-    # Seq 1: [1, 2, 3, 0, 0, 0, 0, 0] - length 3
-    # Seq 2: [4, 5, 6, 7, 8, 0, 0, 0] - length 5
-    tokens = torch.tensor(
-        [
-            [1, 2, 3, 0, 0, 0, 0, 0],
-            [4, 5, 6, 7, 8, 0, 0, 0],
-        ]
-    )
-    labels = torch.tensor(
-        [
-            [2, 3, -100, -100, -100, -100, -100, -100],
-            [5, 6, 7, 8, -100, -100, -100, -100],
-        ]
-    )
-    loss_mask = torch.tensor(
-        [
-            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        ]
-    )
-    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
+    labels = torch.tensor([[2, 3, -100, 5, 6, 7, 8, -100]])
+    loss_mask = torch.tensor([[1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]])
+    position_ids = torch.tensor([[0, 1, 2, 0, 1, 2, 3, 4]])
 
     vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
@@ -389,6 +370,9 @@ def test_get_batch_enable_packing_path(monkeypatch):
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
+        "cu_seqlens": torch.tensor([[0, 3, 8]], dtype=torch.int32),
+        "cu_seqlens_argmin": torch.tensor([[3]], dtype=torch.int32),
+        "max_seqlen": torch.tensor([[5]], dtype=torch.int32),
         "visual_inputs": vi,
     }
 
@@ -401,38 +385,29 @@ def test_get_batch_enable_packing_path(monkeypatch):
         out_attention_mask,
         out_position_ids,
         cu_seqlens,
+        cu_seqlens_argmin,
         max_seqlen,
+        cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin,
         visual_inputs,
     ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection())
 
-    # Verify packing occurred
-    # With pad_to_multiple_of=1 (cp_size=1), total packed length = 3 + 5 = 8
-    assert out_tokens.shape == (1, 8), f"Expected packed shape (1, 8), got {out_tokens.shape}"
+    assert out_tokens.shape == (1, 8)
     assert out_labels.shape == (1, 8)
     assert out_loss_mask.shape == (1, 8)
     assert out_position_ids.shape == (1, 8)
-
-    # Verify cu_seqlens is populated (not None)
-    assert cu_seqlens is not None, "cu_seqlens should be set when packing is enabled"
-    assert cu_seqlens.tolist() == [0, 3, 8], f"Expected cu_seqlens [0, 3, 8], got {cu_seqlens.tolist()}"
-
-    # Verify max_seqlen
-    assert max_seqlen is not None, "max_seqlen should be set when packing is enabled"
-    assert max_seqlen.item() == 5, f"Expected max_seqlen 5, got {max_seqlen.item()}"
-
-    # Verify attention_mask is None for packed sequences
-    assert out_attention_mask is None, "attention_mask should be None for packed sequences"
-
-    # Verify packed tokens content
-    expected_tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
-    assert torch.equal(out_tokens.cpu(), expected_tokens), f"Expected {expected_tokens}, got {out_tokens}"
-
-    # Verify visual_inputs passed through
+    assert cu_seqlens.tolist() == [[0, 3, 8]]
+    assert cu_seqlens_argmin.item() == 3
+    assert max_seqlen.item() == 5
+    assert cu_seqlens_unpadded is None
+    assert cu_seqlens_unpadded_argmin is None
+    assert out_attention_mask is None
+    assert torch.equal(out_tokens.cpu(), tokens)
     assert visual_inputs is not None
 
 
-def test_get_batch_enable_packing_with_cp(monkeypatch):
-    """Test get_batch packing with context parallelism (pad_to_multiple_of > 1)."""
+def test_get_batch_consumes_collated_unpadded_cu_seqlens(monkeypatch):
+    """Test get_batch forwards collate-provided padded and unpadded cu_seqlens."""
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
@@ -452,25 +427,10 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
         },
     )()
 
-    # Sequences: length 3 and length 5
-    # With CP=2, pad_to_multiple_of = 2*2 = 4
-    # Seq 1: 3 -> padded to 4
-    # Seq 2: 5 -> padded to 6
-    # Total: 4 + 6 = 10
-    tokens = torch.tensor(
-        [
-            [1, 2, 3, 0, 0, 0, 0, 0],
-            [4, 5, 6, 7, 8, 0, 0, 0],
-        ]
-    )
-    labels = torch.tensor(
-        [
-            [2, 3, -100, -100, -100, -100, -100, -100],
-            [5, 6, 7, 8, -100, -100, -100, -100],
-        ]
-    )
-    loss_mask = torch.ones_like(tokens, dtype=torch.float)
-    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+    tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 7, 8, 0, 0, 0]])
+    labels = torch.full_like(tokens, -100)
+    loss_mask = torch.zeros_like(tokens, dtype=torch.float)
+    position_ids = torch.arange(12).unsqueeze(0)
 
     batch = {
         "input_ids": tokens,
@@ -478,22 +438,39 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
+        "cu_seqlens": torch.tensor([[0, 4, 12]], dtype=torch.int32),
+        "cu_seqlens_unpadded": torch.tensor([[0, 3, 8]], dtype=torch.int32),
+        "cu_seqlens_argmin": torch.tensor([[3]], dtype=torch.int32),
+        "cu_seqlens_unpadded_argmin": torch.tensor([[3]], dtype=torch.int32),
+        "max_seqlen": torch.tensor([[8]], dtype=torch.int32),
         "visual_inputs": None,
     }
 
     it = _Iterator(batch)
 
-    # Use CP size of 2
-    out_tokens, out_labels, out_loss_mask, _, out_position_ids, cu_seqlens, max_seqlen, _ = get_batch(
-        it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2)
-    )
+    (
+        out_tokens,
+        out_labels,
+        out_loss_mask,
+        _,
+        out_position_ids,
+        cu_seqlens,
+        cu_seqlens_argmin,
+        max_seqlen,
+        cu_seqlens_unpadded,
+        cu_seqlens_unpadded_argmin,
+        _,
+    ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2))
 
-    # With CP=2, pad_to_multiple_of = 4
-    # Seq 1: 3 -> 4, Seq 2: 5 -> 8 (next multiple of 4)
-    # Total: 4 + 8 = 12
-    assert out_tokens.shape[1] == 12, f"Expected packed length 12, got {out_tokens.shape[1]}"
-    assert cu_seqlens.tolist() == [0, 4, 12], f"Expected cu_seqlens [0, 4, 12], got {cu_seqlens.tolist()}"
-    assert max_seqlen.item() == 8, f"Expected max_seqlen 8, got {max_seqlen.item()}"
+    assert out_tokens.shape[1] == 12
+    assert out_labels.shape[1] == 12
+    assert out_loss_mask.shape[1] == 12
+    assert out_position_ids.shape[1] == 12
+    assert cu_seqlens.tolist() == [[0, 4, 12]]
+    assert cu_seqlens_unpadded.tolist() == [[0, 3, 8]]
+    assert cu_seqlens_argmin.item() == 3
+    assert cu_seqlens_unpadded_argmin.item() == 3
+    assert max_seqlen.item() == 8
 
 
 def test_forward_step_schedule_plan(monkeypatch):
@@ -606,7 +583,7 @@ def test_forward_step_schedule_plan(monkeypatch):
 
 
 class TestPackBatchSequences:
-    """Tests for the pack_batch_sequences function."""
+    """Tests for the _pack_padded_sequence_as_legacy_tuple function."""
 
     def test_basic_packing(self):
         """Test basic sequence packing functionality."""
@@ -633,7 +610,7 @@ class TestPackBatchSequences:
         position_ids = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
         attention_mask = None
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -680,7 +657,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(10).unsqueeze(0).expand(batch_size, -1)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -720,7 +697,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -744,7 +721,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(8).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -777,7 +754,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(4).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -800,7 +777,7 @@ class TestPackBatchSequences:
         loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0, 0.0]])  # Second token masked
         position_ids = torch.arange(5).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -835,7 +812,7 @@ class TestPackBatchSequences:
             ]
         )
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -855,34 +832,23 @@ class TestPackBatchSequences:
         assert packed_pos[0, 3].item() == 1  # Second seq, pos 1
         assert packed_pos[0, 4].item() == 2  # Second seq, pos 2
 
-    def test_packing_empty_batch_warning(self, caplog):
-        """Test that all-padding batch returns empty tensors with warning."""
+    def test_packing_empty_batch_raises(self):
+        """Test that all-padding batch fails instead of hiding invalid metadata."""
         tokens = torch.tensor([[0, 0, 0, 0]])  # All padding
         labels = torch.tensor([[-100, -100, -100, -100]])
         loss_mask = torch.zeros(1, 4)
         position_ids = torch.arange(4).unsqueeze(0)
 
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        # No valid sequences found, should return empty tensors
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels.shape == (1, 0)
-        assert packed_loss_mask.shape == (1, 0)
-        assert packed_pos.shape == (1, 0)
-        # cu_seqlens should have just [0] for empty batch
-        assert len(cu_seqlens) == 1
-        assert cu_seqlens[0].item() == 0
-        assert max_seqlen.item() == 0
+        with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
+            _pack_padded_sequence_as_legacy_tuple(
+                tokens=tokens,
+                labels=labels,
+                loss_mask=loss_mask,
+                attention_mask=None,
+                position_ids=position_ids,
+                pad_token_id=0,
+                pad_to_multiple_of=1,
+            )
 
     def test_packing_different_dtypes(self):
         """Test packing with different tensor dtypes."""
@@ -891,7 +857,7 @@ class TestPackBatchSequences:
         loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]], dtype=torch.float32)
         position_ids = torch.tensor([[0, 1, 2, 3]], dtype=torch.long)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -917,7 +883,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.tensor([[0, 1, 2, 3]])
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -946,7 +912,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float)
         position_ids = torch.arange(3).unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,
@@ -969,7 +935,7 @@ class TestPackBatchSequences:
         )
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=None,
             loss_mask=None,
@@ -1001,7 +967,7 @@ class TestPackBatchSequences:
         )
         position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=None,
             loss_mask=None,
@@ -1020,29 +986,21 @@ class TestPackBatchSequences:
         assert cu_seqlens.tolist() == [0, 4, 12]
         assert max_seqlen.item() == 8
 
-    def test_packing_none_labels_empty_batch(self, caplog):
-        """Test empty batch with None labels/loss_mask returns None for those fields."""
+    def test_packing_none_labels_empty_batch(self):
+        """Test empty batch with None labels/loss_mask raises like other all-padding batches."""
         tokens = torch.tensor([[0, 0, 0, 0]])
         position_ids = torch.arange(4).unsqueeze(0)
 
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=None,
-            loss_mask=None,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels is None
-        assert packed_loss_mask is None
-        assert packed_pos.shape == (1, 0)
-        assert cu_seqlens.tolist() == [0]
-        assert max_seqlen.item() == 0
+        with pytest.raises(ValueError, match="Cannot pack a batch with no non-padding tokens"):
+            _pack_padded_sequence_as_legacy_tuple(
+                tokens=tokens,
+                labels=None,
+                loss_mask=None,
+                attention_mask=None,
+                position_ids=position_ids,
+                pad_token_id=0,
+                pad_to_multiple_of=1,
+            )
 
     def test_packing_gpu_tensor(self):
         """Test packing works on GPU if available."""
@@ -1054,7 +1012,7 @@ class TestPackBatchSequences:
         loss_mask = torch.ones_like(tokens, dtype=torch.float, device="cuda")
         position_ids = torch.arange(5, device="cuda").unsqueeze(0)
 
-        result = pack_batch_sequences(
+        result = _pack_padded_sequence_as_legacy_tuple(
             tokens=tokens,
             labels=labels,
             loss_mask=loss_mask,

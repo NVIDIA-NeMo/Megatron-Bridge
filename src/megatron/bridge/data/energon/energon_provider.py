@@ -35,15 +35,27 @@ class EnergonProvider(DatasetProvider):
     task_encoder: Optional[Any] = None
     # Enable batch-level online sequence packing
     enable_in_batch_packing: bool = False
+    # Active user: Qwen3-VL. Its step needs unpacked batch tensors and builds
+    # packed metadata after model-specific CP/SP padding, so task encoders must
+    # leave in-batch packing disabled when this flag is set.
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
+
+    def _sync_task_encoder_sequence_batching(self) -> None:
+        if self.task_encoder is None:
+            return
+        self.task_encoder.pad_to_max_length = self.pad_to_max_length
+        self.task_encoder.pad_to_multiple_of = self.pad_to_multiple_of
+        self.task_encoder.enable_in_batch_packing = (
+            self.enable_in_batch_packing and not self.defer_in_batch_packing_to_step
+        )
+        self.task_encoder.in_batch_packing_pad_to_multiple_of = self.in_batch_packing_pad_to_multiple_of
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
-        if (
-            self.enable_in_batch_packing
-            and self.task_encoder is not None
-            and hasattr(self.task_encoder, "pack_sequences")
-        ):
-            self.task_encoder.pack_sequences = True
+        self._sync_task_encoder_sequence_batching()
         dataset = EnergonMultiModalDataModule(
             path=self.path,
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,

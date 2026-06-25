@@ -126,6 +126,7 @@ def _qwen35_vl_apply_common(
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
     cfg.dataset.enable_in_batch_packing = False
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
