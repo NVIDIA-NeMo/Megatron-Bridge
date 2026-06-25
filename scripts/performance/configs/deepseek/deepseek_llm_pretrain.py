@@ -61,6 +61,24 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
 
+def apply_deepseek_v3_perf72_configs(cfg: ConfigContainer, config_variant: str) -> None:
+    """Scale DeepSeek-V3 down moderately for 72-GPU GB300 perf probes."""
+    expert_count_by_variant = {
+        "perf72_e72": 72,
+        "perf72_e108": 108,
+        "perf72_e144": 144,
+    }
+    num_moe_experts = expert_count_by_variant.get(config_variant.lower())
+    if num_moe_experts is None:
+        return
+
+    num_layers = 31
+    first_dense_layers = 3
+    cfg.model.num_layers = num_layers
+    cfg.model.num_moe_experts = num_moe_experts
+    cfg.model.moe_layer_freq = [0] * first_dense_layers + [1] * (num_layers - first_dense_layers)
+
+
 def deepseek_v3_pretrain_config_gb300(
     precision: str = "bf16", mock: bool = True, config_variant: str = "v1"
 ) -> ConfigContainer:
@@ -93,6 +111,7 @@ def deepseek_v3_pretrain_config_gb300(
 
     set_deepseek_v3_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    apply_deepseek_v3_perf72_configs(cfg, config_variant)
     if is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
 
