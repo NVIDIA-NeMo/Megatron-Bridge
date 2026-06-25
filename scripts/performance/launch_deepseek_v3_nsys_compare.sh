@@ -27,7 +27,8 @@
 #   WAIT_TIMEOUT_SEC (default 5400 — DSv3 50-iter run is ~23 min once it lands)
 #   PYTHON           (default "python" — override if interpreter w/ nemo_run is elsewhere)
 #   GRES             (Slurm GPU request, auto-detected per cluster; GRES="" to disable)
-#   NGPUS            (default 256; GN must divide it)
+#   NGPUS            (default & MINIMUM 256 — DSv3 HybridEP EP=64 production scale;
+#                    smaller is rejected. Scale up in multiples of 256.)
 #   GN               (default 4 — GPUs per node, GB200 = 4)
 #   HYBRIDEP_SYNC            (default 1 = sync on / fix on)
 #   HYBRIDEP_CUSTOM_ALLGATHER(default 0 = enable_custom_allgather forced False / fix on)
@@ -60,16 +61,16 @@ OUT_DIR=$(realpath "$OUT_DIR")
 TS=$(date +%s)
 
 # --- NGPUS / profiling_ranks (start / middle / last world rank) ---------------
+# 256 GPUs (64 nodes x GN=4) is the SMALLEST valid base scale for DSv3: the HybridEP
+# path runs at EP=64 (production), and smaller scales crash (the HybridEP buffer needs
+# a full NVL domain / EP=64; sub-256 reproducers hit -N dim / illegal-address). Scale
+# UP from 256 — keep NGPUS a multiple of 256 so EP=64 stays valid.
 NGPUS="${NGPUS:-256}"
 GN="${GN:-4}"
-[[ "$NGPUS" =~ ^[0-9]+$ ]] || { echo "ERROR: NGPUS must be a non-negative integer, got '$NGPUS'" >&2; exit 2; }
+[[ "$NGPUS" =~ ^[0-9]+$ ]] || { echo "ERROR: NGPUS must be a positive integer, got '$NGPUS'" >&2; exit 2; }
 NGPUS=$((10#$NGPUS))
-[[ "$NGPUS" -ge 1 ]] || { echo "ERROR: NGPUS must be >=1, got '$NGPUS'" >&2; exit 2; }
-case "$NGPUS" in
-    1) PROFILE_RANKS_CSV="0" ;;
-    2) PROFILE_RANKS_CSV="0,1" ;;
-    *) PROFILE_RANKS_CSV="0,$((NGPUS / 2)),$((NGPUS - 1))" ;;
-esac
+[[ "$NGPUS" -ge 256 ]] || { echo "ERROR: DSv3 requires NGPUS>=256 (HybridEP EP=64 production scale); got '$NGPUS'" >&2; exit 2; }
+PROFILE_RANKS_CSV="0,$((NGPUS / 2)),$((NGPUS - 1))"
 PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
 echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
 
