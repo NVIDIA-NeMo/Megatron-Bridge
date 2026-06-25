@@ -44,3 +44,15 @@ from megatron.bridge.training.config import ConfigContainer
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
     return cfg
+
+
+def _llama_benchmark_common(cfg: ConfigContainer) -> None:
+    """Apply legacy Llama benchmark defaults shared by the flat recipes."""
+    te_rng_disabled = not cfg.rng.te_rng_tracker and not cfg.model.use_te_rng_tracker
+    cuda_graph_impl = getattr(cfg.model, "cuda_graph_impl", None)
+
+    _benchmark_common(cfg)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    if cuda_graph_impl == "none" and te_rng_disabled:
+        cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False

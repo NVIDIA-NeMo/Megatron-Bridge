@@ -15,8 +15,8 @@
 
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
-    _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
+    _llama_benchmark_common,
     _perf_precision,
     llama31_405b_pretrain_config,
     userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192,
@@ -38,7 +38,7 @@ def llama31_405b_pretrain_128gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 64
+    cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
 
     cfg.ddp.use_megatron_fsdp = True
@@ -58,7 +58,7 @@ def llama31_405b_pretrain_128gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -71,32 +71,20 @@ def llama31_405b_pretrain_128gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
 
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 64
+    cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
-
-    cfg.ddp.use_megatron_fsdp = True
-    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
-    cfg.ddp.keep_fp8_transpose_cache = False
-    cfg.ddp.average_in_collective = False
-    cfg.ddp.fsdp_double_buffer = True
-    cfg.model.init_model_with_meta_device = True
-    cfg.model.gradient_accumulation_fusion = False
-    cfg.checkpoint.load = None
-
-    cfg.model.cpu_offloading = True
-    cfg.model.cpu_offloading_weights = False
-    cfg.model.cpu_offloading_num_layers = 10
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -109,17 +97,17 @@ def llama31_405b_pretrain_128gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
 
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 2
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 64
+    cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -137,16 +125,16 @@ def llama31_405b_pretrain_128gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = 4
     cfg.model.sequence_parallel = True
-    cfg.train.global_batch_size = 64
+    cfg.train.global_batch_size = 768
     cfg.train.micro_batch_size = 1
 
-    cfg.model.cuda_graph_impl = "local"
-    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
     cfg.comm_overlap.tp_comm_overlap = False
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -183,7 +171,7 @@ def llama31_405b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -207,7 +195,7 @@ def llama31_405b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
@@ -231,7 +219,7 @@ def llama31_405b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -258,5 +246,5 @@ def llama31_405b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h16384_tp4_cp2_mbs1_seqlen8192
     cfg.comm_overlap.tp_comm_overlap = False
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg

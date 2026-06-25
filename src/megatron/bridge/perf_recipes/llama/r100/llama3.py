@@ -16,7 +16,7 @@
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _benchmark_common,
+    _llama_benchmark_common,
     _perf_precision,
     llama3_8b_pretrain_config,
 )
@@ -44,7 +44,7 @@ def llama3_8b_pretrain_8gpu_r100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -70,7 +70,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -96,7 +96,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -122,5 +122,5 @@ def llama3_8b_pretrain_8gpu_r100_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg

@@ -15,8 +15,8 @@
 
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
-    _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
+    _llama_benchmark_common,
     _perf_precision,
     _with_global_batch_size,
     llama31_405b_pretrain_config,
@@ -45,7 +45,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
@@ -70,7 +70,7 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_h100_h16384_tp8_cp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 

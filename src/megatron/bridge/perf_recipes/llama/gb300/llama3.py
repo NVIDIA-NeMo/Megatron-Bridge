@@ -16,7 +16,8 @@
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _benchmark_common,
+    _enable_overlap_param_gather_with_optimizer_step,
+    _llama_benchmark_common,
     _perf_precision,
     _with_global_batch_size,
     llama3_8b_pretrain_config,
@@ -51,7 +52,7 @@ def llama3_8b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -78,7 +79,7 @@ def llama3_8b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -105,7 +106,7 @@ def llama3_8b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -132,7 +133,7 @@ def llama3_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -171,7 +172,7 @@ def llama3_70b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -208,7 +209,7 @@ def llama3_70b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "alltoall"
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -229,7 +230,7 @@ def llama3_70b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -255,7 +256,7 @@ def llama3_70b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -290,7 +291,8 @@ def llama3_70b_sft_32gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -325,7 +327,8 @@ def llama3_70b_sft_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -358,7 +361,7 @@ def llama3_70b_lora_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -378,8 +381,9 @@ def llama3_70b_lora_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 20
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
 
@@ -391,7 +395,8 @@ def llama3_70b_lora_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
+    _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
 
 
@@ -413,6 +418,7 @@ def llama3_70b_lora_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 20
     cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
 
@@ -424,7 +430,7 @@ def llama3_70b_lora_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -432,6 +438,8 @@ def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 70B SFT: 32× GB300, FP8-MX (same layout as FP8-CS)."""
     cfg = llama3_70b_sft_32gpu_gb300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
     return cfg
 
 

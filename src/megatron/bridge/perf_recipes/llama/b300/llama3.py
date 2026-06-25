@@ -16,7 +16,7 @@
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _benchmark_common,
+    _llama_benchmark_common,
     _perf_precision,
     llama3_8b_pretrain_config,
     llama3_70b_peft_config,
@@ -47,7 +47,7 @@ def llama3_8b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -72,7 +72,7 @@ def llama3_8b_pretrain_8gpu_b300_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -97,7 +97,7 @@ def llama3_8b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -118,7 +118,7 @@ def llama3_8b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -149,7 +149,7 @@ def llama3_70b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -180,7 +180,7 @@ def llama3_70b_pretrain_64gpu_b300_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -201,7 +201,7 @@ def llama3_70b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -227,7 +227,7 @@ def llama3_70b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = False
     cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -260,7 +260,7 @@ def llama3_70b_lora_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -293,7 +293,7 @@ def llama3_70b_lora_8gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
 
 
@@ -326,5 +326,5 @@ def llama3_70b_lora_8gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
-    _benchmark_common(cfg)
+    _llama_benchmark_common(cfg)
     return cfg
