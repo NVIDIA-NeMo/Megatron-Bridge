@@ -67,8 +67,30 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
-def _packable_collate(examples, processor, *, pack_sequences=False):
-    return {"pack_sequences": pack_sequences}
+def _packable_collate(
+    examples,
+    processor,
+    *,
+    sequence_length=None,
+    pad_to_max_length=False,
+    pad_to_multiple_of=128,
+    enable_in_batch_packing=False,
+    in_batch_packing_pad_to_multiple_of=1,
+):
+    del (
+        examples,
+        processor,
+        sequence_length,
+        pad_to_max_length,
+        pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of,
+    )
+    return {"enable_in_batch_packing": enable_in_batch_packing}
+
+
+def _legacy_collate(examples, processor):
+    del processor
+    return {"num_examples": len(examples)}
 
 
 def test_conversation_dataset_basic():
@@ -123,6 +145,34 @@ def test_conversation_dataset_binds_text_chat_collate_for_messages():
     assert batch["tokens"].tolist() == [[7, 8, 9]]
     assert batch["labels"].tolist() == [[8, 9, -100]]
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0]]
+
+
+def test_conversation_dataset_preserves_legacy_custom_collate_contract():
+    from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+
+    ds = ConversationDataset(
+        base_examples=[_example()],
+        target_length=1,
+        processor=Gemma3Processor(),
+        collate_impl=_legacy_collate,
+        sequence_length=16,
+        pad_to_max_length=True,
+    )
+
+    assert ds.collate_fn([ds[0]]) == {"num_examples": 1}
+
+
+def test_conversation_dataset_rejects_legacy_custom_collate_when_packing_requested():
+    from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+
+    with pytest.raises(ValueError, match="does not accept enable_in_batch_packing=True"):
+        ConversationDataset(
+            base_examples=[_example()],
+            target_length=1,
+            processor=Gemma3Processor(),
+            collate_impl=_legacy_collate,
+            enable_in_batch_packing=True,
+        )
 
 
 def test_conversation_dataset_rejects_unknown_processor_without_collate_impl():
@@ -543,4 +593,32 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
     train_ds, _, _ = provider.build_datasets(ctx)
 
     assert train_ds is not None
-    assert train_ds.collate_fn([_example()])["pack_sequences"] is True
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is True
+
+
+def test_hf_provider_can_defer_in_batch_packing_to_training_step(monkeypatch):
+    import transformers
+
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+
+    def _fake_get_maker(self):
+        return lambda **kwargs: [_example(), _example()]
+
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        maker_name="rdr",
+        collate_impl=_packable_collate,
+        enable_in_batch_packing=True,
+        defer_in_batch_packing_to_step=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is False
