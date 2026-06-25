@@ -1,22 +1,22 @@
 diff --git a/megatron/core/transformer/moe/fused_a2a.py b/megatron/core/transformer/moe/fused_a2a.py
-index 39f50a4a6..034f2071d 100644
+index defbe996a..2f08a0345 100644
 --- a/megatron/core/transformer/moe/fused_a2a.py
 +++ b/megatron/core/transformer/moe/fused_a2a.py
-@@ -13,10 +13,23 @@ try:
- except ImportError:
-     HAVE_DEEP_EP = False
+@@ -282,6 +282,23 @@ _HYBRID_EP_MIN_BUFFER_TOKENS = 512
+ _HYBRID_EP_IB_QP_MAX_DEPTH = 65535
+ _HYBRID_EP_IB_DISPATCH_DEPTH_PER_TOKEN = 3
  
-+import os
- import torch
- 
- _buffer = None
- 
-+# HYBRIDEP_SYNC env knob (default "1" = sync after every dispatch/combine).
-+# At 8-GPU GB200 the synchronize was needed to avoid cudaErrorIllegalAddress
-+# in backward after the custom_allgather=False patch unmasked a cross-stream
-+# race. Set HYBRIDEP_SYNC=0 to test whether the race fires at 256-GPU too,
-+# or whether it's masked at scale by NCCL-collective barriers / DP averaging.
++# --- DSv3 GB200 determinism knobs (script-level via env) ---------------------
++# HYBRIDEP_SYNC (default "1"): torch.cuda.synchronize() after each non-blocking
++#   dispatch_with_permute / combine_with_unpermute. Closes a cross-stream race
++#   (consumer on the current stream reads still-in-flight comm-stream writes ->
++#   cudaErrorIllegalAddress). Set HYBRIDEP_SYNC=0 to disable.
++# HYBRIDEP_CUSTOM_ALLGATHER (default "0" = forced False): 26.04 defaults
++#   enable_custom_allgather=True, whose path leaves num_dispatched_tokens_tensor
++#   uninitialised -> "-4 dim" crash under torch.use_deterministic_algorithms.
++#   Set HYBRIDEP_CUSTOM_ALLGATHER=1 to restore stock True.
 +_HYBRIDEP_SYNC_ENABLED = os.environ.get("HYBRIDEP_SYNC", "1").strip() != "0"
++_HYBRIDEP_CUSTOM_ALLGATHER = os.environ.get("HYBRIDEP_CUSTOM_ALLGATHER", "0").strip() != "0"
 +
 +
 +def _hybridep_maybe_sync():
@@ -24,56 +24,49 @@ index 39f50a4a6..034f2071d 100644
 +        torch.cuda.synchronize()
 +
  
- def get_hidden_bytes(x: torch.Tensor) -> int:
-     """Calculate the number of hidden bytes for a tensor.
-@@ -318,6 +331,7 @@ def init_hybrid_ep_buffer(
-         use_fp8=fp8_dispatch,
-         num_sms_dispatch_api=num_sms_dispatch_api,
-         num_sms_combine_api=num_sms_combine_api,
-+        enable_custom_allgather=False,
-     )
- 
- 
-@@ -382,6 +396,18 @@ class HybridEPDispatch(torch.autograd.Function):
-             num_permuted_tokens=num_permuted_tokens,
+ def _round_up_to_multiple(value: int, multiple: int) -> int:
+     return ((value + multiple - 1) // multiple) * multiple
+@@ -390,6 +407,8 @@ def init_hybrid_ep_buffer(
+         kwargs['num_blocks_unpermute'] = num_blocks_unpermute
+     if num_sms_preprocessing_api is not None:
+         kwargs['num_sms_preprocessing_api'] = num_sms_preprocessing_api
++    # Determinism knob (HYBRIDEP_CUSTOM_ALLGATHER) — see module-level note.
++    kwargs['enable_custom_allgather'] = _HYBRIDEP_CUSTOM_ALLGATHER
+     _hybrid_ep_buffer = HybridEPBuffer(
+         group=group,
+         hidden_dim=hidden_dim,
+@@ -487,6 +506,10 @@ class HybridEPDispatch(torch.autograd.Function):
              non_blocking=non_blocking,
+             **({"fuse_permute_dispatch": fused} if fused else {}),
          )
-+        # When non_blocking=True the HybridEP runtime writes the dispatch outputs on
-+        # its internal comm stream and returns before the write completes.  Any CUDA
-+        # operation on the returned tensors that is launched on the current (default)
-+        # stream will race against that still-in-flight write → cudaErrorIllegalAddress.
-+        # Inserting a full device synchronize here is the simplest safe fix: it ensures
-+        # every in-flight comm-stream kernel has completed before autograd or the expert
-+        # matmuls touch the output storage.
-+        # NOTE: this is intentionally heavier than record_stream — record_stream only
-+        # prevents the *allocator* from recycling the buffer, it does not prevent the
-+        # current stream from reading a partially-written tensor.
++        # Cross-stream race guard: drain the comm stream before any consumer on the
++        # current stream reads the still-in-flight non-blocking dispatch outputs.
 +        if non_blocking:
 +            _hybridep_maybe_sync()
  
          ctx.handle = handle
          ctx.pad_multiple = pad_multiple
-@@ -402,6 +428,9 @@ class HybridEPDispatch(torch.autograd.Function):
-         combined_hidden, combined_probs = _hybrid_ep_buffer.combine_with_unpermute(
-             hidden=grad_x, probs=grad_probs, handle=handle, pad_multiple=ctx.pad_multiple
+@@ -512,6 +535,9 @@ class HybridEPDispatch(torch.autograd.Function):
+             pad_multiple=ctx.pad_multiple,
+             **({"fuse_unpermute_combine": ctx.fused} if ctx.fused else {}),
          )
-+        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
-+        # before the upstream autograd nodes (running on current stream) read the result.
++        # Cross-stream race guard: drain the comm stream before upstream autograd
++        # (on the current stream) reads the combine outputs.
 +        _hybridep_maybe_sync()
-         return combined_hidden, None, combined_probs, None, None, None, None, None, None, None
- 
- 
-@@ -419,6 +448,9 @@ class HybridEPCombine(torch.autograd.Function):
-         combined_hidden, _ = _hybrid_ep_buffer.combine_with_unpermute(
-             hidden=x, handle=handle, pad_multiple=pad_multiple
+         return (
+             combined_hidden,
+             None,
+@@ -546,6 +572,9 @@ class HybridEPCombine(torch.autograd.Function):
+             pad_multiple=pad_multiple,
+             **({"fuse_unpermute_combine": fused} if fused else {}),
          )
-+        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
-+        # before downstream computation (running on current stream) reads the result.
++        # Cross-stream race guard: drain the comm stream before downstream compute
++        # (on the current stream) reads the combine output.
 +        _hybridep_maybe_sync()
          ctx.handle = handle
          ctx.pad_multiple = pad_multiple
          ctx.num_permuted_tokens = num_permuted_tokens
-@@ -430,6 +462,7 @@ class HybridEPCombine(torch.autograd.Function):
+@@ -558,6 +587,7 @@ class HybridEPCombine(torch.autograd.Function):
          Backward pass of fused combine of the HybridEP backend
          '''
          handle = ctx.handle
@@ -81,13 +74,12 @@ index 39f50a4a6..034f2071d 100644
          dispatched_hidden, _, _, _, _ = _hybrid_ep_buffer.dispatch_with_permute(
              hidden=grad_x,
              scaling_factor=None,
-@@ -437,6 +470,11 @@ class HybridEPCombine(torch.autograd.Function):
-             pad_multiple=ctx.pad_multiple,
+@@ -566,6 +596,10 @@ class HybridEPCombine(torch.autograd.Function):
              num_permuted_tokens=ctx.num_permuted_tokens,
+             **({"fuse_permute_dispatch": ctx.fused} if ctx.fused else {}),
          )
-+        # Same sync rationale as HybridEPDispatch.forward: if dispatch was async, the
-+        # backward comm stream must be drained before the upstream grad computation
-+        # (which runs on the current stream) reads dispatched_hidden.
++        # Cross-stream race guard: drain the comm stream before upstream grad
++        # computation (on the current stream) reads dispatched_hidden.
 +        if _non_blocking:
 +            _hybridep_maybe_sync()
          return dispatched_hidden, None, None, None, None

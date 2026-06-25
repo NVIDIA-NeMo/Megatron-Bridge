@@ -241,7 +241,7 @@ $PYTHON scripts/performance/setup_experiment.py \
     -gn "$GPUS_PER_NODE" \
     --container_image "$CONTAINER" \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
-    --custom_env_vars "RACE_NOISE=${RACE_NOISE},CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING:-0},HYBRIDEP_SYNC=${HYBRIDEP_SYNC:-1},HF_HOME=/lustre/fsw/portfolios/llmservice/users/zhiyul/hf_cache" \
+    --custom_env_vars "RACE_NOISE=${RACE_NOISE},CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING:-0},HYBRIDEP_SYNC=${HYBRIDEP_SYNC:-1},HYBRIDEP_CUSTOM_ALLGATHER=${HYBRIDEP_CUSTOM_ALLGATHER:-0},HF_HOME=/lustre/fsw/portfolios/llmservice/users/zhiyul/hf_cache" \
     -hf "$HF_TOKEN" \
     -wdk "$WANDB_API_KEY" \
     -wdp "mbridge-dev-zhiyul" \
