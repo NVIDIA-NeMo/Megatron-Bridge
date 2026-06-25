@@ -1187,8 +1187,10 @@ class MegatronModelBridge(
             conversion_tasks = self.build_conversion_tasks(hf_pretrained, megatron_model)
 
         for task in conversion_tasks:
-            # None means megatron module not on current rank, skip if this task is not going to happen
-            if task.megatron_module is None:
+            # build_conversion_tasks returns List[None | WeightConversionTask]: a slot stays None
+            # when no mapping matched. A None megatron_module means the module is not on the current
+            # rank. Either way there is nothing to stream, so skip.
+            if task is None or task.megatron_module is None:
                 continue
             hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state
             if isinstance(task.mapping.hf_param, str):

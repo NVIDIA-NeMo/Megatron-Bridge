@@ -46,6 +46,9 @@ def _bridge_loading(monkeypatch, tasks):
     monkeypatch.setattr(bridge, "_with_progress_tracking", lambda iterable, description: iterable)
     # ``unwrap_model`` is module-level in model_bridge; pass the model list through unchanged.
     monkeypatch.setattr(model_bridge_mod, "unwrap_model", lambda m: m)
+    # After the task loop, load_weights broadcasts shared embeddings across ranks; stub it out so
+    # the test needs no distributed/parallel-state init (we are only exercising the task loop).
+    monkeypatch.setattr(bridge, "_broadcast_shared_embeddings", lambda models: None)
     return bridge
 
 
