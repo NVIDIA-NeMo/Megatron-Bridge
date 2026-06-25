@@ -50,9 +50,8 @@ def resolve_global_flops_seqlen_stats(
 
     Reads the three accumulators populated by the forward step
     (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
-    over real sub-sequences, ``_flops_vision_patches``), corrects for VPP
-    over-counting, and reduces them to global totals across the data-parallel
-    group.
+    over real sub-sequences, ``_flops_vision_patches``) and reduces them to
+    global totals across the data-parallel group.
 
     Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
     differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
@@ -65,8 +64,9 @@ def resolve_global_flops_seqlen_stats(
         state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
         data_parallel_size: Size of the data-parallel group (used for the
             extrapolation fallback).
-        vp_size: Virtual pipeline size; accumulators are divided by it to undo
-            the per-virtual-stage over-counting. ``None``/``<= 1`` is a no-op.
+        vp_size: Virtual pipeline size. Kept for call-site compatibility; VPP
+            does not rescale these accumulators because they already represent
+            the executed training step consumed by the full-model FLOPS formula.
         dp_group: Data-parallel process group to SUM-reduce over. Must be the
             pure DP group (excluding CP) matching ``data_parallel_size`` — CP
             ranks share the same ``cu_seqlens`` and would double-count.
@@ -80,14 +80,7 @@ def resolve_global_flops_seqlen_stats(
     local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
     local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
     local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
-
-    # VPP correction: forward_step_func runs once per virtual stage per microbatch,
-    # so each accumulator over-counts by vp_size; the FLOPS formula already covers
-    # all layers. Done per-rank (before the reduce) to recover each rank's true local.
-    if isinstance(vp_size, int) and vp_size > 1:
-        local_seqlen_sum //= vp_size
-        local_seqlen_sq_sum //= vp_size
-        local_vision_patches //= vp_size
+    _ = vp_size
 
     use_all_reduce = (
         bool(getattr(state, "_flops_requires_global_reduce", False))

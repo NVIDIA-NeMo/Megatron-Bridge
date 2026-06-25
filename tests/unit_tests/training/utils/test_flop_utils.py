@@ -2209,16 +2209,19 @@ class TestResolveGlobalFlopsSeqlenStats:
         )
         assert (seqlen_sum, seqlen_sq_sum, vision) == (512, 4096, 0)
 
-    def test_vpp_correction_divides_before_extrapolation(self):
-        # Accumulators over-count by vp_size; helper divides them back per-rank.
+    def test_vpp_size_does_not_rescale_before_extrapolation(self):
+        # VPP accumulators already represent the executed training step; dividing
+        # by vp_size undercounts reported FLOPS for virtual-pipeline jobs.
         state = _State()
-        state._flops_seqlen_sum = 1000 * 4  # accumulated once per virtual stage (vp=4)
-        state._flops_seqlen_sq_sum = 250_000 * 4
-        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 250_000
+        state._flops_vision_patches = 64
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
             state, data_parallel_size=2, vp_size=4, dp_group=None
         )
         assert seqlen_sum == 1000 * 2
         assert seqlen_sq_sum == 250_000 * 2
+        assert vision == 64 * 2
 
     def test_no_accumulation_returns_none(self):
         # Step functions that don't set accumulators → caller falls back to fixed-length.
