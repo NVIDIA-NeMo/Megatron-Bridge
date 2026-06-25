@@ -37,6 +37,9 @@ def _is_patch_packed_visual_dict(value: Any) -> bool:
     Dim 0 of these two tensors means different things (patches vs images), so
     they cannot be sliced independently by DP. They must be sliced jointly
     along the per-image boundary.
+
+    TODO(mimo): This is very model-specific. We should revisit this to make it more generic.
+    maybe it should be handled by the model itself that defines how to slice the data.
     """
     return (
         isinstance(value, dict)
