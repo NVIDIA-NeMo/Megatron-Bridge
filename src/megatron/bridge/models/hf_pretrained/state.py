@@ -829,7 +829,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -901,6 +901,14 @@ class SafeTensorsStateSource(StateSource):
 
         # Final check on whether all original tensors were written.
         unsaved_keys = all_expected_keys - all_saved_keys
+        if unsaved_keys and strict:
+            print(f"\nError: {len(unsaved_keys)} tensors from the original checkpoint were not written:")
+            for key in sorted(unsaved_keys):
+                print(f"  - {key}")
+            raise RuntimeError(
+                f"{len(unsaved_keys)} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
         if not unsaved_keys:
             extra_keys = all_yielded_keys - all_expected_keys
             if extra_keys:
@@ -1038,7 +1046,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
