@@ -183,6 +183,25 @@ def test_cp_split_size_one_is_identity():
     assert _split_on_cp_rank(None, 4, 0, seq_dim=1) is None
 
 
+def test_cp_split_rejects_non_divisible_sequence_length():
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_on_cp_rank
+
+    tensor = torch.arange(10).view(1, 10)
+    with pytest.raises(ValueError, match="divisible by 4"):
+        _split_on_cp_rank(tensor, cp_size=2, cp_rank=0, seq_dim=1)
+
+
+def test_cp_split_attention_mask_slices_query_and_key_positions():
+    from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import _split_attention_mask_on_cp_rank
+
+    attention_mask = torch.arange(64).view(1, 1, 8, 8)
+    rank0_indices = torch.tensor([0, 1, 6, 7])
+    rank0_mask = _split_attention_mask_on_cp_rank(attention_mask, cp_size=2, cp_rank=0)
+
+    expected = attention_mask.index_select(2, rank0_indices).index_select(3, rank0_indices)
+    assert torch.equal(rank0_mask, expected)
+
+
 # ===========================================================================
 # Pre-expanded mode: num_placeholders == total_image_features
 # ===========================================================================

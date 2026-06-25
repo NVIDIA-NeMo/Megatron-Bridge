@@ -40,15 +40,37 @@ def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim
     """
     if val is None or cp_size <= 1:
         return val
+    seq_len = val.shape[seq_dim]
+    if seq_len % (2 * cp_size) != 0:
+        raise ValueError(
+            f"Cannot split sequence dimension {seq_dim} with length {seq_len} across context parallel size "
+            f"{cp_size}; length must be divisible by {2 * cp_size}."
+        )
     val = val.view(
         *val.shape[:seq_dim],
         2 * cp_size,
-        val.shape[seq_dim] // (2 * cp_size),
+        seq_len // (2 * cp_size),
         *val.shape[seq_dim + 1 :],
     )
     index = torch.tensor([cp_rank, 2 * cp_size - cp_rank - 1], device=val.device)
     val = val.index_select(seq_dim, index)
     return val.view(*val.shape[:seq_dim], -1, *val.shape[seq_dim + 2 :])
+
+
+def _split_attention_mask_on_cp_rank(
+    attention_mask: Optional[Tensor],
+    cp_size: int,
+    cp_rank: int,
+) -> Optional[Tensor]:
+    """Slice a 2D or 4D attention mask into this context-parallel rank's zigzag chunks."""
+    if attention_mask is None or cp_size <= 1:
+        return attention_mask
+    if attention_mask.dim() == 2:
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=1)
+    if attention_mask.dim() == 4:
+        attention_mask = _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=2)
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=3)
+    raise ValueError(f"attention_mask must be 2D or 4D for CP slicing, got shape {tuple(attention_mask.shape)}.")
 
 
 def _configure_kimi_vision_attention(vision_tower_config, vision_tower_cls) -> None:
@@ -456,6 +478,8 @@ class KimiK25VLModel(MegatronModule):
         if cp_size > 1:
             labels = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1)
             loss_mask = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1)
+            position_ids = _split_on_cp_rank(position_ids, cp_size, cp_rank, seq_dim=1)
+            attention_mask = _split_attention_mask_on_cp_rank(attention_mask, cp_size, cp_rank)
 
         outputs = self.language_model.forward(
             input_ids=None,
