@@ -14,6 +14,7 @@
 
 import torch
 import torch.distributed as dist
+from megatron.core.utils import get_pg_size
 
 
 class LoRAMerge:
@@ -62,7 +63,7 @@ class LoRAMerge:
         """
 
         lora_scale = alpha / dim if scale is None else scale
-        tp_size = 1 if tp_group is None else tp_group.size()
+        tp_size = get_pg_size(tp_group)
 
         if tp_size == 1:
             lora_weight = lora_scale * (linear_out @ linear_in)

@@ -942,7 +942,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora_merge.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -998,7 +1001,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora_merge.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
