@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 from dataclasses import dataclass, field
@@ -278,3 +279,30 @@ def test_pack_sft_data_uses_hf_text_provider_for_hf_recipe_dataset(monkeypatch):
     assert hf_provider.build_context.train_samples == 0
     assert hf_provider.build_context.valid_samples == 0
     assert hf_provider.build_context.test_samples == 0
+
+
+def test_rewrite_messages_jsonl_as_prompt_completion(tmp_path):
+    module = _load_module()
+    input_path = tmp_path / "training.jsonl"
+    input_path.write_text(
+        json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Question?"},
+                    {"role": "assistant", "content": [{"type": "text", "text": "Answer."}]},
+                ],
+                "original_answers": ["Answer."],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    module._rewrite_messages_jsonl_as_prompt_completion(input_path)
+
+    rewritten = json.loads(input_path.read_text(encoding="utf-8"))
+    assert rewritten == {
+        "input": "Question?",
+        "output": "Answer.",
+        "original_answers": ["Answer."],
+    }
