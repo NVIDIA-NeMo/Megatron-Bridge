@@ -192,6 +192,46 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     assert "feature_attention_mask" not in batch
 
 
+def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "dummy"
+
+        def __call__(self, text=None, audio=None, return_tensors="pt", padding=True, **kwargs):
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
+    ]
+
+    batch = collate.qwen2_audio_collate_fn(
+        examples, _AudioProcessor(), sequence_length=128, enable_in_batch_packing=True
+    )
+
+    assert batch["input_ids"].shape == (2, 128)
+    assert "cu_seqlens" not in batch
+    assert "max_seqlen" not in batch
+
+
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
@@ -354,6 +394,76 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
 
     assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
     assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
+
+
+def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _PackableProcessor:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        class _Tok:
+            pad_token_id = 99
+            pad_token = "<pad>"
+            added_tokens_decoder = {}
+            chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            rendered = conversation[0]["content"][-1]["text"]
+            if tokenize and kwargs.get("return_assistant_tokens_mask"):
+                length = 3 if "short" in rendered else 5
+                return {
+                    "input_ids": list(range(1, length + 1)),
+                    "assistant_masks": [0] * (length - 1) + [1],
+                }
+            return rendered
+
+        def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+            texts = text if isinstance(text, list) else [text]
+            lengths = [3 if "short" in item else 5 for item in texts]
+            max_len = max(lengths)
+            input_ids = torch.full((len(texts), max_len), self.tokenizer.pad_token_id)
+            attention_mask = torch.zeros((len(texts), max_len), dtype=torch.long)
+            for row, length in enumerate(lengths):
+                input_ids[row, :length] = torch.arange(1, length + 1)
+                attention_mask[row, :length] = 1
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "short"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "long"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _PackableProcessor(),
+        sequence_length=16,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 4, 12]]
+    assert batch["max_seqlen"].tolist() == [[8]]
+    assert batch["visual_inputs"] is not None
 
 
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
@@ -571,10 +681,11 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     """Gemma4 wraps Ministral3 collation with explicit Gemma4 assistant boundaries."""
     captured = {}
 
-    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None):
+    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None, **kwargs):
         captured["examples"] = examples
         captured["processor"] = processor
         captured["boundary_config"] = assistant_mask_boundary_config
+        captured["kwargs"] = kwargs
         return {"input_ids": torch.tensor([[1]])}
 
     class _Processor:
@@ -592,13 +703,26 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     processor = _Processor()
     monkeypatch.setattr(gemma_vl_collate, "ministral3_collate_fn", _fake_ministral3_collate_fn)
 
-    batch = collate.gemma4_vl_collate_fn(examples, processor)
+    batch = collate.gemma4_vl_collate_fn(
+        examples,
+        processor,
+        sequence_length=256,
+        pad_to_max_length=True,
+        pad_to_multiple_of=32,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
 
     assert batch["input_ids"].tolist() == [[1]]
     assert captured["examples"] == examples
     assert captured["processor"] is processor
     assert captured["boundary_config"].role_start_tokens == {"assistant": [202]}
     assert captured["boundary_config"].role_end_tokens == {"assistant": [203]}
+    assert captured["kwargs"]["sequence_length"] == 256
+    assert captured["kwargs"]["pad_to_max_length"] is True
+    assert captured["kwargs"]["pad_to_multiple_of"] == 32
+    assert captured["kwargs"]["enable_in_batch_packing"] is True
+    assert captured["kwargs"]["in_batch_packing_pad_to_multiple_of"] == 8
 
 
 def test_gemma4_registered_fn_matches_alias():

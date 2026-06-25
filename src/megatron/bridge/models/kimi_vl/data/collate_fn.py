@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
@@ -140,6 +141,15 @@ def kimi_k25_vl_collate_fn(
     examples: list[dict[str, Any]],
     processor,
     max_length: int | None = None,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Kimi K2.5 VL processors with pre-expanded image tokens.
 
@@ -149,6 +159,8 @@ def kimi_k25_vl_collate_fn(
     3. Pads all sequences to fixed max_length
     This ensures the model forward pass doesn't change sequence length dynamically.
     """
+    del visual_keys, min_pixels, max_pixels
+
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = infer_assistant_mask_boundary_config(processor)
 
@@ -308,4 +320,13 @@ def kimi_k25_vl_collate_fn(
     for key in ("pixel_values", "pixel_values_videos", "grid_thws", "video_grid_thw"):
         result.pop(key, None)
     result["visual_inputs"] = visual_inputs
+    pad_or_pack_sequence(
+        result,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return result
