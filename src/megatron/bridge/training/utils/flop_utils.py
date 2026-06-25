@@ -12,8 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 from pathlib import Path
+
+from megatron.core.models.hybrid.hybrid_layer_allocation import (
+    Symbols,
+    get_hybrid_layer_counts,
+    parse_hybrid_pattern,
+)
 
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
@@ -140,47 +145,23 @@ def num_floating_point_operations(
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, MLP, MoE, and GDN layers."""
-        if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
-            counts = {"M": 0, "G": 0, "*": 0, "-": 0, "E": 0}
-            try:
-                hybrid_allocation = importlib.import_module("megatron.core.models.hybrid.hybrid_layer_allocation")
-                layer_counts = hybrid_allocation.get_hybrid_layer_counts(cfg.model.hybrid_layer_pattern)
-                symbols = hybrid_allocation.Symbols
-                return (
-                    layer_counts[symbols.ATTENTION],
-                    layer_counts[symbols.MAMBA],
-                    layer_counts[symbols.MLP],
-                    layer_counts[symbols.MOE],
-                    layer_counts[symbols.GDN],
-                )
-            except (AttributeError, ImportError, KeyError, ModuleNotFoundError):
-                pass
+        hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+        if hybrid_pattern:
+            layer_counts = get_hybrid_layer_counts(hybrid_pattern)
+            return (
+                layer_counts[Symbols.ATTENTION],
+                layer_counts[Symbols.MAMBA],
+                layer_counts[Symbols.MLP],
+                layer_counts[Symbols.MOE],
+                layer_counts[Symbols.GDN],
+            )
 
-            try:
-                parse_hybrid_pattern = importlib.import_module(
-                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
-                ).parse_hybrid_pattern
-                parsed = parse_hybrid_pattern(cfg.model.hybrid_layer_pattern)
-                if parsed.main_pattern:
-                    for layer_type in parsed.main_pattern:
-                        if layer_type in counts:
-                            counts[layer_type] += 1
-                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
-                    for layer_type in parsed.mtp_pattern:
-                        if layer_type in counts:
-                            counts[layer_type] += parsed.mtp_num_depths
-            except (AttributeError, ImportError, ModuleNotFoundError):
-                for layer_type in cfg.model.hybrid_layer_pattern:
-                    if layer_type in counts:
-                        counts[layer_type] += 1
-            return counts["*"], counts["M"], counts["-"], counts["E"], counts["G"]
-        else:
-            num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
-            num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
-            num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
-            num_moe_layers = 0
-            num_gdn_layers = 0
-            return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
+        num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
+        num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
+        num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
+        num_moe_layers = 0
+        num_gdn_layers = 0
+        return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
 
     def mlp_layer_flops(batch_size, seq_len, hidden_size, expansion=4.0, swiglu=False):
         """Calculate FLOPs for an MLP layer."""
@@ -264,28 +245,13 @@ def num_floating_point_operations(
         hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
         if not hybrid_pattern or getattr(cfg.model, "window_size", None) is None:
             return 0
-        try:
-            hybrid_allocation = importlib.import_module("megatron.core.models.hybrid.hybrid_layer_allocation")
-            parsed = hybrid_allocation.parse_hybrid_pattern(hybrid_pattern)
-            main_pattern = parsed.main_pattern or ""
-            attention_symbol = hybrid_allocation.Symbols.ATTENTION
-            pipe_symbol = hybrid_allocation.Symbols.PIPE
-        except (AttributeError, ImportError, ModuleNotFoundError):
-            try:
-                parse_hybrid_pattern = importlib.import_module(
-                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
-                ).parse_hybrid_pattern
-                parsed = parse_hybrid_pattern(hybrid_pattern)
-                main_pattern = parsed.main_pattern or ""
-            except (AttributeError, ImportError, ModuleNotFoundError):
-                main_pattern = hybrid_pattern.split("/", 1)[0]
-            attention_symbol = "*"
-            pipe_symbol = "|"
+        parsed = parse_hybrid_pattern(hybrid_pattern)
+        main_pattern = parsed.main_pattern or ""
 
         num_swa_layers = 0
         num_main_attn_layers = 0
-        for layer_number, layer_type in enumerate(main_pattern.replace(pipe_symbol, ""), start=1):
-            if layer_type != attention_symbol:
+        for layer_number, layer_type in enumerate(main_pattern.replace(Symbols.PIPE, ""), start=1):
+            if layer_type != Symbols.ATTENTION:
                 continue
             num_main_attn_layers += 1
             if is_swa_layer(layer_number):
@@ -887,14 +853,8 @@ def num_floating_point_operations(
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
             hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
             if hybrid_pattern:
-                try:
-                    parse_hybrid_pattern = importlib.import_module(
-                        "megatron.core.ssm.mamba_hybrid_layer_allocation"
-                    ).parse_hybrid_pattern
-                    parsed = parse_hybrid_pattern(hybrid_pattern)
-                    mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
-                except (ImportError, ModuleNotFoundError):
-                    mtp_num_layers = 0
+                parsed = parse_hybrid_pattern(hybrid_pattern)
+                mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
             else:
                 mtp_num_layers = 0
         padded_vocab_size = calculate_padded_vocab_size(
