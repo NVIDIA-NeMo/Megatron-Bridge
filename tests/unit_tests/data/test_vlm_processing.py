@@ -239,24 +239,6 @@ class _ProcessorTemplateBoundaryProcessor(_ChatMLBoundaryProcessor):
         self.tokenizer = self._Tok()
 
 
-class _KimiBoundaryProcessor(_Processor):
-    class _Tok(_Tokenizer):
-        chat_template = "<|im_assistant|>assistant<|im_middle|><think>{{ content }}</think><|im_end|>"
-
-        def __call__(self, text, add_special_tokens=False):
-            mapping = {
-                "<|im_assistant|>assistant<|im_middle|>": [102],
-                "<|im_end|>": [103],
-                "<think>": [201],
-                "</think>": [202],
-            }
-            return {"input_ids": mapping.get(text, [42])}
-
-    def __init__(self):
-        super().__init__()
-        self.tokenizer = self._Tok()
-
-
 def test_gather_assistant_text_segments_handles_structured_and_string_content():
     example = {
         "conversation": [
@@ -370,29 +352,6 @@ def test_infer_assistant_mask_boundary_config_uses_processor_template_when_token
     assert boundary_config is not None
     assert boundary_config.role_start_tokens == {"assistant": [202]}
     assert boundary_config.role_end_tokens == {"assistant": [203]}
-
-
-def test_infer_assistant_mask_boundary_config_for_kimi_trims_empty_think_block():
-    processor = _KimiBoundaryProcessor()
-    boundary_config = infer_assistant_mask_boundary_config(processor)
-
-    assert boundary_config is not None
-    assert boundary_config.role_start_tokens == {"assistant": [102]}
-    assert boundary_config.role_end_tokens == {"assistant": [103]}
-    assert list(boundary_config.trim_leading_token_ids) == []
-    assert [list(token_sequence) for token_sequence in boundary_config.trim_leading_token_sequences] == [[201, 202]]
-
-    mask = build_assistant_loss_mask(
-        [
-            {"role": "assistant", "content": "thinking"},
-            {"role": "assistant", "content": "non-thinking"},
-        ],
-        torch.tensor([102, 201, 30, 31, 202, 40, 103, 102, 201, 202, 41, 103]),
-        processor,
-        boundary_config=boundary_config,
-    )
-
-    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
 
 
 def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_tokenize():

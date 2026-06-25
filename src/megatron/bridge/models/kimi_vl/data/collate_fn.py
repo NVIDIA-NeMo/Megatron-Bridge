@@ -22,11 +22,36 @@ import torch
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_processing import (
+    AssistantMaskBoundaryConfig,
+    assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
-    infer_assistant_mask_boundary_config,
+    get_processor_tokenizer,
+    tokenize_text_without_special_tokens,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+KIMI_ASSISTANT_START = "<|im_assistant|>assistant<|im_middle|>"
+KIMI_ASSISTANT_END = "<|im_end|>"
+KIMI_THINK_OPEN = "<think>"
+KIMI_THINK_CLOSE = "</think>"
+
+
+def _kimi_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig:
+    """Build Kimi assistant loss boundaries and trim only empty thinking blocks."""
+    tokenizer = get_processor_tokenizer(processor)
+    think_open_tokens = tokenize_text_without_special_tokens(tokenizer, KIMI_THINK_OPEN)
+    think_close_tokens = tokenize_text_without_special_tokens(tokenizer, KIMI_THINK_CLOSE)
+    empty_think_tokens = [*think_open_tokens, *think_close_tokens]
+    trim_leading_token_sequences = (empty_think_tokens,) if think_open_tokens and think_close_tokens else ()
+
+    return assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=KIMI_ASSISTANT_START,
+        assistant_end=KIMI_ASSISTANT_END,
+        trim_leading_token_sequences=trim_leading_token_sequences,
+    )
 
 
 def _expand_image_tokens_and_aligned_mask(
@@ -164,7 +189,7 @@ def kimi_k25_vl_collate_fn(
     # globally drop special tokens such as <|im_end|>, which the assistant must
     # learn to emit.
     skipped_tokens = torch.empty(0, dtype=torch.long)
-    boundary_config = infer_assistant_mask_boundary_config(processor)
+    boundary_config = _kimi_assistant_mask_boundary_config(processor)
 
     # Get media token ID
     media_token_id = getattr(processor, "media_placeholder_token_id", None)

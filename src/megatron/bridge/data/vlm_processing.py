@@ -448,33 +448,20 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
     if template is None:
         return None
 
-    candidates: tuple[tuple[str, str, tuple[tuple[str, ...], ...]], ...] = (
-        ("<|im_assistant|>assistant<|im_middle|>", "<|im_end|>", (("<think>", "</think>"),)),
-        ("<|im_start|>assistant\n", "<|im_end|>", ()),
-        ("<|turn>model\n", "<turn|>", ()),
-        ("<start_of_turn>model\n", "<end_of_turn>", ()),
+    candidates: tuple[tuple[str, str], ...] = (
+        ("<|im_start|>assistant\n", "<|im_end|>"),
+        ("<|turn>model\n", "<turn|>"),
+        ("<start_of_turn>model\n", "<end_of_turn>"),
     )
-    for assistant_start, assistant_end, trim_leading_sequences in candidates:
+    for assistant_start, assistant_end in candidates:
         if assistant_start.rstrip("\n") not in template or assistant_end not in template:
             continue
         start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
         end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
-        trim_token_sequences = [
-            token_ids
-            for token_sequence in trim_leading_sequences
-            if (
-                token_ids := [
-                    token_id
-                    for token in token_sequence
-                    for token_id in tokenize_text_without_special_tokens(tokenizer, token)
-                ]
-            )
-        ]
         if start_tokens and end_tokens:
             return AssistantMaskBoundaryConfig(
                 role_start_tokens={CHATML_ASSISTANT_ROLE: start_tokens},
                 role_end_tokens={CHATML_ASSISTANT_ROLE: end_tokens},
-                trim_leading_token_sequences=trim_token_sequences,
             )
     return None
 

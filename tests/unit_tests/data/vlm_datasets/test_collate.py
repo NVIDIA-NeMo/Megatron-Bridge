@@ -507,11 +507,23 @@ class _KimiDummyTokenizer:
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def convert_tokens_to_ids(self, token):
-        return MEDIA_TOKEN_ID
+        mapping = {
+            "<|im_assistant|>": KIMI_IM_ASSISTANT_ID,
+            "<|im_end|>": KIMI_IM_END_ID,
+            "<|media_pad|>": MEDIA_TOKEN_ID,
+            "<think>": KIMI_THINK_OPEN_ID,
+            "</think>": KIMI_THINK_CLOSE_ID,
+        }
+        return mapping.get(token, MEDIA_TOKEN_ID)
 
     def __call__(self, text, add_special_tokens=True, **kwargs):
-        # Return a fixed token sequence so loss-mask search can find the span.
-        return {"input_ids": [10, 11, 12]}
+        mapping = {
+            "<|im_assistant|>assistant<|im_middle|>": KIMI_ASSISTANT_HEADER_IDS,
+            "<|im_end|>": [KIMI_IM_END_ID],
+            "<think>": [KIMI_THINK_OPEN_ID],
+            "</think>": [KIMI_THINK_CLOSE_ID],
+        }
+        return {"input_ids": mapping.get(text, [10, 11, 12])}
 
 
 class _KimiDummyProcessor:
