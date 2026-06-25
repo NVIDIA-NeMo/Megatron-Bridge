@@ -66,6 +66,56 @@ class _TextChatTokenizer:
         }
 
 
+class _ChatMLBoundaryTokenizer:
+    pad_token_id = 0
+    pad_token = "<pad>"
+    added_tokens_decoder = {}
+    chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>"
+
+    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+        if tokenize:
+            raise AssertionError("boundary fallback test should render then tokenize")
+        return "rendered-boundary"
+
+    def __call__(
+        self,
+        text,
+        padding=True,
+        truncation=False,
+        return_tensors="pt",
+        max_length=None,
+        add_special_tokens=True,
+        **kwargs,
+    ):
+        del kwargs, add_special_tokens
+        if text == "<|im_start|>assistant\n":
+            return {"input_ids": [101]}
+        if text == "<|im_end|>":
+            return {"input_ids": [102]}
+
+        texts = text if isinstance(text, list) else [text]
+        tokenized = [[100, 10, 102, 101, 21, 22, 102] for _ in texts]
+        if truncation and max_length is not None:
+            tokenized = [ids[:max_length] for ids in tokenized]
+        max_len = (
+            max_length if padding == "max_length" and max_length is not None else max(len(ids) for ids in tokenized)
+        )
+        input_ids = []
+        attention_mask = []
+        for ids in tokenized:
+            row = list(ids)
+            mask = [1] * len(row)
+            pad_len = max_len - len(row)
+            row.extend([self.pad_token_id] * pad_len)
+            mask.extend([0] * pad_len)
+            input_ids.append(row)
+            attention_mask.append(mask)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+        }
+
+
 def test_text_chat_collate_fn_builds_shifted_assistant_labels_from_messages():
     tokenizer = _TextChatTokenizer()
     examples = [
@@ -91,6 +141,24 @@ def test_text_chat_collate_fn_builds_shifted_assistant_labels_from_messages():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0], [0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3], [0, 1, 2, 3]]
     assert batch["token_count"] == [3, 4]
+
+
+def test_text_chat_collate_fn_uses_chatml_boundary_mask_without_generation_template():
+    tokenizer = _ChatMLBoundaryTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer)
+
+    assert batch["tokens"].tolist() == [[100, 10, 102, 101, 21, 22, 102]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, 21, 22, 102, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
 
 
 def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():

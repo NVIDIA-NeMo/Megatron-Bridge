@@ -488,6 +488,59 @@ def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch)
     assert "cu_seqlens_unpadded" not in batch
 
 
+def test_hf_provider_auto_selects_text_chat_collate_for_messages(monkeypatch):
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    class TextTokenizer:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+            if tokenize:
+                return {"input_ids": [6, 7, 8], "assistant_masks": [0, 1, 1]}
+            return "rendered"
+
+        def __call__(self, text, padding=True, truncation=False, return_tensors="pt", **kwargs):
+            return {
+                "input_ids": torch.tensor([[6, 7, 8]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+            }
+
+    class WrappedTokenizer:
+        _tokenizer = TextTokenizer()
+
+    def _fake_get_maker(maker_name):
+        assert maker_name == "squad"
+        return lambda **kwargs: [
+            {
+                "messages": [
+                    {"role": "user", "content": "ping"},
+                    {"role": "assistant", "content": "pong"},
+                ]
+            }
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path=None,
+        maker_name="squad",
+        enable_in_batch_packing=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0, tokenizer=WrappedTokenizer())
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    batch = train_ds.collate_fn([train_ds[0]])
+    assert batch["tokens"].tolist() == [[6, 7, 8]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 3]]
+
+
 def test_hf_provider_forwards_in_batch_packing_padding_multiple(monkeypatch):
     from megatron.bridge.data.hf_datasets import provider as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn

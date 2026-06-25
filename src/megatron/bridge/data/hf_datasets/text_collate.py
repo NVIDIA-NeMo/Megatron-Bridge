@@ -30,6 +30,7 @@ from megatron.bridge.data.vlm_processing import (
     build_shifted_labels_and_loss_mask,
     ensure_position_ids,
     get_processor_tokenizer,
+    infer_assistant_mask_boundary_config,
 )
 
 
@@ -196,6 +197,7 @@ def text_chat_collate_fn(
     tokenizer = get_processor_tokenizer(processor)
     conversations = [_normalize_text_conversation(example) for example in examples]
     rendered_texts = [_render_chat(conversation, processor, tokenizer) for conversation in conversations]
+    boundary_config = infer_assistant_mask_boundary_config(processor)
     batch = _tensorize_batch(
         _tokenize_texts(
             rendered_texts,
@@ -215,6 +217,7 @@ def text_chat_collate_fn(
             input_ids,
             processor,
             skipped_tokens,
+            boundary_config=boundary_config,
             warn_on_all_masked=warn_on_all_masked,
         )
         for conversation, input_ids in zip(conversations, batch["input_ids"])
