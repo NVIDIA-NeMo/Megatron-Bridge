@@ -84,5 +84,11 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 def kimi_k2_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 1024× H100, FP8-SC (alias of FP8-CS)."""
-    return kimi_k2_pretrain_1024gpu_h100_fp8cs_config()
+    """Kimi K2 pretrain: 1024× H100, FP8-SC."""
+    cfg = kimi_k2_pretrain_1024gpu_h100_fp8cs_config()
+    cfg.mixed_precision.fp8_recipe = "blockwise"
+    cfg.mixed_precision.fp8_param = False
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
+    return cfg

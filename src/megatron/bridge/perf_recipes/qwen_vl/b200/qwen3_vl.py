@@ -18,7 +18,6 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
     ConfigContainer,
     _benchmark_common,
     _finalize_qwen3_vl,
-    _finalize_qwen3_vl_with_overlap,
     _perf_precision,
     qwen3_vl_30b_a3b_pretrain_mock_config,
     qwen3_vl_235b_a22b_pretrain_mock_config,
@@ -44,7 +43,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 12
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1024
@@ -55,7 +56,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_overlap(cfg)
+    _finalize_qwen3_vl(cfg)
     return cfg
 
 
@@ -78,7 +79,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 12
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1024
@@ -89,7 +92,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
-    _finalize_qwen3_vl_with_overlap(cfg)
+    _finalize_qwen3_vl(cfg)
     return cfg
 
 
@@ -112,7 +115,9 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.num_layers_in_first_pipeline_stage = 10
+    cfg.model.num_layers_in_last_pipeline_stage = 12
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 1024

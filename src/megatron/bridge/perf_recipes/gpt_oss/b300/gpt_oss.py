@@ -33,22 +33,22 @@ def gpt_oss_20b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
     cfg.mixed_precision = _gpt_oss_20b_nvfp4_precision()
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 2
+    cfg.model.context_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 24
-    cfg.train.micro_batch_size = 3
+    cfg.train.global_batch_size = 4
+    cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
     _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_transformer_engine_graph_configs(cfg)
 
-    cfg.optimizer.lr = 0.0004
-    cfg.optimizer.min_lr = 0.0004
-    cfg.validation.eval_interval = 512
-    cfg.validation.eval_iters = 43
-    cfg.scheduler.lr_warmup_iters = 192
+    cfg.optimizer.lr = 0.0006
+    cfg.optimizer.min_lr = 0.0006
+    cfg.validation.eval_interval = 384
+    cfg.validation.eval_iters = 32
+    cfg.scheduler.lr_warmup_iters = 64
     return cfg
 
 
@@ -58,23 +58,23 @@ def gpt_oss_20b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision = _gpt_oss_20b_fp8mx_precision()
 
     cfg.model.tensor_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
+    cfg.model.context_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 24
-    cfg.train.micro_batch_size = 3
+    cfg.train.global_batch_size = 4
+    cfg.train.micro_batch_size = 1
 
     _benchmark_common(cfg)
     _apply_gpt_oss_20b_common_configs(cfg)
     _apply_gpt_oss_20b_local_graph_configs(cfg)
 
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.optimizer.lr = 0.0005
-    cfg.optimizer.min_lr = 0.0005
-    cfg.validation.eval_interval = 512
-    cfg.validation.eval_iters = 43
-    cfg.scheduler.lr_warmup_iters = 256
+    cfg.model.moe_expert_rank_capacity_factor = 5
+    cfg.optimizer.lr = 0.0004
+    cfg.optimizer.min_lr = 0.0004
+    cfg.validation.eval_interval = 384
+    cfg.validation.eval_iters = 32
+    cfg.scheduler.lr_warmup_iters = 512
     return cfg
 
 

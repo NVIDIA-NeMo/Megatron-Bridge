@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_transformer_engine_graph,
     _perf_precision,
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
@@ -82,12 +83,66 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     _deepseek_v3_common(cfg)
 
     cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 4096
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.comm_overlap.overlap_grad_reduce = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+
+    _benchmark_common(cfg)
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    _enable_deepseek_transformer_engine_graph(cfg)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, NVFP4 (same layout as BF16)."""
+    cfg = deepseek_v3_pretrain_256gpu_b200_bf16_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.recompute_modules = ["mla_up_proj", "layernorm", "moe_act"]
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
+    return cfg
+
+
+def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _deepseek_v3_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 4096
+    cfg.train.global_batch_size = 256
     cfg.train.micro_batch_size = 1
 
     cfg.model.recompute_modules = ["mla_up_proj"]
@@ -98,18 +153,4 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
     _benchmark_common(cfg)
-    return cfg
-
-
-def deepseek_v3_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× B200, NVFP4 (same layout as BF16)."""
-    cfg = deepseek_v3_pretrain_256gpu_b200_bf16_config()
-    cfg.mixed_precision = _perf_precision("nvfp4")
-    return cfg
-
-
-def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× B200, MXFP8, large-scale proxy (GBS=256)."""
-    cfg = deepseek_v3_pretrain_256gpu_b200_fp8mx_config()
-    cfg.train.global_batch_size = 256
     return cfg

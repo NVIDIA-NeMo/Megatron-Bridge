@@ -67,6 +67,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     return cfg
 
 
@@ -95,4 +96,5 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     return cfg

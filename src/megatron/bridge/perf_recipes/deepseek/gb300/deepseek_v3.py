@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     _apply_deepseek_v3_64gpu_gb300_fsdp_configs,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_full_iteration_mxfp8,
     _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -96,9 +97,9 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 32
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = []
 
     cfg.model.cuda_graph_scope = []
     cfg.ddp.overlap_grad_reduce = True
@@ -107,6 +108,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*4|(t*4|)*14tmL")
 
     _benchmark_common(cfg)
+    _enable_deepseek_full_iteration_mxfp8(cfg, fp8_dot_product_attention=True, fp8_output_proj=True)
     return cfg
 
 
@@ -164,4 +166,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.train.global_batch_size = 256
+    cfg.model.fp8_output_proj = True
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     return cfg
