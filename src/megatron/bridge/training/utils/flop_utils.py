@@ -143,6 +143,20 @@ def num_floating_point_operations(
         if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
             counts = {"M": 0, "G": 0, "*": 0, "-": 0, "E": 0}
             try:
+                hybrid_allocation = importlib.import_module("megatron.core.models.hybrid.hybrid_layer_allocation")
+                layer_counts = hybrid_allocation.get_hybrid_layer_counts(cfg.model.hybrid_layer_pattern)
+                symbols = hybrid_allocation.Symbols
+                return (
+                    layer_counts[symbols.ATTENTION],
+                    layer_counts[symbols.MAMBA],
+                    layer_counts[symbols.MLP],
+                    layer_counts[symbols.MOE],
+                    layer_counts[symbols.GDN],
+                )
+            except (AttributeError, ImportError, KeyError, ModuleNotFoundError):
+                pass
+
+            try:
                 parse_hybrid_pattern = importlib.import_module(
                     "megatron.core.ssm.mamba_hybrid_layer_allocation"
                 ).parse_hybrid_pattern
@@ -155,7 +169,7 @@ def num_floating_point_operations(
                     for layer_type in parsed.mtp_pattern:
                         if layer_type in counts:
                             counts[layer_type] += parsed.mtp_num_depths
-            except (ImportError, ModuleNotFoundError):
+            except (AttributeError, ImportError, ModuleNotFoundError):
                 for layer_type in cfg.model.hybrid_layer_pattern:
                     if layer_type in counts:
                         counts[layer_type] += 1
@@ -206,18 +220,80 @@ def num_floating_point_operations(
         num_heads,
         gqa_groups=8,
         kv_channels=None,
+        core_seq_factor=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
+        core_seq_factor = seq_len if core_seq_factor is None else core_seq_factor
         return (
-            4
-            * batch_size
-            * seq_len
-            * hidden_size
-            * p
-            * (hidden_size + (hidden_size * (g / num_heads)) + (seq_len / 2))
+            4 * batch_size * seq_len * hidden_size * p * (hidden_size + (hidden_size * (g / num_heads)))
+            + 2 * batch_size * seq_len * hidden_size * p * core_seq_factor
         )
+
+    def calculate_swa_context():
+        """Calculate the average causal sliding-window context length."""
+        window_size = getattr(cfg.model, "window_size", None)
+        if window_size is None:
+            return None
+        if isinstance(window_size, (list, tuple)):
+            effective_window = window_size[0] + window_size[1] + 1
+        else:
+            effective_window = window_size
+
+        if effective_window < effective_seq_length:
+            return effective_window - effective_window * (effective_window - 1) / (2 * effective_seq_length)
+        return core_attn_seq_factor / 2
+
+    def is_swa_layer(layer_number: int) -> bool:
+        """Return whether the 1-indexed physical layer uses sliding-window attention."""
+        window_size = getattr(cfg.model, "window_size", None)
+        if window_size is None:
+            return False
+        window_attn_skip_freq = getattr(cfg.model, "window_attn_skip_freq", None)
+        if window_attn_skip_freq is None:
+            return True
+        if isinstance(window_attn_skip_freq, int):
+            return layer_number % window_attn_skip_freq != 0
+        if isinstance(window_attn_skip_freq, list):
+            return layer_number <= len(window_attn_skip_freq) and bool(window_attn_skip_freq[layer_number - 1])
+        return False
+
+    def count_hybrid_swa_attention_layers(num_attn_layers: int) -> int:
+        """Count SWA attention symbols in the main physical hybrid pattern."""
+        hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+        if not hybrid_pattern or getattr(cfg.model, "window_size", None) is None:
+            return 0
+        try:
+            hybrid_allocation = importlib.import_module("megatron.core.models.hybrid.hybrid_layer_allocation")
+            parsed = hybrid_allocation.parse_hybrid_pattern(hybrid_pattern)
+            main_pattern = parsed.main_pattern or ""
+            attention_symbol = hybrid_allocation.Symbols.ATTENTION
+            pipe_symbol = hybrid_allocation.Symbols.PIPE
+        except (AttributeError, ImportError, ModuleNotFoundError):
+            try:
+                parse_hybrid_pattern = importlib.import_module(
+                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
+                ).parse_hybrid_pattern
+                parsed = parse_hybrid_pattern(hybrid_pattern)
+                main_pattern = parsed.main_pattern or ""
+            except (AttributeError, ImportError, ModuleNotFoundError):
+                main_pattern = hybrid_pattern.split("/", 1)[0]
+            attention_symbol = "*"
+            pipe_symbol = "|"
+
+        num_swa_layers = 0
+        num_main_attn_layers = 0
+        for layer_number, layer_type in enumerate(main_pattern.replace(pipe_symbol, ""), start=1):
+            if layer_type != attention_symbol:
+                continue
+            num_main_attn_layers += 1
+            if is_swa_layer(layer_number):
+                num_swa_layers += 1
+
+        # MTP attention layers are counted in num_attn_layers, but they do not
+        # correspond to main-pattern layer numbers for window_attn_skip_freq.
+        return min(num_swa_layers, num_attn_layers, num_main_attn_layers)
 
     def mamba_layer_flops(
         batch_size,
@@ -296,18 +372,38 @@ def num_floating_point_operations(
         gdn_conv_kernel_dim=4,
         vocab_size=256000,
         mtp_num_layers=0,
+        core_seq_factor=None,
+        num_swa_attn_layers=0,
+        swa_context=None,
     ):
         """Calculate total FLOPs for the hybrid model."""
-        flops_fwd = (
-            num_attn_layers
-            * attn_layer_flops(
+        num_full_attn_layers = num_attn_layers - num_swa_attn_layers
+        full_attn_flops = num_full_attn_layers * attn_layer_flops(
+            batch_size,
+            seq_len,
+            hidden_size,
+            num_attn_heads,
+            gqa_groups,
+            kv_channels,
+            core_seq_factor=core_seq_factor,
+        )
+        swa_attn_flops = 0
+        if num_swa_attn_layers > 0:
+            if swa_context is None:
+                raise ValueError("swa_context must be set when num_swa_attn_layers > 0")
+            swa_attn_flops = num_swa_attn_layers * attn_layer_flops(
                 batch_size,
                 seq_len,
                 hidden_size,
                 num_attn_heads,
                 gqa_groups,
                 kv_channels,
+                core_seq_factor=2 * swa_context,
             )
+
+        flops_fwd = (
+            full_attn_flops
+            + swa_attn_flops
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
             * mamba_layer_flops(
@@ -781,8 +877,9 @@ def num_floating_point_operations(
         patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
         return vit_flops(cfg, batch_size, patches_per_image)
 
-    # Main entrypoint for FLOPs calculation.
-    if getattr(cfg.model, "is_hybrid_model", False):
+    # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
+    # a physical hybrid pattern is sufficient to select hybrid accounting.
+    if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):
         # Calculate the number of each type of layer.
         num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers = calculate_layer_counts()
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
@@ -809,6 +906,8 @@ def num_floating_point_operations(
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
+        num_swa_attn_layers = count_hybrid_swa_attention_layers(num_attn_layers)
+        swa_context = calculate_swa_context() if num_swa_attn_layers > 0 else None
 
         # Compute hybrid model FLOPs.
         llm_flops = hybrid_flops(
@@ -848,6 +947,9 @@ def num_floating_point_operations(
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
+            core_seq_factor=core_attn_seq_factor,
+            num_swa_attn_layers=num_swa_attn_layers,
+            swa_context=swa_context,
         )
         return llm_flops + _compute_vit_flops()
     else:

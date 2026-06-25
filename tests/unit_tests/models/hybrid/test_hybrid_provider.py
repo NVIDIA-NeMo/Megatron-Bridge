@@ -39,6 +39,7 @@ class TestHybridModelProvider:
         assert provider.params_dtype == torch.bfloat16
         assert provider.fp16 is False
         assert provider.bf16 is True
+        assert provider.is_hybrid_model is True
         assert provider.mamba_num_groups == 8
         assert provider.hybrid_layer_pattern is None
         assert provider.hybrid_stack_spec is None
