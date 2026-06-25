@@ -55,8 +55,19 @@ class TestHybridStackSpecs:
             return_value=mock_spec,
         ) as mock_fn:
             result = modelopt_hybrid_stack_spec()
-        mock_fn.assert_called_once_with(local_core_attention=False, remap_te_layernorm=False)
+        mock_fn.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
         assert result is mock_spec
+
+    def test_modelopt_spec_remaps_te_layernorm_state_dict_keys(self):
+        result = modelopt_hybrid_stack_spec()
+
+        assert result.submodules.mamba_layer.submodules.sharded_state_dict_keys_map == {
+            "norm.": "mixer.in_proj.layer_norm_"
+        }
+        assert result.submodules.attention_layer.submodules.sharded_state_dict_keys_map == {
+            "input_layernorm.": "self_attention.linear_qkv.layer_norm_",
+            "pre_mlp_layernorm.": "mlp.linear_fc1.layer_norm_",
+        }
 
     def test_default_spec_returns_te_spec(self):
         config = _make_hybrid_config()
