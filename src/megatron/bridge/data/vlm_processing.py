@@ -639,6 +639,22 @@ def _trim_leading_token_sequences(
     end: int,
     trim_token_sequences: Sequence[Sequence[int]],
 ) -> int:
+    """Skip complete token sequences that appear contiguously at a span start.
+
+    This is intentionally sequence-based instead of token-set based. For Kimi,
+    it can remove a leading empty ``<think></think>`` block while preserving a
+    non-empty ``<think>reasoning...</think>`` block as supervised content.
+
+    Args:
+        ids: Rendered token ids to inspect.
+        start: Inclusive span start.
+        end: Exclusive span end.
+        trim_token_sequences: Candidate token-id sequences to skip when they
+            match exactly at the current span start.
+
+    Returns:
+        The first index after all matched leading token sequences.
+    """
     idx = start
     while idx < end:
         for raw_token_sequence in trim_token_sequences:
