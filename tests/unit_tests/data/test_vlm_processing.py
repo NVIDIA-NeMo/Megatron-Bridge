@@ -544,6 +544,19 @@ def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
     assert mask.tolist() == [0.0, 0.0, 1.0, 1.0]
 
 
+def test_build_assistant_loss_mask_boundary_config_trims_leading_sequences_only_when_complete():
+    input_ids = torch.tensor([102, 55, 3, 56, 4, 101, 102, 55, 56, 5, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [101]},
+        trim_leading_token_sequences=([55, 56],),
+    )
+
+    mask = build_assistant_loss_mask([], input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+
+
 def test_build_assistant_loss_mask_applies_skipped_tokens_to_boundary_mask():
     example = {
         "conversation": [
