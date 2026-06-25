@@ -200,6 +200,9 @@ def deepseek_v3_pretrain_config_b300(
     cfg = pretrain_config()
     cfg.mixed_precision = precision_config
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     # Apply model-specific settings that were previously passed as constructor args
     cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
     cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
