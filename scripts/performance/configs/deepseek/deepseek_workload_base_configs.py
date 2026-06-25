@@ -70,6 +70,8 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V1,
     micro_batch_size=1,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=4,
     cuda_graph_impl="full_iteration",
     moe_a2a_overlap=True,
     cutedsl_fused_grouped_mlp=True,
