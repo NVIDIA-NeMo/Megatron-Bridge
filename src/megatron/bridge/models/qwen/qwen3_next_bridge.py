@@ -198,6 +198,16 @@ class Qwen3NextBridge(MegatronModelBridge):
                     megatron_param="mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc2.weight*",
                     hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
                 ),
+                # Sequential (non-grouped) MTP experts (e.g. ModelOpt pruning).
+                GatedMLPMapping(
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.experts.local_experts.*.linear_fc1.weight",
+                    gate="mtp.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="mtp.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="mtp.layers.*.mtp_model_layer.mlp.experts.local_experts.*.linear_fc2.weight",
+                    hf_param="mtp.layers.*.mlp.experts.*.down_proj.weight",
+                ),
                 # Gated MLP of shared expert
                 GatedMLPMapping(
                     megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
