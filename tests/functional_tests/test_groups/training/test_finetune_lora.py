@@ -50,6 +50,10 @@ from tests.functional_tests.utils import (
 )
 
 
+DEFAULT_GLOBAL_BATCH_SIZE = 8
+DEFAULT_SFT_DATASET_ROWS = 64
+
+
 @dataclass
 class Llama3TinyModelProvider(GPTModelProvider):
     """Smaller Llama3 config used previously for functional tests."""
@@ -154,6 +158,7 @@ class TestLoRAFinetune:
             pretrain_iters = 10
             initial_lora_iters = 6  # First phase of LoRA training
             total_lora_iters = 12  # Total LoRA training iterations
+            required_lora_samples = total_lora_iters * DEFAULT_GLOBAL_BATCH_SIZE
 
             # First run: Pretrain and save checkpoint
             pretrain_cfg = self._create_pretrain_config(
@@ -171,6 +176,7 @@ class TestLoRAFinetune:
             )
 
             # Second run: LoRA finetuning initial phase (will be "interrupted")
+            lora_dataset_root = self._write_sft_dataset(shared_base_dir, num_rows=required_lora_samples)
 
             # Initial LoRA training configuration (use total iters for scheduler)
             lora_initial_cfg = self._create_lora_config(
@@ -180,7 +186,7 @@ class TestLoRAFinetune:
                 pretrain_checkpoint_dir,
                 seq_length,
                 scheduler_total_iters=total_lora_iters,
-                dataset_root=self._write_sft_dataset(shared_base_dir),
+                dataset_root=lora_dataset_root,
             )
 
             # Run initial LoRA finetuning (simulate job getting interrupted)
@@ -202,7 +208,7 @@ class TestLoRAFinetune:
                 seq_length,
                 load_checkpoint=lora_checkpoint_dir,
                 scheduler_total_iters=total_lora_iters,  # Keep total for scheduler calculation
-                dataset_root=self._write_sft_dataset(shared_base_dir),
+                dataset_root=lora_dataset_root,
             )
             # Override save interval for final phase and use checkpoint scheduler settings
             lora_resume_cfg.checkpoint.save_interval = total_lora_iters - initial_lora_iters
@@ -291,7 +297,7 @@ class TestLoRAFinetune:
             sequence_parallel=(tensor_parallel_size > 1),
         )
 
-    def _create_training_config(self, train_iters, global_batch_size=8, micro_batch_size=1):
+    def _create_training_config(self, train_iters, global_batch_size=DEFAULT_GLOBAL_BATCH_SIZE, micro_batch_size=1):
         """Create a training configuration."""
         return TrainingConfig(
             train_iters=train_iters,
@@ -354,13 +360,14 @@ class TestLoRAFinetune:
             num_workers=1,
         )
 
-    def _write_sft_dataset(self, base_dir):
+    def _write_sft_dataset(self, base_dir, num_rows=DEFAULT_SFT_DATASET_ROWS):
         """Create a tiny local SFT dataset shared by all distributed ranks."""
         dataset_root = os.path.join(base_dir, "sft_data")
         if torch.distributed.get_rank() == 0:
             os.makedirs(dataset_root, exist_ok=True)
-            # Keep enough finite samples for dataloader_type="single" LoRA runs.
-            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(64)]
+            rows = [
+                {"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(num_rows)
+            ]
             with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row) + "\n")
