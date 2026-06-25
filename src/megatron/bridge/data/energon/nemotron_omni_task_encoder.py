@@ -237,6 +237,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
 
         images_pil = _images_to_pil(sample.imgs) if sample.imgs is not None and len(sample.imgs) > 0 else None
 
+        # Video is currently only supported with use_temporal_video_embedder=True.
+        if video_frames and not self.use_temporal_video_embedder:
+            raise ValueError("Nemotron Omni video samples are currently only supported with use_temporal_video_embedder=True.")
+
         # 2. Process audio → mel spectrogram + compute token count
         n_sound_tokens = 0
         sound_clips_t: Optional[torch.Tensor] = None
@@ -311,22 +315,24 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         ]
         prompt_text = self._tokenizer.apply_chat_template(text_conv, tokenize=False, add_generation_prompt=False)
 
-        proc_kwargs = {"text": prompt_text, "return_tensors": "pt"}
+        # This encoder always assumes a dynamic-resolution processor (Nemotron-3
+        # Omni Reasoning), which resizes each image to its own aspect-ratio-preserving
+        # (H_i, W_i).  When a sample's images do NOT all share a size, the processor
+        # returns pixel_values as a list of differently-shaped [3, H_i, W_i] tensors
+        # (it only stacks into [N, 3, H, W] when sizes match).  With return_tensors="pt"
+        # the outer BatchFeature would then try to torch.stack that list and crash, so
+        # we call with return_tensors=None and tensorize what we need ourselves.
+        # pixel_values is normalised (list-or-stacked) and patchified into a packed
+        # [1, Σpatches, 3·P·P] sequence in step 9 (same for video frames).
         if all_proc_images:
-            proc_kwargs["images"] = all_proc_images
-
-        orig_tiles = getattr(self.processor.image_processor, "max_num_tiles", None)
-        if all_proc_images and orig_tiles is not None:
-            self.processor.image_processor.max_num_tiles = 1
-        proc_output = self.processor(**proc_kwargs)
-        if orig_tiles is not None:
-            self.processor.image_processor.max_num_tiles = orig_tiles
-
-        input_ids_np = (
-            proc_output["input_ids"][0].numpy()
-            if proc_output["input_ids"].dim() == 2
-            else proc_output["input_ids"].numpy()
-        )
+            proc_output = self.processor(text=prompt_text, images=all_proc_images, return_tensors=None)
+            # return_tensors=None → input_ids is a list-of-one-list [[id, ...]].
+            # np.array handles both a plain Python list and a tensor row.
+            input_ids_np = np.array(proc_output["input_ids"][0], dtype=np.int64)
+        else:
+            # Text-only sample.
+            proc_output = self.processor(text=prompt_text, return_tensors="pt")
+            input_ids_np = proc_output["input_ids"][0].numpy()
 
         # 5. Insert audio tokens into input_ids after the last </img>
         #    Format: <so_start> + N × <so_embedding> + <so_end>
@@ -345,14 +351,12 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             )
             input_ids_np = np.concatenate([input_ids_np[:insert_pos], sound_block, input_ids_np[insert_pos:]])
 
-        # 5b. Build loss mask FIRST on raw input_ids (before adjust_image_tokens),
-        # then adjust image tokens. The loss mask positions must align with the
-        # post-adjustment input_ids that the model receives.
-        pv = proc_output.get("pixel_values")
-        num_patches = None
-        if pv is not None:
-            num_tiles = pv.shape[0] if isinstance(pv, torch.Tensor) else len(pv)
-            num_patches = torch.ones(num_tiles, dtype=torch.long)
+        # 5b. num_patches tells adjust_image_tokens (step 7b) how many <image>
+        # tokens each <img>…</img> block should hold.  In the dynamic-resolution
+        # path each image/frame collapses to exactly one <image> token (the model
+        # fans it out to num_image_tiles[i] via img_seq_len=1), so num_patches is
+        # ones(N) where N == number of images + representative video frames.
+        num_patches = torch.ones(len(all_proc_images), dtype=torch.long) if all_proc_images else None
 
         # 6. Build loss mask — only supervise assistant turns
         loss_mask_np = np.zeros(len(input_ids_np), dtype=np.float32)
@@ -376,19 +380,13 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         labels_np[shifted_loss == 0.0] = IGNORE_INDEX
         loss_mask_np = shifted_loss
 
-        # 7b. Adjust image tokens — shrink many <image> tokens per tile to one.
-        # This must happen AFTER loss mask and labels are built so positions stay aligned.
+        # 7b. Collapse each <img>…<image>…<image>…</img> block (the HF processor
+        # expands one <image> into many) down to exactly one <image> per image/frame.
+        # Must run AFTER loss mask and labels are built so token positions stay aligned.
         img_start_id = self._tokenizer.convert_tokens_to_ids("<img>")
         img_end_id = self._tokenizer.convert_tokens_to_ids("</img>")
         if num_patches is not None and (input_ids_np == img_start_id).any():
             from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
-
-            proc_num_patches = proc_output.get("num_patches")
-            if proc_num_patches is not None:
-                if not isinstance(proc_num_patches, torch.Tensor):
-                    proc_num_patches = torch.tensor(proc_num_patches)
-            else:
-                proc_num_patches = num_patches
 
             # adjust_image_tokens can handle a dict of tensors with matching shapes
             adjusted = adjust_image_tokens(
@@ -397,7 +395,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                     "labels": torch.from_numpy(labels_np).unsqueeze(0),
                     "loss_mask": torch.from_numpy(loss_mask_np).unsqueeze(0),
                 },
-                proc_num_patches,
+                num_patches,
                 img_start_id,
                 img_end_id,
             )
@@ -411,53 +409,74 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         labels_np = labels_np[:max_len].copy()
         loss_mask_np = loss_mask_np[:max_len].copy()
 
-        # 9. Collect visual tensors (num_patches already computed in step 5b)
+        # 9. Build the packed dynamic-resolution visual tensors.
+        # Both branches produce pixel_values as a packed [1, Σpatches, 3·P·P] sequence
+        # plus per-image imgs_sizes / num_frames / num_image_tiles, which the training
+        # step turns into vision_packed_seq_params for RADIO's dynamic_resolution path.
+        #   VIDEO: patchify ALL frames (not just the representative ones used for the
+        #          input_ids token expansion) at a fixed 512×512.
+        #   IMAGE: patchify each image at its own processor-resized (H_i, W_i).
         visual_tensors: Dict[str, torch.Tensor] = {}
-        for key in self.visual_keys:
-            val = proc_output.get(key)
-            if val is not None:
-                visual_tensors[key] = val if isinstance(val, torch.Tensor) else torch.tensor(val)
-
-        # 10. Temporal video embedder: patchify ALL video frames and pack
         sample_imgs_sizes: Optional[torch.Tensor] = None
         sample_num_frames: Optional[torch.Tensor] = None
-        if self.use_temporal_video_embedder and video_frames:
-            all_patches = []
+        sample_num_image_tiles: Optional[torch.Tensor] = None
+        P = self.patch_dim
+
+        if video_frames and self.use_temporal_video_embedder:
             target_h, target_w = 512, 512
-            for frame in video_frames:
-                patches = self._patchify_frame(frame, target_h, target_w)
-                all_patches.append(patches)
-            # Pack into [1, total_patches, C*P*P] for dynamic resolution
-            packed = torch.cat(all_patches, dim=0).unsqueeze(0)  # [1, N*num_patches_per_frame, feat]
-            visual_tensors["pixel_values"] = packed
+            all_patches = [self._patchify_frame(f, target_h, target_w) for f in video_frames]
+            visual_tensors["pixel_values"] = torch.cat(all_patches, dim=0).unsqueeze(0)
             sample_imgs_sizes = torch.tensor([[target_h, target_w]] * len(video_frames), dtype=torch.long)
             sample_num_frames = torch.tensor([len(video_frames)], dtype=torch.long)
-            # Also include standalone images (each is 1 frame)
+            # Prepend any standalone images alongside the video (each counts as 1 frame).
             if images_pil:
                 for img in images_pil:
-                    img_patches = self._patchify_frame(img, target_h, target_w)
-                    packed_img = img_patches.unsqueeze(0)
-                    visual_tensors["pixel_values"] = torch.cat([packed_img, visual_tensors["pixel_values"]], dim=1)
+                    img_patches = self._patchify_frame(img, target_h, target_w).unsqueeze(0)
+                    visual_tensors["pixel_values"] = torch.cat(
+                        [img_patches, visual_tensors["pixel_values"]], dim=1
+                    )
                     sample_imgs_sizes = torch.cat(
-                        [
-                            torch.tensor([[target_h, target_w]], dtype=torch.long),
-                            sample_imgs_sizes,
-                        ],
-                        dim=0,
+                        [torch.tensor([[target_h, target_w]], dtype=torch.long), sample_imgs_sizes], dim=0
                     )
-                    sample_num_frames = torch.cat(
-                        [
-                            torch.tensor([1], dtype=torch.long),
-                            sample_num_frames,
-                        ]
-                    )
+                    sample_num_frames = torch.cat([torch.tensor([1], dtype=torch.long), sample_num_frames])
 
-        # Compute per-image num_image_tiles for LM-side image-token expansion
-        # (new llava_model.py dynamic_resolution path). num_tiles_i = (H/P * W/P) // 4
-        # matching the HF collate's shuffled_count computation.
-        sample_num_image_tiles: Optional[torch.Tensor] = None
-        if sample_imgs_sizes is not None:
-            P = self.patch_dim
+        elif images_pil:
+            # The dynamic-resolution processor returns imgs_sizes as [(H_i, W_i), …]
+            # and num_tokens as the per-image post-shuffle token count (= (py·px)//4).
+            # pixel_values comes back EITHER as a list of [3, H_i, W_i] tensors (images
+            # of different sizes) OR as a single stacked [N, 3, H, W] tensor (when all
+            # images share a size, e.g. a single image), so normalise to a per-image
+            # list before patchifying each into [1, Σpatches, 3·P·P].
+            pv_raw = proc_output.get("pixel_values")
+            if pv_raw is None:
+                pv_list = []
+            elif isinstance(pv_raw, torch.Tensor):
+                pv_list = [pv_raw[i] for i in range(pv_raw.shape[0])]
+            else:
+                pv_list = list(pv_raw)
+            patch_seqs = []
+            for img_t in pv_list:
+                if not isinstance(img_t, torch.Tensor):
+                    img_t = torch.as_tensor(img_t, dtype=torch.float32)
+                _, H, W = img_t.shape
+                py, px = H // P, W // P
+                patch_seqs.append(
+                    img_t.reshape(3, py, P, px, P).permute(1, 3, 0, 2, 4).reshape(py * px, 3 * P * P)
+                )
+            if patch_seqs:
+                visual_tensors["pixel_values"] = torch.cat(patch_seqs, dim=0).unsqueeze(0)
+            imgs_sizes_raw = proc_output.get("imgs_sizes")
+            sample_imgs_sizes = torch.as_tensor(imgs_sizes_raw, dtype=torch.long) if imgs_sizes_raw is not None else None
+            sample_num_frames = torch.ones(len(pv_list), dtype=torch.long)
+            num_tokens_raw = proc_output.get("num_tokens")
+            sample_num_image_tiles = (
+                torch.as_tensor(num_tokens_raw, dtype=torch.int) if num_tokens_raw is not None else None
+            )
+
+        # Derive num_image_tiles from imgs_sizes for the video path (the image path
+        # already set it directly from the processor's num_tokens).
+        # num_tiles_i = (H/P * W/P) // 4 matches the HF collate's shuffled_count.
+        if sample_imgs_sizes is not None and sample_num_image_tiles is None:
             sample_num_image_tiles = torch.tensor(
                 [(int(h) // P) * (int(w) // P) // 4 for h, w in sample_imgs_sizes.tolist()],
                 dtype=torch.int,
@@ -512,7 +531,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             position_ids_flat = torch.cat([torch.arange(L, dtype=torch.long) for L in lengths], dim=0)
 
             tokens = tokens_flat.unsqueeze(0)
-            tokens[tokens == pad_id] = 0
+            # NOTE: do NOT remap `tokens == pad_id` to 0. pad_id == eos == <|im_end|>
+            # for this tokenizer, and in the packed branch there is no padding at all
+            # (sequences are concatenated), so a value-match would only destroy real
+            # in-sequence turn-end/eos markers. The HF collate keeps them; match it.
             labels = labels_flat.unsqueeze(0)
             loss_mask_t = loss_mask_flat.unsqueeze(0)
             position_ids = position_ids_flat.unsqueeze(0)
@@ -539,7 +561,11 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 loss_mask_mat[i, :seq_len] = s.loss_mask.numpy()[:seq_len]
 
             tokens = torch.from_numpy(input_ids_mat)
-            tokens[tokens == pad_id] = 0
+            # NOTE: do NOT remap `tokens == pad_id` to 0. pad_id == eos == <|im_end|>
+            # for this tokenizer, so a value-match zeroes every real in-sequence
+            # turn-end/eos token, not just the trailing padding. Trailing pad is
+            # harmless regardless of its value (labels=IGNORE, loss_mask=0, causal
+            # attention never reads it), and the HF collate keeps pad_id — match it.
             labels = torch.from_numpy(labels_mat)
             loss_mask_t = torch.from_numpy(loss_mask_mat)
 
@@ -552,10 +578,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             )
 
         # Aggregate visual tensors.
-        # The temporal video path ships pixel_values as [1, N_i*patches_per_frame, feat]
-        # per sample. When packing, concat along dim=1 so the whole microbatch becomes a
-        # single [1, total_patches, feat] packed sequence that matches vision_packed_seq_params
-        # cu_seqlens. Without packing, preserve the legacy [MBS, patches, feat] stack.
+        # Image and video both ship pixel_values as a packed [1, Σpatches, feat]
+        # sequence (dim 3).  Concatenate along dim=1 so the whole microbatch becomes a
+        # single [1, total_patches, feat] packed sequence matching the cu_seqlens that
+        # the training step builds from the batched imgs_sizes.
         all_visual_keys = set()
         for s in samples:
             all_visual_keys.update(s.visual_tensors.keys())
@@ -565,7 +591,8 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             if not tensors:
                 batched_visual[key] = None
                 continue
-            if self.pack_sequences and tensors[0].dim() == 3:
+            if tensors[0].dim() == 3:
+                # Packed [1, patches, feat] → concat along the patch dim.
                 batched_visual[key] = torch.cat(tensors, dim=1)
             else:
                 batched_visual[key] = torch.cat(tensors, dim=0)

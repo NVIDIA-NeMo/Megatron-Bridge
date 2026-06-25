@@ -59,12 +59,19 @@ def masked_next_token_loss(
         - A dict containing reporting metrics on the loss and number of tokens across
           the data parallel ranks
     """
+    # Use reshape(-1) rather than view(-1): for LLaVA-family models the returned
+    # loss_mask/losses can be non-contiguous when the combined (text + expanded
+    # image tokens) sequence exceeds the LM max length and LLaVAModel._preprocess_data
+    # truncates it with a dim-1 slice ``[:, :max_len]``. That slice is contiguous at
+    # micro_batch_size==1 (size-1 leading dim) but non-contiguous at mbs>1, which makes
+    # view(-1) raise. reshape(-1) matches view() for contiguous tensors and only copies
+    # when needed, so it is behavior-preserving for all existing runs.
     if isinstance(output_tensor, tuple):
-        losses = output_tensor[0].view(-1).float()
-        loss_mask = output_tensor[1].view(-1).float()
+        losses = output_tensor[0].reshape(-1).float()
+        loss_mask = output_tensor[1].reshape(-1).float()
     else:
-        losses = output_tensor.view(-1).float()
-    loss_mask = loss_mask.view(-1).float()
+        losses = output_tensor.reshape(-1).float()
+    loss_mask = loss_mask.reshape(-1).float()
     loss = torch.sum(losses * loss_mask)
 
     # Check individual rank losses are not NaN prior to DP all-reduce.
