@@ -340,6 +340,8 @@ def longlive_wan_1_3b_pretrain_config() -> ConfigContainer:
     and swaps only the forward step to `longlive_wan_step`.
     """
     cfg = wan_1_3b_text2video_pretrain_config()
+    cfg.model.context_parallel_size = 1
+    cfg.model.qkv_format = "sbhd"
     cfg.model.window_size = _longlive_window_size(
         latent_height=cfg.dataset.H_latents,
         latent_width=cfg.dataset.W_latents,

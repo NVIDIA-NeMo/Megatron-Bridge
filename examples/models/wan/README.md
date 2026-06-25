@@ -184,14 +184,7 @@ For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/w
 
 LongLiveWan adds a WAN training step for paired clean/noisy teacher forcing. It uses the same offline WAN WebDataset format as the standard recipe: `pth` files contain precomputed video latents and `pickle` files contain text embeddings. This MVP does not run raw-video VAE encoding or online T5 text encoding inside training.
 
-The LongLive step expands each temporal chunk into a clean copy and a noisy copy. Loss is computed only on the noisy copy, and the dense teacher-forcing mask lets noisy chunks see previous clean chunks plus their own noisy chunk. This exact dense-mask path is intended for reduced-resolution validation. Full-size LongLive-2.0 long-video training requires a block-sparse/flex attention mask; a plain TE sliding window is not equivalent because it cannot prevent noisy chunks from attending to previous noisy chunks.
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-  --recipe longlive_wan_1_3b_pretrain_config \
-  --step_func longlive_wan_step \
-  dataset.path=${WORKSPACE}/datasets/wan
-```
+The LongLive step expands each temporal chunk into a clean copy and a noisy copy. Loss is computed only on the noisy copy, and the dense teacher-forcing mask lets noisy chunks see previous clean chunks plus their own noisy chunk. The 1.3B recipe is internally configured for the supported `qkv_format=sbhd` and `context_parallel_size=1` path, but the full text-to-video sequence is still larger than the dense-mask limit. Treat the full-size recipe as a configuration template until block-sparse/flex attention support is available; use the reduced-resolution command below for exact validation.
 
 For a small exact smoke test, reduce the latent resolution so the paired clean/noisy sequence stays below the dense-mask limit:
 

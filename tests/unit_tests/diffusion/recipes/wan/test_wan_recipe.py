@@ -184,7 +184,8 @@ class TestLongLiveWan1_3BPretrainConfig:
         assert isinstance(config.dataset, WanDatasetConfig)
         assert config.model.seq_length == 43008
         assert config.dataset.seq_length == 43008
-        assert config.model.context_parallel_size == 4
+        assert config.model.context_parallel_size == 1
+        assert config.model.qkv_format == "sbhd"
         assert config.model.window_size == (24 * 52 * 30, 0)
         assert config.model.window_attn_skip_freq is None
         assert "longlive_wan" in config.checkpoint.save
