@@ -60,17 +60,18 @@ fi
 
 WORKDIR=$(pwd)
 
-# v0.4.1 submodule pin; anything above is "ours" (per-manager HybridEP fix etc.)
-BASE_COMMIT="d7288711ba278d160d2a5a22c099915c9fe1395c"
+# MLM submodule pin; anything above is "ours" (working-tree edits bind-mounted).
+# Updated from d7288711b (v0.4.1) to c8288b6c (ultra-perf branch pin).
+BASE_COMMIT="c8288b6c978f2b6b6c460a21b5b42114f5c0be3e"
 MEGATRON_DIR="3rdparty/Megatron-LM"
 
 # Mount changed MLM files (committed + working-tree + staged + untracked .py).
 # 26.04 editable install path: /opt/Megatron-Bridge/3rdparty/Megatron-LM/
 CUSTOM_MOUNTS=""
 if [ -d "$MEGATRON_DIR" ]; then
-    CHANGED_COMMITTED=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD 2>/dev/null || true)
-    CHANGED_WT=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM 2>/dev/null || true)
-    CHANGED_STAGED=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM --cached 2>/dev/null || true)
+    CHANGED_COMMITTED=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM "$BASE_COMMIT" HEAD 2>/dev/null | grep '\.py$' || true)
+    CHANGED_WT=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM 2>/dev/null | grep '\.py$' || true)
+    CHANGED_STAGED=$(git -C "$MEGATRON_DIR" diff --name-only --diff-filter=AM --cached 2>/dev/null | grep '\.py$' || true)
     CHANGED_UNTRACKED=$(git -C "$MEGATRON_DIR" ls-files --others --exclude-standard -- '*.py' 2>/dev/null || true)
     CHANGED_FILES=$(printf '%s\n' $CHANGED_COMMITTED $CHANGED_WT $CHANGED_STAGED $CHANGED_UNTRACKED | sort -u)
     for f in $CHANGED_FILES; do
