@@ -1203,6 +1203,13 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
+        if hasattr(self.dataset, "pad_to_max_length"):
+            requires_fixed_seq_len = (
+                getattr(self.model, "pipeline_model_parallel_size", 1) > 1
+                or getattr(self.model, "expert_model_parallel_size", 1) > 1
+            )
+            self.dataset.pad_to_max_length = requires_fixed_seq_len
+
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:

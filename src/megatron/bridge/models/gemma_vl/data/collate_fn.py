@@ -21,6 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS, THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
@@ -38,6 +39,11 @@ def gemma3_vl_collate_fn(
     visual_keys: Sequence[str] = THW_GRID_VISUAL_KEYS,
     min_pixels: int | None = None,
     max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Gemma3 VL models."""
     skipped_tokens = extract_skipped_token_ids(processor)
@@ -112,14 +118,43 @@ def gemma3_vl_collate_fn(
     for key in PASSTHROUGH_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    pad_or_pack_sequence(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return batch
 
 
-def gemma4_vl_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def gemma4_vl_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Gemma4 VL models."""
     return ministral3_collate_fn(
         examples,
         processor,
+        visual_keys=visual_keys,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         assistant_mask_boundary_config=assistant_mask_boundary_config_from_markers(
             processor,
             assistant_start="<|turn>model\n",

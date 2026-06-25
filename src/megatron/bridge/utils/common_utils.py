@@ -16,6 +16,7 @@ import os
 import re
 import types
 import warnings
+from datetime import timedelta
 from pathlib import Path
 
 import torch
@@ -130,6 +131,29 @@ def print_rank_last(message: str) -> None:
             print(message, flush=True)
     else:
         print(message, flush=True)
+
+
+def maybe_initialize_distributed(timeout_minutes: int = 60) -> None:
+    """Initialize the default process group from the standard launcher env vars.
+
+    No-op when torch.distributed is unavailable or already initialized. This is the minimal
+    bring-up used by standalone (e.g. inference) entry points that set up model parallelism
+    separately; it does not perform MPU initialization (see ``training.initialize`` for the
+    full training path).
+
+    Args:
+        timeout_minutes: Process-group timeout in minutes (useful for slow multi-node setup).
+    """
+    if not torch.distributed.is_available() or torch.distributed.is_initialized():
+        return
+
+    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    torch.distributed.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
 
 
 def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn.Module:
