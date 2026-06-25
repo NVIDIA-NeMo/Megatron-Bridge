@@ -1197,7 +1197,6 @@ class MegatronPeftBridge:
                 linear_in_on_base,
                 alpha,
                 dim,
-                tp_size=1,
                 tp_group=None,
             )
 
@@ -1361,7 +1360,6 @@ class MegatronPeftBridge:
             linear_in_on_base,
             alpha,
             dim,
-            tp_size=1,
             tp_group=None,
         )
         return merged.to(orig_dtype)

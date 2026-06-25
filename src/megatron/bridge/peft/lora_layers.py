@@ -57,7 +57,6 @@ class LoRALinear(AdapterWrapper):
             self.adapter.alpha,
             self.adapter.dim,
             tp_group=getattr(self.adapter, "tp_group", None),
-            scale=getattr(self.adapter, "scale", None),
         )
         if merged_weight.shape != base_weight.shape:
             raise RuntimeError(
