@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Collate-time VLM batch padding, truncation, and in-batch packing helpers."""
+"""Collate-time sequence batch padding, truncation, and packing helpers."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_packing import pack_padded_batch_to_packed_sequences
+from megatron.bridge.data.sequence_packing import _pack_padded_sequence_batch
 
 
 def _ceil_to_multiple(value: int, multiple: int) -> int:
@@ -37,7 +37,7 @@ def _token_key(batch: MutableMapping[str, Any]) -> str:
         return "tokens"
     if isinstance(batch.get("input_ids"), torch.Tensor):
         return "input_ids"
-    raise ValueError("VLM batch must contain a 2D 'input_ids' or 'tokens' tensor.")
+    raise ValueError("Sequence batch must contain a 2D 'input_ids' or 'tokens' tensor.")
 
 
 def _set_tokens(batch: MutableMapping[str, Any], token_key: str, value: torch.Tensor) -> None:
@@ -99,7 +99,7 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
-def prepare_vlm_batch_sequences_for_training(
+def pad_or_pack_sequence_batch(
     batch: MutableMapping[str, Any],
     *,
     sequence_length: int | None,
@@ -110,7 +110,12 @@ def prepare_vlm_batch_sequences_for_training(
     pad_token_id: int = 0,
     ignore_index: int = IGNORE_INDEX,
 ) -> None:
-    """Prepare padded or packed VLM sequence tensors for the training step.
+    """Pad, truncate, or pack sequence tensors for the training step.
+
+    This is the collate-time policy helper for sequence tensors. When packing
+    is enabled it still uses an internal pad-then-pack helper, because the
+    current model collates first produce padded tensors. Longer term, packing
+    collates should build flattened packed tensors directly.
 
     Args:
         batch: Mutable collate batch with ``input_ids`` or ``tokens`` plus
@@ -132,7 +137,7 @@ def prepare_vlm_batch_sequences_for_training(
     token_key = _token_key(batch)
     tokens = batch[token_key]
     if not isinstance(tokens, torch.Tensor) or tokens.dim() != 2:
-        raise ValueError("VLM batch preparation expects a 2D token tensor.")
+        raise ValueError("Sequence batch preparation expects a 2D token tensor.")
 
     if enable_in_batch_packing:
         attention_mask = batch.get("attention_mask")
@@ -142,7 +147,7 @@ def prepare_vlm_batch_sequences_for_training(
             or attention_mask.shape != tokens.shape
         ):
             batch["attention_mask"] = None
-        pack_padded_batch_to_packed_sequences(
+        _pack_padded_sequence_batch(
             batch,
             pad_token_id=pad_token_id,
             ignore_index=ignore_index,

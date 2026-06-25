@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers for collate-time in-batch sequence packing."""
+"""Internal helpers for collate-time in-batch sequence packing."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _ceil_to_multiple(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
 
-def pack_padded_batch_to_packed_sequences(
+def _pack_padded_sequence_batch(
     batch: MutableMapping[str, Any],
     *,
     pad_token_id: int = 0,
@@ -60,6 +60,11 @@ def pack_padded_batch_to_packed_sequences(
     attention_mask_key: str = "attention_mask",
 ) -> None:
     """Convert a padded microbatch to packed sequence layout in place.
+
+    This is a transitional pad-then-pack helper for callers that already rely
+    on tokenizer/processor padding. New collators should prefer constructing
+    the packed layout directly instead of padding first and stripping padding
+    here.
 
     The helper mutates ``batch`` in place. It converts text-like tensors from
     ``[B, S]`` to ``[1, sum(L_i)]`` and emits metadata consumed by
@@ -168,7 +173,7 @@ def pack_padded_batch_to_packed_sequences(
         batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
 
 
-def pack_padded_batch_to_legacy_tuple(
+def _pack_padded_sequence_batch_as_legacy_tuple(
     tokens: torch.Tensor,
     labels: torch.Tensor | None,
     loss_mask: torch.Tensor | None,
@@ -188,8 +193,9 @@ def pack_padded_batch_to_legacy_tuple(
 ]:
     """Convert padded sequence tensors and return the legacy tuple form.
 
-    This compatibility wrapper keeps older step-time callers on their existing
-    return contract while reusing the shared packed sequence implementation.
+    Internal compatibility wrapper for older step-time callers. It preserves
+    the legacy tuple return contract while reusing the transitional
+    pad-then-pack helper above.
     """
     batch: dict[str, Any] = {
         "input_ids": tokens,
@@ -198,7 +204,7 @@ def pack_padded_batch_to_legacy_tuple(
         "attention_mask": padding_mask,
         "position_ids": position_ids,
     }
-    pack_padded_batch_to_packed_sequences(
+    _pack_padded_sequence_batch(
         batch,
         pad_token_id=pad_token_id,
         pad_to_multiple_of=pad_to_multiple_of,

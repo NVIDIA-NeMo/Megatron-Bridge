@@ -26,7 +26,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.data.sequence_packing import pack_padded_batch_to_legacy_tuple
+from megatron.bridge.data.sequence_packing import _pack_padded_sequence_batch_as_legacy_tuple
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -193,7 +193,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
             packed_position_ids,
             cu_seqlens,
             max_seqlen,
-        ) = pack_padded_batch_to_legacy_tuple(
+        ) = _pack_padded_sequence_batch_as_legacy_tuple(
             tokens=tokens_or_input,
             labels=batch.get("labels"),
             loss_mask=batch.get("loss_mask"),

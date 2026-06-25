@@ -37,7 +37,7 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
-from megatron.bridge.data.vlm_batching import prepare_vlm_batch_sequences_for_training
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence_batch
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -572,7 +572,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             }
-            prepare_vlm_batch_sequences_for_training(
+            pad_or_pack_sequence_batch(
                 text_batch,
                 sequence_length=self.seq_length,
                 pad_to_max_length=self.pad_to_max_length,
