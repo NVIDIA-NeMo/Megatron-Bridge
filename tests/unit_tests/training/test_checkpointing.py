@@ -52,6 +52,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class _DummyClass:
@@ -3056,7 +3057,7 @@ class TestCheckpointManager:
 
     def test_create_checkpoint_manager_missing_module_raises(self):
         """Test create_checkpoint_manager raises ImportError for non-existent module."""
-        config = CheckpointConfig(custom_manager_class="nonexistent.module.ClassName")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.nonexistent_module.ClassName")
 
         with pytest.raises(ImportError, match="Could not import module"):
             create_checkpoint_manager(config)
@@ -3064,10 +3065,20 @@ class TestCheckpointManager:
     def test_create_checkpoint_manager_missing_class_raises(self):
         """Test create_checkpoint_manager raises AttributeError for non-existent class."""
         # Use a real module but non-existent class
-        config = CheckpointConfig(custom_manager_class="os.path.NonExistentClass")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.training.checkpointing.NonExistentClass")
 
         with pytest.raises(AttributeError, match="does not have class"):
             create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_rejects_unallowed_custom_class_before_import(self):
+        """Test custom manager class paths are allowlist-validated before import."""
+        config = CheckpointConfig(custom_manager_class="attacker_pkg.manager.PayloadManager")
+
+        with patch("importlib.import_module") as mock_import:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                create_checkpoint_manager(config)
+
+        mock_import.assert_not_called()
 
     def test_create_checkpoint_manager_custom_class(self):
         """Test create_checkpoint_manager loads and instantiates a custom class."""
@@ -3093,7 +3104,7 @@ class TestCheckpointManager:
             mock_module.CustomTestManager = CustomTestManager
             mock_import.return_value = mock_module
 
-            config = CheckpointConfig(custom_manager_class="test.module.CustomTestManager")
+            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
             manager = create_checkpoint_manager(config)
 
             assert isinstance(manager, CustomTestManager)

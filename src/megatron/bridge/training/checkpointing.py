@@ -89,6 +89,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
 )
 from megatron.bridge.utils.import_utils import safe_import
+from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -745,6 +746,11 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Invalid custom_manager_class format: '{checkpoint_config.custom_manager_class}'. "
                 f"Expected fully qualified class name like 'mypackage.module.ClassName'."
             ) from err
+
+        _validate_target_prefix(
+            target=checkpoint_config.custom_manager_class,
+            full_key="checkpoint.custom_manager_class",
+        )
 
         try:
             module = importlib.import_module(module_path)
