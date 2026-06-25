@@ -234,6 +234,8 @@ def test_pack_sft_data_forwards_supported_overrides_and_explicit_paths(monkeypat
             "4096",
             "--hf-path",
             "nvidia/unit",
+            "--pad-seq-to-mult",
+            "4",
             "--train-input-path",
             str(train_input),
             "--packed-train-data-path",
@@ -253,6 +255,7 @@ def test_pack_sft_data_forwards_supported_overrides_and_explicit_paths(monkeypat
     assert kwargs["output_metadata_path"] == metadata_output
     assert kwargs["packed_sequence_size"] == 2048
     assert kwargs["max_seq_length"] == 4096
+    assert kwargs["pad_seq_to_mult"] == 4
     assert kwargs["num_tokenizer_workers"] == 1
 
 

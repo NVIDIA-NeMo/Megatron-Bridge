@@ -43,6 +43,12 @@ def main() -> None:
         help="Recipe name for a packed-sequence SFT dataset config.",
     )
     parser.add_argument("--seq-length", type=int, default=None, help="Optional sequence length override.")
+    parser.add_argument(
+        "--pad-seq-to-mult",
+        type=int,
+        default=None,
+        help="Optional packed sequence padding multiple override. Use 2 * context_parallel_size for CP.",
+    )
     parser.add_argument("--hf-path", default=None, help="Optional Hugging Face model ID or local snapshot path.")
     parser.add_argument(
         "--train-input-path", default=None, help="Optional processed JSONL path for the training split."
@@ -94,6 +100,10 @@ def main() -> None:
     offline_packing_specs = getattr(cfg.dataset, "offline_packing_specs", None)
     if offline_packing_specs is None:
         sys.exit(f"Error: recipe '{args.recipe}' has no offline packing specs.")
+    if args.pad_seq_to_mult is not None:
+        if args.pad_seq_to_mult <= 0:
+            sys.exit("Error: --pad-seq-to-mult must be a positive integer.")
+        offline_packing_specs.pad_seq_to_mult = args.pad_seq_to_mult
 
     # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
     # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
