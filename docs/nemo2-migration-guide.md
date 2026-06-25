@@ -245,7 +245,8 @@ def create_finetune_config():
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=2048,
             ),
         ),

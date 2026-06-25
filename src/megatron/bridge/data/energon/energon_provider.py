@@ -34,12 +34,12 @@ class EnergonProvider(DatasetProvider):
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
     # Enable batch-level online sequence packing
-    pack_sequences_in_batch: bool = False
+    enable_in_batch_packing: bool = False
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
         if (
-            self.pack_sequences_in_batch
+            self.enable_in_batch_packing
             and self.task_encoder is not None
             and hasattr(self.task_encoder, "pack_sequences")
         ):

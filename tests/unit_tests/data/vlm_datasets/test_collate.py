@@ -31,6 +31,10 @@ def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
     assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
 
 
+def test_vlm_collate_keeps_qwen_vl_registration():
+    assert collate.COLLATE_FNS["Qwen2_5_VLProcessor"] is collate.qwen2_5_collate_fn
+
+
 class _DummyProcessor:
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 

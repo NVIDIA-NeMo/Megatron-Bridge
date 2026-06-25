@@ -66,7 +66,7 @@ def llama3_8b_sft_config_gb200(precision: str = "bf16", config_variant: str = "v
     seq_length = 16384
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -90,7 +90,7 @@ def llama3_8b_sft_config_h100(precision: str = "bf16", config_variant: str = "v1
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -114,7 +114,7 @@ def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -127,7 +127,7 @@ def llama3_70b_sft_config_gb300(precision: str = "bf16", config_variant: str = "
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
     # for CUDA graphs and avoids NaN issues in attention kernels.
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 
     return cfg
@@ -150,7 +150,7 @@ def llama3_70b_sft_config_gb200(precision: str = "bf16", config_variant: str = "
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -180,7 +180,7 @@ def llama3_70b_sft_config_h100(precision: str = "bf16", config_variant: str = "v
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
@@ -210,7 +210,7 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
@@ -221,7 +221,7 @@ def llama3_70b_lora_config_gb300(precision: str = "bf16", config_variant: str = 
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
     # for CUDA graphs and avoids NaN issues in attention kernels.
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 
     return cfg
@@ -246,13 +246,13 @@ def llama3_70b_lora_config_gb200(precision: str = "bf16", config_variant: str = 
     cfg.mixed_precision = precision_config
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
     # for CUDA graphs and avoids NaN issues in attention kernels.
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 
@@ -279,13 +279,13 @@ def llama3_70b_lora_config_b300(precision: str = "bf16", config_variant: str = "
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
     # for CUDA graphs and avoids NaN issues in attention kernels.
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 
@@ -312,13 +312,13 @@ def llama3_70b_lora_config_b200(precision: str = "bf16", config_variant: str = "
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     # Enable pad_cu_seqlens for CUDA graphs compatibility with packed sequences.
     # This ensures consistent cu_seqlens tensor shapes across batches, which is required
     # for CUDA graphs and avoids NaN issues in attention kernels.
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))
 
@@ -345,7 +345,7 @@ def llama3_70b_lora_config_h100(precision: str = "bf16", config_variant: str = "
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     set_llama3_common_peft_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=bool(cfg.model.tensor_model_parallel_size > 1))

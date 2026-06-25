@@ -322,7 +322,7 @@ def gemma2_2b_sft_config() -> ConfigContainer:
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -426,7 +426,7 @@ def gemma2_9b_sft_config() -> ConfigContainer:
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 9B SFT uses TP=4
     cfg.model.pipeline_model_parallel_layout = None
@@ -530,7 +530,7 @@ def gemma2_27b_sft_config() -> ConfigContainer:
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 27B SFT uses TP=8, PP=2
     cfg.model.pipeline_model_parallel_layout = None
@@ -648,7 +648,7 @@ def gemma2_2b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - PEFT uses TP=1
     cfg.model.pipeline_model_parallel_layout = None
@@ -760,7 +760,7 @@ def gemma2_9b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 9B PEFT uses TP=1
     cfg.model.pipeline_model_parallel_layout = None
@@ -872,7 +872,7 @@ def gemma2_27b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 27B PEFT uses TP=4
     cfg.model.pipeline_model_parallel_layout = None

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
@@ -22,6 +23,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
     _forward_step_common,
+    _partition_packed_batch_for_cp,
     get_batch,
     get_packed_seq_params,
 )
@@ -78,7 +80,8 @@ def _as_nocuda(tensor):
 
 def _make_cfg(
     *,
-    packed_sequence_specs=None,
+    enable_offline_packing=False,
+    offline_packing_specs=None,
     skip_getting_attention_mask_from_dataset=True,
     pipeline_model_parallel_layout=None,
     pipeline_model_parallel_size=1,
@@ -90,7 +93,8 @@ def _make_cfg(
         "D",
         (),
         {
-            "packed_sequence_specs": packed_sequence_specs,
+            "enable_offline_packing": enable_offline_packing,
+            "offline_packing_specs": offline_packing_specs,
             "skip_getting_attention_mask_from_dataset": skip_getting_attention_mask_from_dataset,
         },
     )()
@@ -161,6 +165,118 @@ class _VpStageWrapper:
 class TestGetBatch:
     """Tests for the get_batch helper."""
 
+    def test_partition_packed_batch_trims_padded_cu_seqlens(self, monkeypatch):
+        """Packed CP slicing should ignore padded cu_seqlens sentinels."""
+        seen_cu_seqlens = []
+
+        def fake_thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen_cu_seqlens.append(cu_seqlens.clone())
+            assert total_tokens == 8
+            assert cp_size == 2
+            assert cp_rank == 0
+            return torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        fake_tex = type(
+            "FakeTransformerEngineTorch",
+            (),
+            {"thd_get_partitioned_indices": staticmethod(fake_thd_get_partitioned_indices)},
+        )
+        monkeypatch.setitem(sys.modules, "transformer_engine_torch", fake_tex)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.is_te_min_version", lambda version: True)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_context_parallel_rank",
+            lambda: 0,
+        )
+
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(100, 108).unsqueeze(0),
+            "loss_mask": torch.ones(1, 8),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "cu_seqlens": torch.tensor([[0, 4, 6, 8, -1, -1]], dtype=torch.int32),
+            "cu_seqlens_argmin": torch.tensor([[4]]),
+            "max_seqlen": torch.tensor([[4]], dtype=torch.int32),
+        }
+
+        out = _partition_packed_batch_for_cp(batch, cp_size=2)
+
+        assert seen_cu_seqlens
+        assert all(torch.equal(cu, torch.tensor([0, 4, 6, 8], dtype=torch.int32)) for cu in seen_cu_seqlens)
+        assert torch.equal(out["tokens"], torch.tensor([[0, 1, 2, 3]]))
+        assert torch.equal(out["labels"], torch.tensor([[100, 101, 102, 103]]))
+        assert torch.equal(out["position_ids"], torch.tensor([[0, 1, 2, 3]]))
+        assert torch.equal(out["loss_mask"], torch.ones(1, 4))
+
+    def test_partition_packed_batch_trims_negative_sentinel_fallback(self, monkeypatch):
+        """Packed CP slicing can trim CPU cu_seqlens without a precomputed argmin."""
+        seen_cu_seqlens = []
+
+        def fake_thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen_cu_seqlens.append(cu_seqlens.clone())
+            return torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        fake_tex = type(
+            "FakeTransformerEngineTorch",
+            (),
+            {"thd_get_partitioned_indices": staticmethod(fake_thd_get_partitioned_indices)},
+        )
+        monkeypatch.setitem(sys.modules, "transformer_engine_torch", fake_tex)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.is_te_min_version", lambda version: True)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_context_parallel_rank",
+            lambda: 0,
+        )
+
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(100, 108).unsqueeze(0),
+            "loss_mask": torch.ones(1, 8),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "cu_seqlens": torch.tensor([[0, 4, 6, 8, -1, -1]], dtype=torch.int32),
+            "max_seqlen": torch.tensor([[4]], dtype=torch.int32),
+        }
+
+        out = _partition_packed_batch_for_cp(batch, cp_size=2)
+
+        assert seen_cu_seqlens
+        assert all(torch.equal(cu, torch.tensor([0, 4, 6, 8], dtype=torch.int32)) for cu in seen_cu_seqlens)
+        assert torch.equal(out["tokens"], torch.tensor([[0, 1, 2, 3]]))
+
+    def test_partition_packed_batch_no_padding_passthrough(self, monkeypatch):
+        """Packed CP slicing should leave unpadded cu_seqlens unchanged."""
+        seen_cu_seqlens = []
+
+        def fake_thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen_cu_seqlens.append(cu_seqlens.clone())
+            return torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        fake_tex = type(
+            "FakeTransformerEngineTorch",
+            (),
+            {"thd_get_partitioned_indices": staticmethod(fake_thd_get_partitioned_indices)},
+        )
+        monkeypatch.setitem(sys.modules, "transformer_engine_torch", fake_tex)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.is_te_min_version", lambda version: True)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_context_parallel_rank",
+            lambda: 0,
+        )
+
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(100, 108).unsqueeze(0),
+            "loss_mask": torch.ones(1, 8),
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "cu_seqlens": torch.tensor([[0, 4, 8]], dtype=torch.int32),
+            "max_seqlen": torch.tensor([[4]], dtype=torch.int32),
+        }
+
+        out = _partition_packed_batch_for_cp(batch, cp_size=2)
+
+        assert seen_cu_seqlens
+        assert all(torch.equal(cu, torch.tensor([0, 4, 8], dtype=torch.int32)) for cu in seen_cu_seqlens)
+        assert torch.equal(out["tokens"], torch.tensor([[0, 1, 2, 3]]))
+
     def test_middle_pp_stage_preserves_full_packed_batch(self, monkeypatch):
         """Middle PP stages load full tensors when packed metadata is active."""
         _set_middle_pp_stage(monkeypatch)
@@ -205,7 +321,7 @@ class TestGetBatch:
             out_cu_seqlens_unpadded_argmin,
         ) = get_batch(
             _Iterator(batch),
-            _make_cfg(packed_sequence_specs=object()),
+            _make_cfg(enable_offline_packing=True, offline_packing_specs=object()),
             use_mtp=False,
             pg_collection=_MockPGCollection(),
         )
@@ -228,7 +344,7 @@ class TestGetBatch:
 
         result = get_batch(
             data_iterator,
-            _make_cfg(packed_sequence_specs=None),
+            _make_cfg(offline_packing_specs=None),
             use_mtp=False,
             pg_collection=_MockPGCollection(),
         )
@@ -498,7 +614,7 @@ class TestGetBatch:
         max_seqlen = torch.tensor([[5]], dtype=torch.int32)
         model = Mock(return_value=torch.tensor(1.0))
         state = Mock()
-        state.cfg = _make_cfg(packed_sequence_specs=object())
+        state.cfg = _make_cfg(enable_offline_packing=True, offline_packing_specs=object())
         state.timers = _NoopTimer()
         state.straggler_timer = _NoopTimer()
         config = type(

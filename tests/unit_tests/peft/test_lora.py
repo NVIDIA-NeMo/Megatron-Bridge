@@ -28,14 +28,25 @@ from megatron.bridge.peft import canonical_lora as canonical_lora_module
 from megatron.bridge.peft import lora as lora_module
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
-from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
+from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     AdapterAttributes,
     GroupedExpertLinearAdapter,
     get_adapter_attributes_from_linear,
     is_modelopt_linear,
 )
+
+
+class MockProcessGroup:
+    """Process group test double exposing the size used by LoRAMerge."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+
+    def size(self) -> int:
+        return self._size
 
 
 class SimpleModel(nn.Module):
@@ -852,7 +863,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -894,7 +904,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -933,7 +942,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -950,8 +962,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights
@@ -990,7 +1001,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -1007,8 +1021,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights
