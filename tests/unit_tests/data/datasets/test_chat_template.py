@@ -463,6 +463,23 @@ class TestCreateSFTDataset:
         mock_parquet_class.assert_called_once()
 
     @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    def test_create_packed_parquet_dataset_preserves_pad_seq_to_mult(self, mock_parquet_class):
+        """Test that packed Parquet datasets receive pad_seq_to_mult."""
+        from pathlib import Path
+
+        mock_tokenizer = MagicMock()
+        mock_parquet_class.return_value = MagicMock()
+
+        create_sft_dataset(
+            path=Path("test.idx.parquet"),
+            tokenizer=mock_tokenizer,
+            pad_seq_to_mult=4,
+        )
+
+        call_kwargs = mock_parquet_class.call_args[1]
+        assert call_kwargs["pad_seq_to_mult"] == 4
+
+    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_dataset_idx_pq(self, mock_parquet_class):
         """Test that .idx.pq files create GPTSFTPackedParquetDataset."""
         from pathlib import Path
