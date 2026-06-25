@@ -3,9 +3,7 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import build_hypercomm_grids
+from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import EXPERT_VIEW_NAME, build_hypercomm_grids
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -43,19 +41,28 @@ class TestBuildHypercommGrids:
         # Check grid was created with correct shape
         mock_grid_class.assert_called_once()
         call_kwargs = mock_grid_class.call_args[1]
-        assert call_kwargs["shape"] == [2, 1, 1, 2, 2]  # [tp, cp, ep, pp, dp]
-        assert call_kwargs["dim_names"] == ["tp", "cp", "ep", "pp", "dp"]
+        assert call_kwargs["shape"] == [2, 1, 2, 2]  # [tp, cp, dp, pp]
+        assert call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert call_kwargs["rank_offset"] == 0
         assert call_kwargs["backend"] == "nccl"
 
+        mock_grid.register_view.assert_called_once_with(
+            EXPERT_VIEW_NAME,
+            shape=[1, 1, 4, 2],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
+
         # Check all process groups were created
-        create_pg_calls = [call[0][0] for call in mock_grid.create_pg.call_args_list]
-        assert ["tp"] in create_pg_calls
-        assert ["cp"] in create_pg_calls
-        assert ["ep"] in create_pg_calls
-        assert ["pp"] in create_pg_calls
-        assert ["dp"] in create_pg_calls
-        assert ["dp", "cp"] in create_pg_calls
+        create_pg_calls = [(call.args[0], call.kwargs.get("view")) for call in mock_grid.create_pg.call_args_list]
+        assert (["tp"], None) in create_pg_calls
+        assert (["cp"], None) in create_pg_calls
+        assert (["pp"], None) in create_pg_calls
+        assert (["dp"], None) in create_pg_calls
+        assert (["dp", "cp"], None) in create_pg_calls
+        assert (["ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_multiple_modules(self, mock_grid_class):
@@ -124,14 +131,14 @@ class TestBuildHypercommGrids:
         # Check both grids created with different shapes
         assert mock_grid_class.call_count == 2
 
-        # First call (llm): shape [8, 1, 1, 2, 1]
+        # First call (llm): shape [8, 1, 1, 2]
         first_call_kwargs = mock_grid_class.call_args_list[0][1]
-        assert first_call_kwargs["shape"] == [8, 1, 1, 2, 1]
+        assert first_call_kwargs["shape"] == [8, 1, 1, 2]
         assert first_call_kwargs["rank_offset"] == 0
 
-        # Second call (encoder): shape [2, 1, 1, 1, 2]
+        # Second call (encoder): shape [2, 1, 2, 1]
         second_call_kwargs = mock_grid_class.call_args_list[1][1]
-        assert second_call_kwargs["shape"] == [2, 1, 1, 1, 2]
+        assert second_call_kwargs["shape"] == [2, 1, 2, 1]
         assert second_call_kwargs["rank_offset"] == 16
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
@@ -151,8 +158,8 @@ class TestBuildHypercommGrids:
         mock_grid = MagicMock()
         create_pg_calls = []
 
-        def track_create_pg(dims):
-            create_pg_calls.append(dims)
+        def track_create_pg(dims, *, view=None):
+            create_pg_calls.append((dims, view))
             return MagicMock()
 
         mock_grid.create_pg = track_create_pg
@@ -161,32 +168,51 @@ class TestBuildHypercommGrids:
         build_hypercomm_grids(megatron_mimo_config)
 
         # Verify all dimension groups created
-        assert ["tp"] in create_pg_calls
-        assert ["cp"] in create_pg_calls
-        assert ["ep"] in create_pg_calls
-        assert ["pp"] in create_pg_calls
-        assert ["dp"] in create_pg_calls
+        assert (["tp"], None) in create_pg_calls
+        assert (["cp"], None) in create_pg_calls
+        assert (["pp"], None) in create_pg_calls
+        assert (["dp"], None) in create_pg_calls
         # Verify composite group created
-        assert ["dp", "cp"] in create_pg_calls
+        assert (["dp", "cp"], None) in create_pg_calls
+        assert (["tp", "cp"], None) in create_pg_calls
+        assert (["tp", "pp"], None) in create_pg_calls
+        assert (["tp", "dp", "cp"], None) in create_pg_calls
+        assert (["tp", "cp", "dp", "pp"], None) in create_pg_calls
+        assert (["ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep", "pp"], EXPERT_VIEW_NAME) in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
-    def test_build_rejects_expert_parallelism_until_dual_view_phase(self, mock_grid_class):
-        """Phase 1 keeps the single-grid path guarded for non-default EP/ETP."""
+    def test_build_registers_non_default_language_expert_view(self, mock_grid_class):
+        """Non-default language EP/ETP is represented as a separate expert view."""
         megatron_mimo_config = MegatronMIMOParallelismConfig(
             module_parallelisms={
                 "language": ModuleParallelismConfig(
-                    tensor_model_parallel_size=2,
+                    tensor_model_parallel_size=4,
                     expert_model_parallel_size=2,
-                    expert_tensor_parallel_size=1,
-                    data_parallel_size=1,
+                    expert_tensor_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
                 ),
             }
         )
 
-        with pytest.raises(ValueError, match="requires Phase 2 dual-view grids"):
-            build_hypercomm_grids(megatron_mimo_config)
+        mock_grid = MagicMock()
+        mock_grid.create_pg = MagicMock(return_value=MagicMock())
+        mock_grid_class.return_value = mock_grid
 
-        mock_grid_class.assert_not_called()
+        build_hypercomm_grids(megatron_mimo_config)
+
+        mock_grid_class.assert_called_once()
+        assert mock_grid_class.call_args.kwargs["shape"] == [4, 1, 2, 2]
+        mock_grid.register_view.assert_called_once_with(
+            EXPERT_VIEW_NAME,
+            shape=[2, 2, 2, 2],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_uses_nccl_backend(self, mock_grid_class):

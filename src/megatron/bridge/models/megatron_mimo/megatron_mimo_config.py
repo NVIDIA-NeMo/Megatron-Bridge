@@ -104,8 +104,8 @@ class ModuleParallelismConfig:
 class MegatronMIMOParallelismConfig:
     """Configuration for multi-module (MegatronMIMO) heterogeneous parallelism.
 
-    Note: Phase 1 only supports heterogeneous deployment where each module
-    can have different parallelism configurations and rank offsets.
+    Supports heterogeneous deployment where each module can have different
+    parallelism configurations and rank offsets.
 
     The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
@@ -162,17 +162,7 @@ class MegatronMIMOParallelismConfig:
                 continue
             if parallelism.expert_model_parallel_size != 1 or parallelism.expert_tensor_parallel_size != 1:
                 raise ValueError(
-                    "Encoder modules must remain dense in MegatronMIMO MoE Phase 1; "
-                    f"module '{name}' has expert_model_parallel_size="
-                    f"{parallelism.expert_model_parallel_size}, expert_tensor_parallel_size="
-                    f"{parallelism.expert_tensor_parallel_size}."
-                )
-
-    def _validate_phase1_expert_parallelism_guard(self) -> None:
-        for name, parallelism in self.module_parallelisms.items():
-            if parallelism.expert_model_parallel_size != 1 or parallelism.expert_tensor_parallel_size != 1:
-                raise ValueError(
-                    "MegatronMIMO MoE expert parallelism requires Phase 2 dual-view grids; "
+                    "Encoder modules must remain dense for MegatronMIMO MoE; "
                     f"module '{name}' has expert_model_parallel_size="
                     f"{parallelism.expert_model_parallel_size}, expert_tensor_parallel_size="
                     f"{parallelism.expert_tensor_parallel_size}."
@@ -231,5 +221,4 @@ class MegatronMIMOParallelismConfig:
 
         self._validate_heterogeneous(world_size)
         self._validate_encoder_expert_parallelism()
-        self._validate_phase1_expert_parallelism_guard()
         self._validate_parallelism_constraints()

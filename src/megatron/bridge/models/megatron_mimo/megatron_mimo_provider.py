@@ -29,6 +29,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
+    EXPERT_VIEW_NAME,
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
@@ -297,10 +298,17 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     dp=grid.get_pg(["dp"]),
                     pp=pp_group,
                     cp=grid.get_pg(["cp"]),
-                    ep=grid.get_pg(["ep"]),
+                    ep=grid.get_pg(["ep"], view=EXPERT_VIEW_NAME),
+                    expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
+                    expt_dp=grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME),
                     dp_cp=grid.get_pg(["dp", "cp"]),
+                    intra_dp_cp=grid.get_pg(["dp", "cp"]),
+                    tp_cp=grid.get_pg(["tp", "cp"]),
+                    tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
-                    tp_ep_pp=grid.get_pg(["tp", "ep", "pp"]),
+                    tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
+                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME),
+                    intra_expt_dp=grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )
@@ -395,6 +403,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
+        llm_pg = None
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
@@ -429,7 +438,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ),
         )
 
-        megatron_mimo_model = MimoModel(mimo_model_config)
+        mimo_model_kwargs = {}
+        if llm_pg is not None:
+            mimo_model_kwargs["cp_group"] = llm_pg.cp
+            mimo_model_kwargs["tp_group"] = llm_pg.tp
+        megatron_mimo_model = MimoModel(mimo_model_config, **mimo_model_kwargs)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)

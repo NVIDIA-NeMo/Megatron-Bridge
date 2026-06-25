@@ -149,7 +149,7 @@ def test_megatron_mimo_rejects_encoder_expert_parallelism():
         megatron_mimo_parallelism_config.finalize(world_size=3)
 
 
-def test_megatron_mimo_phase1_rejects_language_expert_parallelism():
+def test_megatron_mimo_allows_language_expert_parallelism_after_runtime_wiring():
     module_parallelisms = {
         "images": ModuleParallelismConfig(tensor_model_parallel_size=1, data_parallel_size=1, rank_offset=0),
         "language": ModuleParallelismConfig(
@@ -163,8 +163,11 @@ def test_megatron_mimo_phase1_rejects_language_expert_parallelism():
         module_parallelisms=module_parallelisms,
     )
 
-    with pytest.raises(ValueError, match="requires Phase 2 dual-view grids"):
-        megatron_mimo_parallelism_config.finalize(world_size=3)
+    megatron_mimo_parallelism_config.finalize(world_size=3)
+
+    language_parallelism = megatron_mimo_parallelism_config.get_parallelism("language")
+    assert language_parallelism.expert_model_parallel_size == 2
+    assert language_parallelism.expert_tensor_parallel_size == 1
 
 
 def test_megatron_mimo_heterogeneous_rejects_non_divisible_dp():

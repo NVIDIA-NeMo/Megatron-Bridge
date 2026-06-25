@@ -137,7 +137,7 @@ class TestMegatronMIMOProvider:
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
         mock_grid.is_current_rank_in_grid.return_value = True
-        mock_grid.get_pg.side_effect = lambda dims: pp_group if dims == ["pp"] else MagicMock()
+        mock_grid.get_pg.side_effect = lambda dims, *, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MegatronMIMOProvider.from_standard_provider(
@@ -777,25 +777,35 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_pp = MagicMock(name="pp_pg")
         mock_cp = MagicMock(name="cp_pg")
         mock_ep = MagicMock(name="ep_pg")
+        mock_expt_tp = MagicMock(name="expt_tp_pg")
+        mock_expt_dp = MagicMock(name="expt_dp_pg")
         mock_dp_cp = MagicMock(name="dp_cp_pg")
+        mock_tp_cp = MagicMock(name="tp_cp_pg")
+        mock_tp_dp_cp = MagicMock(name="tp_dp_cp_pg")
         mock_mp = MagicMock(name="mp_pg")
+        mock_tp_ep = MagicMock(name="tp_ep_pg")
         mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
 
         pg_map = {
-            ("tp",): mock_tp,
-            ("dp",): mock_dp,
-            ("pp",): mock_pp,
-            ("cp",): mock_cp,
-            ("ep",): mock_ep,
-            ("dp", "cp"): mock_dp_cp,
-            ("tp", "pp"): mock_mp,
-            ("tp", "ep", "pp"): mock_tp_ep_pp,
+            (("tp",), None): mock_tp,
+            (("dp",), None): mock_dp,
+            (("pp",), None): mock_pp,
+            (("cp",), None): mock_cp,
+            (("dp", "cp"), None): mock_dp_cp,
+            (("tp", "cp"), None): mock_tp_cp,
+            (("tp", "dp", "cp"), None): mock_tp_dp_cp,
+            (("tp", "pp"), None): mock_mp,
+            (("ep",), "expert"): mock_ep,
+            (("expt_tp",), "expert"): mock_expt_tp,
+            (("expt_dp",), "expert"): mock_expt_dp,
+            (("expt_tp", "ep"), "expert"): mock_tp_ep,
+            (("expt_tp", "ep", "pp"), "expert"): mock_tp_ep_pp,
         }
 
         mock_grid = MagicMock()
         mock_grid.rank_offset = 0
         mock_grid.size = 4
-        mock_grid.get_pg.side_effect = lambda dims: pg_map[tuple(dims)]
+        mock_grid.get_pg.side_effect = lambda dims, view=None: pg_map[(tuple(dims), view)]
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
@@ -810,6 +820,13 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.pp == mock_pp
         assert pgc.cp == mock_cp
         assert pgc.ep == mock_ep
+        assert pgc.expt_tp == mock_expt_tp
+        assert pgc.expt_dp == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
+        assert pgc.intra_dp_cp == mock_dp_cp
+        assert pgc.tp_cp == mock_tp_cp
+        assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
+        assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
+        assert pgc.intra_expt_dp == mock_expt_dp
