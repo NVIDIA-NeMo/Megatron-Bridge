@@ -156,7 +156,7 @@ def get_batch(
     )
 
 
-def _pad_and_pack_qwen3_vl_step_batch(
+def _pad_and_pack_qwen3_vl_step(
     tokens: torch.Tensor,
     labels: torch.Tensor,
     loss_mask: torch.Tensor,
@@ -172,7 +172,7 @@ def _pad_and_pack_qwen3_vl_step_batch(
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``pad_or_pack_sequence_batch``.
+    prefer collate-time packing via ``pad_or_pack_sequence``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -257,7 +257,7 @@ def forward_step(
     # needs the original input IDs before doing model-specific CP/SP handling.
     enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = _pad_and_pack_qwen3_vl_step_batch(
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = _pad_and_pack_qwen3_vl_step(
         tokens,
         labels,
         loss_mask,

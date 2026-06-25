@@ -23,7 +23,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_packing import _pack_padded_sequence_batch
+from megatron.bridge.data.sequence_packing import _pack_padded_sequence
 
 
 def _ceil_to_multiple(value: int, multiple: int) -> int:
@@ -99,7 +99,7 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
-def pad_or_pack_sequence_batch(
+def pad_or_pack_sequence(
     batch: MutableMapping[str, Any],
     *,
     sequence_length: int | None,
@@ -147,7 +147,7 @@ def pad_or_pack_sequence_batch(
             or attention_mask.shape != tokens.shape
         ):
             batch["attention_mask"] = None
-        _pack_padded_sequence_batch(
+        _pack_padded_sequence(
             batch,
             pad_token_id=pad_token_id,
             ignore_index=ignore_index,

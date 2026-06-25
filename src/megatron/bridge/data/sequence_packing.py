@@ -46,7 +46,7 @@ def _ceil_to_multiple(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
 
-def _pack_padded_sequence_batch(
+def _pack_padded_sequence(
     batch: MutableMapping[str, Any],
     *,
     pad_token_id: int = 0,
@@ -173,7 +173,7 @@ def _pack_padded_sequence_batch(
         batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
 
 
-def _pack_padded_sequence_batch_as_legacy_tuple(
+def _pack_padded_sequence_as_legacy_tuple(
     tokens: torch.Tensor,
     labels: torch.Tensor | None,
     loss_mask: torch.Tensor | None,
@@ -204,7 +204,7 @@ def _pack_padded_sequence_batch_as_legacy_tuple(
         "attention_mask": padding_mask,
         "position_ids": position_ids,
     }
-    _pack_padded_sequence_batch(
+    _pack_padded_sequence(
         batch,
         pad_token_id=pad_token_id,
         pad_to_multiple_of=pad_to_multiple_of,
