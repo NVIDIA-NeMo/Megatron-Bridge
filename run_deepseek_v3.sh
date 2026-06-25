@@ -4,7 +4,7 @@
 #   DETERMINISTIC=true BACKEND=fused GPU=gb200 ./run_deepseek_v3.sh
 #   DETERMINISTIC=true BACKEND=fused GPU=gb200 DET_DEBUG=true ./run_deepseek_v3.sh
 set -euo pipefail
-source ../../secrets.sh
+source ../secrets.sh
 
 GPU=${GPU:-"gb200"}
 NUM_GPUS=${NUM_GPUS:-256}
@@ -35,6 +35,7 @@ FLEX_BACKEND=${FLEX_BACKEND:-}
 # CUSTOM_MOUNTS logic below).
 RACE_NOISE=${RACE_NOISE:-0}
 export RACE_NOISE
+GRES_ARG=""
 
 if [ "$GPU" = "h100" ]; then
     CONTAINER="/lustre/fsw/portfolios/coreai/users/zhiyul/benchmark-rl/nemo-26.04.sqsh"
@@ -42,10 +43,11 @@ if [ "$GPU" = "h100" ]; then
     PARTITION="${PARTITION:-batch_short}"
     GPUS_PER_NODE=8
 elif [ "$GPU" = "gb200" ] || [ "$GPU" = "b200" ]; then
-    CONTAINER="/lustre/fsw/coreai_dlalgo_llm/zhiyul/containers/nemo-26.04.sqsh"
-    ACCOUNT="coreai_dlalgo_llm"
-    PARTITION="${PARTITION:-gb200}"
+    CONTAINER="/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/enroot-images/nemo-26.04.01.squashfs"
+    ACCOUNT="nemotron_sw_pre"
+    PARTITION="${PARTITION:-batch}"
     GPUS_PER_NODE=4
+    GRES_ARG="--gres gpu:4"
     # Debug-branch note (kept verbatim): "AssertionError: Modules must not have
     # hooks registered at the time they are passed. However, registering hooks
     # on modules after passing them through make_graphed_callables is allowed."
@@ -224,10 +226,10 @@ if [ -n "$FLEX_BACKEND" ]; then
     fi
 fi
 
-# Use the 2602-side venv for nemo_run (with upgraded version on /tmp PYTHONPATH).
-PYTHON="${PYTHON:-/lustre/fsw/coreai_dlalgo_llm/zhiyul/deterministics/Megatron-Bridge-2602/venv/bin/python}"
+# Use the Megatron-Bridge venv for nemo_run.
+PYTHON="${PYTHON:-/lustre/fsw/portfolios/llmservice/users/zhiyul/Megatron-Bridge/venv/bin/python}"
 
-env PYTHONPATH=/tmp/nemo_run_2604 $PYTHON scripts/performance/setup_experiment.py \
+$PYTHON scripts/performance/setup_experiment.py \
     --account "$ACCOUNT" \
     --partition "$PARTITION" \
     --gpu "$GPU" \
@@ -239,7 +241,7 @@ env PYTHONPATH=/tmp/nemo_run_2604 $PYTHON scripts/performance/setup_experiment.p
     -gn "$GPUS_PER_NODE" \
     --container_image "$CONTAINER" \
     --custom_mounts "/lustre:/lustre,$WORKDIR:/opt/Megatron-Bridge$CUSTOM_MOUNTS" \
-    --custom_env_vars "RACE_NOISE=${RACE_NOISE},CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING:-0},HYBRIDEP_SYNC=${HYBRIDEP_SYNC:-1}" \
+    --custom_env_vars "RACE_NOISE=${RACE_NOISE},CUDA_LAUNCH_BLOCKING=${CUDA_LAUNCH_BLOCKING:-0},HYBRIDEP_SYNC=${HYBRIDEP_SYNC:-1},HF_HOME=/lustre/fsw/portfolios/llmservice/users/zhiyul/hf_cache" \
     -hf "$HF_TOKEN" \
     -wdk "$WANDB_API_KEY" \
     -wdp "mbridge-dev-zhiyul" \
@@ -249,4 +251,5 @@ env PYTHONPATH=/tmp/nemo_run_2604 $PYTHON scripts/performance/setup_experiment.p
     $PARALLELISM_ARGS \
     $NUM_LAYERS_ARG \
     $GBS_ARG \
+    $GRES_ARG \
     $additional_args
