@@ -1,0 +1,95 @@
+diff --git a/megatron/core/transformer/moe/fused_a2a.py b/megatron/core/transformer/moe/fused_a2a.py
+index 39f50a4a6..034f2071d 100644
+--- a/megatron/core/transformer/moe/fused_a2a.py
++++ b/megatron/core/transformer/moe/fused_a2a.py
+@@ -13,10 +13,23 @@ try:
+ except ImportError:
+     HAVE_DEEP_EP = False
+ 
++import os
+ import torch
+ 
+ _buffer = None
+ 
++# HYBRIDEP_SYNC env knob (default "1" = sync after every dispatch/combine).
++# At 8-GPU GB200 the synchronize was needed to avoid cudaErrorIllegalAddress
++# in backward after the custom_allgather=False patch unmasked a cross-stream
++# race. Set HYBRIDEP_SYNC=0 to test whether the race fires at 256-GPU too,
++# or whether it's masked at scale by NCCL-collective barriers / DP averaging.
++_HYBRIDEP_SYNC_ENABLED = os.environ.get("HYBRIDEP_SYNC", "1").strip() != "0"
++
++
++def _hybridep_maybe_sync():
++    if _HYBRIDEP_SYNC_ENABLED:
++        torch.cuda.synchronize()
++
+ 
+ def get_hidden_bytes(x: torch.Tensor) -> int:
+     """Calculate the number of hidden bytes for a tensor.
+@@ -318,6 +331,7 @@ def init_hybrid_ep_buffer(
+         use_fp8=fp8_dispatch,
+         num_sms_dispatch_api=num_sms_dispatch_api,
+         num_sms_combine_api=num_sms_combine_api,
++        enable_custom_allgather=False,
+     )
+ 
+ 
+@@ -382,6 +396,18 @@ class HybridEPDispatch(torch.autograd.Function):
+             num_permuted_tokens=num_permuted_tokens,
+             non_blocking=non_blocking,
+         )
++        # When non_blocking=True the HybridEP runtime writes the dispatch outputs on
++        # its internal comm stream and returns before the write completes.  Any CUDA
++        # operation on the returned tensors that is launched on the current (default)
++        # stream will race against that still-in-flight write → cudaErrorIllegalAddress.
++        # Inserting a full device synchronize here is the simplest safe fix: it ensures
++        # every in-flight comm-stream kernel has completed before autograd or the expert
++        # matmuls touch the output storage.
++        # NOTE: this is intentionally heavier than record_stream — record_stream only
++        # prevents the *allocator* from recycling the buffer, it does not prevent the
++        # current stream from reading a partially-written tensor.
++        if non_blocking:
++            _hybridep_maybe_sync()
+ 
+         ctx.handle = handle
+         ctx.pad_multiple = pad_multiple
+@@ -402,6 +428,9 @@ class HybridEPDispatch(torch.autograd.Function):
+         combined_hidden, combined_probs = _hybrid_ep_buffer.combine_with_unpermute(
+             hidden=grad_x, probs=grad_probs, handle=handle, pad_multiple=ctx.pad_multiple
+         )
++        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
++        # before the upstream autograd nodes (running on current stream) read the result.
++        _hybridep_maybe_sync()
+         return combined_hidden, None, combined_probs, None, None, None, None, None, None, None
+ 
+ 
+@@ -419,6 +448,9 @@ class HybridEPCombine(torch.autograd.Function):
+         combined_hidden, _ = _hybrid_ep_buffer.combine_with_unpermute(
+             hidden=x, handle=handle, pad_multiple=pad_multiple
+         )
++        # combine_with_unpermute may write on the HybridEP comm stream; synchronize
++        # before downstream computation (running on current stream) reads the result.
++        _hybridep_maybe_sync()
+         ctx.handle = handle
+         ctx.pad_multiple = pad_multiple
+         ctx.num_permuted_tokens = num_permuted_tokens
+@@ -430,6 +462,7 @@ class HybridEPCombine(torch.autograd.Function):
+         Backward pass of fused combine of the HybridEP backend
+         '''
+         handle = ctx.handle
++        _non_blocking = ctx.num_permuted_tokens is not None
+         dispatched_hidden, _, _, _, _ = _hybrid_ep_buffer.dispatch_with_permute(
+             hidden=grad_x,
+             scaling_factor=None,
+@@ -437,6 +470,11 @@ class HybridEPCombine(torch.autograd.Function):
+             pad_multiple=ctx.pad_multiple,
+             num_permuted_tokens=ctx.num_permuted_tokens,
+         )
++        # Same sync rationale as HybridEPDispatch.forward: if dispatch was async, the
++        # backward comm stream must be drained before the upstream grad computation
++        # (which runs on the current stream) reads dispatched_hidden.
++        if _non_blocking:
++            _hybridep_maybe_sync()
+         return dispatched_hidden, None, None, None, None
+ 
+ 
