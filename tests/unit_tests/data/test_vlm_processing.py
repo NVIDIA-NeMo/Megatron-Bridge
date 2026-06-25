@@ -372,14 +372,15 @@ def test_infer_assistant_mask_boundary_config_uses_processor_template_when_token
     assert boundary_config.role_end_tokens == {"assistant": [203]}
 
 
-def test_infer_assistant_mask_boundary_config_for_kimi_trims_think_markers():
+def test_infer_assistant_mask_boundary_config_for_kimi_trims_empty_think_block():
     processor = _KimiBoundaryProcessor()
     boundary_config = infer_assistant_mask_boundary_config(processor)
 
     assert boundary_config is not None
     assert boundary_config.role_start_tokens == {"assistant": [102]}
     assert boundary_config.role_end_tokens == {"assistant": [103]}
-    assert list(boundary_config.trim_leading_token_ids) == [201, 202]
+    assert list(boundary_config.trim_leading_token_ids) == []
+    assert [list(token_sequence) for token_sequence in boundary_config.trim_leading_token_sequences] == [[201, 202]]
 
     mask = build_assistant_loss_mask(
         [
@@ -391,7 +392,7 @@ def test_infer_assistant_mask_boundary_config_for_kimi_trims_think_markers():
         boundary_config=boundary_config,
     )
 
-    assert mask.tolist() == [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
 
 
 def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_tokenize():
@@ -582,6 +583,19 @@ def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
     assert mask.tolist() == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_boundary_config_trims_leading_sequences_only_when_complete():
+    input_ids = torch.tensor([102, 55, 3, 56, 4, 101, 102, 55, 56, 5, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [101]},
+        trim_leading_token_sequences=([55, 56],),
+    )
+
+    mask = build_assistant_loss_mask([], input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
 
 
 def test_build_assistant_loss_mask_applies_skipped_tokens_to_boundary_mask():

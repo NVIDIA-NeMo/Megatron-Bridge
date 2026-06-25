@@ -808,7 +808,14 @@ def test_kimi_k25_vl_collate_fn_trains_thinking_but_skips_empty_think_markers():
 
     batch = collate.kimi_k25_vl_collate_fn(examples, proc)
 
-    assert _kimi_target_ids(batch, row=0) == [31, 32, KIMI_THINK_CLOSE_ID, 41, KIMI_IM_END_ID]
+    assert _kimi_target_ids(batch, row=0) == [
+        KIMI_THINK_OPEN_ID,
+        31,
+        32,
+        KIMI_THINK_CLOSE_ID,
+        41,
+        KIMI_IM_END_ID,
+    ]
     assert _kimi_target_ids(batch, row=1) == [51, KIMI_IM_END_ID]
 
 
