@@ -53,19 +53,60 @@ class _DatasetConfig:
 
 @dataclass
 class _RecipeConfig:
-    dataset: _DatasetConfig | None = field(default_factory=_DatasetConfig)
+    dataset: object | None = field(default_factory=_DatasetConfig)
     tokenizer: object = "tokenizer-config"
 
 
 class _FinetuningDatasetBuilder:
     pack_metadata = Path("default-pack-metadata.json")
+    init_kwargs = None
 
     def __init__(self, *, tokenizer: object, **kwargs: object) -> None:
+        type(self).init_kwargs = {"tokenizer": tokenizer, **kwargs}
         self.tokenizer = tokenizer
         self.kwargs = kwargs
 
     def prepare_packed_data(self) -> None:
         raise AssertionError("explicit pack-path tests should not call prepare_packed_data")
+
+
+class _DatasetBuildContext:
+    def __init__(
+        self,
+        train_samples: int,
+        valid_samples: int,
+        test_samples: int,
+        *,
+        tokenizer: object | None = None,
+    ) -> None:
+        self.train_samples = train_samples
+        self.valid_samples = valid_samples
+        self.test_samples = test_samples
+        self.tokenizer = tokenizer
+
+
+class _HFTextSFTDatasetProvider:
+    def __init__(self) -> None:
+        self.seq_length = 2048
+        self.seed = 123
+        self.memmap_workers = 1
+        self.max_train_samples = None
+        self.enable_offline_packing = True
+        self.offline_packing_specs = _PackedSequenceSpecs()
+        self.dataset_kwargs = {"pad_to_max_length": True}
+        self.do_validation = True
+        self.do_test = False
+        self.build_context = None
+
+    def _dataset_root(self) -> Path:
+        return Path("hf-text-root")
+
+    def _effective_dataset_kwargs(self) -> dict[str, object]:
+        return {"chat": True, "use_hf_tokenizer_chat_template": True, **self.dataset_kwargs}
+
+    def build_datasets(self, context: _DatasetBuildContext) -> tuple[None, None, None]:
+        self.build_context = context
+        return None, None, None
 
 
 def _load_module():
@@ -86,6 +127,7 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     data = types.ModuleType("megatron.bridge.data")
     builders = types.ModuleType("megatron.bridge.data.builders")
     datasets = types.ModuleType("megatron.bridge.data.datasets")
+    hf_datasets = types.ModuleType("megatron.bridge.data.hf_datasets")
     training = types.ModuleType("megatron.bridge.training")
     tokenizers = types.ModuleType("megatron.bridge.training.tokenizers")
     recipes = types.ModuleType("megatron.bridge.recipes")
@@ -98,8 +140,12 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     prepare_packed_sequence_data = Mock()
     packed_sequence.prepare_packed_sequence_data = prepare_packed_sequence_data
 
+    text_sft_provider = types.ModuleType("megatron.bridge.data.hf_datasets.text_sft_provider")
+    text_sft_provider.HFTextSFTDatasetProvider = _HFTextSFTDatasetProvider
+
     training_config = types.ModuleType("megatron.bridge.training.config")
     training_config.DataloaderConfig = _DataloaderConfig
+    training_config.DatasetBuildContext = _DatasetBuildContext
 
     tokenizer_module = types.ModuleType("megatron.bridge.training.tokenizers.tokenizer")
     tokenizer_module.build_tokenizer = Mock(return_value="tokenizer")
@@ -109,11 +155,13 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setitem(sys.modules, "megatron.bridge.data", data)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders", builders)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.datasets", datasets)
+    monkeypatch.setitem(sys.modules, "megatron.bridge.data.hf_datasets", hf_datasets)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training", training)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers", tokenizers)
     monkeypatch.setitem(sys.modules, "megatron.bridge.recipes", recipes)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders.finetuning_dataset", finetuning_dataset)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.datasets.packed_sequence", packed_sequence)
+    monkeypatch.setitem(sys.modules, "megatron.bridge.data.hf_datasets.text_sft_provider", text_sft_provider)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.config", training_config)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers.tokenizer", tokenizer_module)
     monkeypatch.setattr(megatron, "bridge", bridge, raising=False)
@@ -121,8 +169,10 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setattr(bridge, "data", data, raising=False)
     monkeypatch.setattr(data, "builders", builders, raising=False)
     monkeypatch.setattr(data, "datasets", datasets, raising=False)
+    monkeypatch.setattr(data, "hf_datasets", hf_datasets, raising=False)
     monkeypatch.setattr(builders, "finetuning_dataset", finetuning_dataset, raising=False)
     monkeypatch.setattr(datasets, "packed_sequence", packed_sequence, raising=False)
+    monkeypatch.setattr(hf_datasets, "text_sft_provider", text_sft_provider, raising=False)
     monkeypatch.setattr(bridge, "training", training, raising=False)
     monkeypatch.setattr(training, "config", training_config, raising=False)
     monkeypatch.setattr(training, "tokenizers", tokenizers, raising=False)
@@ -204,3 +254,24 @@ def test_pack_sft_data_forwards_supported_overrides_and_explicit_paths(monkeypat
     assert kwargs["packed_sequence_size"] == 2048
     assert kwargs["max_seq_length"] == 4096
     assert kwargs["num_tokenizer_workers"] == 1
+
+
+def test_pack_sft_data_uses_hf_text_provider_for_hf_recipe_dataset(monkeypatch):
+    module = _load_module()
+    hf_provider = _HFTextSFTDatasetProvider()
+
+    def unit_recipe():
+        return _RecipeConfig(dataset=hf_provider)
+
+    _install_pack_sft_stubs(monkeypatch, unit_recipe)
+    _FinetuningDatasetBuilder.init_kwargs = None
+    monkeypatch.setattr(sys, "argv", ["pack_sft_data.py", "--recipe", "unit_recipe"])
+
+    module.main()
+
+    assert _FinetuningDatasetBuilder.init_kwargs is None
+    assert hf_provider.build_context is not None
+    assert hf_provider.build_context.tokenizer == "tokenizer"
+    assert hf_provider.build_context.train_samples == 0
+    assert hf_provider.build_context.valid_samples == 0
+    assert hf_provider.build_context.test_samples == 0

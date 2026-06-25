@@ -62,7 +62,8 @@ def main() -> None:
     import megatron.bridge.recipes as all_recipes
     from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
     from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
-    from megatron.bridge.training.config import DataloaderConfig
+    from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
+    from megatron.bridge.training.config import DataloaderConfig, DatasetBuildContext
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
     recipe_fn = getattr(all_recipes, args.recipe, None)
@@ -110,17 +111,6 @@ def main() -> None:
 
     print("Packing dataset (skipped if already cached)...")
     dataset_config = cfg.dataset
-    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
-
-    builder = FinetuningDatasetBuilder(
-        tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
-    )
-
     custom_pack_paths = [
         args.train_input_path,
         args.val_input_path,
@@ -128,13 +118,49 @@ def main() -> None:
         args.packed_val_data_path,
         args.packed_metadata_path,
     ]
+
+    def make_finetuning_pack_builder() -> FinetuningDatasetBuilder:
+        if isinstance(dataset_config, HFTextSFTDatasetProvider):
+            return FinetuningDatasetBuilder(
+                dataset_root=dataset_config._dataset_root(),
+                tokenizer=tokenizer,
+                seq_length=dataset_config.seq_length,
+                seed=dataset_config.seed,
+                memmap_workers=dataset_config.memmap_workers,
+                max_train_samples=dataset_config.max_train_samples,
+                enable_offline_packing=dataset_config.enable_offline_packing,
+                offline_packing_specs=dataset_config.offline_packing_specs,
+                dataset_kwargs=dataset_config._effective_dataset_kwargs(),
+                do_validation=dataset_config.do_validation,
+                do_test=dataset_config.do_test,
+            )
+
+        dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
+        return FinetuningDatasetBuilder(
+            tokenizer=tokenizer,
+            **{
+                field.name: getattr(dataset_config, field.name)
+                for field in fields(dataset_config)
+                if field.name not in dataloader_field_names
+            },
+        )
+
+    def get_pack_dataset_kwargs() -> dict:
+        if isinstance(dataset_config, HFTextSFTDatasetProvider):
+            return dataset_config._effective_dataset_kwargs()
+        return cfg.dataset.dataset_kwargs
+
     if any(custom_pack_paths):
         if not args.train_input_path:
             sys.exit("Error: --train-input-path is required when using explicit pack paths.")
         if not args.packed_train_data_path:
             sys.exit("Error: --packed-train-data-path is required when using explicit pack paths.")
 
-        packed_metadata_path = Path(args.packed_metadata_path) if args.packed_metadata_path else builder.pack_metadata
+        packed_metadata_path = (
+            Path(args.packed_metadata_path)
+            if args.packed_metadata_path
+            else make_finetuning_pack_builder().pack_metadata
+        )
         prepare_packed_sequence_data(
             input_path=Path(args.train_input_path),
             output_path=Path(args.packed_train_data_path),
@@ -143,7 +169,7 @@ def main() -> None:
             tokenizer=tokenizer,
             max_seq_length=cfg.dataset.seq_length,
             seed=cfg.dataset.seed,
-            dataset_kwargs=cfg.dataset.dataset_kwargs,
+            dataset_kwargs=get_pack_dataset_kwargs(),
             pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
             num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
         )
@@ -157,7 +183,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 max_seq_length=cfg.dataset.seq_length,
                 seed=cfg.dataset.seed,
-                dataset_kwargs=cfg.dataset.dataset_kwargs,
+                dataset_kwargs=get_pack_dataset_kwargs(),
                 pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
                 num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
             )
@@ -167,6 +193,12 @@ def main() -> None:
         print("Done.")
         return
 
+    if isinstance(dataset_config, HFTextSFTDatasetProvider):
+        dataset_config.build_datasets(DatasetBuildContext(0, 0, 0, tokenizer=tokenizer))
+        print("Done.")
+        return
+
+    builder = make_finetuning_pack_builder()
     builder.prepare_packed_data()
 
     print("Done.")
