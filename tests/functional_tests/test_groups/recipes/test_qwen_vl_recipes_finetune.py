@@ -39,7 +39,7 @@ QWEN_VL_PRETRAIN_PACKED_RECIPES = [
         "qwen25_vl_3b_packed",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
         {"num_layers": 2},
-        {"pack_sequences_in_batch": True},
+        {"enable_in_batch_packing": True},
     ),
 ]
 

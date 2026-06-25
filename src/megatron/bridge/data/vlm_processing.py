@@ -312,8 +312,29 @@ def normalized_vlm_sample_to_hf_example(
 
 
 def get_processor_tokenizer(processor: Any) -> Any:
-    """Return the tokenizer attached to a processor, or the object itself."""
-    return getattr(processor, "tokenizer", processor)
+    """Return the HF-style tokenizer attached to a processor or Megatron tokenizer wrapper."""
+    current = processor
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+
+        tokenizer = getattr(current, "tokenizer", None)
+        if tokenizer is not None and tokenizer is not current:
+            current = tokenizer
+            continue
+
+        # HF fast tokenizers also expose a private ``_tokenizer`` backend. Once
+        # an object already looks like the callable HF tokenizer, keep it.
+        if callable(current) and hasattr(current, "added_tokens_decoder"):
+            return current
+
+        tokenizer = getattr(current, "_tokenizer", None)
+        if tokenizer is not None and tokenizer is not current:
+            current = tokenizer
+            continue
+
+        break
+    return current
 
 
 def _as_token_id_list(token_ids: Any) -> list[int]:
@@ -414,6 +435,31 @@ def tokenize_text_without_special_tokens(tokenizer: Any, text: str) -> list[int]
     return _as_token_id_list(tokens)
 
 
+def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig | None:
+    """Infer assistant role boundaries from known HF chat-template formats."""
+    tokenizer = get_processor_tokenizer(processor)
+    template = _get_chat_template(tokenizer, processor)
+    if template is None:
+        return None
+
+    candidates = (
+        ("<|im_start|>assistant\n", "<|im_end|>"),
+        ("<|turn>model\n", "<turn|>"),
+        ("<start_of_turn>model\n", "<end_of_turn>"),
+    )
+    for assistant_start, assistant_end in candidates:
+        if assistant_start.rstrip("\n") not in template or assistant_end not in template:
+            continue
+        start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
+        end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)
+        if start_tokens and end_tokens:
+            return AssistantMaskBoundaryConfig(
+                role_start_tokens={CHATML_ASSISTANT_ROLE: start_tokens},
+                role_end_tokens={CHATML_ASSISTANT_ROLE: end_tokens},
+            )
+    return None
+
+
 def assistant_mask_boundary_config_from_markers(
     processor: Any,
     *,
@@ -467,7 +513,7 @@ def _warn_if_all_masked(
 def _get_chat_template(*objects: Any) -> str | None:
     for obj in objects:
         template = getattr(obj, "chat_template", None)
-        if isinstance(template, str):
+        if isinstance(template, str) and template:
             return template
     return None
 

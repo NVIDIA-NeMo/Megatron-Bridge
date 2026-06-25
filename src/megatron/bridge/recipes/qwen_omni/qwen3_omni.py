@@ -74,7 +74,7 @@ def qwen3_omni_30b_a3b_sft_config(
 
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
-    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.enable_in_batch_packing = False
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -139,7 +139,7 @@ def qwen3_omni_30b_a3b_sft_preloaded_config(
         dataloader_type="single",
         num_workers=2,
     )
-    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.enable_in_batch_packing = False
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False

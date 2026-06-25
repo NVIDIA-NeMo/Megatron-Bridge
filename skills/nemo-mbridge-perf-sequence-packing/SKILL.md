@@ -2,7 +2,7 @@
 name: nemo-mbridge-perf-sequence-packing
 description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints.
 license: Apache-2.0
-when_to_use: Enabling sequence packing or long-context SFT, or investigating a commit that broke sequence packing or changed packing behavior; 'packed sequences', 'sequence packing', 'PackedSequenceSpecs', 'pack_sequences_in_batch', 'CP with packing'.
+when_to_use: Enabling sequence packing or long-context SFT, or investigating a commit that broke sequence packing or changed packing behavior; 'packed sequences', 'sequence packing', 'PackedSequenceSpecs', 'enable_in_batch_packing', 'CP with packing'.
 ---
 
 # Sequence Packing Skill
@@ -23,7 +23,8 @@ cfg.train.micro_batch_size = 1
 cfg.dataset.seq_length = 4096
 cfg.model.seq_length = 4096
 cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
-cfg.dataset.packed_sequence_specs = PackedSequenceSpecs(
+cfg.dataset.enable_offline_packing = True
+cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
     packed_sequence_size=4096,
     pad_seq_to_mult=1,
 )
@@ -35,18 +36,18 @@ If CP is enabled:
 cfg.model.context_parallel_size = 2
 cfg.model.calculate_per_token_loss = True
 cfg.ddp.average_in_collective = False
-cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
 # If sequence_parallel is also enabled, use lcm(2*CP, CP*TP):
 # import math
-# cfg.dataset.packed_sequence_specs.pad_seq_to_mult = math.lcm(2 * CP, CP * TP)
+# cfg.dataset.offline_packing_specs.pad_seq_to_mult = math.lcm(2 * CP, CP * TP)
 # See src/megatron/bridge/training/vlm_step.py for reference logic.
 ```
 
 If CUDA graphs are enabled for this packed path:
 
 ```python
-cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
 cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 ```
 
@@ -58,7 +59,7 @@ dataset initialization.
 In-batch packing for VLM finetuning:
 
 ```python
-cfg.dataset.pack_sequences_in_batch = True
+cfg.dataset.enable_in_batch_packing = True
 cfg.train.micro_batch_size = 2
 ```
 
@@ -77,10 +78,12 @@ LLM packed SFT config surface:
 ```72:97:src/megatron/bridge/recipes/utils/finetune_utils.py
 if packed_sequence:
     dataset_kwargs = {"pad_to_max_length": True}
-    packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+    enable_offline_packing = True
+    offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 else:
     dataset_kwargs = {}
-    packed_sequence_specs = None
+    enable_offline_packing = False
+    offline_packing_specs = None
 ```
 
 Bridge validation:
@@ -95,7 +98,7 @@ if self.model.context_parallel_size > 1:
 if ... packed_sequence_size > 0 and self.train.micro_batch_size > 1:
     raise ValueError(...)
 ...
-if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+if getattr(self.dataset, "enable_in_batch_packing", False) and self.train.micro_batch_size == 1:
     raise ValueError(...)
 ```
 
@@ -133,7 +136,7 @@ Use the checked-in unit coverage:
 
 ```bash
 uv run python -m pytest tests/unit_tests/training/utils/test_packed_seq_utils.py -v && \
-uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or pack_sequences_in_batch or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
+uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
 uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "enable_packing" -v
 ```
 

@@ -322,7 +322,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
     )
-    enable_packing = getattr(cfg.dataset, "pack_sequences_in_batch", False)
+    enable_packing = getattr(cfg.dataset, "enable_in_batch_packing", False)
 
     if not enable_packing:
         # PP needs fixed activation shapes across stages. EP/HybridEP also needs

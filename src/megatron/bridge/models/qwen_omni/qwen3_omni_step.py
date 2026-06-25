@@ -232,8 +232,8 @@ def forward_step(
         )
     timers("batch-generator").stop()
 
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
-    if pack_sequences_in_batch:
+    enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
+    if enable_in_batch_packing:
         raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
 
     if pg_collection.cp.size() > 1:

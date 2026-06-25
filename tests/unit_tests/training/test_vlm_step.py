@@ -328,7 +328,7 @@ def test_get_batch_padding_paths(monkeypatch):
 
 
 def test_get_batch_enable_packing_path(monkeypatch):
-    """Test get_batch with pack_sequences_in_batch=True (enable_packing path)."""
+    """Test get_batch with enable_in_batch_packing=True (enable_packing path)."""
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
@@ -355,7 +355,7 @@ def test_get_batch_enable_packing_path(monkeypatch):
         (),
         {
             "skip_getting_attention_mask_from_dataset": True,
-            "pack_sequences_in_batch": True,  # Enable packing
+            "enable_in_batch_packing": True,  # Enable packing
         },
     )()
 
@@ -448,7 +448,7 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
         (),
         {
             "skip_getting_attention_mask_from_dataset": True,
-            "pack_sequences_in_batch": True,
+            "enable_in_batch_packing": True,
         },
     )()
 
