@@ -19,7 +19,7 @@ import warnings
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.data.vlm_processing import gather_assistant_text_segments
 from megatron.bridge.training.utils.visual_inputs import Qwen2AudioInputs
 
@@ -135,7 +135,7 @@ def qwen2_audio_collate_fn(
     for key in ("input_features", "feature_attention_mask"):
         batch.pop(key, None)
 
-    pad_or_pack_sequence(
+    prepare_padded_or_packed_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

@@ -20,6 +20,27 @@ from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_param
 class TestGetPackedSeqParams:
     """Test suite for get_packed_seq_params function."""
 
+    def test_current_mcore_metadata_fields(self):
+        """Test get_packed_seq_params with current MCore metadata field names."""
+        batch = {
+            "cu_seqlens_q": torch.IntTensor([0, 120, 245, 370]),
+            "cu_seqlens_kv": torch.IntTensor([0, 120, 245, 370]),
+            "cu_seqlens_q_padded": torch.IntTensor([0, 128, 256, 384]),
+            "cu_seqlens_kv_padded": torch.IntTensor([0, 128, 256, 384]),
+            "max_seqlen_q": torch.tensor(128),
+            "max_seqlen_kv": torch.tensor(128),
+        }
+
+        result = get_packed_seq_params(batch)
+
+        torch.testing.assert_close(result.cu_seqlens_q, batch["cu_seqlens_q"])
+        torch.testing.assert_close(result.cu_seqlens_kv, batch["cu_seqlens_kv"])
+        torch.testing.assert_close(result.cu_seqlens_q_padded, batch["cu_seqlens_q_padded"])
+        torch.testing.assert_close(result.cu_seqlens_kv_padded, batch["cu_seqlens_kv_padded"])
+        assert result.max_seqlen_q == 128
+        assert result.max_seqlen_kv == 128
+        assert result.qkv_format == "thd"
+
     def test_without_cu_seqlens_unpadded(self):
         """Test get_packed_seq_params when cu_seqlens_unpadded is NOT present.
 

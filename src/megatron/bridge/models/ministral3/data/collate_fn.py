@@ -19,7 +19,7 @@ from PIL import Image
 
 from megatron.bridge.data.datasets.utils import GENERATION_REGEX, IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import (
     AssistantMaskBoundaryConfig,
@@ -169,7 +169,7 @@ def ministral3_collate_fn(
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
-    pad_or_pack_sequence(
+    prepare_padded_or_packed_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

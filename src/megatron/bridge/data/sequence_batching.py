@@ -23,7 +23,6 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_packing import _pack_padded_sequence
 
 
 def _ceil_to_multiple(value: int, multiple: int) -> int:
@@ -99,7 +98,158 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
-def pad_or_pack_sequence(
+def _sequence_lengths(tokens: torch.Tensor, *, pad_token_id: int, padding_mask: torch.Tensor | None) -> list[int]:
+    lengths = []
+    batch_size, seq_len = tokens.shape
+    for idx in range(batch_size):
+        if padding_mask is not None:
+            length = int(padding_mask[idx].sum().item())
+        else:
+            non_pad_mask = tokens[idx] != pad_token_id
+            if non_pad_mask.all():
+                length = seq_len
+            elif non_pad_mask.any():
+                length = int(non_pad_mask.nonzero(as_tuple=True)[0][-1].item()) + 1
+            else:
+                length = 0
+        lengths.append(length)
+    return lengths
+
+
+def _validate_sequence_tensor(
+    batch: MutableMapping[str, Any],
+    key: str,
+    *,
+    tokens: torch.Tensor,
+) -> torch.Tensor | None:
+    tensor = batch.get(key)
+    if tensor is None:
+        return None
+    if not isinstance(tensor, torch.Tensor) or tensor.shape != tokens.shape:
+        raise ValueError(f"'{key}' must match token shape for direct sequence packing.")
+    return tensor
+
+
+def pack_sequence_batch_to_mcore_thd(
+    batch: MutableMapping[str, Any],
+    *,
+    token_key: str | None = None,
+    pad_token_id: int = 0,
+    ignore_index: int = IGNORE_INDEX,
+    pad_to_multiple_of: int = 1,
+) -> None:
+    """Pack a collated sequence batch directly into MCore THD layout.
+
+    This helper emits the current ``PackedSeqParams`` field names consumed by
+    Megatron-Core and Transformer Engine: ``cu_seqlens_q``, ``cu_seqlens_kv``,
+    optional padded cu-seqlens, and ``max_seqlen_q`` / ``max_seqlen_kv``.
+
+    Args:
+        batch: Mutable collate batch with 2D token, position, and optional
+            label/loss-mask tensors.
+        token_key: Token key to use. If unset, detected from ``tokens`` or
+            ``input_ids``.
+        pad_token_id: Token value for padding inserted by ``pad_to_multiple_of``.
+        ignore_index: Label value for inserted padding.
+        pad_to_multiple_of: Optional per-sequence packed length multiple.
+
+    Raises:
+        ValueError: If required tensors are missing or the batch contains no
+            non-padding tokens.
+    """
+    if pad_to_multiple_of < 1:
+        raise ValueError("pad_to_multiple_of must be >= 1.")
+
+    token_key = token_key if token_key is not None else _token_key(batch)
+    tokens = batch[token_key]
+    if not isinstance(tokens, torch.Tensor) or tokens.dim() != 2:
+        raise ValueError("Direct sequence packing expects a 2D token tensor.")
+
+    position_ids = batch.get("position_ids")
+    if not isinstance(position_ids, torch.Tensor) or position_ids.dim() != 2 or position_ids.shape != tokens.shape:
+        raise ValueError("Direct sequence packing expects 2D 'position_ids' matching token shape.")
+
+    labels = _validate_sequence_tensor(batch, "labels", tokens=tokens)
+    loss_mask = _validate_sequence_tensor(batch, "loss_mask", tokens=tokens)
+
+    attention_mask = batch.get("attention_mask")
+    padding_mask = None
+    if attention_mask is not None:
+        if (
+            not isinstance(attention_mask, torch.Tensor)
+            or attention_mask.dim() != 2
+            or attention_mask.shape != tokens.shape
+        ):
+            raise ValueError("'attention_mask' must match token shape for direct sequence packing.")
+        padding_mask = attention_mask.to(device=tokens.device)
+
+    lengths = _sequence_lengths(tokens, pad_token_id=pad_token_id, padding_mask=padding_mask)
+    valid_indices = [idx for idx, length in enumerate(lengths) if length > 0]
+    if not valid_indices:
+        raise ValueError("Cannot pack a batch with no non-padding tokens.")
+
+    unpadded_lengths = [lengths[idx] for idx in valid_indices]
+    padded_lengths = [_ceil_to_multiple(length, pad_to_multiple_of) for length in unpadded_lengths]
+
+    cu_seqlens = [0]
+    cu_seqlens_padded = [0]
+    for length, padded_length in zip(unpadded_lengths, padded_lengths):
+        cu_seqlens.append(cu_seqlens[-1] + length)
+        cu_seqlens_padded.append(cu_seqlens_padded[-1] + padded_length)
+
+    total_len = cu_seqlens_padded[-1]
+    device = tokens.device
+    packed_tokens = torch.full((1, total_len), pad_token_id, dtype=tokens.dtype, device=device)
+    packed_position_ids = torch.zeros((1, total_len), dtype=position_ids.dtype, device=position_ids.device)
+    packed_labels = (
+        torch.full((1, total_len), ignore_index, dtype=labels.dtype, device=labels.device)
+        if labels is not None
+        else None
+    )
+    packed_loss_mask = (
+        torch.zeros((1, total_len), dtype=loss_mask.dtype, device=loss_mask.device) if loss_mask is not None else None
+    )
+
+    offset = 0
+    for batch_idx, length, padded_length in zip(valid_indices, unpadded_lengths, padded_lengths):
+        packed_tokens[0, offset : offset + length] = tokens[batch_idx, :length]
+        packed_position_ids[0, offset : offset + length] = position_ids[batch_idx, :length]
+        if packed_labels is not None and labels is not None:
+            packed_labels[0, offset : offset + length] = labels[batch_idx, :length]
+        if packed_loss_mask is not None and loss_mask is not None:
+            packed_loss_mask[0, offset : offset + length] = loss_mask[batch_idx, :length]
+
+        pad_len = padded_length - length
+        if pad_len > 0:
+            start_pos = position_ids[batch_idx, length - 1] + 1
+            packed_position_ids[0, offset + length : offset + padded_length] = torch.arange(
+                start_pos,
+                start_pos + pad_len,
+                dtype=position_ids.dtype,
+                device=position_ids.device,
+            )
+        offset += padded_length
+
+    _set_tokens(batch, token_key, packed_tokens)
+    if packed_labels is not None:
+        batch["labels"] = packed_labels
+    if packed_loss_mask is not None:
+        batch["loss_mask"] = packed_loss_mask
+    batch["position_ids"] = packed_position_ids
+    batch["attention_mask"] = None
+
+    cu_seqlens_t = torch.tensor(cu_seqlens, dtype=torch.int32, device=device)
+    batch["cu_seqlens_q"] = cu_seqlens_t
+    batch["cu_seqlens_kv"] = cu_seqlens_t
+    if cu_seqlens_padded != cu_seqlens:
+        cu_seqlens_padded_t = torch.tensor(cu_seqlens_padded, dtype=torch.int32, device=device)
+        batch["cu_seqlens_q_padded"] = cu_seqlens_padded_t
+        batch["cu_seqlens_kv_padded"] = cu_seqlens_padded_t
+    batch["max_seqlen_q"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
+    batch["max_seqlen_kv"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
+
+
+def prepare_padded_or_packed_sequence_batch(
     batch: MutableMapping[str, Any],
     *,
     sequence_length: int | None,
@@ -112,10 +262,9 @@ def pad_or_pack_sequence(
 ) -> None:
     """Pad, truncate, or pack sequence tensors for the training step.
 
-    This is the collate-time policy helper for sequence tensors. When packing
-    is enabled it still uses an internal pad-then-pack helper, because the
-    current model collates first produce padded tensors. Longer term, packing
-    collates should build flattened packed tensors directly.
+    This is the collate-time policy helper for sequence tensors. Non-packed
+    batches are padded/truncated to the requested shape. Packed batches are
+    emitted directly in MCore THD layout with current packed-sequence metadata.
 
     Args:
         batch: Mutable collate batch with ``input_ids`` or ``tokens`` plus
@@ -140,27 +289,13 @@ def pad_or_pack_sequence(
         raise ValueError("Sequence batch preparation expects a 2D token tensor.")
 
     if enable_in_batch_packing:
-        attention_mask = batch.get("attention_mask")
-        if attention_mask is not None and (
-            not isinstance(attention_mask, torch.Tensor)
-            or attention_mask.dim() != 2
-            or attention_mask.shape != tokens.shape
-        ):
-            batch["attention_mask"] = None
-        _pack_padded_sequence(
+        pack_sequence_batch_to_mcore_thd(
             batch,
             pad_token_id=pad_token_id,
             ignore_index=ignore_index,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            tokens_key=token_key,
+            token_key=token_key,
         )
-        # Legacy VLM packing always carried both padded and unpadded metadata,
-        # even when no extra per-sequence padding was inserted. Keep that
-        # contract so PackedSeqParams takes the same path as the former
-        # training-step packer.
-        if batch.get("cu_seqlens_unpadded") is None:
-            batch["cu_seqlens_unpadded"] = batch["cu_seqlens"].clone()
-            batch["cu_seqlens_unpadded_argmin"] = batch["cu_seqlens_argmin"].clone()
         return
 
     if sequence_length is None:

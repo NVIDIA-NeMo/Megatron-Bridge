@@ -18,23 +18,51 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 
-def get_packed_seq_params(batch: dict[str, torch.Tensor]) -> PackedSeqParams:
+PackedMetadataValue = torch.Tensor | int | None
+
+
+def _squeeze_metadata(value: PackedMetadataValue) -> PackedMetadataValue:
+    if value is None:
+        return None
+    if not isinstance(value, torch.Tensor):
+        return value
+    return value.squeeze()
+
+
+def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqParams:
     """Build packed sequence parameters from a batch dictionary.
 
-    The function squeezes possible batch dimensions and removes any padding
-    marked by -1 values. It returns a `PackedSeqParams` instance suitable for
-    packed sequence attention kernels.
+    Current MCore-style metadata is passed through directly after squeezing
+    possible batch dimensions. Legacy Bridge metadata is still converted by
+    removing any padding marked by -1 values.
 
     Args:
-        batch: A dictionary containing packed-sequence metadata. Expected keys:
-            `cu_seqlens`, optional `cu_seqlens_unpadded`, optional argmins,
-            optional `max_seqlen`, and optional `total_tokens` (required for
-            hybrid SSM/Mamba models to generate ``seq_idx``).
+        batch: A dictionary containing packed-sequence metadata. Current keys
+            are ``cu_seqlens_q``, ``cu_seqlens_kv``, optional padded variants,
+            ``max_seqlen_q``, ``max_seqlen_kv``, and optional ``total_tokens``
+            (required for hybrid SSM/Mamba models to generate ``seq_idx``).
+            Legacy ``cu_seqlens`` / ``cu_seqlens_unpadded`` batches are also
+            accepted for offline packed SFT compatibility.
 
     Returns:
         PackedSeqParams with identical q/kv parameters and `qkv_format` set to
         "thd".
     """
+    if "cu_seqlens_q" in batch:
+        cu_seqlens_q = _squeeze_metadata(batch["cu_seqlens_q"])
+        cu_seqlens_kv = _squeeze_metadata(batch.get("cu_seqlens_kv"))
+        max_seqlen_q = _squeeze_metadata(batch.get("max_seqlen_q"))
+        max_seqlen_kv = _squeeze_metadata(batch.get("max_seqlen_kv"))
+        return PackedSeqParams(
+            cu_seqlens_q=cu_seqlens_q,
+            cu_seqlens_kv=cu_seqlens_kv if cu_seqlens_kv is not None else cu_seqlens_q,
+            cu_seqlens_q_padded=_squeeze_metadata(batch.get("cu_seqlens_q_padded")),
+            cu_seqlens_kv_padded=_squeeze_metadata(batch.get("cu_seqlens_kv_padded")),
+            max_seqlen_q=max_seqlen_q,
+            max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
+            total_tokens=batch.get("total_tokens"),
+            qkv_format="thd",
+        )
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
     cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")

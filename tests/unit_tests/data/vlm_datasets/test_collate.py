@@ -231,6 +231,8 @@ def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
     assert batch["input_ids"].shape == (2, 128)
     assert "cu_seqlens" not in batch
     assert "max_seqlen" not in batch
+    assert "cu_seqlens_q" not in batch
+    assert "max_seqlen_q" not in batch
 
 
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
@@ -462,8 +464,14 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 4, 12]]
-    assert batch["max_seqlen"].tolist() == [[8]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert batch["max_seqlen_q"].item() == 8
+    assert batch["max_seqlen_kv"].item() == 8
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_unpadded" not in batch
     assert batch["visual_inputs"] is not None
 
 

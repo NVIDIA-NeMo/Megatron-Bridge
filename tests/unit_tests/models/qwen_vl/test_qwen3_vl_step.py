@@ -26,7 +26,7 @@ def test_get_batch_from_iterator_rejects_collate_time_packing_metadata():
         "input_ids": torch.tensor([[1, 2, 3]]),
         "position_ids": torch.tensor([[0, 1, 2]]),
         "visual_inputs": None,
-        "cu_seqlens": torch.tensor([[0, 3]], dtype=torch.int32),
+        "cu_seqlens_q": torch.tensor([0, 3], dtype=torch.int32),
     }
 
     with pytest.raises(ValueError, match="does not support collate-time in-batch packing"):

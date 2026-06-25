@@ -18,7 +18,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.data.vlm_processing import assistant_mask_boundary_config_from_markers, build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -50,10 +50,8 @@ def nemotron_omni_collate_fn(
 
     When ``enable_in_batch_packing=True``, samples in the microbatch are concatenated
     along the sequence dim into a single ``[1, sum(L_i)]`` batch, and
-    ``cu_seqlens`` / ``cu_seqlens_argmin`` / ``max_seqlen`` are emitted so
-    TE's THD attention kernels handle per-sample masking without an attention
-    mask. ``cu_seqlens_unpadded`` is also emitted when per-sequence padding is
-    inserted for CP/SP divisibility.
+    current MCore packed-sequence metadata fields are emitted so TE's THD
+    attention kernels handle per-sample masking without an attention mask.
     """
     del visual_keys, min_pixels, max_pixels
 
@@ -400,7 +398,7 @@ def nemotron_omni_collate_fn(
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
 
-    pad_or_pack_sequence(
+    prepare_padded_or_packed_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

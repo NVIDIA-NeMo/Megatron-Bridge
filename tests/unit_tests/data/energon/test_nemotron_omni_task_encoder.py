@@ -207,11 +207,12 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     assert batch.input_ids.tolist() == [[1, 2, 3, 4, 5]]
     assert batch.attention_mask is None
     assert batch.position_ids.tolist() == [[0, 1, 0, 1, 2]]
-    assert batch.cu_seqlens.tolist() == [0, 2, 5]
-    assert batch.cu_seqlens_unpadded.tolist() == [0, 2, 5]
-    assert batch.cu_seqlens_argmin.item() == 3
-    assert batch.cu_seqlens_unpadded_argmin.item() == 3
-    assert batch.max_seqlen.item() == 3
+    assert batch.cu_seqlens_q.tolist() == [0, 2, 5]
+    assert batch.cu_seqlens_kv.tolist() == [0, 2, 5]
+    assert batch.cu_seqlens_q_padded is None
+    assert batch.cu_seqlens_kv_padded is None
+    assert batch.max_seqlen_q.item() == 3
+    assert batch.max_seqlen_kv.item() == 3
     assert batch.visual_tensors["pixel_values"].shape == (1, 5, 3)
     assert batch.sound_clips.shape == (2, 2, 4)
     assert batch.sound_length.tolist() == [2, 1]
@@ -222,11 +223,13 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     encoded = encoder.encode_batch(batch)
     assert encoded["tokens"] is batch.input_ids
     assert encoded["sound_clips"] is batch.sound_clips
-    assert encoded["cu_seqlens"] is batch.cu_seqlens
-    assert encoded["cu_seqlens_unpadded"] is batch.cu_seqlens_unpadded
-    assert encoded["cu_seqlens_argmin"] is batch.cu_seqlens_argmin
-    assert encoded["cu_seqlens_unpadded_argmin"] is batch.cu_seqlens_unpadded_argmin
-    assert encoded["max_seqlen"] is batch.max_seqlen
+    assert encoded["cu_seqlens_q"] is batch.cu_seqlens_q
+    assert encoded["cu_seqlens_kv"] is batch.cu_seqlens_kv
+    assert encoded["max_seqlen_q"] is batch.max_seqlen_q
+    assert encoded["max_seqlen_kv"] is batch.max_seqlen_kv
+    assert "cu_seqlens" not in encoded
+    assert "cu_seqlens_unpadded" not in encoded
+    assert "cu_seqlens_argmin" not in encoded
     assert isinstance(encoded["visual_inputs"], GenericVisualInputs)
     assert encoded["visual_inputs"].pixel_values.shape == (1, 5, 3)
 
