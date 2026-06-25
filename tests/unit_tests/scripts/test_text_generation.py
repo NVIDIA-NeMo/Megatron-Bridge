@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 import types
+from datetime import timedelta
 from enum import Enum
 from pathlib import Path
 
@@ -180,3 +181,57 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
+
+
+def test_maybe_initialize_distributed_populates_env_from_safe_helpers(monkeypatch, text_generation):
+    init_calls = []
+    set_device_calls = []
+
+    for key in ("RANK", "WORLD_SIZE", "LOCAL_RANK", "MASTER_ADDR", "MASTER_PORT"):
+        monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setattr(text_generation.dist, "is_available", lambda: True)
+    monkeypatch.setattr(text_generation.dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(text_generation, "get_rank_safe", lambda: 7)
+    monkeypatch.setattr(text_generation, "get_world_size_safe", lambda: 16)
+    monkeypatch.setattr(text_generation, "get_local_rank_preinit", lambda: 3)
+    monkeypatch.setattr(text_generation, "get_master_addr_safe", lambda: "node-0")
+    monkeypatch.setattr(text_generation, "get_master_port_safe", lambda: 23456)
+    monkeypatch.setattr(text_generation.torch.cuda, "set_device", lambda device: set_device_calls.append(device))
+    monkeypatch.setattr(
+        text_generation.dist,
+        "init_process_group",
+        lambda backend, timeout: init_calls.append({"backend": backend, "timeout": timeout}),
+    )
+
+    text_generation._maybe_initialize_distributed(timeout_minutes=11)
+
+    assert (
+        dict(
+            RANK="7",
+            WORLD_SIZE="16",
+            LOCAL_RANK="3",
+            MASTER_ADDR="node-0",
+            MASTER_PORT="23456",
+        ).items()
+        <= dict(text_generation.os.environ).items()
+    )
+    assert set_device_calls == [3]
+    assert init_calls == [{"backend": "nccl", "timeout": timedelta(minutes=11)}]
+
+
+def test_maybe_initialize_distributed_is_noop_when_dist_unavailable(monkeypatch, text_generation):
+    monkeypatch.setattr(text_generation.dist, "is_available", lambda: False)
+    monkeypatch.setattr(text_generation.dist, "is_initialized", lambda: False)
+    monkeypatch.setattr(
+        text_generation.dist,
+        "init_process_group",
+        lambda *args, **kwargs: pytest.fail("init_process_group should not be called"),
+    )
+    monkeypatch.setattr(
+        text_generation.torch.cuda,
+        "set_device",
+        lambda device: pytest.fail("set_device should not be called"),
+    )
+
+    text_generation._maybe_initialize_distributed(timeout_minutes=1)
