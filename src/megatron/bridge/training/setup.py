@@ -45,7 +45,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer
+from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -306,6 +306,13 @@ def setup(
                 skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
             )
         )
+        # Workaround for upstream mcore: reload_model_params() only refreshes the
+        # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
+        # clones and level-3 FP32 working copies retain their random init.  Without
+        # this sync, the first optimizer step on (optimizer_cpu_offload=True + dist
+        # optimizer + BF16 + HF init) regresses the BF16 model to fresh random init.
+        # No-op when CPU offload is not enabled.  See NVIDIA-NeMo/RL PR #2372.
+        sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 

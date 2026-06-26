@@ -98,10 +98,14 @@ def _assert_basic_config(cfg):
 
 @pytest.mark.parametrize("recipe_func", _QWEN_RECIPE_FUNCS)
 def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    # Monkeypatch AutoBridge in the specific module where the recipe function is defined
+    # Always patch AutoBridge in qwen3_moe (where base configs actually call it)
+    qwen3_moe_mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    monkeypatch.setattr(qwen3_moe_mod, "AutoBridge", _FakeBridge)
+    # Also patch in the recipe function's own module if it directly references AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoBridge"):
+        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 

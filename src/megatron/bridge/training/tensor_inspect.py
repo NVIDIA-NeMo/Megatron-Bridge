@@ -52,6 +52,16 @@ def initialize_tensor_inspect_pre_model_initialization(tensor_inspect_config: Te
     if tensor_inspect_config is None or not tensor_inspect_config.enabled:
         return
 
+    if (
+        tensor_inspect_config.feature_dirs
+        and not tensor_inspect_config.allow_custom_feature_dirs
+        and not getattr(tensor_inspect_config, "_feature_dirs_from_default", False)
+    ):
+        raise ValueError(
+            "Custom tensor inspect feature_dirs can load plugin code. "
+            "Set allow_custom_feature_dirs=True only for trusted feature directories."
+        )
+
     if not HAVE_NVINSPECT:
         print_rank_0(MISSING_NVINSPECT_MSG)
         raise ImportError(MISSING_NVINSPECT_MSG)
