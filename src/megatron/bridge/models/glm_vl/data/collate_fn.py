@@ -17,13 +17,26 @@
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
-def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def glm4v_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for GLM-4.5V model.
 
     GLM-4.5V requires ``mm_token_type_ids`` to distinguish image (1) and video (2)
@@ -32,7 +45,10 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
     defaults).  We wrap all visual tensors — including ``mm_token_type_ids`` — in
     :class:`GenericVisualInputs` so they flow through ``vlm_step.py`` to the model.
     """
+    del visual_keys, min_pixels, max_pixels
+
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     batch = processor.apply_chat_template(
         [example["conversation"] for example in examples],
@@ -55,7 +71,13 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)
@@ -72,5 +94,14 @@ def glm4v_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    pad_or_pack_sequence(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
 
     return batch

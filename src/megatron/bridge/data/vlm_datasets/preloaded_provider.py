@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from transformers import AutoProcessor
 
-from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
@@ -200,14 +200,18 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
     # Enable batch-level online sequence packing
-    pack_sequences_in_batch: bool = False
+    enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
 
     def _build_split_dataset(
         self,
         split_path: Optional[str],
         target_length: int,
         processor: Any,
-    ) -> Optional[VLMConversationDataset]:
+    ) -> Optional[ConversationDataset]:
         if not split_path or target_length <= 0:
             return None
         raw_examples = _load_preloaded_examples(split_path)
@@ -220,10 +224,16 @@ class PreloadedVLMConversationProvider(DatasetProvider):
         if not base_examples:
             logging.warning(f"No usable examples parsed from {split_path}")
             return None
-        return VLMConversationDataset(
+        return ConversationDataset(
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
+            sequence_length=self.seq_length,
+            pad_to_max_length=self.pad_to_max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            enable_in_batch_packing=self.enable_in_batch_packing,
+            defer_in_batch_packing_to_step=self.defer_in_batch_packing_to_step,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:

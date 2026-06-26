@@ -42,7 +42,6 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -50,15 +49,33 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
+    """Trim padded THD cu_seqlens without introducing a CUDA sync."""
+    if cu_seqlens_argmin is not None:
+        if cu_seqlens_argmin.is_cuda:
+            raise ValueError("Packed CP batches expect cu_seqlens_argmin on CPU to avoid device-to-host sync")
+        return cu_seqlens[: int(cu_seqlens_argmin.item())]
+
+    if cu_seqlens.is_cuda:
+        raise ValueError("Packed CP batches require cu_seqlens_argmin to trim cu_seqlens without GPU synchronization")
+
+    # Packed dataset padding uses -1 sentinels. Match the first negative entry
+    # instead of argmin so this stays correct for any negative sentinel value.
+    padding_indices = torch.nonzero(cu_seqlens < 0, as_tuple=True)[0]
+    if padding_indices.numel() == 0:
+        return cu_seqlens
+    return cu_seqlens[: int(padding_indices[0].item())]
+
+
 def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
     """Return whether the dataset is expected to provide packed sequence metadata."""
     dataset_cfg = getattr(cfg, "dataset", None)
-    packed_sequence_specs = getattr(dataset_cfg, "packed_sequence_specs", None)
-    if packed_sequence_specs is not None:
-        packed_sequence_size = getattr(packed_sequence_specs, "packed_sequence_size", None)
+    offline_packing_specs = getattr(dataset_cfg, "offline_packing_specs", None)
+    if getattr(dataset_cfg, "enable_offline_packing", False):
+        packed_sequence_size = getattr(offline_packing_specs, "packed_sequence_size", None)
         return packed_sequence_size is None or packed_sequence_size > 0
 
-    return getattr(dataset_cfg, "pack_sequences_in_batch", False)
+    return getattr(dataset_cfg, "enable_in_batch_packing", False)
 
 
 def _middle_pp_stage_needs_batch(cfg: ConfigContainer) -> bool:
@@ -148,6 +165,8 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
     if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
         raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
     cu_seqlens = cu_seqlens.squeeze()
+    cu_seqlens = _trim_padded_cu_seqlens_for_cp(cu_seqlens, batch.get("cu_seqlens_argmin"))
+
     cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
     if cu_seqlens_unpadded is not None:
         batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded.squeeze()
@@ -353,26 +372,6 @@ def _forward_step_common(
             vp_stage=_model_chunk_vp_stage(model),
         )
     timers("batch-generator").stop()
-
-    # Accumulate FLOPS metadata across micro-batches. The THD attention term Σᵢ sᵢ² is
-    # derived inline from cu_seqlens (kept on-device, sync-free); see
-    # accumulate_flops_metadata. Falls back to BSHD when cu_seqlens is absent.
-    #
-    # The cu_seqlens-driven THD path is only wired/validated for CP == 1 in this PR.
-    # Under context parallelism the batch (and its cu_seqlens) is CP-partitioned per
-    # rank, so the per-rank Σᵢ sᵢ² accounting here is not yet correct — that is the
-    # follow-up tracked in #4161. Until then, forward cu_seqlens only for CP == 1 so
-    # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
-    # change), instead of running the not-yet-CP-safe cu_seqlens path.
-    cp_use_thd = pg_collection.cp.size() == 1
-    accumulate_flops_metadata(
-        state,
-        tokens,
-        cu_seqlens=cu_seqlens if cp_use_thd else None,
-        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
-        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
-        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
-    )
 
     forward_args = {
         "input_ids": tokens,

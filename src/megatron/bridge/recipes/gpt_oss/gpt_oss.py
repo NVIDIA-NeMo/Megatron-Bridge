@@ -300,7 +300,7 @@ def gpt_oss_20b_sft_config() -> ConfigContainer:
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings (MoE-specific)
     cfg.model.pipeline_model_parallel_layout = None
@@ -426,7 +426,7 @@ def gpt_oss_120b_sft_config() -> ConfigContainer:
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings (MoE-specific) - 120B SFT uses PP=4
     cfg.model.pipeline_model_parallel_layout = None
@@ -572,7 +572,7 @@ def gpt_oss_20b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings (MoE-specific) - PEFT uses EP=1
     cfg.model.pipeline_model_parallel_layout = None
@@ -707,7 +707,7 @@ def gpt_oss_120b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings (MoE-specific) - 120B PEFT uses PP=1, EP=8
     cfg.model.pipeline_model_parallel_layout = None
