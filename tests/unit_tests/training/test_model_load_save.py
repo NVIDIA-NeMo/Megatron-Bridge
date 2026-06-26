@@ -1154,3 +1154,51 @@ class TestLoadTokenizer:
 
             tokenizer_path = os.path.join(ckpt_path, "tokenizer")
             assert mock_tokenizer_cfg.tokenizer_model == Path(tokenizer_path)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_rejects_checkpoint_trust_remote_code(
+        self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer
+    ):
+        """Test that checkpoint tokenizer config cannot authorize remote code."""
+        mock_read_cfg.return_value = {"tokenizer": {}}
+        mock_instantiate.return_value = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="attacker/tokenizer",
+            hf_tokenizer_kwargs={"trust_remote_code": True},
+        )
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            with pytest.raises(ValueError, match="Checkpoint tokenizer config requested trust_remote_code=True"):
+                load_tokenizer(ckpt_path)
+
+        mock_build_tokenizer.assert_not_called()
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_allows_caller_trust_remote_code_override(
+        self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer
+    ):
+        """Test that callers can explicitly trust checkpoint tokenizer code."""
+        mock_read_cfg.return_value = {"tokenizer": {}}
+        mock_tokenizer_cfg = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="trusted/tokenizer",
+            hf_tokenizer_kwargs={"trust_remote_code": True},
+        )
+        mock_instantiate.return_value = mock_tokenizer_cfg
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_tokenizer(ckpt_path, trust_remote_code=True)
+
+        assert result == mock_tokenizer
+        assert mock_tokenizer_cfg.trust_remote_code is True
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)
