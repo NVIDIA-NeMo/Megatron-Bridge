@@ -52,6 +52,7 @@ from tests.functional_tests.utils import (
 
 DEFAULT_GLOBAL_BATCH_SIZE = 8
 DEFAULT_SFT_DATASET_ROWS = 64
+PACKED_SFT_CONTEXT_REPETITIONS = 520
 
 
 @dataclass
@@ -270,7 +271,10 @@ class TestLoRAFinetune:
                 pretrain_checkpoint_dir,
                 packed_sequence_size,
                 packed_sequences=True,
-                dataset_root=self._write_sft_dataset(shared_base_dir),
+                dataset_root=self._write_sft_dataset(
+                    shared_base_dir,
+                    context_repetitions=PACKED_SFT_CONTEXT_REPETITIONS,
+                ),
             )
             # Ensure micro_batch_size is 1 for packed sequences (requirement)
             lora_cfg.train.micro_batch_size = 1
@@ -360,14 +364,18 @@ class TestLoRAFinetune:
             num_workers=1,
         )
 
-    def _write_sft_dataset(self, base_dir, num_rows=DEFAULT_SFT_DATASET_ROWS):
+    def _write_sft_dataset(self, base_dir, num_rows=DEFAULT_SFT_DATASET_ROWS, context_repetitions=0):
         """Create a tiny local SFT dataset shared by all distributed ranks."""
         dataset_root = os.path.join(base_dir, "sft_data")
         if torch.distributed.get_rank() == 0:
             os.makedirs(dataset_root, exist_ok=True)
-            rows = [
-                {"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(num_rows)
-            ]
+            context = " ".join(["context"] * context_repetitions)
+            rows = []
+            for idx in range(num_rows):
+                question = f"Question: {idx} + {idx}?"
+                if context:
+                    question = f"{question} Context: {context}."
+                rows.append({"input": f"{question} Answer:", "output": str(idx + idx)})
             with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row) + "\n")
