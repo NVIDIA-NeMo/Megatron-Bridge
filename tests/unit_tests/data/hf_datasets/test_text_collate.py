@@ -40,7 +40,16 @@ class _TextChatTokenizer:
             return {"input_ids": [11, 21, 22], "assistant_masks": [0, 1, 1]}
         return "bye" if conversation[-1]["content"] == "bye" else "hello"
 
-    def __call__(self, text, padding=True, truncation=False, return_tensors="pt", max_length=None, **kwargs):
+    def __call__(
+        self,
+        text,
+        padding=True,
+        truncation=False,
+        return_tensors="pt",
+        max_length=None,
+        pad_to_multiple_of=None,
+        **kwargs,
+    ):
         texts = text if isinstance(text, list) else [text]
         tokenized = [[11, 12, 21, 22] if item == "bye" else [11, 21, 22] for item in texts]
         if truncation and max_length is not None:
@@ -49,6 +58,8 @@ class _TextChatTokenizer:
             max_len = max_length
         else:
             max_len = max(len(ids) for ids in tokenized) if padding else None
+            if max_len is not None and pad_to_multiple_of is not None and pad_to_multiple_of > 1:
+                max_len = ((max_len + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
         input_ids = []
         attention_mask = []
         for ids in tokenized:
@@ -141,6 +152,24 @@ def test_text_chat_collate_fn_builds_shifted_assistant_labels_from_messages():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0], [0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3], [0, 1, 2, 3]]
     assert batch["token_count"] == [3, 4]
+
+
+def test_text_chat_collate_fn_pads_non_packed_sequences_to_multiple():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, pad_to_multiple_of=4)
+
+    assert batch["tokens"].tolist() == [[11, 21, 22, 0]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1, 0]]
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 3]]
 
 
 def test_text_chat_collate_fn_uses_chatml_boundary_mask_without_generation_template():

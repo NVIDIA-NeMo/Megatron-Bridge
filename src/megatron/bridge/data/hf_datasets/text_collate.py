@@ -95,6 +95,7 @@ def _tokenize_texts(
     *,
     max_length: int | None,
     pad_to_max_length: bool,
+    pad_to_multiple_of: int,
 ) -> dict[str, Any]:
     tokenizer_kwargs: dict[str, Any] = {
         "padding": "max_length" if pad_to_max_length and max_length is not None else True,
@@ -103,6 +104,8 @@ def _tokenize_texts(
     if max_length is not None:
         tokenizer_kwargs["max_length"] = max_length
         tokenizer_kwargs["truncation"] = True
+    if not pad_to_max_length and pad_to_multiple_of > 1:
+        tokenizer_kwargs["pad_to_multiple_of"] = pad_to_multiple_of
 
     seen: set[int] = set()
     for tokenizer_or_processor in (tokenizer, processor):
@@ -159,6 +162,7 @@ def text_chat_collate_fn(
     max_length: int | None = None,
     sequence_length: int | None = None,
     pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 1,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
     enable_in_batch_packing: bool = False,
@@ -177,6 +181,8 @@ def text_chat_collate_fn(
             conversation-dataset providers.
         pad_to_max_length: If set with ``max_length``, pad every row to
             ``max_length`` instead of the longest row in the batch.
+        pad_to_multiple_of: Optional non-packed padding multiple. The HF
+            conversation provider uses this to keep CP/SP slices shape-compatible.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
         enable_in_batch_packing: If True, flatten the padded microbatch and emit
@@ -205,6 +211,7 @@ def text_chat_collate_fn(
             tokenizer,
             max_length=max_length,
             pad_to_max_length=pad_to_max_length,
+            pad_to_multiple_of=pad_to_multiple_of,
         )
     )
     batch["input_ids"] = _as_2d_long_tensor(batch["input_ids"])
