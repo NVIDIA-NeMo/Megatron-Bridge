@@ -22,9 +22,11 @@ import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import _language_model_packed_seq_params
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_packed_seq_attention_mask, get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
@@ -51,6 +53,78 @@ Test utils functions for Qwen3VL model.
     Run with: uv run torchrun --nproc_per_node=2 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
     Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
 """
+
+
+def test_language_model_packed_seq_params_uses_actual_cu_seqlens_for_sequence_parallel():
+    """Test that padded cu-seqlens are removed for the TP/SP language-model THD stream."""
+    actual = torch.tensor([0, 3, 5], dtype=torch.int32)
+    padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=actual,
+        cu_seqlens_kv=actual,
+        cu_seqlens_q_padded=padded,
+        cu_seqlens_kv_padded=padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+        total_tokens=8,
+    )
+
+    language_model_params = _language_model_packed_seq_params(
+        packed_seq_params,
+        use_actual_cu_seqlens=True,
+    )
+
+    assert language_model_params is not packed_seq_params
+    assert language_model_params.cu_seqlens_q is actual
+    assert language_model_params.cu_seqlens_kv is actual
+    assert language_model_params.cu_seqlens_q_padded is None
+    assert language_model_params.cu_seqlens_kv_padded is None
+    assert language_model_params.total_tokens is None
+
+    aligned_language_model_params = _language_model_packed_seq_params(
+        packed_seq_params,
+        use_actual_cu_seqlens=True,
+        total_sequence_length=8,
+    )
+
+    assert torch.equal(aligned_language_model_params.cu_seqlens_q, torch.tensor([0, 3, 8], dtype=torch.int32))
+    assert torch.equal(aligned_language_model_params.cu_seqlens_kv, torch.tensor([0, 3, 8], dtype=torch.int32))
+    assert aligned_language_model_params.max_seqlen_q == 5
+    assert aligned_language_model_params.max_seqlen_kv == 5
+
+
+def test_language_model_packed_seq_params_keeps_padded_cu_seqlens_for_context_parallel():
+    """Test that CP keeps padded segment lengths while aligning the final stream length."""
+    actual = torch.tensor([0, 1234, 2420], dtype=torch.int32)
+    padded = torch.tensor([0, 1240, 2432], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=actual,
+        cu_seqlens_kv=actual,
+        cu_seqlens_q_padded=padded,
+        cu_seqlens_kv_padded=padded,
+        max_seqlen_q=1240,
+        max_seqlen_kv=1240,
+        total_tokens=2432,
+    )
+
+    language_model_params = _language_model_packed_seq_params(
+        packed_seq_params,
+        use_actual_cu_seqlens=False,
+        use_padded_cu_seqlens=True,
+        total_sequence_length=2424,
+    )
+
+    expected = torch.tensor([0, 1240, 2424], dtype=torch.int32)
+    assert language_model_params is not packed_seq_params
+    assert torch.equal(language_model_params.cu_seqlens_q, expected)
+    assert torch.equal(language_model_params.cu_seqlens_kv, expected)
+    assert torch.equal(language_model_params.cu_seqlens_q_padded, expected)
+    assert torch.equal(language_model_params.cu_seqlens_kv_padded, expected)
+    assert torch.all((language_model_params.cu_seqlens_q[1:] - language_model_params.cu_seqlens_q[:-1]) % 4 == 0)
+    assert language_model_params.total_tokens is None
+    assert get_packed_seq_attention_mask(torch.ones(1, 2432), language_model_params).sum().item() == 2424
 
 
 class TestQwen3VLUtils:
@@ -485,6 +559,49 @@ class TestQwen3VLUtils:
 
         assert torch.equal(position_ids, expected_positions)
         assert torch.equal(deltas, expected_deltas)
+
+    def test_get_packed_seq_attention_mask_flat_padded(self):
+        """Test packed metadata produces a dense mask for flat padded packed batches."""
+        input_ids = torch.zeros((1, 12), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+        expected = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0]], dtype=torch.bool)
+        assert torch.equal(attention_mask, expected)
+
+    def test_get_rope_index_flat_packed_resets_positions_per_segment(self):
+        """Test packed-flat Qwen MRoPE resets position ids at each cu_seqlens boundary."""
+        vision_start_token_id = 151652
+        image_token_id = 151655
+        video_token_id = 151656
+        seq0 = torch.tensor(
+            [10, vision_start_token_id, image_token_id, image_token_id, image_token_id, image_token_id, 11]
+        )
+        seq1 = torch.tensor([20, 21, 22])
+        input_ids = torch.tensor([seq0.tolist() + [0] + seq1.tolist() + [0]], dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, seq0.numel(), seq0.numel() + seq1.numel()], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=image_token_id,
+            video_token_id=video_token_id,
+            vision_start_token_id=vision_start_token_id,
+            input_ids=input_ids,
+            image_grid_thw=torch.tensor([[1, 4, 4]]),
+            packed_seq_params=packed_seq_params,
+        )
+
+        expected_seq1_positions = torch.arange(seq1.numel()).view(1, -1).expand(3, -1)
+        assert position_ids.shape == (3, 1, 12)
+        assert torch.equal(position_ids[:, 0, 8:11], expected_seq1_positions)
+        assert deltas.shape == (2, 1)
 
     def test_get_rope_index_packed_seq_params_fallback_dense_mask(self):
         """Test get_rope_index falls back to dense mask when cu_seqlens is missing."""

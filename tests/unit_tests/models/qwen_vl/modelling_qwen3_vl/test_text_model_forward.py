@@ -17,6 +17,7 @@
 from types import SimpleNamespace
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 
@@ -124,3 +125,63 @@ def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
 
     assert output == "ok"
     assert calls["group"] is expected_group
+
+
+def test_tied_mtp_state_dict_drops_redundant_output_weight():
+    """MTP ranks keep the duplicated embedding as the canonical tied weight."""
+    dummy = Qwen3VLGPTModel.__new__(Qwen3VLGPTModel)
+    dummy.mtp_process = True
+    dummy.pre_process = False
+    sharded_state_dict = {
+        "language_model.output_layer.weight": object(),
+        "language_model.embedding.word_embeddings.weight": object(),
+    }
+
+    Qwen3VLGPTModel.tie_embeddings_and_output_weights_state_dict(
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        {},
+    )
+
+    assert "language_model.output_layer.weight" not in sharded_state_dict
+    assert "language_model.embedding.word_embeddings.weight" in sharded_state_dict
+
+
+def test_tied_non_mtp_state_dict_delegates_to_gpt_model(monkeypatch):
+    """Non-MTP tied-output handling stays on the upstream GPTModel path."""
+    calls = {}
+
+    def fake_tie_embeddings(
+        self,
+        sharded_state_dict,
+        output_layer_weight_key,
+        first_stage_word_emb_key,
+        metadata,
+    ):
+        calls["args"] = (self, sharded_state_dict, output_layer_weight_key, first_stage_word_emb_key, metadata)
+
+    monkeypatch.setattr(GPTModel, "tie_embeddings_and_output_weights_state_dict", fake_tie_embeddings)
+
+    dummy = Qwen3VLGPTModel.__new__(Qwen3VLGPTModel)
+    dummy.mtp_process = False
+    dummy.pre_process = False
+    sharded_state_dict = {"language_model.output_layer.weight": object()}
+    metadata = {"dp_cp_group": object()}
+
+    Qwen3VLGPTModel.tie_embeddings_and_output_weights_state_dict(
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        metadata,
+    )
+
+    assert calls["args"] == (
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        metadata,
+    )

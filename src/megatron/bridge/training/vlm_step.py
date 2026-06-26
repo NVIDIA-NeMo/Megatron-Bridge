@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Mapping
+from copy import copy
 from functools import partial
 from inspect import Parameter, signature
 from typing import Any, Iterable
@@ -22,6 +23,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -29,6 +31,9 @@ from megatron.bridge.training.losses import (
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
+
+
+_VISUAL_PAYLOAD_FIELDS = frozenset(("pixel_values", "pixel_values_videos"))
 
 
 def _unwrap_forward_module(model: Any) -> Any:
@@ -76,6 +81,34 @@ def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torc
     return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
+def _defer_in_batch_packing_to_step(cfg: ConfigContainer) -> bool:
+    """Return whether the current dataset expects the training step to pack the batch."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    return bool(
+        dataset_cfg is not None
+        and getattr(dataset_cfg, "enable_in_batch_packing", False)
+        and getattr(dataset_cfg, "defer_in_batch_packing_to_step", False)
+    )
+
+
+def _has_qwen_mrope_position_ids(batch: Mapping[str, Any]) -> bool:
+    """Return whether the batch carries precomputed Qwen MRoPE position IDs."""
+    position_ids = batch.get("position_ids")
+    return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
+
+
+def _project_visual_inputs_for_pp_stage(visual_inputs: Any, *, is_first_pp_stage: bool) -> Any:
+    """Drop visual payload tensors from PP stages that only need visual metadata."""
+    if visual_inputs is None or is_first_pp_stage:
+        return visual_inputs
+
+    projected = copy(visual_inputs)
+    for field_name in _VISUAL_PAYLOAD_FIELDS:
+        if hasattr(projected, field_name):
+            setattr(projected, field_name, None)
+    return projected
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
@@ -83,6 +116,7 @@ def get_batch_from_iterator(
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
+    defer_in_batch_packing_to_step: bool = False,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -102,7 +136,8 @@ def get_batch_from_iterator(
     if not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
-    # Instead of raw tensors, expect a single 'visual_inputs' object in batch
+    # Instead of raw tensors, expect a single 'visual_inputs' object in batch.
+    # Middle PP ranks still need visual metadata for MRoPE, but not image/video payload tensors.
     required_device_keys.add("visual_inputs")
 
     if "cu_seqlens" in batch:
@@ -114,7 +149,11 @@ def get_batch_from_iterator(
             required_host_keys.add("cu_seqlens_unpadded_argmin")
         required_host_keys.add("max_seqlen")
 
-    required_device_keys.update(("tokens", "input_ids", "position_ids"))
+    can_use_mrope_metadata_only = _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
+    needs_input_ids = is_first_pp_stage or is_last_pp_stage or not can_use_mrope_metadata_only
+    if needs_input_ids:
+        required_device_keys.update(("tokens", "input_ids"))
+    required_device_keys.add("position_ids")
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
 
@@ -125,9 +164,12 @@ def get_batch_from_iterator(
                 if val is None:
                     _batch_required_keys[key] = None
                 else:
-                    _batch_required_keys[key] = val
+                    _batch_required_keys[key] = _project_visual_inputs_for_pp_stage(
+                        val,
+                        is_first_pp_stage=is_first_pp_stage,
+                    )
                     # Move all visual inputs contained tensors to CUDA
-                    for k, v in val.__dict__.items():
+                    for k, v in _batch_required_keys[key].__dict__.items():
                         _batch_required_keys[key].__dict__[k] = v.cuda(non_blocking=True) if v is not None else None
             else:
                 _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
@@ -161,6 +203,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
+        defer_in_batch_packing_to_step=_defer_in_batch_packing_to_step(cfg),
     )
 
     visual_inputs = batch.get("visual_inputs")
@@ -218,6 +261,31 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+    if cu_seqlens is None and _defer_in_batch_packing_to_step(state.cfg):
+        packed_batch = {
+            "input_ids": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "attention_mask": attention_mask,
+            "position_ids": position_ids,
+        }
+        pad_or_pack_sequence(
+            packed_batch,
+            sequence_length=None,
+            enable_in_batch_packing=True,
+            in_batch_packing_pad_to_multiple_of=getattr(state.cfg.dataset, "in_batch_packing_pad_to_multiple_of", 1),
+        )
+        tokens = packed_batch["input_ids"]
+        labels = packed_batch.get("labels")
+        loss_mask = packed_batch.get("loss_mask")
+        attention_mask = packed_batch.get("attention_mask")
+        position_ids = packed_batch.get("position_ids")
+        cu_seqlens = packed_batch.get("cu_seqlens")
+        cu_seqlens_argmin = packed_batch.get("cu_seqlens_argmin")
+        max_seqlen = packed_batch.get("max_seqlen")
+        cu_seqlens_unpadded = packed_batch.get("cu_seqlens_unpadded")
+        cu_seqlens_unpadded_argmin = packed_batch.get("cu_seqlens_unpadded_argmin")
+
     # Accumulate FLOPS metadata across micro-batches.
     # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
     # train.py resets these before each step and reads accumulated values afterwards.
@@ -262,7 +330,15 @@ def forward_step(
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
+            if tokens is not None:
+                total_tokens = tokens.size(1)
+            elif labels is not None:
+                total_tokens = labels.size(1)
+            elif position_ids is not None:
+                total_tokens = position_ids.size(-1)
+            else:
+                total_tokens = getattr(config, "seq_length", None)
+            packed_seq_params["total_tokens"] = total_tokens
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     if loss_mask is not None:

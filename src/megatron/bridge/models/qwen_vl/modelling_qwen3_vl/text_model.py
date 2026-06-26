@@ -22,6 +22,7 @@ from typing import Literal, Optional
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -104,6 +105,25 @@ class Qwen3VLGPTModel(GPTModel):
             post_process=self.post_process,
             vp_stage=vp_stage,
             pg_collection=pg_collection,
+        )
+
+    def tie_embeddings_and_output_weights_state_dict(
+        self,
+        sharded_state_dict: ShardedStateDict,
+        output_layer_weight_key: str,
+        first_stage_word_emb_key: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Tie embedding/output checkpoint entries for Qwen3-VL MTP pipeline stages."""
+        if getattr(self, "mtp_process", False) and not self.pre_process:
+            sharded_state_dict.pop(output_layer_weight_key, None)
+            return
+
+        super().tie_embeddings_and_output_weights_state_dict(
+            sharded_state_dict,
+            output_layer_weight_key,
+            first_stage_word_emb_key,
+            metadata if metadata is not None else {},
         )
 
     def forward(
