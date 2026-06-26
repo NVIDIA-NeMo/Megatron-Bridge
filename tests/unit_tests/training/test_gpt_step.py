@@ -226,6 +226,41 @@ class TestGetBatch:
         assert all(torch.equal(cu, torch.tensor([0, 4, 8], dtype=torch.int32)) for cu in seen_cu_seqlens)
         assert torch.equal(out["tokens"], torch.tensor([[0, 1, 2, 3]]))
 
+    def test_partition_packed_batch_skips_none_attention_mask(self, monkeypatch):
+        """Packed CP slicing should keep the packed attention mask as None."""
+        seen_keys = []
+
+        def fake_thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen_keys.append(total_tokens)
+            return torch.tensor([0, 1, 2, 3], dtype=torch.long)
+
+        fake_tex = type(
+            "FakeTransformerEngineTorch",
+            (),
+            {"thd_get_partitioned_indices": staticmethod(fake_thd_get_partitioned_indices)},
+        )
+        monkeypatch.setitem(sys.modules, "transformer_engine_torch", fake_tex)
+        monkeypatch.setattr("megatron.bridge.training.gpt_step.is_te_min_version", lambda version: True)
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.parallel_state.get_context_parallel_rank",
+            lambda: 0,
+        )
+
+        batch = {
+            "tokens": torch.arange(8).unsqueeze(0),
+            "labels": torch.arange(100, 108).unsqueeze(0),
+            "loss_mask": torch.ones(1, 8),
+            "attention_mask": None,
+            "position_ids": torch.arange(8).unsqueeze(0),
+            "cu_seqlens": torch.tensor([[0, 4, 8]], dtype=torch.int32),
+            "max_seqlen": torch.tensor([[4]], dtype=torch.int32),
+        }
+
+        out = _partition_packed_batch_for_cp(batch, cp_size=2)
+
+        assert out["attention_mask"] is None
+        assert seen_keys == [8, 8, 8, 8]
+
     def test_middle_pp_stage_preserves_full_packed_batch(self, monkeypatch):
         """Middle PP stages load full tensors when packed metadata is active."""
         _set_middle_pp_stage(monkeypatch)
