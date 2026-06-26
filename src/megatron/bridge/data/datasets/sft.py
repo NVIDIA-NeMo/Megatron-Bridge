@@ -234,6 +234,7 @@ def create_sft_dataset(
         return GPTSFTPackedParquetDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
