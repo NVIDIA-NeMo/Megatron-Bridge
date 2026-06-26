@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import _pre_pad_data_point
+from megatron.bridge.data.datasets.packed_sequence import _pre_pad_data_point, _resolve_num_tokenizer_workers
 
 
 PAD_ID = 0
@@ -71,3 +71,25 @@ def test_pre_pad_data_point_truncates_overlong():
 
     assert len(data["input_ids"]) == 16
     assert len(data["loss_mask"]) == 16
+
+
+def test_resolve_num_tokenizer_workers_keeps_explicit_worker_count(monkeypatch):
+    """Explicit worker counts should remain opt-in even when distributed is initialized."""
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: True)
+
+    assert _resolve_num_tokenizer_workers(2) == 2
+
+
+def test_resolve_num_tokenizer_workers_uses_one_worker_during_distributed_packing(monkeypatch):
+    """Default multiprocessing is unsafe after distributed signal handlers are installed."""
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: True)
+
+    assert _resolve_num_tokenizer_workers(-1) == 1
+
+
+def test_resolve_num_tokenizer_workers_uses_cpu_count_outside_distributed(monkeypatch):
+    """Outside distributed training, the historical default still uses all CPUs."""
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: False)
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.mp.cpu_count", lambda: 12)
+
+    assert _resolve_num_tokenizer_workers(-1) == 12

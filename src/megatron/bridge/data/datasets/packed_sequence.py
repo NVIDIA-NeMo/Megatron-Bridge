@@ -37,6 +37,31 @@ logger = logging.getLogger(__name__)
 _shared_dataset = None
 
 
+def _distributed_is_initialized() -> bool:
+    """Return whether torch.distributed is initialized without importing torch at module import time."""
+    try:
+        import torch
+
+        return torch.distributed.is_available() and torch.distributed.is_initialized()
+    except (AttributeError, ImportError, RuntimeError):
+        return False
+
+
+def _resolve_num_tokenizer_workers(num_workers: int) -> int:
+    """Resolve the tokenizer worker count used during packed data preparation."""
+    if num_workers > 0:
+        return num_workers
+
+    if _distributed_is_initialized():
+        logger.info(
+            "Using a single tokenizer worker for in-process distributed packing. "
+            "Set PackedSequenceSpecs.num_tokenizer_workers > 1 to opt into multiprocessing."
+        )
+        return 1
+
+    return mp.cpu_count()
+
+
 def _tokenize_get_item(i):
     return _shared_dataset[i]
 
@@ -47,9 +72,9 @@ def _tokenize_init_worker(dataset):
 
 
 def _retrieve_tokenized(dataset, num_workers):
+    num_workers = _resolve_num_tokenizer_workers(num_workers)
     if num_workers == 1:
         return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
-    num_workers = num_workers if num_workers > 0 else mp.cpu_count()
     with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
         return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
 
