@@ -365,7 +365,7 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
         class _Tok:
             pad_token_id = 0
             pad_token = "<pad>"
-            added_tokens_decoder = {}
+            added_tokens_decoder = {103: "<|im_end|>"}
             chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
 
             def __call__(self, text, add_special_tokens=False):
@@ -1262,6 +1262,24 @@ def _zero_assistant_loss_mask(
     **kwargs,
 ):  # noqa: ARG001 - test helper signature
     return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
+
+
+def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
+    proc = _NemotronOmniProcessor(tokenized_rows=[[100, 10, 102, 101, 21, 22, 102]])
+    proc.tokenizer.added_tokens_decoder = {102: "<|im_end|>"}
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ],
+        }
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc)
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, 21, 22, 102, -100]]
 
 
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):

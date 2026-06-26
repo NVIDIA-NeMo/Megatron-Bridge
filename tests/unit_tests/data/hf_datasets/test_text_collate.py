@@ -80,7 +80,7 @@ class _TextChatTokenizer:
 class _ChatMLBoundaryTokenizer:
     pad_token_id = 0
     pad_token = "<pad>"
-    added_tokens_decoder = {}
+    added_tokens_decoder = {102: "<|im_end|>"}
     chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>"
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
