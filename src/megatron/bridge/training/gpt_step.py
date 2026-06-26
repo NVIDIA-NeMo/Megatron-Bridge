@@ -49,6 +49,24 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
+    """Trim padded THD cu_seqlens without introducing a CUDA sync."""
+    if cu_seqlens_argmin is not None:
+        if cu_seqlens_argmin.is_cuda:
+            raise ValueError("Packed CP batches expect cu_seqlens_argmin on CPU to avoid device-to-host sync")
+        return cu_seqlens[: int(cu_seqlens_argmin.item())]
+
+    if cu_seqlens.is_cuda:
+        raise ValueError("Packed CP batches require cu_seqlens_argmin to trim cu_seqlens without GPU synchronization")
+
+    # Packed dataset padding uses -1 sentinels. Match the first negative entry
+    # instead of argmin so this stays correct for any negative sentinel value.
+    padding_indices = torch.nonzero(cu_seqlens < 0, as_tuple=True)[0]
+    if padding_indices.numel() == 0:
+        return cu_seqlens
+    return cu_seqlens[: int(padding_indices[0].item())]
+
+
 def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
     """Return whether the dataset is expected to provide packed sequence metadata."""
     dataset_cfg = getattr(cfg, "dataset", None)
@@ -147,6 +165,8 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
     if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
         raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
     cu_seqlens = cu_seqlens.squeeze()
+    cu_seqlens = _trim_padded_cu_seqlens_for_cp(cu_seqlens, batch.get("cu_seqlens_argmin"))
+
     cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
     if cu_seqlens_unpadded is not None:
         batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded.squeeze()

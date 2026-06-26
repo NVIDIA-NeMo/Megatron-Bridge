@@ -68,6 +68,28 @@ ETP=${ETP:-1}
 CP=${CP:-1}
 SP=${SP:-True}
 GPUS_PER_NODE=${GPUS_PER_NODE:-8}
+PAD_SEQ_TO_MULT=${PAD_SEQ_TO_MULT:-}
+
+if [ -z "$PAD_SEQ_TO_MULT" ]; then
+    if [ "$CP" -gt 1 ]; then
+        PAD_SEQ_TO_MULT=$((2 * CP))
+        case "$SP" in
+            True | true | TRUE | 1 | yes | YES)
+                CP_SP_MULT=$((CP * TP))
+                GCD_A=$PAD_SEQ_TO_MULT
+                GCD_B=$CP_SP_MULT
+                while [ "$GCD_B" -ne 0 ]; do
+                    GCD_TMP=$((GCD_A % GCD_B))
+                    GCD_A=$GCD_B
+                    GCD_B=$GCD_TMP
+                done
+                PAD_SEQ_TO_MULT=$((PAD_SEQ_TO_MULT / GCD_A * CP_SP_MULT))
+                ;;
+        esac
+    else
+        PAD_SEQ_TO_MULT=1
+    fi
+fi
 
 RECOMPUTE_GRANULARITY=${RECOMPUTE_GRANULARITY:-full}
 RECOMPUTE_METHOD=${RECOMPUTE_METHOD:-uniform}
@@ -146,6 +168,7 @@ CLI_OVERRIDES="\
     model.sequence_parallel=${SP} \
     model.context_parallel_size=${CP} \
     model.seq_length=${SEQ_LENGTH} \
+    dataset.packed_sequence_specs.pad_seq_to_mult=${PAD_SEQ_TO_MULT} \
     model.recompute_granularity=${RECOMPUTE_GRANULARITY} \
     dist.distributed_timeout_minutes=90"
 
@@ -179,6 +202,7 @@ echo "Nodes: ${SLURM_JOB_NUM_NODES}"
 echo "GPUs/node: ${GPUS_PER_NODE}"
 echo "Recipe: ${RECIPE_NAME}"
 echo "Parallelism: TP=${TP} PP=${PP} EP=${EP} ETP=${ETP} CP=${CP} SP=${SP}"
+echo "Packed pad_seq_to_mult: ${PAD_SEQ_TO_MULT}"
 echo "Recompute: ${RECOMPUTE_GRANULARITY} ${RECOMPUTE_METHOD:-} ${RECOMPUTE_MODULES}"
 echo "Save dir: ${SAVE_DIR}"
 echo "W&B: ${WANDB_ENTITY}/${WANDB_PROJECT} (${WANDB_MODE})"

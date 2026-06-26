@@ -234,6 +234,7 @@ def create_sft_dataset(
         return GPTSFTPackedParquetDataset(
             pack_metadata_file_path=pack_metadata_file_path,
             pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
             **gpt_sft_dataset_kwargs,
             **kwargs,
         )
@@ -1038,7 +1039,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
             cu_seqlens_batch = {
-                "attention_mask": torch.LongTensor([1] * len(input_ids)),  # no attention mask is needed for packed seq
+                "attention_mask": None,  # no attention mask is needed for packed seq
                 "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
                 "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
                 "max_seqlen": max_seqlen,  # only required for perf
