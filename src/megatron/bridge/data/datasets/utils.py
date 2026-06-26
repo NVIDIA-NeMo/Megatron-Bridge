@@ -879,6 +879,17 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
     return chat
 
 
+def _chat_template_input_ids(tokenized_chat: Any) -> list[int]:
+    input_ids = tokenized_chat.get("input_ids") if hasattr(tokenized_chat, "get") else tokenized_chat
+    if isinstance(input_ids, torch.Tensor):
+        input_ids = input_ids.detach().cpu().tolist()
+    if isinstance(input_ids, (list, tuple)) and input_ids and isinstance(input_ids[0], (list, tuple)):
+        if len(input_ids) != 1:
+            raise ValueError("Expected a single tokenized chat sequence from apply_chat_template.")
+        input_ids = input_ids[0]
+    return [int(token_id) for token_id in input_ids]
+
+
 def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
@@ -931,33 +942,49 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     if getattr(tokenizer, "legacy", False):
         tokenizer = tokenizer._tokenizer
 
-    # assistant mask only works if chat template has generation keyword
     template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
 
-    if not template_has_generation_kwd:
-        raise ValueError(
-            "The tokenizer's chat_template does not contain a {% generation %} block, which is required "
-            "for HF's apply_chat_template to produce assistant-only loss masks via "
-            "return_assistant_tokens_mask=True. Without it, the loss mask would silently fall back to "
-            "all-ones (loss computed on the entire conversation including system/user tokens). "
-            "To fix this, either: (1) patch the chat_template to wrap assistant content with "
-            "{% generation %}...{% endgeneration %}, or (2) use the legacy special-tokens preprocessing "
-            "path instead of use_hf_tokenizer_chat_template=True."
+    if template_has_generation_kwd:
+        tokenized_chat = tokenizer.apply_chat_template(
+            chat,
+            tools=tools,
+            tokenize=True,
+            return_dict=True,
+            return_assistant_tokens_mask=True,
         )
+        input_ids = tokenized_chat.get("input_ids")
+        mask = tokenized_chat["assistant_masks"]
+    else:
+        from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
 
-    tokenized_chat = tokenizer.apply_chat_template(
-        chat,
-        tools=tools,
-        tokenize=True,
-        return_dict=True,
-        return_assistant_tokens_mask=True,
-    )
+        boundary_config = infer_assistant_mask_boundary_config(tokenizer)
+        if boundary_config is None:
+            raise ValueError(
+                "The tokenizer's chat_template does not contain a {% generation %} block and Bridge could not "
+                "infer assistant boundary markers for an assistant-only loss mask. Add a generation block to the "
+                "chat_template or use a model collate path that passes AssistantMaskBoundaryConfig explicitly."
+            )
+
+        tokenized_chat = tokenizer.apply_chat_template(
+            chat,
+            tools=tools,
+            tokenize=True,
+            return_dict=True,
+        )
+        input_ids = _chat_template_input_ids(tokenized_chat)
+        mask = (
+            build_assistant_loss_mask(
+                chat,
+                torch.LongTensor(input_ids),
+                tokenizer,
+                boundary_config=boundary_config,
+            )
+            .to(dtype=torch.bool)
+            .tolist()
+        )
 
     # Choose the last conversation as answer other history are context by finding the last masked token
     # which indicates end of context and beginning of answer
-    input_ids = tokenized_chat.get("input_ids")
-    mask = tokenized_chat["assistant_masks"]
-
     if 0 in mask:
         # traverse the list backward for first occurrence of masked token
         context_end_idx = len(mask) - mask[::-1].index(0)

@@ -24,7 +24,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _convert_to_openai_messages
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_packing import _pack_padded_sequence
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
@@ -244,15 +244,15 @@ def text_chat_collate_fn(
     batch["metadata"] = [_metadata_from_example(example) for example in examples]
     batch["token_count"] = [int(count) for count in batch["attention_mask"].sum(dim=1).tolist()]
     if enable_in_batch_packing:
-        # Transitional path: tokenizer output is already padded here. Future
-        # text collates should construct packed layout directly.
         pad_token_id = getattr(tokenizer, "pad_token_id", None)
         if pad_token_id is None:
             pad_token_id = 0
-        _pack_padded_sequence(
+        prepare_padded_or_packed_sequence_batch(
             batch,
+            sequence_length=None,
+            enable_in_batch_packing=True,
             pad_token_id=int(pad_token_id),
             ignore_index=ignore_index,
-            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
     return batch

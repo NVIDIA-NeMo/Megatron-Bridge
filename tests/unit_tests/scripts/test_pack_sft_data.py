@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import importlib.util
-import json
 import sys
 import types
 from dataclasses import dataclass, field
@@ -281,28 +280,15 @@ def test_pack_sft_data_uses_hf_text_provider_for_hf_recipe_dataset(monkeypatch):
     assert hf_provider.build_context.test_samples == 0
 
 
-def test_rewrite_messages_jsonl_as_prompt_completion(tmp_path):
+def test_pack_sft_data_rejects_removed_hf_messages_rewrite_flag(monkeypatch):
     module = _load_module()
-    input_path = tmp_path / "training.jsonl"
-    input_path.write_text(
-        json.dumps(
-            {
-                "messages": [
-                    {"role": "user", "content": "Question?"},
-                    {"role": "assistant", "content": [{"type": "text", "text": "Answer."}]},
-                ],
-                "original_answers": ["Answer."],
-            }
-        )
-        + "\n",
-        encoding="utf-8",
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["pack_sft_data.py", "--recipe", "unit_recipe", "--pack-hf-messages-as-prompt-completion"],
     )
 
-    module._rewrite_messages_jsonl_as_prompt_completion(input_path)
+    with pytest.raises(SystemExit) as exc_info:
+        module.main()
 
-    rewritten = json.loads(input_path.read_text(encoding="utf-8"))
-    assert rewritten == {
-        "input": "Question?",
-        "output": "Answer.",
-        "original_answers": ["Answer."],
-    }
+    assert exc_info.value.code == 2

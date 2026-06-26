@@ -237,9 +237,12 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 0, 1, 2, 3]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 3, 7]]
-    assert batch["cu_seqlens_argmin"].item() == 3
-    assert batch["max_seqlen"].tolist() == [[4]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 7]
+    assert batch["max_seqlen_q"].item() == 4
+    assert batch["max_seqlen_kv"].item() == 4
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded" not in batch
     assert "cu_seqlens_unpadded_argmin" not in batch
 
@@ -270,8 +273,13 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 4, 8]]
-    assert batch["cu_seqlens_argmin"].item() == 3
-    assert batch["max_seqlen"].tolist() == [[4]]
-    assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3, 7]]
-    assert batch["cu_seqlens_unpadded_argmin"].item() == 3
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 8]
+    assert batch["max_seqlen_q"].item() == 4
+    assert batch["max_seqlen_kv"].item() == 4
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
+    assert "cu_seqlens_unpadded" not in batch
+    assert "cu_seqlens_unpadded_argmin" not in batch

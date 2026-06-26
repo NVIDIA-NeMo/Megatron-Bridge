@@ -29,65 +29,9 @@ Set HF_HOME / NEMO_HOME if your dataset and model caches are not under ~/.cache.
 
 import argparse
 import inspect
-import json
 import sys
 from dataclasses import fields
 from pathlib import Path
-
-
-def _message_content_to_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        text_parts = []
-        for part in content:
-            if isinstance(part, dict):
-                text_parts.append(str(part.get("text", "")))
-            else:
-                text_parts.append(str(part))
-        return "".join(text_parts)
-    return str(content)
-
-
-def _rewrite_messages_jsonl_as_prompt_completion(path: Path) -> None:
-    if not path.exists():
-        return
-
-    rewritten_rows = []
-    needs_rewrite = False
-    with path.open("r", encoding="utf-8") as fp:
-        for line in fp:
-            row = json.loads(line)
-            messages = row.get("messages")
-            if not isinstance(messages, list):
-                rewritten_rows.append(row)
-                continue
-
-            prompts = [
-                _message_content_to_text(message.get("content", ""))
-                for message in messages
-                if isinstance(message, dict) and message.get("role") == "user"
-            ]
-            completions = [
-                _message_content_to_text(message.get("content", ""))
-                for message in messages
-                if isinstance(message, dict) and message.get("role") == "assistant"
-            ]
-            if not prompts or not completions:
-                raise ValueError(f"Cannot rewrite {path}: expected at least one user and assistant message.")
-
-            rewritten = {key: value for key, value in row.items() if key != "messages"}
-            rewritten["input"] = "\n".join(prompts)
-            rewritten["output"] = "\n".join(completions)
-            rewritten_rows.append(rewritten)
-            needs_rewrite = True
-
-    if not needs_rewrite:
-        return
-
-    with path.open("w", encoding="utf-8") as fp:
-        for row in rewritten_rows:
-            fp.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def main() -> None:
@@ -104,14 +48,6 @@ def main() -> None:
         type=int,
         default=None,
         help="Optional packed sequence padding multiple override. Use 2 * context_parallel_size for CP.",
-    )
-    parser.add_argument(
-        "--pack-hf-messages-as-prompt-completion",
-        action="store_true",
-        help=(
-            "For HF text providers, rewrite generated messages JSONL to plain input/output rows before packing. "
-            "Use this when the tokenizer chat template cannot provide assistant-token masks."
-        ),
     )
     parser.add_argument("--hf-path", default=None, help="Optional Hugging Face model ID or local snapshot path.")
     parser.add_argument(
@@ -276,18 +212,6 @@ def main() -> None:
         return
 
     if isinstance(dataset_config, HFTextSFTDatasetProvider):
-        if args.pack_hf_messages_as_prompt_completion:
-            root = dataset_config._dataset_root()
-            dataset_config._prepare_jsonl_data(root)
-            _rewrite_messages_jsonl_as_prompt_completion(root / "training.jsonl")
-            if dataset_config.do_validation:
-                _rewrite_messages_jsonl_as_prompt_completion(root / "validation.jsonl")
-            if dataset_config.do_test:
-                _rewrite_messages_jsonl_as_prompt_completion(root / "test.jsonl")
-            make_finetuning_pack_builder(dataset_kwargs_override={}).prepare_packed_data()
-            print("Done.")
-            return
-
         dataset_config.build_datasets(DatasetBuildContext(0, 0, 0, tokenizer=tokenizer))
         print("Done.")
         return

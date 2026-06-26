@@ -482,9 +482,12 @@ def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch)
     batch = train_ds.collate_fn([train_ds[0]])
     assert batch["tokens"].tolist() == [[6, 7, 8]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 3]]
-    assert batch["cu_seqlens_argmin"].item() == 2
-    assert batch["max_seqlen"].tolist() == [[3]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
+    assert batch["max_seqlen_q"].item() == 3
+    assert batch["max_seqlen_kv"].item() == 3
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded" not in batch
 
 
@@ -538,7 +541,8 @@ def test_hf_provider_auto_selects_text_chat_collate_for_messages(monkeypatch):
     batch = train_ds.collate_fn([train_ds[0]])
     assert batch["tokens"].tolist() == [[6, 7, 8]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 3]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
 
 
 def test_hf_provider_forwards_in_batch_packing_padding_multiple(monkeypatch):
@@ -593,8 +597,12 @@ def test_hf_provider_forwards_in_batch_packing_padding_multiple(monkeypatch):
     assert train_ds is not None
     batch = train_ds.collate_fn([train_ds[0]])
     assert batch["tokens"].tolist() == [[6, 7, 8, 0]]
-    assert batch["cu_seqlens"].tolist() == [[0, 4]]
-    assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4]
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_unpadded" not in batch
 
 
 def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypatch):
