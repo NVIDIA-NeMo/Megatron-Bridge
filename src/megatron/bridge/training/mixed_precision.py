@@ -26,7 +26,7 @@ from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 
 if TYPE_CHECKING:
     from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-    from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+    from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 
 
 @dataclass(kw_only=True)
@@ -112,7 +112,7 @@ class MixedPrecisionConfig:
 
     def setup(
         self,
-        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig",
+        model_config: "GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig",
         optimizer_config: Optional[OptimizerConfig] = None,
         ddp_config: Optional[DistributedDataParallelConfig] = None,
     ) -> None:

@@ -128,6 +128,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         # VL-specific overrides
         provider.vision_config = vision_config
         provider.hf_model_path = hf_pretrained._model_name_or_path
+        provider.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
         provider.generation_config = hf_pretrained.generation_config
 
         # media_placeholder_token_id is on the top-level KimiK25Config, not on text_config
@@ -204,6 +205,7 @@ class KimiK25VLBridge(MegatronModelBridge):
         self,
         hf_pretrained,
         megatron_model,
+        weight_dtype=None,
     ) -> List:
         """Override to synthesize virtual weight keys from INT4 quantized triplets.
 
@@ -227,7 +229,7 @@ class KimiK25VLBridge(MegatronModelBridge):
 
         hf_pretrained.state.source.get_all_keys = _get_all_keys_with_virtual
         try:
-            return super().build_conversion_tasks(hf_pretrained, megatron_model)
+            return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
         finally:
             hf_pretrained.state.source.get_all_keys = original_get_all_keys
 

@@ -148,9 +148,14 @@ def _assert_basic_config(cfg):
 
 @pytest.mark.parametrize("recipe_func", _LLAMA_RECIPE_FUNCS)
 def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
+    # Always patch AutoBridge in the base llama3 module (where base configs call it)
+    llama3_mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
+    monkeypatch.setattr(llama3_mod, "AutoBridge", _FakeBridge)
+    # Also patch in the recipe's own module if it directly imports AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoBridge"):
+        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()

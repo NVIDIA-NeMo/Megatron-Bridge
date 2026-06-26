@@ -293,6 +293,15 @@ def parse_cli_args():
         "--seq_length",
         type=int,
     )
+    training_args.add_argument(
+        "--distributed_timeout_minutes",
+        type=int,
+        help=(
+            "Process-group init timeout in minutes (dist.distributed_timeout_minutes). "
+            "Widen above the 10-minute default when a one-time dataset index build on rank 0 "
+            "can outlast the NCCL collective watchdog while other ranks wait at the setup barrier."
+        ),
+    )
 
     # Optimizer
     optimizer_args = parser.add_argument_group("Optimizer arguments")
@@ -896,7 +905,7 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2' ('v1' if 'v2' doens't exist). Use --list_config_variants to see available options.",
+        help="Config variant for workload base configs (used by setup_experiment.py only). Use --list_config_variants to see available options.",
         default="v2",
     )
     config_variant_args.add_argument(

@@ -346,7 +346,7 @@ tests/unit_tests/models/<model>/
 ### Functional tests (GPU)
 
 ```text
-tests/functional_tests/models/<model>/
+tests/functional_tests/test_groups/models/<model>/
 ├── __init__.py
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
 └── test_<model>_provider.py    # compare_provider_configs (optional)
@@ -435,7 +435,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 ```bash
 uv run python -m pytest tests/unit_tests/models/<model>/ -v
-uv run python -m pytest tests/functional_tests/models/<model>/ -v --run-gpu
+uv run python -m pytest tests/functional_tests/test_groups/models/<model>/ -v --run-gpu
 ```
 
 ## Quick Decision Tree

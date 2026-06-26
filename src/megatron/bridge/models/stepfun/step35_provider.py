@@ -89,6 +89,7 @@ class Step35DecoderLayer(TransformerLayer):
         is_mtp_layer: bool = False,
         add_layer_offset: bool = True,
         pp_layer_offset: Optional[int] = None,
+        name: str | None = None,
     ):
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
@@ -139,6 +140,7 @@ class Step35DecoderLayer(TransformerLayer):
             is_mtp_layer=is_mtp_layer,
             add_layer_offset=add_layer_offset,
             pp_layer_offset=pp_layer_offset,
+            name=name,
         )
 
 

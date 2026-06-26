@@ -91,7 +91,7 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
     # Packing requires micro_batch_size > 1; disable for MBS=1 default
-    cfg.dataset.pack_sequences_in_batch = False
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings — VLMs require no overlap
     cfg.ddp.overlap_grad_reduce = False
@@ -132,6 +132,9 @@ def gemma4_vl_26b_sft_config(hf_path: str = _HF_PATH) -> ConfigContainer:
     cfg.train.train_iters = 40  # override common (was 50)
     cfg.validation.eval_interval = 10  # override common (was 5)
     cfg.validation.eval_iters = 5  # override common (was 10)
+    # Full Gemma 4 VL checkpoints are large enough that rank-0 DCP
+    # finalization can exceed the default 10-minute process-group timeout.
+    cfg.dist.distributed_timeout_minutes = 90
 
     # Optimizer — lower LR for full SFT
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

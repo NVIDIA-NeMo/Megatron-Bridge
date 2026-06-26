@@ -218,20 +218,21 @@ class GLM45VModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
         #
-        # vlm_step.get_batch pads input_ids to multiples of 128 but mm_token_type_ids
-        # (from visual_inputs) is not padded.  Align them and build an attention mask
-        # so get_rope_index fills only real-token positions.
+        # Collate-time batching may pad input_ids while mm_token_type_ids from
+        # visual_inputs stays at the processor-produced length. Align them and
+        # build an attention mask so get_rope_index fills only real-token positions.
         seq_len = input_ids.shape[1]
         if mm_token_type_ids is not None and mm_token_type_ids.shape[1] < seq_len:
             pad_len = seq_len - mm_token_type_ids.shape[1]
             mm_token_type_ids = torch.nn.functional.pad(mm_token_type_ids, (0, pad_len), value=0)
-        # Build attention mask: 1 for real tokens, 0 for padding inserted by vlm_step
+        # Build attention mask: 1 for real tokens, 0 for collate-time padding.
         hf_attention_mask = (input_ids != 0).long()
         position_ids, rope_deltas = self.get_rope_index(
             input_ids,
