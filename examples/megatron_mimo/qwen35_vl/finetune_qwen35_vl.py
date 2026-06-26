@@ -113,7 +113,7 @@ class Qwen35MIMOHFSpec:
 
 
 @dataclass(frozen=True)
-class MIMOBatchRequirements:
+class MIMOBatchSpec:
     """Rank-local batch fields required by the active MIMO module/stage."""
 
     input_ids: bool = True
@@ -235,14 +235,14 @@ def _grid_dim_rank(grid: Any, dim_name: str, default: int = 0) -> int:
     return int(grid.get_pg([dim_name]).rank())
 
 
-def _batch_requirements_for_rank(cfg: Any) -> MIMOBatchRequirements:
+def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     grids = getattr(cfg.model, "_grids", None)
     if not grids:
-        return MIMOBatchRequirements()
+        return MIMOBatchSpec()
 
     grid, module_name = _rank_grid_and_module(grids)
     if grid is None or module_name is None:
-        return MIMOBatchRequirements(
+        return MIMOBatchSpec(
             input_ids=False,
             position_ids=False,
             labels=False,
@@ -256,7 +256,7 @@ def _batch_requirements_for_rank(cfg: Any) -> MIMOBatchRequirements:
     is_last_pp = pp_rank == pp_size - 1
 
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
-        return MIMOBatchRequirements(
+        return MIMOBatchSpec(
             input_ids=is_first_pp,
             # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
             position_ids=True,
@@ -265,7 +265,7 @@ def _batch_requirements_for_rank(cfg: Any) -> MIMOBatchRequirements:
             modality_inputs=False,
         )
 
-    return MIMOBatchRequirements(
+    return MIMOBatchSpec(
         # Encoder first stages need input_ids to attach per-sample split metadata.
         input_ids=is_first_pp,
         position_ids=False,
@@ -277,17 +277,17 @@ def _batch_requirements_for_rank(cfg: Any) -> MIMOBatchRequirements:
 
 def _project_adapted_batch(
     adapted: dict[str, Any],
-    requirements: MIMOBatchRequirements,
+    batch_spec: MIMOBatchSpec,
 ) -> dict[str, Any]:
-    if not requirements.input_ids:
+    if not batch_spec.input_ids:
         adapted["input_ids"] = None
-    if not requirements.position_ids:
+    if not batch_spec.position_ids:
         adapted["position_ids"] = None
-    if not requirements.labels:
+    if not batch_spec.labels:
         adapted["labels"] = None
-    if not requirements.loss_mask:
+    if not batch_spec.loss_mask:
         adapted["loss_mask"] = None
-    if not requirements.modality_inputs:
+    if not batch_spec.modality_inputs:
         adapted["modality_inputs"] = None
     return adapted
 
@@ -579,9 +579,9 @@ def _adapt_qwen35_hf_batch(
     *,
     seq_length: int,
     pad_to_seq_length: bool,
-    requirements: MIMOBatchRequirements | None = None,
+    batch_spec: MIMOBatchSpec | None = None,
 ) -> dict[str, Any]:
-    requirements = requirements or MIMOBatchRequirements()
+    batch_spec = batch_spec or MIMOBatchSpec()
     input_ids = batch.get("tokens") if batch.get("tokens") is not None else batch["input_ids"]
     labels = batch.get("labels")
     loss_mask = batch.get("loss_mask")
@@ -603,7 +603,7 @@ def _adapt_qwen35_hf_batch(
     image_grid_thw = visual_kwargs.get("image_grid_thw")
 
     position_ids = None
-    if requirements.position_ids:
+    if batch_spec.position_ids:
         position_ids, _ = get_rope_index(
             spec.spatial_merge_size,
             spec.image_token_id,
@@ -615,7 +615,7 @@ def _adapt_qwen35_hf_batch(
         )
 
     modality_inputs = None
-    if requirements.modality_inputs and pixel_values is not None and image_grid_thw is not None:
+    if batch_spec.modality_inputs and pixel_values is not None and image_grid_thw is not None:
         vision_data, vision_grid_thw, _ = reorganize_inputs(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -642,7 +642,7 @@ def _adapt_qwen35_hf_batch(
             "loss_mask": None if loss_mask is None else loss_mask.contiguous(),
             "modality_inputs": modality_inputs,
         },
-        requirements,
+        batch_spec,
     )
 
 
@@ -678,13 +678,13 @@ class _Qwen35HFMimoCollateAdapter:
         spec: Qwen35MIMOHFSpec,
         seq_length: int,
         pad_to_seq_length: bool,
-        requirements: MIMOBatchRequirements,
+        batch_spec: MIMOBatchSpec,
     ) -> None:
         self.base_collate = base_collate
         self.spec = spec
         self.seq_length = seq_length
         self.pad_to_seq_length = pad_to_seq_length
-        self.requirements = requirements
+        self.batch_spec = batch_spec
 
     def __call__(self, items: list[Any]) -> dict[str, Any]:
         batch = self.base_collate(items)
@@ -693,7 +693,7 @@ class _Qwen35HFMimoCollateAdapter:
             self.spec,
             seq_length=self.seq_length,
             pad_to_seq_length=self.pad_to_seq_length,
-            requirements=self.requirements,
+            batch_spec=self.batch_spec,
         )
 
 
@@ -706,7 +706,7 @@ class _Qwen35HFMetadataMimoCollateAdapter:
         spec: Qwen35MIMOHFSpec,
         seq_length: int,
         pad_to_seq_length: bool,
-        requirements: MIMOBatchRequirements,
+        batch_spec: MIMOBatchSpec,
         # Keep these defaults in parity with qwen2_5_collate_fn on visual ranks.
         min_pixels: int = QWEN_VL_MIN_PIXELS,
         max_pixels: int = QWEN_VL_MAX_PIXELS,
@@ -715,7 +715,7 @@ class _Qwen35HFMetadataMimoCollateAdapter:
         self.spec = spec
         self.seq_length = seq_length
         self.pad_to_seq_length = pad_to_seq_length
-        self.requirements = requirements
+        self.batch_spec = batch_spec
         self.min_pixels = min_pixels
         self.max_pixels = max_pixels
 
@@ -732,7 +732,7 @@ class _Qwen35HFMetadataMimoCollateAdapter:
             self.spec,
             seq_length=self.seq_length,
             pad_to_seq_length=self.pad_to_seq_length,
-            requirements=self.requirements,
+            batch_spec=self.batch_spec,
         )
 
 
@@ -797,12 +797,10 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         base_collate = getattr(train_ds, "collate_fn", None)
         if base_collate is None:
             raise ValueError("HF conversation train dataset does not expose collate_fn.")
-        requirements = _batch_requirements_for_rank(cfg)
-        use_metadata_collate = not requirements.modality_inputs
+        batch_spec = _batch_spec_for_rank(cfg)
+        use_metadata_collate = not batch_spec.modality_inputs
         _log(
-            "mimo_batch_requirements "
-            f"requirements={requirements.describe()} "
-            f"collate={'metadata' if use_metadata_collate else 'visual'}"
+            f"mimo_batch_spec spec={batch_spec.describe()} collate={'metadata' if use_metadata_collate else 'visual'}"
         )
 
         if use_metadata_collate:
@@ -814,7 +812,7 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
                 spec=spec,
                 seq_length=args.seq_length,
                 pad_to_seq_length=args.pad_to_seq_length,
-                requirements=requirements,
+                batch_spec=batch_spec,
             )
         else:
             # Wrap the dataset's collate so the MIMO adapt runs in worker processes
@@ -826,7 +824,7 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
                 spec=spec,
                 seq_length=args.seq_length,
                 pad_to_seq_length=args.pad_to_seq_length,
-                requirements=requirements,
+                batch_spec=batch_spec,
             )
 
         train_loader = build_pretraining_data_loader(
