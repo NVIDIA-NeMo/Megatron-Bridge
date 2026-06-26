@@ -31,7 +31,11 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
     _language_model_packed_seq_params,
     _split_if_full_sequence,
 )
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_packed_seq_attention_mask, get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
+    _get_flat_packed_ranges,
+    get_packed_seq_attention_mask,
+    get_rope_index,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
@@ -643,6 +647,37 @@ class TestQwen3VLUtils:
         attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
 
         expected = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0]], dtype=torch.bool)
+        assert torch.equal(attention_mask, expected)
+
+    def test_get_packed_seq_attention_mask_uses_flat_ranges(self):
+        """Test flat packed mask geometry matches flat packed MRoPE ranges."""
+        input_ids = torch.zeros((1, 12), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+        ranges = _get_flat_packed_ranges(input_ids, packed_seq_params)
+        assert ranges is not None
+
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+        expected = torch.zeros_like(input_ids, dtype=torch.bool)
+        for padded_start, valid_end, _ in ranges:
+            expected[0, padded_start:valid_end] = True
+        assert torch.equal(attention_mask, expected)
+
+    def test_get_packed_seq_attention_mask_flat_padded_truncated(self):
+        """Test flat packed mask clamps segments when padded metadata exceeds the local input."""
+        input_ids = torch.zeros((1, 10), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+        expected = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 0, 1, 1]], dtype=torch.bool)
+        assert _get_flat_packed_ranges(input_ids, packed_seq_params) is None
         assert torch.equal(attention_mask, expected)
 
     def test_get_rope_index_flat_packed_resets_positions_per_segment(self):

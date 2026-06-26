@@ -52,6 +52,22 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 
 
+def _retarget_cu_seqlens(
+    cu_seqlens: torch.Tensor,
+    *,
+    max_seqlen: int,
+    total_sequence_length: int | None,
+) -> tuple[torch.Tensor, int]:
+    """Align the final cu-seqlens offset with the local THD stream length."""
+    if total_sequence_length is None or int(cu_seqlens[-1].item()) == total_sequence_length:
+        return cu_seqlens, max_seqlen
+
+    cu_seqlens = cu_seqlens.clone()
+    cu_seqlens[-1] = total_sequence_length
+    max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
+    return cu_seqlens, max_seqlen
+
+
 def _language_model_packed_seq_params(
     packed_seq_params: PackedSeqParams | None,
     *,
@@ -69,16 +85,16 @@ def _language_model_packed_seq_params(
     ):
         cu_seqlens_q = packed_seq_params.cu_seqlens_q_padded
         cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
-        max_seqlen_q = packed_seq_params.max_seqlen_q
-        max_seqlen_kv = packed_seq_params.max_seqlen_kv
-        if int(cu_seqlens_q[-1].item()) != total_sequence_length:
-            cu_seqlens_q = cu_seqlens_q.clone()
-            cu_seqlens_q[-1] = total_sequence_length
-            max_seqlen_q = int((cu_seqlens_q[1:] - cu_seqlens_q[:-1]).max().item())
-        if int(cu_seqlens_kv[-1].item()) != total_sequence_length:
-            cu_seqlens_kv = cu_seqlens_kv.clone()
-            cu_seqlens_kv[-1] = total_sequence_length
-            max_seqlen_kv = int((cu_seqlens_kv[1:] - cu_seqlens_kv[:-1]).max().item())
+        cu_seqlens_q, max_seqlen_q = _retarget_cu_seqlens(
+            cu_seqlens_q,
+            max_seqlen=packed_seq_params.max_seqlen_q,
+            total_sequence_length=total_sequence_length,
+        )
+        cu_seqlens_kv, max_seqlen_kv = _retarget_cu_seqlens(
+            cu_seqlens_kv,
+            max_seqlen=packed_seq_params.max_seqlen_kv,
+            total_sequence_length=total_sequence_length,
+        )
         if (
             cu_seqlens_q is packed_seq_params.cu_seqlens_q_padded
             and cu_seqlens_kv is packed_seq_params.cu_seqlens_kv_padded
@@ -107,17 +123,16 @@ def _language_model_packed_seq_params(
 
     cu_seqlens_q = packed_seq_params.cu_seqlens_q
     cu_seqlens_kv = packed_seq_params.cu_seqlens_kv
-    max_seqlen_q = packed_seq_params.max_seqlen_q
-    max_seqlen_kv = packed_seq_params.max_seqlen_kv
-    if total_sequence_length is not None:
-        if int(cu_seqlens_q[-1].item()) != total_sequence_length:
-            cu_seqlens_q = cu_seqlens_q.clone()
-            cu_seqlens_q[-1] = total_sequence_length
-            max_seqlen_q = int((cu_seqlens_q[1:] - cu_seqlens_q[:-1]).max().item())
-        if int(cu_seqlens_kv[-1].item()) != total_sequence_length:
-            cu_seqlens_kv = cu_seqlens_kv.clone()
-            cu_seqlens_kv[-1] = total_sequence_length
-            max_seqlen_kv = int((cu_seqlens_kv[1:] - cu_seqlens_kv[:-1]).max().item())
+    cu_seqlens_q, max_seqlen_q = _retarget_cu_seqlens(
+        cu_seqlens_q,
+        max_seqlen=packed_seq_params.max_seqlen_q,
+        total_sequence_length=total_sequence_length,
+    )
+    cu_seqlens_kv, max_seqlen_kv = _retarget_cu_seqlens(
+        cu_seqlens_kv,
+        max_seqlen=packed_seq_params.max_seqlen_kv,
+        total_sequence_length=total_sequence_length,
+    )
 
     return PackedSeqParams(
         qkv_format=packed_seq_params.qkv_format,

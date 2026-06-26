@@ -31,6 +31,53 @@ from torch import Tensor
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 
 
+def _get_packed_cu_seqlens(
+    packed_seq_params: PackedSeqParams,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Return padded and unpadded cu-seqlens for Qwen packed text streams."""
+    cu_seqlens_padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
+    if cu_seqlens_padded is None:
+        cu_seqlens_padded = packed_seq_params.cu_seqlens_q
+    return cu_seqlens_padded, packed_seq_params.cu_seqlens_q
+
+
+def _get_flat_packed_ranges(
+    input_ids: torch.Tensor,
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    allow_truncated: bool = False,
+) -> list[tuple[int, int, int]] | None:
+    """Return ``(padded_start, valid_end, padded_end)`` ranges for flat packed input."""
+    if packed_seq_params is None or input_ids is None or input_ids.dim() != 2 or input_ids.size(0) != 1:
+        return None
+
+    cu_seqlens_padded, cu_seqlens_unpadded = _get_packed_cu_seqlens(packed_seq_params)
+    if (
+        cu_seqlens_padded is None
+        or cu_seqlens_unpadded is None
+        or cu_seqlens_padded.numel() < 3
+        or cu_seqlens_unpadded.numel() < cu_seqlens_padded.numel()
+    ):
+        return None
+
+    max_len = input_ids.size(1)
+    if not allow_truncated and int(cu_seqlens_padded[-1].item()) > max_len:
+        return None
+
+    ranges = []
+    for idx in range(cu_seqlens_padded.numel() - 1):
+        padded_start = int(cu_seqlens_padded[idx].item())
+        if padded_start >= max_len:
+            break
+        padded_end = int(cu_seqlens_padded[idx + 1].item())
+        if allow_truncated:
+            padded_end = min(padded_end, max_len)
+        unpadded_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
+        valid_end = min(padded_start + unpadded_len, padded_end)
+        ranges.append((padded_start, valid_end, padded_end))
+    return ranges
+
+
 def get_packed_seq_attention_mask(input_ids: torch.Tensor, packed_seq_params: PackedSeqParams) -> torch.Tensor:
     """Build a dense keep mask matching packed sequence metadata.
 
@@ -40,26 +87,17 @@ def get_packed_seq_attention_mask(input_ids: torch.Tensor, packed_seq_params: Pa
     token counts. Qwen3-VL still needs a dense mask for its local THD
     conversion, so derive it from the same metadata used by attention.
     """
-    cu_seqlens_padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
-    if cu_seqlens_padded is None:
-        cu_seqlens_padded = packed_seq_params.cu_seqlens_q
-    cu_seqlens_unpadded = packed_seq_params.cu_seqlens_q
+    cu_seqlens_padded, cu_seqlens_unpadded = _get_packed_cu_seqlens(packed_seq_params)
 
-    if cu_seqlens_padded is None or cu_seqlens_padded.numel() < 2:
+    if cu_seqlens_padded is None or cu_seqlens_unpadded is None or cu_seqlens_padded.numel() < 2:
         return torch.ones_like(input_ids, dtype=torch.bool)
 
     attention_mask = torch.zeros_like(input_ids, dtype=torch.bool)
     seq_count = cu_seqlens_padded.numel() - 1
 
-    if input_ids.size(0) == 1 and seq_count > 1:
-        max_len = input_ids.size(1)
-        for idx in range(seq_count):
-            padded_start = int(cu_seqlens_padded[idx].item())
-            padded_end = min(int(cu_seqlens_padded[idx + 1].item()), max_len)
-            if padded_start >= max_len:
-                break
-            unpadded_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
-            valid_end = min(padded_start + unpadded_len, padded_end)
+    flat_packed_ranges = _get_flat_packed_ranges(input_ids, packed_seq_params, allow_truncated=True)
+    if flat_packed_ranges is not None:
+        for padded_start, valid_end, _ in flat_packed_ranges:
             attention_mask[0, padded_start:valid_end] = True
         return attention_mask
 
@@ -214,33 +252,6 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
             rotary_seq_len *= transformer_config.tensor_model_parallel_size
 
         return rotary_seq_len
-
-
-def _get_flat_packed_ranges(
-    input_ids: torch.Tensor,
-    packed_seq_params: PackedSeqParams | None,
-) -> list[tuple[int, int, int]] | None:
-    """Return ``(padded_start, valid_end, padded_end)`` ranges for flat packed input."""
-    if packed_seq_params is None or input_ids is None or input_ids.dim() != 2 or input_ids.size(0) != 1:
-        return None
-
-    cu_seqlens_padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
-    if cu_seqlens_padded is None:
-        cu_seqlens_padded = packed_seq_params.cu_seqlens_q
-    cu_seqlens_unpadded = packed_seq_params.cu_seqlens_q
-
-    if cu_seqlens_padded is None or cu_seqlens_padded.numel() < 3:
-        return None
-    if int(cu_seqlens_padded[-1].item()) > input_ids.size(1):
-        return None
-
-    ranges = []
-    for idx in range(cu_seqlens_padded.numel() - 1):
-        padded_start = int(cu_seqlens_padded[idx].item())
-        padded_end = int(cu_seqlens_padded[idx + 1].item())
-        unpadded_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
-        ranges.append((padded_start, padded_start + unpadded_len, padded_end))
-    return ranges
 
 
 def _build_llm_rope_positions(
