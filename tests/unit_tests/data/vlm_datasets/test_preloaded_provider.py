@@ -66,7 +66,7 @@ def test_preloaded_provider_defaults_trust_remote_code_false(monkeypatch):
         def from_pretrained(path, trust_remote_code=None):
             seen["path"] = path
             seen["trust_remote_code"] = trust_remote_code
-            return Gemma3Processor()
+            return _DummyProcessor()
 
     monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
 
@@ -85,7 +85,7 @@ def test_preloaded_provider_explicit_trust_remote_code_true(monkeypatch):
         def from_pretrained(path, trust_remote_code=None):
             seen["path"] = path
             seen["trust_remote_code"] = trust_remote_code
-            return Gemma3Processor()
+            return _DummyProcessor()
 
     monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
 
