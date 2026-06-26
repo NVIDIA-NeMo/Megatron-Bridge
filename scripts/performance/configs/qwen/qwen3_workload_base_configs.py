@@ -358,10 +358,10 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
 QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
     QWEN3_30B_A3B_PRETRAIN_CONFIG_GB300_FP8_CS_V1,
     moe_a2a_overlap=True,
-    cuda_graph_impl="none",
+    cuda_graph_impl="full_iteration",
     cuda_graph_scope=[],
-    # cutedsl_fused_grouped_mlp=True,
-    # fp8_dot_product_attention=True,
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
 )
 
 
