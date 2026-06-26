@@ -57,7 +57,9 @@ def _by_megatron(registry):
 
 
 def _dummy_task():
-    return SimpleNamespace(param_name="", global_param_name="", mapping=None)
+    from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+
+    return WeightConversionTask(param_name="", global_param_name="", mapping=None)
 
 
 def _deepseek_v4_hf_config():
@@ -310,6 +312,13 @@ class TestDeepSeekV4QuantizedExport:
         assert torch.equal(restored_mxfp4.float(), mxfp4_weight.float())
 
 
+def test_sequential_expert_mappings_present(bridge_with_mtp):
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning)."""
+    params = _by_megatron(bridge_with_mtp.mapping_registry())
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
+
+
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
 
@@ -436,3 +445,59 @@ class TestDeepSeekV4HardwareDefaults:
 
         assert out.apply_dsa_kernel_fusion is True
         assert out.use_fused_mhc is True
+
+
+class TestDeepSeekV4ExportWeightDtype:
+    def test_weight_dtype_set_skips_requantization(self, monkeypatch):
+        from dataclasses import replace
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        task = WeightConversionTask(param_name="w", global_param_name="w", mapping=MagicMock())
+        task = replace(task, weight_dtype=torch.bfloat16)  # frozen: must be settable via replace
+
+        def fail_requantize(*args, **kwargs):
+            raise AssertionError("requantize must be skipped when weight_dtype is set")
+
+        monkeypatch.setattr(quantization_utils, "requantize_hf_weight_scale_pairs", fail_requantize)
+        weight = torch.randn(4, 4, dtype=torch.float32)
+        converted = {"model.layers.0.mlp.weight": weight}
+        hf_state = {"model.layers.0.mlp.weight": weight, "model.layers.0.mlp.scale": torch.ones(1)}
+
+        out = bridge.maybe_modify_converted_hf_weight(task, converted, hf_state)
+
+        assert out is converted  # returned unchanged; generic path casts the dtype
+
+    def test_generic_export_cast_applies_plain_dtype(self):
+        from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+        weights = {
+            "model.layers.0.mlp.weight": torch.randn(4, 4, dtype=torch.float32),
+            "model.layers.0.mlp.bias_idx": torch.ones(2, dtype=torch.int32),
+        }
+        out = MegatronModelBridge._cast_export_weight_dtype(weights, torch.bfloat16)
+        assert out["model.layers.0.mlp.weight"].dtype == torch.bfloat16
+        assert out["model.layers.0.mlp.bias_idx"].dtype == torch.int32  # int preserved
+        assert MegatronModelBridge._cast_export_weight_dtype(weights, None) is weights
+
+    def test_no_weight_dtype_requantizes_by_default(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import DeepSeekV4Bridge
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        task = WeightConversionTask(param_name="w", global_param_name="w", mapping=MagicMock())
+        called = {}
+
+        def fake_requantize(converted, hf_state, *, use_mxfp4=None):
+            called["hit"] = True
+            return {"quantized": torch.zeros(1)}
+
+        monkeypatch.setattr(quantization_utils, "requantize_hf_weight_scale_pairs", fake_requantize)
+        out = bridge.maybe_modify_converted_hf_weight(task, {"a.weight": torch.ones(1)}, {})
+
+        assert called.get("hit") and "quantized" in out

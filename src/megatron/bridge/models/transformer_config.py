@@ -121,7 +121,7 @@ class TransformerConfig(MCoreTransformerConfig):
         # so PP stages must communicate tensor shapes dynamically instead of using static
         # buffers.  Set *after* __post_init__ to avoid the false-positive MoE allgather
         # dispatcher check (irrelevant for non-MoE models).
-        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 
     def __deepcopy__(self, memo):
@@ -192,7 +192,7 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
             self.sequence_parallel = False
         MCoreMLATransformerConfig.__post_init__(self)
 
-        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 
 

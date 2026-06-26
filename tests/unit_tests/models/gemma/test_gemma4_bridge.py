@@ -308,6 +308,25 @@ class TestMaybeModifyLoadedHFWeight:
         assert result["k"].shape == (4, 8)
         assert result["v"].shape == (4, 8)
 
+    def test_kv_synthesis_uses_hf_config_without_provider_bridge(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+        mock_hf_config_dense.num_attention_heads = 6
+        mock_hf_config_dense.num_key_value_heads = 5
+        mock_hf_config_dense.num_global_key_value_heads = 3
+        mock_hf_config_dense.layer_types = ["full_attention"]
+        q_weight = torch.randn(24, 8)
+        sd = {"model.layers.0.self_attn.q_proj.weight": q_weight}
+        hf_param = {
+            "q": "model.layers.0.self_attn.q_proj.weight",
+            "k": "model.layers.0.self_attn.k_proj.weight",
+            "v": "model.layers.0.self_attn.v_proj.weight",
+        }
+
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+
+        assert result["k"].shape == (12, 8)
+        assert result["v"].shape == (12, 8)
+
     def test_kv_passthrough_when_v_present(self, bridge):
         sd = self._make_sd()
         sd["model.layers.0.self_attn.v_proj.weight"] = torch.randn(4, 8)
@@ -485,6 +504,30 @@ class TestGemma4BridgeMappingRegistry:
     def test_has_post_moe_layernorm(self, bridge):
         names = self._collect_names(bridge.mapping_registry())
         assert any("post_moe_layernorm" in n for n in names)
+
+    def test_selects_dense_registry_from_hf_config_without_provider_bridge(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "per_layer_embedding.weight" in names
+        assert "decoder.layers.*.mlp.router.weight" not in names
+
+    def test_selects_dense_registry_when_enable_moe_block_missing(self, bridge):
+        bridge.hf_config = Mock(spec=[])
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "per_layer_embedding.weight" in names
+        assert "decoder.layers.*.mlp.router.weight" not in names
+
+    def test_selects_moe_registry_from_hf_config_without_provider_bridge(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "decoder.layers.*.mlp.router.weight" in names
+        assert "per_layer_embedding.weight" not in names
 
     def test_has_layer_scalar_mapping(self, bridge):
         names = self._collect_names(bridge.mapping_registry())

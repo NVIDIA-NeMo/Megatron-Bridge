@@ -277,7 +277,8 @@ class TestScatterModalityFeatures:
         input_ids = torch.tensor([[7, 8]])
         calls = []
 
-        def fake_scatter(tensor):
+        def fake_scatter(tensor, *, group=None):
+            assert group is None
             calls.append(tensor)
             return tensor + 1.0
 

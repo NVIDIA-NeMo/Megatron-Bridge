@@ -1792,6 +1792,114 @@ def _stream_weights_with_merge_disabled(monkeypatch, converted_name: str):
     return weights
 
 
+def _patch_stream_weights_megatron_to_hf_basics(monkeypatch, *, num_moe_experts: int = 0):
+    monkeypatch.setattr(
+        DummyBridge,
+        "_with_progress_tracking",
+        lambda self, tasks, *_args, **_kwargs: tasks,
+    )
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_args, **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        lambda *_args, **_kwargs: [
+            SimpleNamespace(config=SimpleNamespace(num_moe_experts=num_moe_experts, pipeline_model_parallel_size=1))
+        ],
+    )
+
+
+@pytest.mark.parametrize("cpu", [False, True])
+def test_stream_weights_megatron_to_hf_detaches_standard_export_tensors(monkeypatch, cpu):
+    bridge = DummyBridge()
+    source_tensor = torch.ones(1, requires_grad=True)
+
+    class DummyMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"hf.weight": weight}
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.mlp.linear_fc1.weight",
+        global_param_name="decoder.layers.0.mlp.linear_fc1.weight",
+        mapping=DummyMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=source_tensor,
+    )
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "maybe_modify_converted_hf_weight",
+        lambda self, *_args, **_kwargs: _args[1],
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=cpu,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert len(weights) == 1
+    assert weights[0].param_name == "hf.weight"
+    assert weights[0].weight.requires_grad is False
+    assert weights[0].weight.grad_fn is None
+
+
+@pytest.mark.parametrize("cpu", [False, True])
+def test_stream_weights_megatron_to_hf_detaches_grouped_export_tensors(monkeypatch, cpu):
+    bridge = DummyBridge()
+    grouped_tensor = torch.ones(1, 1, requires_grad=True)
+
+    class GroupedMapping:
+        is_grouped_export = True
+        group_key = "hf.grouped"
+
+        def megatron_to_hf(self, weight, module):
+            return {self.group_key: weight}
+
+    task = WeightConversionTask(
+        param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        global_param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
+        mapping=GroupedMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=grouped_tensor,
+    )
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch, num_moe_experts=1)
+    monkeypatch.setattr(
+        DummyBridge,
+        "_accumulate_grouped_export",
+        lambda *_args, **_kwargs: {"hf.grouped": grouped_tensor},
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            SimpleNamespace(),
+            cpu=cpu,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert len(weights) == 1
+    assert weights[0].param_name == "hf.grouped"
+    assert weights[0].weight.requires_grad is False
+    assert weights[0].weight.grad_fn is None
+
+
 @pytest.mark.parametrize(
     ("converted_name", "expected_name"),
     [

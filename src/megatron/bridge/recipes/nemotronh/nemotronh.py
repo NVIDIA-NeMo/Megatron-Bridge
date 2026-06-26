@@ -16,7 +16,7 @@
 import torch
 from megatron.core.activations import squared_relu
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
@@ -35,7 +35,7 @@ def nemotronh_4b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -169,7 +169,7 @@ def nemotronh_8b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -303,7 +303,7 @@ def nemotronh_47b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -439,7 +439,7 @@ def nemotronh_56b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
@@ -581,7 +581,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 4B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -632,7 +632,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
     # Dataset config - packed_sequence=True by default (from _sft_common)
     # Override seq_length for NemotronH (uses 8192)
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -672,7 +672,7 @@ def nemotronh_4b_sft_config() -> ConfigContainer:
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - NemotronH uses specific optimizer settings
     cfg.optimizer.adam_beta2 = 0.95
@@ -711,7 +711,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 8B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -759,7 +759,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -798,7 +798,7 @@ def nemotronh_8b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -837,7 +837,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 47B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -887,7 +887,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -926,7 +926,7 @@ def nemotronh_47b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -965,7 +965,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config - NemotronH 56B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
@@ -1015,7 +1015,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1054,7 +1054,7 @@ def nemotronh_56b_sft_config() -> ConfigContainer:
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1103,7 +1103,7 @@ def nemotronh_4b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses same parallelism as SFT for 4B
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 4B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -1152,7 +1152,7 @@ def nemotronh_4b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1207,7 +1207,7 @@ def nemotronh_4b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1251,7 +1251,7 @@ def nemotronh_8b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 8B)
         hybrid_layer_pattern="M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
         num_layers=52,
@@ -1298,7 +1298,7 @@ def nemotronh_8b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1353,7 +1353,7 @@ def nemotronh_8b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1397,7 +1397,7 @@ def nemotronh_47b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 47B)
         hybrid_layer_pattern=(
             "M-M-M-M-M-M-M-M-M*-M-M-M-M-M-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-M-M---MM---M-M*-M-M-M-M-M-"
@@ -1446,7 +1446,7 @@ def nemotronh_47b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1501,7 +1501,7 @@ def nemotronh_47b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
@@ -1545,7 +1545,7 @@ def nemotronh_56b_peft_config(
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1
-    cfg.model = MambaModelProvider(
+    cfg.model = HybridModelProvider(
         # Architecture (NemotronH 56B)
         hybrid_layer_pattern=(
             "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-"
@@ -1595,7 +1595,7 @@ def nemotronh_56b_peft_config(
     seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -1650,7 +1650,7 @@ def nemotronh_56b_peft_config(
     cfg.validation.eval_iters = 10
 
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_beta2 = 0.95
