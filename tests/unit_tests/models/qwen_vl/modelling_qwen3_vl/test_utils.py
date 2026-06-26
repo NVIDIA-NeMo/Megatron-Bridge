@@ -16,6 +16,7 @@
 
 import datetime
 import os
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -25,7 +26,11 @@ from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import _language_model_packed_seq_params
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
+    _get_packed_cp_index,
+    _language_model_packed_seq_params,
+    _split_if_full_sequence,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_packed_seq_attention_mask, get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
@@ -125,6 +130,73 @@ def test_language_model_packed_seq_params_keeps_padded_cu_seqlens_for_context_pa
     assert torch.all((language_model_params.cu_seqlens_q[1:] - language_model_params.cu_seqlens_q[:-1]) % 4 == 0)
     assert language_model_params.total_tokens is None
     assert get_packed_seq_attention_mask(torch.ones(1, 2432), language_model_params).sum().item() == 2424
+
+
+def test_get_packed_cp_index_uses_padded_cu_seqlens(monkeypatch):
+    """Packed CP slicing must use padded packed-sequence boundaries."""
+    actual = torch.tensor([0, 6, 14], dtype=torch.int32)
+    padded = torch.tensor([0, 8, 16], dtype=torch.int32)
+    seen = {}
+
+    class FakeTransformerEngineTorch:
+        @staticmethod
+        def thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen["cu_seqlens"] = cu_seqlens
+            seen["total_tokens"] = total_tokens
+            seen["cp_size"] = cp_size
+            seen["cp_rank"] = cp_rank
+            return torch.tensor([0, 1, 14, 15], dtype=torch.int64)
+
+    monkeypatch.setitem(sys.modules, "transformer_engine_torch", FakeTransformerEngineTorch)
+
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=actual,
+        cu_seqlens_kv=actual,
+        cu_seqlens_q_padded=padded,
+        cu_seqlens_kv_padded=padded,
+    )
+
+    index = _get_packed_cp_index(
+        packed_seq_params,
+        total_tokens=16,
+        cp_size=4,
+        cp_rank=0,
+        device=torch.device("cpu"),
+    )
+
+    assert torch.equal(seen["cu_seqlens"], padded)
+    assert seen["total_tokens"] == 16
+    assert seen["cp_size"] == 4
+    assert seen["cp_rank"] == 0
+    assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
+
+
+def test_split_if_full_sequence_only_splits_full_length_inputs():
+    """Dense CP helpers should not double-slice tensors that are already local."""
+    full = torch.arange(16).view(1, 16)
+    split, was_split = _split_if_full_sequence(
+        full,
+        cp_size=2,
+        seq_dim=1,
+        cp_rank=0,
+        full_sequence_length=16,
+    )
+
+    assert was_split
+    assert torch.equal(split, torch.tensor([[0, 1, 2, 3, 12, 13, 14, 15]]))
+
+    already_local = torch.arange(8).view(1, 8)
+    unchanged, was_split = _split_if_full_sequence(
+        already_local,
+        cp_size=2,
+        seq_dim=1,
+        cp_rank=0,
+        full_sequence_length=16,
+    )
+
+    assert not was_split
+    assert unchanged is already_local
 
 
 class TestQwen3VLUtils:

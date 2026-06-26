@@ -136,6 +136,40 @@ def _is_qwen_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
     return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
 
 
+def _get_packed_cp_index(
+    packed_seq_params: PackedSeqParams,
+    *,
+    total_tokens: int,
+    cp_size: int,
+    cp_rank: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return this CP rank's TE THD partition indices for a packed sequence stream."""
+    import transformer_engine_torch as tex
+
+    cu_seqlens = (
+        packed_seq_params.cu_seqlens_q_padded
+        if packed_seq_params.cu_seqlens_q_padded is not None
+        else packed_seq_params.cu_seqlens_q
+    )
+    index = tex.thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank)
+    return index.to(device=device, dtype=torch.long)
+
+
+def _split_if_full_sequence(
+    val: torch.Tensor | None,
+    *,
+    cp_size: int,
+    seq_dim: int,
+    cp_rank: int,
+    full_sequence_length: int | None,
+) -> tuple[torch.Tensor | None, bool]:
+    """CP-split ``val`` only when it still carries the full sequence length."""
+    if val is None or full_sequence_length is None or val.shape[seq_dim] != full_sequence_length:
+        return val, False
+    return split_data_cp_rank(val, cp_size, seq_dim, cp_rank), True
+
+
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
 
@@ -485,6 +519,8 @@ class Qwen3VLModel(MegatronModule):
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
         language_model_total_sequence_length = None
+        packed_cp_index = None
+        full_sequence_length = input_ids.size(1) if input_ids is not None else None
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
 
@@ -589,56 +625,78 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings[vision_mask] = vision_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
-            if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
-                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if packed_seq_params is not None:
-                if attention_mask is None:
-                    attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-                input_ids_thd, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                )
-                lm_input_ids = input_ids_thd
-                language_model_total_sequence_length = input_ids_thd.size(1) * cp_size
-                _, _, vision_mask_thd = reorganize_inputs(
-                    input_ids=input_ids_thd,
-                    pixel_values=pixel_values,
-                    pixel_values_videos=pixel_values_videos,
-                    image_grid_thw=image_grid_thw,
-                    video_grid_thw=video_grid_thw,
-                    image_input_mask=image_input_mask,
-                    video_input_mask=video_input_mask,
-                    image_token_id=self.image_token_id,
-                    video_token_id=self.video_token_id,
-                    square_merge_size=self.square_merge_size,
-                )
+                if cp_size > 1:
+                    if input_ids is None:
+                        raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
+                    packed_cp_index = _get_packed_cp_index(
+                        packed_seq_params,
+                        total_tokens=input_ids.size(1),
+                        cp_size=cp_size,
+                        cp_rank=cp_rank,
+                        device=input_ids.device,
+                    )
+                    lm_input_ids = input_ids.index_select(1, packed_cp_index)
+                    language_model_total_sequence_length = input_ids.size(1)
+                    vision_mask_thd = (
+                        None if vision_mask is None else vision_mask.index_select(1, packed_cp_index).contiguous()
+                    )
+                else:
+                    if attention_mask is None:
+                        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+                    input_ids_thd, _ = preprocess_packed_seqs(
+                        input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                    )
+                    lm_input_ids = input_ids_thd
+                    language_model_total_sequence_length = input_ids_thd.size(1) * cp_size
+                    _, _, vision_mask_thd = reorganize_inputs(
+                        input_ids=input_ids_thd,
+                        pixel_values=pixel_values,
+                        pixel_values_videos=pixel_values_videos,
+                        image_grid_thw=image_grid_thw,
+                        video_grid_thw=video_grid_thw,
+                        image_input_mask=image_input_mask,
+                        video_input_mask=video_input_mask,
+                        image_token_id=self.image_token_id,
+                        video_token_id=self.video_token_id,
+                        square_merge_size=self.square_merge_size,
+                    )
 
                 if deepstack_feature_lists is not None:
                     tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
                     new_deepstack_feature_lists = []
                     for deepstack_visual_embed in deepstack_feature_lists:
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
-                        tmp_embeddings_thd = preprocess_packed_seqs(
-                            tmp_embeddings.contiguous(),
-                            attention_mask,
-                            pre_process=True,
-                            pg_collection=self.pg_collection,
-                        )[0]
+                        if packed_cp_index is not None:
+                            tmp_embeddings_thd = tmp_embeddings.index_select(1, packed_cp_index).contiguous()
+                        else:
+                            tmp_embeddings_thd = preprocess_packed_seqs(
+                                tmp_embeddings.contiguous(),
+                                attention_mask,
+                                pre_process=True,
+                                pg_collection=self.pg_collection,
+                            )[0]
                         new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
 
                     deepstack_feature_lists = new_deepstack_feature_lists
 
                 vision_mask = vision_mask_thd
-                combined_embeddings_thd = (
-                    preprocess_packed_seqs(
-                        combined_embeddings.transpose(0, 1).contiguous(),
-                        attention_mask,
-                        pre_process=True,
-                        pg_collection=self.pg_collection,
-                    )[0]
-                    .transpose(0, 1)
-                    .contiguous()
-                )
+                if packed_cp_index is not None:
+                    combined_embeddings_thd = combined_embeddings.index_select(0, packed_cp_index).contiguous()
+                else:
+                    combined_embeddings_thd = (
+                        preprocess_packed_seqs(
+                            combined_embeddings.transpose(0, 1).contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0]
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
                 combined_embeddings = combined_embeddings_thd
+            elif combined_embeddings is not None and cp_size > 1:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
@@ -652,12 +710,23 @@ class Qwen3VLModel(MegatronModule):
             # convert lm_input_ids to THD format so it matches position_ids.
             if packed_seq_params is not None:
                 if input_ids is not None:
-                    if attention_mask is None:
-                        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-                    lm_input_ids, _ = preprocess_packed_seqs(
-                        input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                    )
-                    language_model_total_sequence_length = lm_input_ids.size(1) * cp_size
+                    if cp_size > 1:
+                        packed_cp_index = _get_packed_cp_index(
+                            packed_seq_params,
+                            total_tokens=input_ids.size(1),
+                            cp_size=cp_size,
+                            cp_rank=cp_rank,
+                            device=input_ids.device,
+                        )
+                        lm_input_ids = input_ids.index_select(1, packed_cp_index)
+                        language_model_total_sequence_length = input_ids.size(1)
+                    else:
+                        if attention_mask is None:
+                            attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+                        lm_input_ids, _ = preprocess_packed_seqs(
+                            input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
+                        )
+                        language_model_total_sequence_length = lm_input_ids.size(1) * cp_size
                 else:
                     lm_input_ids = None
 
@@ -706,24 +775,44 @@ class Qwen3VLModel(MegatronModule):
                 packed_seq_params=packed_seq_params,
             )  #  [3*b*s]
         if packed_seq_params is not None:
-            if attention_mask is None:
-                mask_source = input_ids if input_ids is not None else position_ids[0]
-                attention_mask = get_packed_seq_attention_mask(mask_source, packed_seq_params)
-            # convert position_ids to THD format
-            position_ids = (
-                preprocess_packed_seqs(
-                    position_ids.permute(1, 2, 0),
-                    attention_mask,
-                    pre_process=True,
-                    pg_collection=self.pg_collection,
-                )[0]
-                .permute(2, 0, 1)
-                .contiguous()
-            )
+            if packed_cp_index is not None:
+                position_ids = position_ids.index_select(2, packed_cp_index).contiguous()
+            else:
+                if attention_mask is None:
+                    mask_source = input_ids if input_ids is not None else position_ids[0]
+                    attention_mask = get_packed_seq_attention_mask(mask_source, packed_seq_params)
+                # convert position_ids to THD format
+                position_ids = (
+                    preprocess_packed_seqs(
+                        position_ids.permute(1, 2, 0),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    .permute(2, 0, 1)
+                    .contiguous()
+                )
             attention_mask = None
             self.language_model.rotary_pos_emb.is_thd_format = True
             if language_model_total_sequence_length is None:
                 language_model_total_sequence_length = position_ids.size(-1) * cp_size
+        elif cp_size > 1:
+            lm_input_ids, _ = _split_if_full_sequence(
+                lm_input_ids,
+                cp_size=cp_size,
+                seq_dim=1,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
+            )
+            position_ids, position_ids_were_split = _split_if_full_sequence(
+                position_ids,
+                cp_size=cp_size,
+                seq_dim=2,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
+            )
+            if position_ids_were_split:
+                self.language_model.rotary_pos_emb.is_thd_format = True
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
@@ -735,31 +824,56 @@ class Qwen3VLModel(MegatronModule):
             total_sequence_length=language_model_total_sequence_length,
         )
         return_compacted_loss_mask = False
-        if packed_seq_params is not None and (self.config.sequence_parallel or cp_size > 1):
-            supervision_packed_seq_params = language_model_packed_seq_params if cp_size > 1 else packed_seq_params
-            supervision_mask_source = input_ids
-            if supervision_mask_source is None:
-                supervision_mask_source = labels if labels is not None else loss_mask
-            packed_supervision_mask = (
-                None
-                if supervision_mask_source is None
-                else get_packed_seq_attention_mask(supervision_mask_source, supervision_packed_seq_params)
+        if packed_seq_params is not None:
+            if packed_cp_index is not None:
+                if labels is not None:
+                    labels = labels.index_select(1, packed_cp_index).contiguous()
+                if loss_mask is not None:
+                    original_loss_mask_shape = loss_mask.shape
+                    loss_mask = loss_mask.index_select(1, packed_cp_index).contiguous()
+                    return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
+            elif self.config.sequence_parallel:
+                supervision_mask_source = input_ids
+                if supervision_mask_source is None:
+                    supervision_mask_source = labels if labels is not None else loss_mask
+                packed_supervision_mask = (
+                    None
+                    if supervision_mask_source is None
+                    else get_packed_seq_attention_mask(supervision_mask_source, packed_seq_params)
+                )
+                if labels is not None:
+                    labels = preprocess_packed_seqs(
+                        labels,
+                        packed_supervision_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                if loss_mask is not None:
+                    original_loss_mask_shape = loss_mask.shape
+                    loss_mask = preprocess_packed_seqs(
+                        loss_mask,
+                        packed_supervision_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
+        elif cp_size > 1:
+            labels, _ = _split_if_full_sequence(
+                labels,
+                cp_size=cp_size,
+                seq_dim=1,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
             )
-            if labels is not None:
-                labels = preprocess_packed_seqs(
-                    labels,
-                    packed_supervision_mask,
-                    pre_process=True,
-                    pg_collection=self.pg_collection,
-                )[0]
             if loss_mask is not None:
                 original_loss_mask_shape = loss_mask.shape
-                loss_mask = preprocess_packed_seqs(
+                loss_mask, _ = _split_if_full_sequence(
                     loss_mask,
-                    packed_supervision_mask,
-                    pre_process=True,
-                    pg_collection=self.pg_collection,
-                )[0]
+                    cp_size=cp_size,
+                    seq_dim=1,
+                    cp_rank=cp_rank,
+                    full_sequence_length=full_sequence_length,
+                )
                 return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
 
         output = self.language_model(
