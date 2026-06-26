@@ -14,6 +14,7 @@
 
 import json
 import logging
+import math
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -478,7 +479,8 @@ class FinetuningDatasetConfig(DataloaderConfig):
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: Optional[int] = None
-    packed_sequence_specs: Optional[PackedSequenceSpecs] = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: Optional[PackedSequenceSpecs] = None
     dataset_kwargs: Optional[dict[str, Any]] = None
     do_validation: bool = True
     do_test: bool = True
@@ -1184,10 +1186,35 @@ class ConfigContainer(Container):
         Ensures compatibility between different configuration settings.
         """
 
+        enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+
+        if enable_offline_packing and enable_in_batch_packing:
+            raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if enable_offline_packing and offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if offline_packing_specs is not None and not enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+
+        if hasattr(self.dataset, "pad_to_max_length"):
+            requires_fixed_seq_len = (
+                getattr(self.model, "pipeline_model_parallel_size", 1) > 1
+                or getattr(self.model, "expert_model_parallel_size", 1) > 1
+            )
+            self.dataset.pad_to_max_length = requires_fixed_seq_len
+
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if getattr(self.dataset, "pack_sequences_in_batch", False):
-            self.model._pack_sequences_in_batch = True
+        if enable_in_batch_packing:
+            self.model._enable_in_batch_packing = True
+            if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
+                cp_size = getattr(self.model, "context_parallel_size", 1)
+                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+                has_sp = getattr(self.model, "sequence_parallel", False)
+                cp_multiple = 2 * cp_size if cp_size > 1 else 1
+                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1356,29 +1383,28 @@ class ConfigContainer(Container):
 
         self._validate_cp_comm_type()
 
-        if (
-            isinstance(self.dataset, FinetuningDatasetConfig)
-            and self.dataset.packed_sequence_specs is not None
-            and self.dataset.packed_sequence_specs.packed_sequence_size > 0
-            and self.train.micro_batch_size > 1
-        ):
-            packed_sequence_size = self.dataset.packed_sequence_specs.packed_sequence_size
-            raise ValueError(
-                "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
-                f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting for "
-                f"a packed dataset. Please update your config to the following: \n"
-                f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
-                f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
-                f"(currently {self.train.global_batch_size}) \n"
-                f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
-                f"(currently {packed_sequence_size}) \n"
-                f"For details please visit "
-                f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
-            )
+        if enable_offline_packing:
+            assert offline_packing_specs is not None
+            if offline_packing_specs.packed_sequence_size <= 0:
+                raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+            packed_sequence_size = offline_packing_specs.packed_sequence_size
+            if self.train.micro_batch_size > 1:
+                raise ValueError(
+                    "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
+                    f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting "
+                    f"for a packed dataset. Please update your config to the following: \n"
+                    f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
+                    f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
+                    f"(currently {self.train.global_batch_size}) \n"
+                    f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
+                    f"(currently {packed_sequence_size}) \n"
+                    f"For details please visit "
+                    f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
+                )
 
-        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+        if enable_in_batch_packing and self.train.micro_batch_size == 1:
             raise ValueError(
-                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "micro_batch_size should be greater than 1 when using enable_in_batch_packing=True. "
                 "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
                 "are required per micro-batch."
             )

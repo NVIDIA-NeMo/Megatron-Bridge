@@ -18,12 +18,14 @@ import torch
 from PIL import Image
 
 from megatron.bridge.data.datasets.utils import GENERATION_REGEX, IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import (
     AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
+    infer_assistant_mask_boundary_config,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -55,12 +57,26 @@ def ministral3_collate_fn(
     examples: list,
     processor,
     *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
     assistant_mask_boundary_config: AssistantMaskBoundaryConfig | None = None,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Ministral 3 VL model."""
+    del visual_keys, min_pixels, max_pixels
+
     skipped_tokens = extract_skipped_token_ids(processor)
-    if assistant_mask_boundary_config is None and not _has_generation_chat_template(processor):
-        assistant_mask_boundary_config = _default_ministral3_assistant_mask_boundary_config(processor)
+    if assistant_mask_boundary_config is not None:
+        boundary_config = assistant_mask_boundary_config
+    elif _has_generation_chat_template(processor):
+        boundary_config = infer_assistant_mask_boundary_config(processor)
+    else:
+        boundary_config = _default_ministral3_assistant_mask_boundary_config(processor)
 
     if processor.chat_template is not None:
         batch = processor.apply_chat_template(
@@ -123,7 +139,7 @@ def ministral3_collate_fn(
                 input_ids,
                 processor,
                 skipped_tokens,
-                boundary_config=assistant_mask_boundary_config,
+                boundary_config=boundary_config,
             )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
@@ -153,5 +169,14 @@ def ministral3_collate_fn(
         if key in batch:
             visual_kwargs[key] = batch.pop(key)
     batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+    pad_or_pack_sequence(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
 
     return batch

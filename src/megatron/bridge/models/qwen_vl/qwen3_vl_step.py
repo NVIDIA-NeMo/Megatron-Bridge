@@ -57,6 +57,11 @@ def get_batch_from_iterator(
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
+    if "cu_seqlens" in batch:
+        raise ValueError(
+            "qwen3_vl_step does not support collate-time in-batch packing. "
+            "Use an unpacked collate batch with this step so it can build Qwen3-VL packed sequence metadata itself."
+        )
 
     required_device_keys = set()
     required_host_keys = set()
@@ -151,7 +156,7 @@ def get_batch(
     )
 
 
-def pack_or_pad_batch_sequences(
+def _pad_and_pack_qwen3_vl_step(
     tokens: torch.Tensor,
     labels: torch.Tensor,
     loss_mask: torch.Tensor,
@@ -162,10 +167,12 @@ def pack_or_pad_batch_sequences(
     force_to_pad_to_seq_len: bool = False,
     seq_length: int = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, PackedSeqParams]:
-    """
-    Pad or truncate the batch sequences to the target length, and build packed sequences.
-    If is_qwen3vl, return bshd tokens for be compatible with qwen3vl model.
-    Otherwise, return thd tokens and packed sequences.
+    """Prepare Qwen3-VL step-owned sequence tensors and packed metadata.
+
+    Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
+    while still building ``PackedSeqParams`` for attention boundaries.
+    This is an internal compatibility path for Qwen3-VL; new models should
+    prefer collate-time packing via ``pad_or_pack_sequence``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -176,7 +183,7 @@ def pack_or_pad_batch_sequences(
     divisible_by = tp_size * cp_size * 2 if cp_size > 1 else tp_size
     divisible_by = math.lcm(divisible_by, 16) if use_fp8_padding else divisible_by
 
-    # build bshd sequences with tiny padding to be compatible with qwen3vl model
+    # Keep BS-layout tensors with minimal padding for Qwen3-VL model forward.
     target_len = math.ceil(cur_len / divisible_by) * divisible_by
     if force_to_pad_to_seq_len:
         target_len = seq_length
@@ -246,11 +253,11 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, is_first_pp_stage=is_first, is_last_pp_stage=is_last)
     timers("batch-generator").stop()
 
-    # To be compatible with qwen3vl, we move the sequence padding and packing to forward_step function.
-    # Qwen3VL model need the original input and do cp and sp split in model.forward.
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
+    # Qwen3-VL keeps sequence preparation in the step because model.forward
+    # needs the original input IDs before doing model-specific CP/SP handling.
+    enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
 
-    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = pack_or_pad_batch_sequences(
+    tokens, labels, loss_mask, attention_mask, position_ids, packed_seq_params = _pad_and_pack_qwen3_vl_step(
         tokens,
         labels,
         loss_mask,
@@ -279,7 +286,7 @@ def forward_step(
     forward_args["input_ids"] = original_tokens
     # calculate position_ids in model forward
     forward_args["position_ids"] = None
-    if pack_sequences_in_batch:
+    if enable_in_batch_packing:
         if forward_args["labels"] is not None:
             # When using pp, labels could be None
             forward_args["labels"] = forward_args["labels"].reshape(1, -1)
@@ -289,8 +296,8 @@ def forward_step(
         forward_args["attention_mask"] = attention_mask
         if forward_args["loss_mask"] is not None:
             forward_args["loss_mask"] = forward_args["loss_mask"].reshape(1, -1)
-        # qwen3vl need the original input_ids and position_ids
-        # use split attention mask for calculate loss
+        # Qwen3-VL needs original input_ids and computes position_ids in model
+        # forward; the packed params preserve packed attention boundaries.
         forward_args["packed_seq_params"] = packed_seq_params
 
     # use cp split loss mask for calculate loss

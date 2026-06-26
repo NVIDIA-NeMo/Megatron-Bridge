@@ -64,7 +64,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP} \
         dataset.maker_name=make_${DATASET_NAME}_dataset \
         dataset.seq_length=$SEQ_LENGTH \
-        dataset.pack_sequences_in_batch=False \
+        dataset.enable_in_batch_packing=False \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP
 done

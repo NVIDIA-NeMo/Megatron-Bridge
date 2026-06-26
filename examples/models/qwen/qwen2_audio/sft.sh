@@ -105,8 +105,8 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         "dataset.maker_kwargs.path_or_dataset=ysdede/commonvoice_17_tr_fixed" \
         "dataset.maker_kwargs.split=train" \
         "dataset.val_maker_kwargs.split=validation" \
-        dataset.skip_test=true \
-        dataset.pack_sequences_in_batch=true \
+        dataset.do_test=false \
+        dataset.enable_in_batch_packing=true \
         rng.seed=42 \
         ddp.grad_reduce_in_fp32=false
 done

@@ -18,8 +18,8 @@ import logging
 from typing import Callable, List, Optional, Tuple
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
@@ -240,7 +240,7 @@ def apply_dataset_override(
             )
 
     elif dataset_type == "vlm-hf":
-        config.dataset = HFDatasetConversationProvider(
+        config.dataset = HFConversationDatasetProvider(
             seq_length=resolved_seq_length,
             hf_processor_path=None,
             maker_name="make_cord_v2_dataset",
@@ -249,7 +249,7 @@ def apply_dataset_override(
             data_sharding=True,
             pin_memory=True,
             persistent_workers=False,
-            pack_sequences_in_batch=False,
+            enable_in_batch_packing=False,
         )
 
     elif dataset_type == "vlm-preloaded":

@@ -45,10 +45,10 @@ from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -59,12 +59,6 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.qwen_vl.data.collate_fn import (
-    CHATML_ASSISTANT_START,
-    CHATML_TURN_END,
-    QWEN_VL_MAX_PIXELS,
-    QWEN_VL_MIN_PIXELS,
-)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import reorganize_inputs
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -343,8 +337,8 @@ def _build_mimo_provider(
     standard_provider.use_cpu_initialization = True
     if hasattr(standard_provider, "mtp_num_layers"):
         standard_provider.mtp_num_layers = None
-    if hasattr(standard_provider, "_pack_sequences_in_batch"):
-        standard_provider._pack_sequences_in_batch = False
+    if hasattr(standard_provider, "_enable_in_batch_packing"):
+        standard_provider._enable_in_batch_packing = False
 
     provider = MegatronMIMOProvider.from_standard_provider(
         standard_provider=standard_provider,
@@ -361,11 +355,11 @@ def _build_mimo_provider(
     return provider
 
 
-def _build_data_provider(args: argparse.Namespace) -> HFDatasetConversationProvider:
+def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvider:
     maker_name = args.dataset_maker
     if not maker_name.startswith("make_"):
         maker_name = f"make_{maker_name}_dataset"
-    provider = HFDatasetConversationProvider(
+    provider = HFConversationDatasetProvider(
         seq_length=args.seq_length,
         hf_processor_path=args.processor_path or args.hf_model,
         maker_name=maker_name,
@@ -374,8 +368,9 @@ def _build_data_provider(args: argparse.Namespace) -> HFDatasetConversationProvi
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
-        pack_sequences_in_batch=False,
-        skip_test=True,
+        enable_in_batch_packing=False,
+        do_validation=True,
+        do_test=False,
         trust_remote_code=args.trust_remote_code,
     )
     provider.drop_last = True
@@ -552,6 +547,10 @@ def _build_qwen_metadata_batch(
         attention_mask = attention_mask.contiguous()
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    # Imported lazily: importing collate_fn at module load trips a vlm_datasets<->collate_fn
+    # circular import. By call time the package graph is fully initialized.
+    from megatron.bridge.models.qwen_vl.data.collate_fn import CHATML_ASSISTANT_START, CHATML_TURN_END
+
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
         assistant_start=CHATML_ASSISTANT_START,
@@ -725,17 +724,20 @@ class _Qwen35HFMetadataMimoCollateAdapter:
         seq_length: int,
         pad_to_seq_length: bool,
         batch_spec: MIMOBatchSpec,
-        # Keep these defaults in parity with qwen2_5_collate_fn on visual ranks.
-        min_pixels: int = QWEN_VL_MIN_PIXELS,
-        max_pixels: int = QWEN_VL_MAX_PIXELS,
+        # Defaults resolved lazily from collate_fn to keep parity with qwen2_5_collate_fn on
+        # visual ranks while avoiding the module-load vlm_datasets<->collate_fn circular import.
+        min_pixels: int | None = None,
+        max_pixels: int | None = None,
     ) -> None:
+        from megatron.bridge.models.qwen_vl.data.collate_fn import QWEN_VL_MAX_PIXELS, QWEN_VL_MIN_PIXELS
+
         self.processor = processor
         self.spec = spec
         self.seq_length = seq_length
         self.pad_to_seq_length = pad_to_seq_length
         self.batch_spec = batch_spec
-        self.min_pixels = min_pixels
-        self.max_pixels = max_pixels
+        self.min_pixels = QWEN_VL_MIN_PIXELS if min_pixels is None else min_pixels
+        self.max_pixels = QWEN_VL_MAX_PIXELS if max_pixels is None else max_pixels
 
     def __call__(self, items: list[Any]) -> dict[str, Any]:
         batch, _ = _build_qwen_metadata_batch(
@@ -951,7 +953,7 @@ def _register_converted_checkpoint_pre_wrap_hook(
 def _build_config(
     *,
     model_provider: MegatronMIMOProvider,
-    data_provider: HFDatasetConversationProvider,
+    data_provider: HFConversationDatasetProvider,
     args: argparse.Namespace,
 ) -> ConfigContainer:
     optimizer_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

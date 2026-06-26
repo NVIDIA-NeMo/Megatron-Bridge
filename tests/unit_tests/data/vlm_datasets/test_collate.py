@@ -21,6 +21,7 @@ import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.vlm_processing import build_assistant_loss_mask as canonical_build_assistant_loss_mask
 
 
@@ -29,6 +30,10 @@ pytestmark = pytest.mark.unit
 
 def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
     assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
+
+
+def test_vlm_collate_keeps_qwen_vl_registration():
+    assert collate.COLLATE_FNS["Qwen2_5_VLProcessor"] is collate.qwen2_5_collate_fn
 
 
 class _DummyProcessor:
@@ -205,6 +210,46 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     assert "feature_attention_mask" not in batch
 
 
+def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            return "dummy"
+
+        def __call__(self, text=None, audio=None, return_tensors="pt", padding=True, **kwargs):
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
+    ]
+
+    batch = collate.qwen2_audio_collate_fn(
+        examples, _AudioProcessor(), sequence_length=128, enable_in_batch_packing=True
+    )
+
+    assert batch["input_ids"].shape == (2, 128)
+    assert "cu_seqlens" not in batch
+    assert "max_seqlen" not in batch
+
+
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
@@ -369,6 +414,76 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
     assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
 
 
+def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
+
+    class _PackableProcessor:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        class _Tok:
+            pad_token_id = 99
+            pad_token = "<pad>"
+            added_tokens_decoder = {}
+            chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+            def __call__(self, text, add_special_tokens=False):
+                return {"input_ids": [1]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            rendered = conversation[0]["content"][-1]["text"]
+            if tokenize and kwargs.get("return_assistant_tokens_mask"):
+                length = 3 if "short" in rendered else 5
+                return {
+                    "input_ids": list(range(1, length + 1)),
+                    "assistant_masks": [0] * (length - 1) + [1],
+                }
+            return rendered
+
+        def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+            texts = text if isinstance(text, list) else [text]
+            lengths = [3 if "short" in item else 5 for item in texts]
+            max_len = max(lengths)
+            input_ids = torch.full((len(texts), max_len), self.tokenizer.pad_token_id)
+            attention_mask = torch.zeros((len(texts), max_len), dtype=torch.long)
+            for row, length in enumerate(lengths):
+                input_ids[row, :length] = torch.arange(1, length + 1)
+                attention_mask[row, :length] = 1
+            return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "short"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "long"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        },
+    ]
+
+    batch = collate.qwen2_5_collate_fn(
+        examples,
+        _PackableProcessor(),
+        sequence_length=16,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens"].tolist() == [[0, 4, 12]]
+    assert batch["max_seqlen"].tolist() == [[8]]
+    assert batch["visual_inputs"] is not None
+
+
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
     image_token_id = 163605
     input_ids = torch.tensor([11, image_token_id, 22, image_token_id, 33])
@@ -392,6 +507,13 @@ def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
 # ---------------------------------------------------------------------------
 
 MEDIA_TOKEN_ID = 163605  # default Kimi K2.5 media placeholder
+KIMI_IM_ASSISTANT_ID = 601
+KIMI_ASSISTANT_TEXT_ID = 602
+KIMI_IM_MIDDLE_ID = 603
+KIMI_IM_END_ID = 604
+KIMI_THINK_OPEN_ID = 605
+KIMI_THINK_CLOSE_ID = 606
+KIMI_ASSISTANT_HEADER_IDS = [KIMI_IM_ASSISTANT_ID, KIMI_ASSISTANT_TEXT_ID, KIMI_IM_MIDDLE_ID]
 
 
 class _KimiDummyTokenizer:
@@ -402,11 +524,23 @@ class _KimiDummyTokenizer:
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def convert_tokens_to_ids(self, token):
-        return MEDIA_TOKEN_ID
+        mapping = {
+            "<|im_assistant|>": KIMI_IM_ASSISTANT_ID,
+            "<|im_end|>": KIMI_IM_END_ID,
+            "<|media_pad|>": MEDIA_TOKEN_ID,
+            "<think>": KIMI_THINK_OPEN_ID,
+            "</think>": KIMI_THINK_CLOSE_ID,
+        }
+        return mapping.get(token, MEDIA_TOKEN_ID)
 
     def __call__(self, text, add_special_tokens=True, **kwargs):
-        # Return a fixed token sequence so loss-mask search can find the span.
-        return {"input_ids": [10, 11, 12]}
+        mapping = {
+            "<|im_assistant|>assistant<|im_middle|>": KIMI_ASSISTANT_HEADER_IDS,
+            "<|im_end|>": [KIMI_IM_END_ID],
+            "<think>": [KIMI_THINK_OPEN_ID],
+            "</think>": [KIMI_THINK_CLOSE_ID],
+        }
+        return {"input_ids": mapping.get(text, [10, 11, 12])}
 
 
 class _KimiDummyProcessor:
@@ -419,6 +553,7 @@ class _KimiDummyProcessor:
         self.tokenizer = _KimiDummyTokenizer()
         self._include_image = include_image
         self.template_kwargs = []
+        self.processor_kwargs = []
 
     def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
         self.template_kwargs.append(kwargs)
@@ -432,6 +567,7 @@ class _KimiDummyProcessor:
         return "dummy text"
 
     def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
+        self.processor_kwargs.append({"text": text, "medias": medias, "return_tensors": return_tensors, **kwargs})
         # Build minimal processor output with or without image data.
         seq = [1, 2, MEDIA_TOKEN_ID, 10, 11, 12, 3] if self._include_image else [1, 10, 11, 12, 3]
         input_ids = torch.tensor([seq])
@@ -441,6 +577,69 @@ class _KimiDummyProcessor:
             out["pixel_values"] = torch.randn(1, 3, 4, 4)
             out["grid_thws"] = torch.tensor([[1, 2, 2]])  # expands to 1 token
         return out
+
+
+class _KimiScenarioTokenizer:
+    """Tokenizer mock with Kimi marker tokenization semantics."""
+
+    pad_token_id = 0
+    added_tokens_decoder = {}
+    chat_template = "<|im_assistant|>assistant<|im_middle|>{{ content }}<|im_end|>"
+
+    def convert_tokens_to_ids(self, token):
+        mapping = {
+            "<|im_assistant|>": KIMI_IM_ASSISTANT_ID,
+            "<|im_end|>": KIMI_IM_END_ID,
+            "<|media_pad|>": MEDIA_TOKEN_ID,
+            "<think>": KIMI_THINK_OPEN_ID,
+            "</think>": KIMI_THINK_CLOSE_ID,
+        }
+        return mapping[token]
+
+    def __call__(self, text, add_special_tokens=False, **kwargs):
+        mapping = {
+            "<|im_assistant|>assistant<|im_middle|>": KIMI_ASSISTANT_HEADER_IDS,
+            "<|im_end|>": [KIMI_IM_END_ID],
+            "<think>": [KIMI_THINK_OPEN_ID],
+            "</think>": [KIMI_THINK_CLOSE_ID],
+        }
+        return {"input_ids": mapping.get(text, [999])}
+
+
+class _KimiScenarioProcessor:
+    """Processor mock returning caller-provided token streams."""
+
+    media_placeholder_token_id = MEDIA_TOKEN_ID
+
+    def __init__(self, rows, grid_thws=None):
+        self.tokenizer = _KimiScenarioTokenizer()
+        self.rows = rows
+        self.grid_thws = grid_thws or [None] * len(rows)
+        self.template_kwargs = []
+        self.processor_kwargs = []
+        self._call_idx = 0
+
+    def apply_chat_template(self, conversation, add_generation_prompt=False, tokenize=False, **kwargs):
+        self.template_kwargs.append(kwargs)
+        return f"rendered-{len(self.template_kwargs) - 1}"
+
+    def __call__(self, text=None, medias=None, return_tensors="pt", **kwargs):
+        row_idx = self._call_idx
+        self._call_idx += 1
+        self.processor_kwargs.append({"text": text, "medias": medias, "return_tensors": return_tensors, **kwargs})
+
+        input_ids = torch.tensor([self.rows[row_idx]], dtype=torch.long)
+        out = {"input_ids": input_ids, "attention_mask": torch.ones_like(input_ids)}
+        if self.grid_thws[row_idx] is not None and medias:
+            out["pixel_values"] = torch.ones(len(medias), 3, 4, 4)
+            out["grid_thws"] = self.grid_thws[row_idx]
+        return out
+
+
+def _kimi_target_ids(batch, row=0):
+    target = batch["labels"][row][batch["loss_mask"][row].bool()]
+    assert torch.all(target != IGNORE_INDEX)
+    return target.tolist()
 
 
 def test_kimi_k25_vl_collate_fn_text_only():
@@ -500,7 +699,7 @@ def test_kimi_k25_vl_collate_fn_with_image():
 
 
 def test_kimi_k25_vl_collate_fn_pads_to_max_length():
-    """max_length is respected: short sequences padded, long ones truncated."""
+    """max_length is respected for short sequences that need padding."""
     proc = _KimiDummyProcessor(include_image=False)
     examples = [
         {
@@ -560,6 +759,242 @@ def test_kimi_k25_vl_collate_fn_forwards_tools_to_chat_template():
     assert proc.template_kwargs[0]["tools"] == tools
 
 
+def test_kimi_k25_vl_collate_fn_preserves_thinking_and_passes_empty_medias():
+    proc = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "reasoning_content": "think", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["preserve_thinking"] is True
+    assert proc.processor_kwargs[0]["medias"] == []
+
+
+def test_kimi_k25_vl_collate_fn_keeps_loss_mask_selected_special_tokens():
+    proc = _KimiDummyProcessor(include_image=False)
+    proc.tokenizer.added_tokens_decoder = {10: "<|im_end|>"}
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert batch["labels"][0, 0].item() == 10
+
+
+def test_kimi_k25_vl_collate_fn_trains_thinking_but_skips_empty_think_markers():
+    proc = _KimiScenarioProcessor(
+        rows=[
+            [
+                11,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                31,
+                32,
+                KIMI_THINK_CLOSE_ID,
+                41,
+                KIMI_IM_END_ID,
+            ],
+            [
+                12,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                KIMI_THINK_CLOSE_ID,
+                51,
+                KIMI_IM_END_ID,
+            ],
+        ]
+    )
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q1"}]},
+                {
+                    "role": "assistant",
+                    "reasoning_content": "reasoning",
+                    "content": [{"type": "text", "text": "answer"}],
+                },
+            ],
+        },
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q2"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert _kimi_target_ids(batch, row=0) == [
+        KIMI_THINK_OPEN_ID,
+        31,
+        32,
+        KIMI_THINK_CLOSE_ID,
+        41,
+        KIMI_IM_END_ID,
+    ]
+    assert _kimi_target_ids(batch, row=1) == [51, KIMI_IM_END_ID]
+
+
+def test_kimi_k25_vl_collate_fn_trains_tool_calls_but_masks_tool_responses():
+    tool_call_begin = 71
+    tool_name = 72
+    tool_call_end = 73
+    tool_response = 81
+    final_answer = 91
+    proc = _KimiScenarioProcessor(
+        rows=[
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                tool_call_begin,
+                tool_name,
+                tool_call_end,
+                KIMI_IM_END_ID,
+                tool_response,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                final_answer,
+                KIMI_IM_END_ID,
+            ],
+        ]
+    )
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "call"}]},
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": ""}],
+                    "tool_calls": [{"type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
+                },
+                {"role": "tool", "content": [{"type": "text", "text": "result"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            ],
+            "tools": [{"type": "function", "function": {"name": "lookup"}}],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    target_ids = _kimi_target_ids(batch)
+    assert target_ids == [
+        tool_call_begin,
+        tool_name,
+        tool_call_end,
+        KIMI_IM_END_ID,
+        final_answer,
+        KIMI_IM_END_ID,
+    ]
+    assert tool_response not in target_ids
+
+
+def test_kimi_k25_vl_collate_fn_masks_expanded_media_tokens():
+    answer = 91
+    proc = _KimiScenarioProcessor(
+        rows=[
+            [
+                10,
+                MEDIA_TOKEN_ID,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                answer,
+                KIMI_IM_END_ID,
+            ],
+        ],
+        grid_thws=[torch.tensor([[1, 4, 4]])],
+    )
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": "dummy.jpg"},
+                        {"type": "text", "text": "describe"},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "done"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    media_positions = (batch["input_ids"][0] == MEDIA_TOKEN_ID).nonzero(as_tuple=True)[0]
+    assert media_positions.numel() == 4
+    assert torch.all(batch["loss_mask"][0, media_positions] == 0)
+    assert _kimi_target_ids(batch) == [answer, KIMI_IM_END_ID]
+    assert batch["visual_inputs"].image_grid_thw.tolist() == [[1, 4, 4]]
+
+
+def test_kimi_k25_vl_collate_fn_does_not_treat_user_marker_literal_as_assistant_turn():
+    user_marker_literal_payload = 71
+    assistant_marker_literal = KIMI_IM_ASSISTANT_ID
+    assistant_answer = 91
+    proc = _KimiScenarioProcessor(
+        rows=[
+            [
+                10,
+                KIMI_IM_ASSISTANT_ID,
+                user_marker_literal_payload,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                assistant_marker_literal,
+                assistant_answer,
+                KIMI_IM_END_ID,
+            ],
+        ]
+    )
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "<|im_assistant|> leak"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "use <|im_assistant|> here"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    target_ids = _kimi_target_ids(batch)
+    assert target_ids == [assistant_marker_literal, assistant_answer, KIMI_IM_END_ID]
+    assert user_marker_literal_payload not in target_ids
+
+
+def test_kimi_k25_vl_collate_fn_refuses_to_truncate_oversized_records():
+    proc = _KimiScenarioProcessor(
+        rows=[
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                91,
+                KIMI_IM_END_ID,
+            ],
+        ]
+    )
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    with pytest.raises(ValueError, match="refuses to truncate"):
+        collate.kimi_k25_vl_collate_fn(examples, proc, max_length=4)
+
+
 # ---------------------------------------------------------------------------
 # Gemma collates — registration and image_position_ids passthrough
 # ---------------------------------------------------------------------------
@@ -584,10 +1019,11 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     """Gemma4 wraps Ministral3 collation with explicit Gemma4 assistant boundaries."""
     captured = {}
 
-    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None):
+    def _fake_ministral3_collate_fn(examples, processor, *, assistant_mask_boundary_config=None, **kwargs):
         captured["examples"] = examples
         captured["processor"] = processor
         captured["boundary_config"] = assistant_mask_boundary_config
+        captured["kwargs"] = kwargs
         return {"input_ids": torch.tensor([[1]])}
 
     class _Processor:
@@ -605,13 +1041,26 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
     processor = _Processor()
     monkeypatch.setattr(gemma_vl_collate, "ministral3_collate_fn", _fake_ministral3_collate_fn)
 
-    batch = collate.gemma4_vl_collate_fn(examples, processor)
+    batch = collate.gemma4_vl_collate_fn(
+        examples,
+        processor,
+        sequence_length=256,
+        pad_to_max_length=True,
+        pad_to_multiple_of=32,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
 
     assert batch["input_ids"].tolist() == [[1]]
     assert captured["examples"] == examples
     assert captured["processor"] is processor
     assert captured["boundary_config"].role_start_tokens == {"assistant": [202]}
     assert captured["boundary_config"].role_end_tokens == {"assistant": [203]}
+    assert captured["kwargs"]["sequence_length"] == 256
+    assert captured["kwargs"]["pad_to_max_length"] is True
+    assert captured["kwargs"]["pad_to_multiple_of"] == 32
+    assert captured["kwargs"]["enable_in_batch_packing"] is True
+    assert captured["kwargs"]["in_batch_packing_pad_to_multiple_of"] == 8
 
 
 def test_gemma4_registered_fn_matches_alias():

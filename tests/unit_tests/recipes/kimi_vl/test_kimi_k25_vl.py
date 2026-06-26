@@ -202,7 +202,7 @@ class TestKimiK25VLSftConfig:
 
         assert cfg.dataset.sequence_length == 4096
         assert cfg.dataset.num_workers == 8
-        assert cfg.dataset.pack_sequences_in_batch is False
+        assert cfg.dataset.enable_in_batch_packing is False
         assert cfg.dataset.hf_processor_path == "moonshotai/Kimi-K2.5"
         assert cfg.dataset.blend is None
 

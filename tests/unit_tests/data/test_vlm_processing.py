@@ -28,6 +28,8 @@ from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
     gather_assistant_text_segments,
+    get_processor_tokenizer,
+    infer_assistant_mask_boundary_config,
     normalize_energon_vlm_sample,
     normalize_hf_vlm_example,
     normalized_vlm_sample_to_hf_example,
@@ -99,6 +101,27 @@ class _GenerationMaskTokenizer(_Tokenizer):
         assert return_assistant_tokens_mask is True
         assert conversation[-1]["role"] == "assistant"
         return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 0, 1, 0]}
+
+
+def test_get_processor_tokenizer_unwraps_megatron_layers_but_keeps_hf_backend_private():
+    class RawHFTokenizer:
+        added_tokens_decoder = {}
+
+        def __init__(self):
+            self._tokenizer = object()
+
+        def __call__(self, text, **kwargs):
+            return {"input_ids": [1, 2, 3]}
+
+    raw_tokenizer = RawHFTokenizer()
+
+    class MegatronHFTokenizerWrapper:
+        tokenizer = raw_tokenizer
+
+    class MegatronTokenizerTextWrapper:
+        _tokenizer = MegatronHFTokenizerWrapper()
+
+    assert get_processor_tokenizer(MegatronTokenizerTextWrapper()) is raw_tokenizer
 
 
 class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
@@ -197,6 +220,25 @@ class _ChatMLBoundaryProcessor(_Processor):
         self.tokenizer = _ChatMLBoundaryTokenizer()
 
 
+class _ProcessorTemplateBoundaryProcessor(_ChatMLBoundaryProcessor):
+    chat_template = "<|turn>model\n{{ content }}<turn|>"
+
+    class _Tok(_Tokenizer):
+        chat_template = ""
+
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {
+                "<|turn>model\n": [202],
+                "<turn|>": [203],
+                "answer": [3, 4],
+            }
+            return {"input_ids": mapping.get(text, [42])}
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = self._Tok()
+
+
 def test_gather_assistant_text_segments_handles_structured_and_string_content():
     example = {
         "conversation": [
@@ -287,6 +329,12 @@ def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
         build_assistant_loss_mask(example, input_ids, _ChatMLProcessor())
 
 
+def test_infer_assistant_mask_boundary_config_from_chatml_template():
+    boundary_config = infer_assistant_mask_boundary_config(_ChatMLBoundaryProcessor())
+
+    assert boundary_config is not None
+
+
 def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers():
     boundary_config = assistant_mask_boundary_config_from_markers(
         _ChatMLBoundaryProcessor(),
@@ -298,6 +346,14 @@ def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers(
     assert boundary_config.role_end_tokens == {"assistant": [103]}
 
 
+def test_infer_assistant_mask_boundary_config_uses_processor_template_when_tokenizer_template_is_empty():
+    boundary_config = infer_assistant_mask_boundary_config(_ProcessorTemplateBoundaryProcessor())
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {"assistant": [202]}
+    assert boundary_config.role_end_tokens == {"assistant": [203]}
+
+
 def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_tokenize():
     with pytest.raises(ValueError, match="Unable to tokenize assistant loss-mask boundary markers"):
         assistant_mask_boundary_config_from_markers(
@@ -305,6 +361,26 @@ def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_
             assistant_start="<|im_start|>assistant\n",
             assistant_end="<|im_end|>",
         )
+
+
+def test_build_assistant_loss_mask_uses_inferred_boundary_config():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "answer"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 4, 101, 102, 3, 4, 103])
+    processor = _ChatMLBoundaryProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
 
 
 def test_build_assistant_loss_mask_uses_marker_boundary_config():
@@ -466,6 +542,19 @@ def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
     mask = build_assistant_loss_mask(example, input_ids, _Processor(), boundary_config=boundary_config)
 
     assert mask.tolist() == [0.0, 0.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_boundary_config_trims_leading_sequences_only_when_complete():
+    input_ids = torch.tensor([102, 55, 3, 56, 4, 101, 102, 55, 56, 5, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [101]},
+        trim_leading_token_sequences=([55, 56],),
+    )
+
+    mask = build_assistant_loss_mask([], input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
 
 
 def test_build_assistant_loss_mask_applies_skipped_tokens_to_boundary_mask():
