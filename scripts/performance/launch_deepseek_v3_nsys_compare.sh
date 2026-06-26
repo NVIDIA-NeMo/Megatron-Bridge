@@ -75,7 +75,6 @@ GN="${GN:-4}"
 NGPUS=$((10#$NGPUS))
 [[ "$NGPUS" -ge 256 ]] || { echo "ERROR: DSv3 requires NGPUS>=256 (HybridEP EP=64 production scale); got '$NGPUS'" >&2; exit 2; }
 PROFILE_RANKS_CSV="0,$((NGPUS / 2)),$((NGPUS - 1))"
-PROFILE_RANKS_HYDRA="[${PROFILE_RANKS_CSV}]"
 echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
 
 # --- Cluster-aware Slurm GPU request ------------------------------------------
@@ -239,7 +238,7 @@ generate_csv() {
         [ -z "$STEM" ] && continue
         local REP="${STEM}.nsys-rep" SQLITE="${STEM}.sqlite" BASE RANK CSV
         BASE="${STEM##*/}"
-        RANK=$(echo "$BASE" | grep -oE 'rank[0-9]+' | head -1); [ -z "$RANK" ] && RANK="rankunknown"
+        if [[ "$BASE" =~ rank[0-9]+ ]]; then RANK="${BASH_REMATCH[0]}"; else RANK="rankunknown"; fi
         CSV="$OUT_DIR/nsys-${MODE}-${RANK}.csv"
         if command -v nsys >/dev/null && [ -f "$REP" ]; then
             nsys stats --force-export=true --report nvtx_sum --format csv "$REP" > "$CSV"
