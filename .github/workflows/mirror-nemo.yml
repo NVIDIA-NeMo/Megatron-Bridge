@@ -1,0 +1,38 @@
+# Mirror public NeMo images into ghcr for faster, self-contained pulls.
+# Registry-to-registry copy (no large local download). Add tags to the matrix.
+name: mirror nemo to ghcr
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    strategy:
+      max-parallel: 1 # avoid ghcr 429s from concurrent blob uploads
+      matrix:
+        tag: ["26.06"]
+    steps:
+      - name: Log in to ghcr
+        uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Copy nemo -> ghcr (retry on 429)
+        run: |
+          set -uxo pipefail
+          SRC="nvcr.io/nvidia/nemo:${{ matrix.tag }}"
+          DST="ghcr.io/${{ github.repository_owner }}/nvidia-nemo-mirror:${{ matrix.tag }}"
+          ok=0
+          for i in $(seq 1 6); do
+            if docker buildx imagetools create --tag "${DST}" "${SRC}"; then ok=1; break; fi
+            echo "attempt ${i} failed; backing off"; sleep $((i * 30))
+          done
+          [ "${ok}" = 1 ] || { echo "mirror failed after retries"; exit 1; }
+          docker buildx imagetools inspect "${DST}"

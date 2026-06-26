@@ -48,33 +48,27 @@ git rebase --signoff main
 git push --force-with-lease
 ```
 
-## Running tests locally
+## Testing
 
-The fork's own GitHub Actions do **not** run Bridge's unit-test suite — that job lives on upstream's self-hosted runners and only fires for PRs against `NVIDIA-NeMo/Megatron-Bridge`. To check a change on a fork branch, run the tests yourself.
+Upstream's unit-test job lives on NVIDIA's self-hosted runners and only fires for PRs against `NVIDIA-NeMo/Megatron-Bridge`, so it never runs on our PRs. To get signal on fork PRs we run our own lightweight job — `.github/workflows/kaiko-tests.yml`, which fires on every PR against `main` and runs `tools/ci/run_tests.sh`. That same script runs locally to reproduce a result (see below).
 
-Plain `pytest` won't work outside a CUDA environment (Bridge needs `torch` + Megatron-Core + Transformer Engine). Instead, run inside the `kmbridge-nemo` image — it already has the full stack — and overlay your checkout via `PYTHONPATH` so your branch's code is what runs:
+How it works:
+
+- **Regression-diff, not pass/fail.** The job runs the full CPU unit suite against *two* checkouts — the PR branch and the current `main` — and fails only on tests that fail on the PR but pass on `main`. Thus, we only care about regressions the change introduces.
+- **Image source.** It pulls the NeMo image from our ghcr mirror (`ghcr.io/kaiko-ai/nvidia-nemo-mirror:<tag>`) rather than nvcr, for self-contained pulls. The fork is public, so it can't use kaiko runners or the private `kmbridge-nemo` image — but the public `nemo` image has the same torch/TE/Megatron-Core stack the unit tests need.
+- **Maintaining the mirror.** `.github/workflows/mirror-nemo.yml` copies `nvcr.io/nvidia/nemo:<tag>` into ghcr. It's `workflow_dispatch`-only: **run it once whenever you introduce a new tag** (e.g. when bumping the `IMAGE` tag in `kaiko-tests.yml`). Add the new tag to that workflow's matrix and trigger it from the Actions tab.
+
+
+### Running it locally
+
+`run_tests.sh` needs the test image and two checkouts — `main` and your branch. From your branch, add a sibling checkout of `main` and point the script at both:
 
 ```bash
-# kmbridge-nemo image ref; the version lives in kaiko-eng's
-# tools/docker_images/ray/uv/kmbridge/pyproject.toml (libs/kbridge/ci/get-image-ref.sh resolves it).
-IMAGE="kaikoprivate.azurecr.io/ray/kmbridge-nemo:<version>"
-az acr login --name kaikoprivate            # once, for registry access
-
-docker run --rm --platform linux/amd64 \
-  -v "$(pwd):/branch:ro" \
-  -w /branch \
-  -e PYTHONPATH=/branch/src \
-  -e PYTHONDONTWRITEBYTECODE=1 \
-  "$IMAGE" \
-  pytest tests/unit_tests/training/test_checkpointing.py -v -p no:cacheprovider
+git worktree add ../main origin/main        # one-time: a sibling checkout of main
+IMAGE=nvcr.io/nvidia/nemo:26.06 tools/ci/run_tests.sh ../main .
 ```
 
-- `PYTHONPATH=/branch/src` makes `import megatron.bridge.*` resolve to your checkout (shadowing the image's baked-in Bridge); `megatron.core`, `torch`, and TE come from the image, so no submodule init is needed.
-- CPU-only: omit `--gpus`. The mocked unit tests don't need a GPU.
-- The read-only (`:ro`) mount keeps the run from writing `.pytest_cache` / `.pyc` into your tree.
-- On Apple Silicon the image runs under amd64 emulation: the "CPU does not support AVX → illegal instruction likely" boot warning is harmless — `torch` still imports (slowly; a few minutes, then the tests run in seconds).
-
-This mirrors how `kaiko-eng`'s `libs/kbridge/ci/test.sh` runs the kbridge tests against the same image.
+It runs the suite inside the image with each checkout overlaid via `PYTHONPATH` (so `import megatron.bridge.*` resolves to that checkout, while `megatron.core`, `torch`, and TE come from the image — no submodule init needed), CPU-only, against a read-only mount. On Apple Silicon the image runs under amd64 emulation: the "CPU does not support AVX → illegal instruction likely" boot warning is harmless — `torch` still imports (slowly; a few minutes, then the tests run in seconds).
 
 ## Workflow: rebasing onto a newer Bridge release
 
