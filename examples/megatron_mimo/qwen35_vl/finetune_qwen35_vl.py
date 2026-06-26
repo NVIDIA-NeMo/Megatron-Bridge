@@ -49,13 +49,22 @@ from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampli
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+)
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.qwen_vl.data.collate_fn import QWEN_VL_MAX_PIXELS, QWEN_VL_MIN_PIXELS
+from megatron.bridge.models.qwen_vl.data.collate_fn import (
+    CHATML_ASSISTANT_START,
+    CHATML_TURN_END,
+    QWEN_VL_MAX_PIXELS,
+    QWEN_VL_MIN_PIXELS,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import reorganize_inputs
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -524,7 +533,11 @@ def _build_qwen_metadata_batch(
     for item in items:
         if not isinstance(item, dict):
             raise ValueError("Qwen metadata-only collate expects dict conversation examples.")
-        text = processor.apply_chat_template(item["conversation"], tokenize=False)
+        text = processor.apply_chat_template(
+            item["conversation"],
+            tokenize=False,
+            **chat_template_kwargs_from_example(item),
+        )
         grids = [
             _qwen_image_grid_for_part(part, image_processor, min_pixels=min_pixels, max_pixels=max_pixels)
             for part in _iter_image_parts(item)
@@ -539,6 +552,11 @@ def _build_qwen_metadata_batch(
         attention_mask = attention_mask.contiguous()
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=CHATML_ASSISTANT_START,
+        assistant_end=CHATML_TURN_END,
+    )
     loss_mask = torch.stack(
         [
             build_assistant_loss_mask(
@@ -546,7 +564,7 @@ def _build_qwen_metadata_batch(
                 row_input_ids,
                 processor,
                 skipped_tokens,
-                require_matches=False,
+                boundary_config=boundary_config,
                 warn_on_all_masked=True,
             )
             for item, row_input_ids in zip(items, input_ids)
