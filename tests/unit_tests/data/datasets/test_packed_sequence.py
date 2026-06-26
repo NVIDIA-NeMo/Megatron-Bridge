@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import _pre_pad_data_point, _retrieve_tokenized
+from megatron.bridge.data.datasets.packed_sequence import _materialize_dataset_items, _pre_pad_data_point
 
 
 PAD_ID = 0
@@ -73,7 +73,7 @@ def test_pre_pad_data_point_truncates_overlong():
     assert len(data["loss_mask"]) == 16
 
 
-def test_retrieve_tokenized_uses_serial_path_for_non_positive_workers(monkeypatch):
+def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(monkeypatch):
     """Non-positive worker counts should not create a multiprocessing pool."""
 
     class TinyDataset:
@@ -88,5 +88,5 @@ def test_retrieve_tokenized_uses_serial_path_for_non_positive_workers(monkeypatc
 
     monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.Pool", fail_pool)
 
-    assert _retrieve_tokenized(TinyDataset(), -1).tolist() == [10, 11, 12]
-    assert _retrieve_tokenized(TinyDataset(), 0).tolist() == [10, 11, 12]
+    assert _materialize_dataset_items(TinyDataset(), -1).tolist() == [10, 11, 12]
+    assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]

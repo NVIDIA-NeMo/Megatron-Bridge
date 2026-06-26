@@ -36,20 +36,20 @@ logger = logging.getLogger(__name__)
 _shared_dataset = None
 
 
-def _tokenize_get_item(i):
+def _get_shared_dataset_item(i):
     return _shared_dataset[i]
 
 
-def _tokenize_init_worker(dataset):
+def _init_shared_dataset_worker(dataset):
     global _shared_dataset
     _shared_dataset = dataset
 
 
-def _retrieve_tokenized(dataset, num_workers):
+def _materialize_dataset_items(dataset, num_workers):
     if num_workers <= 1:
         return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
-    with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
-        return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
+    with Pool(num_workers, initializer=_init_shared_dataset_worker, initargs=(dataset,)) as pool:
+        return np.array(list(tqdm(pool.imap(_get_shared_dataset_item, range(len(dataset))), total=len(dataset))))
 
 
 def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int, pad_id: int) -> None:
@@ -153,7 +153,7 @@ def tokenize_dataset(
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = dataset.max_seq_length
-    dataset = _retrieve_tokenized(dataset, num_tokenizer_workers)
+    dataset = _materialize_dataset_items(dataset, num_tokenizer_workers)
 
     if pad_seq_to_mult > 1:
 
