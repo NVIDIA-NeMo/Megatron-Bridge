@@ -176,17 +176,21 @@ Every number is from a direct sqlite query on the rank-0 `.sqlite`. Where the Ne
 
 ⚠️ **Data lives on the OCI HSG cluster** (these DSv3 runs were on OCI HSG, not lyris). The lyris `/lustre/share/coreai_dlalgo_llm/...` mirror that the Nemotron doc uses **does not exist on HSG** (only `/lustre/fs1` + `/lustre/fsw` are mounted). World-readable, ~1.3 GB:
 
+Layout follows the Nemotron `<scale>/{processed, raw/{det,nondet,det-bitwise}}/` convention:
+
 ```
-/lustre/fsw/portfolios/llmservice/users/zhiyul/dsv3-det-nondet-nsys/
-├── det/               # job 3581564: rank 0/128/255 .nsys-rep + .sqlite
-├── nondet/            # job 3582315: rank 0/128/255 .nsys-rep + .sqlite
-└── leaderboard-csvs/  # leaderboard.txt + nsys-{det,nondet}-rank*.csv + jobid/wdj/submit logs
+/lustre/fsw/portfolios/llmservice/users/zhiyul/dsv3-det-nondet-nsys/256n/
+├── processed/   # leaderboard.txt, nsys-{det,nondet}[-rank{0,128,255}].csv, jobid-*, wdj-*, submit-*, launcher.log
+└── raw/
+    ├── det/          # log-…_3581564_0.out + profile_*_rank{0,128,255}.{nsys-rep,sqlite}
+    ├── nondet/       # log-…_3582315_0.out + profile_*_rank{0,128,255}.{nsys-rep,sqlite}
+    └── det-bitwise/  # log-…_3581575_1.out   (no nsys)
 ```
 
 | Side | Slurm job | wandb run (project `mbridge-dev-zhiyul`) |
 |---|---|---|
 | det + nsys | 3581564 | `deepseek-v3-det-nsys15-18-1782378442` |
 | non-det + nsys (default NCCL) | 3582315 | `deepseek-v3-nondet-default3` |
-| det, no-nsys (bit-wise check) | 3581575 | `deepseek-v3-det-bitwise-check-*` |
+| det, no-nsys (bit-wise check) | 3581575 | `deepseek-v3-det-bitwise-check-1782378442` |
 
-Layout is flat (not the Nemotron `<scale>/{processed,raw/{det,nondet,det-bitwise}}/` convention) — kept in place on HSG. The repo-relative launcher is `scripts/performance/launch_deepseek_v3_nsys_compare.sh`.
+The repo-relative launcher is `scripts/performance/launch_deepseek_v3_nsys_compare.sh`.
