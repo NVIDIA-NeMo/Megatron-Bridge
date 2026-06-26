@@ -90,7 +90,7 @@ RUN pip install "starlette==0.49.1" \
     "mistune>=3.2.1" \
     "GitPython>=3.1.50" && \
     # Address CVE from transitive dependency
-    pip uninstall -y opencv-python-headless
+    pip uninstall -y opencv-python-headless nvidia-dali-cuda130
 
 # Remove PyTorch's bundled third-party onnx source tree (build artifact, not used at runtime).
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
