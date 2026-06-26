@@ -96,7 +96,9 @@ class TestNemotronOmniConversion:
         encoder, instantiates a random-init model, and saves it with its trust_remote_code
         modules so the conversion subprocess can load it offline.
         """
-        pytest.importorskip("transformer_engine_torch")
+        # Import TE through its public PyTorch entry point; source builds load the
+        # native transformer_engine_torch extension from there.
+        import transformer_engine.pytorch  # noqa: F401
 
         temp_dir = tmp_path_factory.mktemp("nemotron_omni_toy_model")
         model_dir = temp_dir / "nemotron_omni_toy"
