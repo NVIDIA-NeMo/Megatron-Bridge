@@ -37,6 +37,7 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -84,10 +85,11 @@ class NemotronOmniTaskBatch(Batch):
     imgs_sizes: Optional[torch.Tensor] = None  # [total_frames, 2]
     num_frames: Optional[torch.Tensor] = None  # [num_media_items]
     num_image_tiles: Optional[torch.Tensor] = None  # [total_images] LM-side token count per image
-    # Packed-sequence metadata (only populated when pack_sequences=True).
+    # Packed-sequence metadata (only populated when enable_in_batch_packing=True).
     cu_seqlens: Optional[torch.Tensor] = None
     cu_seqlens_unpadded: Optional[torch.Tensor] = None
     cu_seqlens_argmin: Optional[torch.Tensor] = None
+    cu_seqlens_unpadded_argmin: Optional[torch.Tensor] = None
     max_seqlen: Optional[torch.Tensor] = None
 
 
@@ -115,6 +117,14 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         num_mel_bins: Number of mel frequency bins (must match the sound
             encoder config, typically 128 for Parakeet).
         visual_keys: Processor output keys to capture as visual tensors.
+        pad_to_max_length: Whether collate-time padding should pad non-packed
+            batches to ``seq_length`` when supported.
+        pad_to_multiple_of: Non-packed collate-time padding multiple used when
+            ``pad_to_max_length`` is false and supported.
+        enable_in_batch_packing: Whether to do in-batch sequence packing.
+        in_batch_packing_pad_to_multiple_of: Per-sample padding multiple used
+            only by the in-batch packed path, typically to satisfy CP/SP
+            divisibility.
     """
 
     def __init__(
@@ -129,7 +139,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         video_nframes: int = 8,
         use_temporal_video_embedder: bool = False,
         patch_dim: int = 16,
-        pack_sequences: bool = False,
+        pad_to_max_length: bool = False,
+        pad_to_multiple_of: int = 128,
+        enable_in_batch_packing: bool = False,
+        in_batch_packing_pad_to_multiple_of: int = 1,
     ):
         super().__init__()
         self.processor = processor
@@ -142,7 +155,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         self.video_nframes = video_nframes
         self.use_temporal_video_embedder = use_temporal_video_embedder
         self.patch_dim = patch_dim
-        self.pack_sequences = pack_sequences
+        self.pad_to_max_length = pad_to_max_length
+        self.pad_to_multiple_of = pad_to_multiple_of
+        self.enable_in_batch_packing = enable_in_batch_packing
+        self.in_batch_packing_pad_to_multiple_of = in_batch_packing_pad_to_multiple_of
 
     @staticmethod
     def _decode_video_bytes(video_bytes: bytes, nframes: int = 8, fps: float = 1.0):
@@ -484,7 +500,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
 
     def batch(self, samples: List[NemotronOmniTaskSample]) -> NemotronOmniTaskBatch:
         """Pad-and-collate (default) OR pack samples along the seq dim when
-        ``pack_sequences=True``. Packing emits ``cu_seqlens`` / ``cu_seqlens_unpadded``
+        ``enable_in_batch_packing=True``. Packing emits ``cu_seqlens`` / ``cu_seqlens_unpadded``
         / ``max_seqlen`` so TE's THD kernels handle cross-sample masking (and CP
         partitioning via ``thd_get_partitioned_indices``) without an attention mask.
         """
@@ -494,9 +510,10 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         cu_seqlens_t: Optional[torch.Tensor] = None
         cu_seqlens_unpadded_t: Optional[torch.Tensor] = None
         cu_seqlens_argmin_t: Optional[torch.Tensor] = None
+        cu_seqlens_unpadded_argmin_t: Optional[torch.Tensor] = None
         max_seqlen_t: Optional[torch.Tensor] = None
 
-        if self.pack_sequences:
+        if self.enable_in_batch_packing:
             # Concatenate samples along the seq dim into a single [1, total_len]
             # microbatch. TE attention kernels use cu_seqlens for per-sample
             # masking; no attention_mask needed.
@@ -525,6 +542,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             # pointing at the first sentinel. Here we emit an unpadded cu_seqlens and
             # set argmin = len(cu_seqlens) so the slice is a no-op (keeps every entry).
             cu_seqlens_argmin_t = torch.tensor(len(cu_seqlens), dtype=torch.int32)
+            cu_seqlens_unpadded_argmin_t = torch.tensor(len(cu_seqlens), dtype=torch.int32)
             max_seqlen_t = torch.tensor(max(lengths), dtype=torch.int32)
         else:
             max_seq_len = max(s.input_ids.size(0) for s in samples)
@@ -550,6 +568,26 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 reset_attention_mask=False,
                 reset_position_ids=False,
             )
+            text_batch = {
+                "input_ids": tokens,
+                "labels": labels,
+                "loss_mask": loss_mask_t,
+                "position_ids": position_ids,
+                "attention_mask": attention_mask,
+            }
+            pad_or_pack_sequence(
+                text_batch,
+                sequence_length=self.seq_length,
+                pad_to_max_length=self.pad_to_max_length,
+                pad_to_multiple_of=self.pad_to_multiple_of,
+                pad_token_id=0,
+                ignore_index=IGNORE_INDEX,
+            )
+            tokens = text_batch["input_ids"]
+            labels = text_batch["labels"]
+            loss_mask_t = text_batch["loss_mask"]
+            position_ids = text_batch["position_ids"]
+            attention_mask = text_batch["attention_mask"]
 
         # Aggregate visual tensors.
         # The temporal video path ships pixel_values as [1, N_i*patches_per_frame, feat]
@@ -565,7 +603,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             if not tensors:
                 batched_visual[key] = None
                 continue
-            if self.pack_sequences and tensors[0].dim() == 3:
+            if self.enable_in_batch_packing and tensors[0].dim() == 3:
                 batched_visual[key] = torch.cat(tensors, dim=1)
             else:
                 batched_visual[key] = torch.cat(tensors, dim=0)
@@ -629,6 +667,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             cu_seqlens=cu_seqlens_t,
             cu_seqlens_unpadded=cu_seqlens_unpadded_t,
             cu_seqlens_argmin=cu_seqlens_argmin_t,
+            cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin_t,
             max_seqlen=max_seqlen_t,
         )
 
@@ -655,6 +694,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
             "cu_seqlens": batch.cu_seqlens,
             "cu_seqlens_unpadded": batch.cu_seqlens_unpadded,
             "cu_seqlens_argmin": batch.cu_seqlens_argmin,
+            "cu_seqlens_unpadded_argmin": batch.cu_seqlens_unpadded_argmin,
             "max_seqlen": batch.max_seqlen,
         }
 

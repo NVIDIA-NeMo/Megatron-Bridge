@@ -15,20 +15,19 @@
 ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.04-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
-ENV PATH="/root/.local/bin:$PATH"
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-ENV VIRTUAL_ENV=/opt/venv
-ENV PATH="$VIRTUAL_ENV/bin:$PATH"
-ENV UV_LINK_MODE=copy
-ENV UV_VERSION="0.7.2"
-ENV NVTE_BUILD_NUM_PHILOX_ROUNDS=3
-RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
-    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
-    # Address CVE-2025-68973
-    apt-get update && apt install -y --only-upgrade gnupg && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+
+ARG INSTALL_DEEPEP=True
+ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
+
+ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    VIRTUAL_ENV=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_VERSION="0.7.2" \
+    NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
+    HYBRID_EP_MULTINODE=1 \
+    RDMA_CORE_HOME=/opt/rdma-core/build \
+    LD_LIBRARY_PATH="/usr/local/cuda/lib64/:$LD_LIBRARY_PATH"
 
 ##############################################################################
 ##
@@ -36,13 +35,13 @@ RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
 ##
 ##############################################################################
 
-ARG INSTALL_DEEPEP=True
-ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
-
-ENV HYBRID_EP_MULTINODE=1
-ENV RDMA_CORE_HOME=/opt/rdma-core/build
-ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64/:$LD_LIBRARY_PATH
 RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patch \
+    curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    # Address CVE-2025-68973
+    apt-get update && apt install -y --only-upgrade gnupg && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
     if [ "$INSTALL_DEEPEP" = "True" ]; then \
     # Upgrade system rdma-core to v60; libibverbs-dev supplies the unversioned
     # libibverbs.so symlink required at link time.
@@ -93,10 +92,16 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
+    # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
+    # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
+    # image, not the default CUDA include path) and scope the build to the target archs.
+    export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
+        CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS}" \
+        CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS}" && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
-    pip install nvidia-cutlass-dsl[cu13]==4.4.1 && \
+    pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \

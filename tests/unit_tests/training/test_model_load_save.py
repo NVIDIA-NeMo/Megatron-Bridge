@@ -323,9 +323,9 @@ class TestLoadMegatronModel:
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
-    @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
+    @pytest.mark.parametrize("model_type", ["gpt", "hybrid", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
-    @patch("megatron.bridge.training.mlm_compat.model._mamba_provider")
+    @patch("megatron.bridge.training.mlm_compat.model._hybrid_provider")
     @patch("megatron.bridge.training.mlm_compat.model._gpt_provider")
     @patch("megatron.bridge.training.mlm_compat.model._get_model")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -346,7 +346,7 @@ class TestLoadMegatronModel:
         mock_load_weights,
         mock_get_model,
         mock_gpt_provider,
-        mock_mamba_provider,
+        mock_hybrid_provider,
         mock_temp_dist,
         model_type,
     ):
@@ -380,15 +380,15 @@ class TestLoadMegatronModel:
         mock_provider = None
         if model_type == "gpt":
             mock_provider = mock_gpt_provider
-        elif model_type == "mamba":
-            mock_provider = mock_mamba_provider
+        elif model_type in ("hybrid", "mamba"):
+            mock_provider = mock_hybrid_provider
         mock_get_model.return_value = [mock_model]
 
         mock_transformer_cfg.return_value = mock_model_cfg
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
-        if model_type in ("gpt", "mamba"):
+        if model_type in ("gpt", "hybrid", "mamba"):
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
             assert isinstance(result, dict)

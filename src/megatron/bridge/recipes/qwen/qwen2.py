@@ -906,7 +906,7 @@ def qwen2_500m_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1004,7 +1004,7 @@ def qwen2_1p5b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1102,7 +1102,7 @@ def qwen2_7b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1200,7 +1200,7 @@ def qwen2_72b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1303,7 +1303,7 @@ def qwen25_500m_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1401,7 +1401,7 @@ def qwen25_1p5b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1499,7 +1499,7 @@ def qwen25_7b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1597,7 +1597,7 @@ def qwen25_14b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1695,7 +1695,7 @@ def qwen25_32b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1793,7 +1793,7 @@ def qwen25_72b_sft_config() -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -1901,7 +1901,7 @@ def qwen2_500m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2004,7 +2004,7 @@ def qwen2_1p5b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2107,7 +2107,7 @@ def qwen2_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2210,7 +2210,7 @@ def qwen2_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2318,7 +2318,7 @@ def qwen25_500m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2421,7 +2421,7 @@ def qwen25_1p5b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2524,7 +2524,7 @@ def qwen25_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2627,7 +2627,7 @@ def qwen25_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2730,7 +2730,7 @@ def qwen25_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()
@@ -2833,7 +2833,7 @@ def qwen25_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Mixed precision - use bf16_mixed config object
     cfg.mixed_precision = bf16_mixed()

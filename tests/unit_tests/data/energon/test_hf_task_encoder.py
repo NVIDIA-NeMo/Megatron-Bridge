@@ -75,7 +75,19 @@ def _make_chatml_sample(conversation, imgs=None, videos=None, key="k1"):
 def _make_collate_fn(pixel_values=None, seen_examples=None):
     """Build a tiny collate function with the same output keys as HF VLM collators."""
 
-    def _collate(examples, processor):  # noqa: ARG001 - processor is part of the collate contract
+    def _collate(
+        examples,
+        processor,  # noqa: ARG001 - processor is part of the collate contract
+        *,
+        visual_keys=None,  # noqa: ARG001 - generic HF collate contract
+        min_pixels=None,  # noqa: ARG001 - generic HF collate contract
+        max_pixels=None,  # noqa: ARG001 - generic HF collate contract
+        sequence_length=None,  # noqa: ARG001 - generic HF collate contract
+        pad_to_max_length=False,  # noqa: ARG001 - generic HF collate contract
+        pad_to_multiple_of=128,  # noqa: ARG001 - generic HF collate contract
+        enable_in_batch_packing=False,  # noqa: ARG001 - generic HF collate contract
+        in_batch_packing_pad_to_multiple_of=1,  # noqa: ARG001 - generic HF collate contract
+    ):
         if seen_examples is not None:
             seen_examples.extend(examples)
         batch_size = len(examples)
@@ -236,7 +248,19 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
             visual_keys,
             min_pixels=None,
             max_pixels=None,
+            sequence_length=None,
+            pad_to_max_length=False,
+            pad_to_multiple_of=128,
+            enable_in_batch_packing=False,
+            in_batch_packing_pad_to_multiple_of=1,
         ):
+            del (
+                sequence_length,
+                pad_to_max_length,
+                pad_to_multiple_of,
+                enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of,
+            )
             seen_kwargs.update(
                 {
                     "examples": examples,

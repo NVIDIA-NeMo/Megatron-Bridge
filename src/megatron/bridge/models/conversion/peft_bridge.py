@@ -39,7 +39,7 @@ from megatron.bridge.models.conversion.utils import (
     persistent_buffers,
 )
 from megatron.bridge.peft.canonical_lora import ModuleDict
-from megatron.bridge.peft.lora import LoRAMerge
+from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     get_adapter_attributes_from_linear,
     is_expert_linear,
@@ -1197,7 +1197,6 @@ class MegatronPeftBridge:
                 linear_in_on_base,
                 alpha,
                 dim,
-                tp_size=1,
                 tp_group=None,
             )
 
@@ -1361,7 +1360,6 @@ class MegatronPeftBridge:
             linear_in_on_base,
             alpha,
             dim,
-            tp_size=1,
             tp_group=None,
         )
         return merged.to(orig_dtype)

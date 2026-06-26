@@ -68,7 +68,7 @@ GLM_45V_FINETUNE_PACKED_RECIPES = [
             "moe_layer_freq": [0, 1],
             "pipeline_model_parallel_layout": None,
         },
-        {"pack_sequences_in_batch": True},
+        {"enable_in_batch_packing": True},
     ),
 ]
 

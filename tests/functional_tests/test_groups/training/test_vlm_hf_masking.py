@@ -18,7 +18,7 @@ import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.training.config import DatasetBuildContext
 
 
@@ -32,7 +32,7 @@ class TestVLMHFMasking:
 
         hf_processor = os.environ.get("HF_VLM_PROCESSOR", "Qwen/Qwen2.5-VL-3B-Instruct")
 
-        provider = HFDatasetConversationProvider(
+        provider = HFConversationDatasetProvider(
             seq_length=256,
             hf_processor_path=hf_processor,
             maker_name="rdr",  # small and public HF dataset

@@ -268,7 +268,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config - packed_sequence=True by default
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # MoE performance optimizations
     cfg.model.moe_permute_fusion = True
@@ -334,7 +334,7 @@ def moonlight_16b_sft_config() -> ConfigContainer:
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - Moonlight uses specific optimizer settings
     cfg.optimizer.adam_eps = 1e-5
@@ -481,7 +481,7 @@ def moonlight_16b_peft_config(
     cfg.model.seq_length = seq_length
     # Dataset config - packed_sequence=True by default
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # MoE performance optimizations
     cfg.model.moe_permute_fusion = True
@@ -551,7 +551,7 @@ def moonlight_16b_peft_config(
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides
     cfg.optimizer.adam_eps = 1e-5

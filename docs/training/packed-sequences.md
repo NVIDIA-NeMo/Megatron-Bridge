@@ -21,8 +21,8 @@ enablement through context parallelism:
 
 | Path | Use case | Key config |
 |---|---|---|
-| Offline packed SFT | Text-only finetuning | `packed_sequence_specs` |
-| VLM in-batch packing | VLM finetuning | `pack_sequences_in_batch=True` |
+| Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
+| VLM in-batch packing | VLM finetuning | `enable_in_batch_packing=True` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
 These are related but they are not the same knob. Offline packed SFT and VLM
