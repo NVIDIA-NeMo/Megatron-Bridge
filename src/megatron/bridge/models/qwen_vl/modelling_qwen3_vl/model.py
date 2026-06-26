@@ -156,6 +156,54 @@ def _get_packed_cp_index(
     return index.to(device=device, dtype=torch.long)
 
 
+def _select_sequence(
+    val: torch.Tensor | None,
+    index: torch.Tensor,
+    *,
+    seq_dim: int,
+) -> torch.Tensor | None:
+    """Index-select one sequence dimension and keep the result contiguous."""
+    if val is None:
+        return None
+    return val.index_select(seq_dim, index).contiguous()
+
+
+def _prepare_packed_lm_input_ids(
+    input_ids: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    packed_seq_params: PackedSeqParams,
+    packed_cp_index: torch.Tensor | None,
+    *,
+    cp_size: int,
+    pg_collection: ProcessGroupCollection,
+) -> tuple[torch.Tensor | None, torch.Tensor | None, int | None]:
+    """Return language-model token IDs aligned with the packed embedding stream."""
+    if input_ids is None:
+        return None, attention_mask, None
+
+    if packed_cp_index is not None:
+        return _select_sequence(input_ids, packed_cp_index, seq_dim=1), attention_mask, input_ids.size(1)
+
+    if attention_mask is None:
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+    lm_input_ids = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True, pg_collection=pg_collection)[0]
+    return lm_input_ids, attention_mask, lm_input_ids.size(1) * cp_size
+
+
+def _prepare_packed_bshd_tensor(
+    val: torch.Tensor,
+    attention_mask: torch.Tensor,
+    packed_cp_index: torch.Tensor | None,
+    *,
+    seq_dim: int,
+    pg_collection: ProcessGroupCollection,
+) -> torch.Tensor:
+    """Return a packed tensor in BSHD-like layout."""
+    if packed_cp_index is not None:
+        return _select_sequence(val, packed_cp_index, seq_dim=seq_dim)
+    return preprocess_packed_seqs(val, attention_mask, pre_process=True, pg_collection=pg_collection)[0]
+
+
 def _split_if_full_sequence(
     val: torch.Tensor | None,
     *,
@@ -512,6 +560,17 @@ class Qwen3VLModel(MegatronModule):
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
+        packed_cp_index = (
+            _get_packed_cp_index(
+                packed_seq_params,
+                total_tokens=input_ids.size(1),
+                cp_size=cp_size,
+                cp_rank=cp_rank,
+                device=input_ids.device,
+            )
+            if packed_seq_params is not None and cp_size > 1 and input_ids is not None
+            else None
+        )
 
         # input_ids to pass to the language model for MTP (Multi-Token Prediction).
         # MTP's _get_embeddings rolls input_ids to generate future-token embeddings,
@@ -519,7 +578,6 @@ class Qwen3VLModel(MegatronModule):
         # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
         lm_input_ids = input_ids
         language_model_total_sequence_length = None
-        packed_cp_index = None
         full_sequence_length = input_ids.size(1) if input_ids is not None else None
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
@@ -626,31 +684,21 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
             if packed_seq_params is not None:
-                if cp_size > 1:
-                    if input_ids is None:
-                        raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
-                    packed_cp_index = _get_packed_cp_index(
-                        packed_seq_params,
-                        total_tokens=input_ids.size(1),
-                        cp_size=cp_size,
-                        cp_rank=cp_rank,
-                        device=input_ids.device,
-                    )
-                    lm_input_ids = input_ids.index_select(1, packed_cp_index)
-                    language_model_total_sequence_length = input_ids.size(1)
-                    vision_mask_thd = (
-                        None if vision_mask is None else vision_mask.index_select(1, packed_cp_index).contiguous()
-                    )
+                if cp_size > 1 and packed_cp_index is None:
+                    raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
+                lm_input_ids, attention_mask, language_model_total_sequence_length = _prepare_packed_lm_input_ids(
+                    input_ids,
+                    attention_mask,
+                    packed_seq_params,
+                    packed_cp_index,
+                    cp_size=cp_size,
+                    pg_collection=self.pg_collection,
+                )
+                if packed_cp_index is not None:
+                    vision_mask_thd = _select_sequence(vision_mask, packed_cp_index, seq_dim=1)
                 else:
-                    if attention_mask is None:
-                        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-                    input_ids_thd, _ = preprocess_packed_seqs(
-                        input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                    )
-                    lm_input_ids = input_ids_thd
-                    language_model_total_sequence_length = input_ids_thd.size(1) * cp_size
                     _, _, vision_mask_thd = reorganize_inputs(
-                        input_ids=input_ids_thd,
+                        input_ids=lm_input_ids,
                         pixel_values=pixel_values,
                         pixel_values_videos=pixel_values_videos,
                         image_grid_thw=image_grid_thw,
@@ -667,34 +715,32 @@ class Qwen3VLModel(MegatronModule):
                     new_deepstack_feature_lists = []
                     for deepstack_visual_embed in deepstack_feature_lists:
                         tmp_embeddings[vision_mask] = deepstack_visual_embed
-                        if packed_cp_index is not None:
-                            tmp_embeddings_thd = tmp_embeddings.index_select(1, packed_cp_index).contiguous()
-                        else:
-                            tmp_embeddings_thd = preprocess_packed_seqs(
-                                tmp_embeddings.contiguous(),
-                                attention_mask,
-                                pre_process=True,
-                                pg_collection=self.pg_collection,
-                            )[0]
+                        tmp_embeddings_thd = _prepare_packed_bshd_tensor(
+                            tmp_embeddings.contiguous(),
+                            attention_mask,
+                            packed_cp_index,
+                            seq_dim=1,
+                            pg_collection=self.pg_collection,
+                        )
                         new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
 
                     deepstack_feature_lists = new_deepstack_feature_lists
 
                 vision_mask = vision_mask_thd
                 if packed_cp_index is not None:
-                    combined_embeddings_thd = combined_embeddings.index_select(0, packed_cp_index).contiguous()
+                    combined_embeddings = _select_sequence(combined_embeddings, packed_cp_index, seq_dim=0)
                 else:
-                    combined_embeddings_thd = (
-                        preprocess_packed_seqs(
+                    combined_embeddings = (
+                        _prepare_packed_bshd_tensor(
                             combined_embeddings.transpose(0, 1).contiguous(),
                             attention_mask,
-                            pre_process=True,
+                            packed_cp_index,
+                            seq_dim=1,
                             pg_collection=self.pg_collection,
-                        )[0]
+                        )
                         .transpose(0, 1)
                         .contiguous()
                     )
-                combined_embeddings = combined_embeddings_thd
             elif combined_embeddings is not None and cp_size > 1:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
@@ -709,26 +755,14 @@ class Qwen3VLModel(MegatronModule):
             # On non-pre_process PP stages (e.g. the last stage where MTP runs),
             # convert lm_input_ids to THD format so it matches position_ids.
             if packed_seq_params is not None:
-                if input_ids is not None:
-                    if cp_size > 1:
-                        packed_cp_index = _get_packed_cp_index(
-                            packed_seq_params,
-                            total_tokens=input_ids.size(1),
-                            cp_size=cp_size,
-                            cp_rank=cp_rank,
-                            device=input_ids.device,
-                        )
-                        lm_input_ids = input_ids.index_select(1, packed_cp_index)
-                        language_model_total_sequence_length = input_ids.size(1)
-                    else:
-                        if attention_mask is None:
-                            attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-                        lm_input_ids, _ = preprocess_packed_seqs(
-                            input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                        )
-                        language_model_total_sequence_length = lm_input_ids.size(1) * cp_size
-                else:
-                    lm_input_ids = None
+                lm_input_ids, attention_mask, language_model_total_sequence_length = _prepare_packed_lm_input_ids(
+                    input_ids,
+                    attention_mask,
+                    packed_seq_params,
+                    packed_cp_index,
+                    cp_size=cp_size,
+                    pg_collection=self.pg_collection,
+                )
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -776,7 +810,7 @@ class Qwen3VLModel(MegatronModule):
             )  #  [3*b*s]
         if packed_seq_params is not None:
             if packed_cp_index is not None:
-                position_ids = position_ids.index_select(2, packed_cp_index).contiguous()
+                position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
             else:
                 if attention_mask is None:
                     mask_source = input_ids if input_ids is not None else position_ids[0]
@@ -826,11 +860,10 @@ class Qwen3VLModel(MegatronModule):
         return_compacted_loss_mask = False
         if packed_seq_params is not None:
             if packed_cp_index is not None:
-                if labels is not None:
-                    labels = labels.index_select(1, packed_cp_index).contiguous()
+                labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
                 if loss_mask is not None:
                     original_loss_mask_shape = loss_mask.shape
-                    loss_mask = loss_mask.index_select(1, packed_cp_index).contiguous()
+                    loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
                     return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
             elif self.config.sequence_parallel:
                 supervision_mask_source = input_ids

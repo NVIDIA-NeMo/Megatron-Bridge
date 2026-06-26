@@ -97,6 +97,19 @@ def _has_qwen_mrope_position_ids(batch: Mapping[str, Any]) -> bool:
     return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
 
 
+def _uses_qwen_mrope_metadata(cfg: ConfigContainer) -> bool:
+    """Return whether the model config supports Qwen-style explicit MRoPE metadata."""
+    model_cfg = getattr(cfg, "model", None)
+    return bool(
+        model_cfg is not None
+        and getattr(model_cfg, "position_embedding_type", None) == "mrope"
+        and getattr(model_cfg, "mrope_section", None) is not None
+        and hasattr(model_cfg, "vision_start_token_id")
+        and hasattr(model_cfg, "image_token_id")
+        and hasattr(model_cfg, "video_token_id")
+    )
+
+
 def _project_visual_inputs_for_pp_stage(visual_inputs: Any, *, is_first_pp_stage: bool) -> Any:
     """Drop visual payload tensors from PP stages that only need visual metadata."""
     if visual_inputs is None or is_first_pp_stage:
@@ -117,6 +130,7 @@ def get_batch_from_iterator(
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
     defer_in_batch_packing_to_step: bool = False,
+    use_qwen_mrope_metadata: bool = False,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -149,7 +163,9 @@ def get_batch_from_iterator(
             required_host_keys.add("cu_seqlens_unpadded_argmin")
         required_host_keys.add("max_seqlen")
 
-    can_use_mrope_metadata_only = _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
+    can_use_mrope_metadata_only = (
+        use_qwen_mrope_metadata and _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
+    )
     needs_input_ids = is_first_pp_stage or is_last_pp_stage or not can_use_mrope_metadata_only
     if needs_input_ids:
         required_device_keys.update(("tokens", "input_ids"))
@@ -204,6 +220,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
         defer_in_batch_packing_to_step=_defer_in_batch_packing_to_step(cfg),
+        use_qwen_mrope_metadata=_uses_qwen_mrope_metadata(cfg),
     )
 
     visual_inputs = batch.get("visual_inputs")

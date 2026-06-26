@@ -207,6 +207,7 @@ def test_get_batch_from_iterator_uses_mrope_metadata_only_on_middle_pp_stage():
         skip_getting_attention_mask_from_dataset=True,
         is_first_pp_stage=False,
         is_last_pp_stage=False,
+        use_qwen_mrope_metadata=True,
     )
 
     assert out["tokens"] is None
@@ -214,6 +215,29 @@ def test_get_batch_from_iterator_uses_mrope_metadata_only_on_middle_pp_stage():
     assert out["position_ids"].shape == (3, 1, 3)
     assert out["visual_inputs"].pixel_values is None
     assert out["visual_inputs"].image_grid_thw is not None
+
+
+def test_get_batch_from_iterator_keeps_input_ids_for_non_qwen_3d_position_ids():
+    batch = _make_batch()
+    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
+        batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+    )
+
+    assert out["tokens"] is not None
+    assert out["input_ids"] is not None
+    assert out["position_ids"].shape == (3, 1, 3)
+    assert out["visual_inputs"].pixel_values is None
 
 
 def test_get_batch_from_iterator_keeps_input_ids_when_step_must_pack_middle_pp_stage():
@@ -232,6 +256,7 @@ def test_get_batch_from_iterator_keeps_input_ids_when_step_must_pack_middle_pp_s
         is_first_pp_stage=False,
         is_last_pp_stage=False,
         defer_in_batch_packing_to_step=True,
+        use_qwen_mrope_metadata=True,
     )
 
     assert out["tokens"] is not None
