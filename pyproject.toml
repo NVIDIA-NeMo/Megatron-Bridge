@@ -128,7 +128,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@4220403e831d29e93868f7793693ea83f6b8b05b",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@b9d690e042b1c4e455214e7dab65d6d3512c05d6",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
