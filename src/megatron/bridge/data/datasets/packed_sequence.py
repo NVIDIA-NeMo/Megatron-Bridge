@@ -13,7 +13,6 @@
 # limitations under the License.
 import json
 import logging
-import multiprocessing as mp
 import warnings
 from dataclasses import dataclass
 from multiprocessing import Pool
@@ -37,31 +36,6 @@ logger = logging.getLogger(__name__)
 _shared_dataset = None
 
 
-def _distributed_is_initialized() -> bool:
-    """Return whether torch.distributed is initialized without importing torch at module import time."""
-    try:
-        import torch
-
-        return torch.distributed.is_available() and torch.distributed.is_initialized()
-    except (AttributeError, ImportError, RuntimeError):
-        return False
-
-
-def _resolve_num_tokenizer_workers(num_workers: int) -> int:
-    """Resolve the tokenizer worker count used during packed data preparation."""
-    if num_workers > 0:
-        return num_workers
-
-    if _distributed_is_initialized():
-        logger.info(
-            "Using a single tokenizer worker for in-process distributed packing. "
-            "Set PackedSequenceSpecs.num_tokenizer_workers > 1 to opt into multiprocessing."
-        )
-        return 1
-
-    return mp.cpu_count()
-
-
 def _tokenize_get_item(i):
     return _shared_dataset[i]
 
@@ -72,8 +46,7 @@ def _tokenize_init_worker(dataset):
 
 
 def _retrieve_tokenized(dataset, num_workers):
-    num_workers = _resolve_num_tokenizer_workers(num_workers)
-    if num_workers == 1:
+    if num_workers <= 1:
         return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
     with Pool(num_workers, initializer=_tokenize_init_worker, initargs=(dataset,)) as pool:
         return np.array(list(tqdm(pool.imap(_tokenize_get_item, range(len(dataset))), total=len(dataset))))
@@ -305,7 +278,7 @@ class PackedSequenceSpecs:
     num_tokenizer_workers: int = -1
     """
     The number of worker processes to use for tokenization when preparing the packed sequence dataset.
-    If -1, the number of workers will be set to the number of CPU cores available
+    If less than or equal to 1, tokenization runs serially. Values greater than 1 enable multiprocessing.
     """
 
     packed_train_data_path: str = None

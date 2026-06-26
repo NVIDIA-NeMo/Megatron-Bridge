@@ -14,7 +14,7 @@
 
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import _pre_pad_data_point, _resolve_num_tokenizer_workers
+from megatron.bridge.data.datasets.packed_sequence import _pre_pad_data_point, _retrieve_tokenized
 
 
 PAD_ID = 0
@@ -73,23 +73,20 @@ def test_pre_pad_data_point_truncates_overlong():
     assert len(data["loss_mask"]) == 16
 
 
-def test_resolve_num_tokenizer_workers_keeps_explicit_worker_count(monkeypatch):
-    """Explicit worker counts should remain opt-in even when distributed is initialized."""
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: True)
+def test_retrieve_tokenized_uses_serial_path_for_non_positive_workers(monkeypatch):
+    """Non-positive worker counts should not create a multiprocessing pool."""
 
-    assert _resolve_num_tokenizer_workers(2) == 2
+    class TinyDataset:
+        def __len__(self):
+            return 3
 
+        def __getitem__(self, index):
+            return index + 10
 
-def test_resolve_num_tokenizer_workers_uses_one_worker_during_distributed_packing(monkeypatch):
-    """Default multiprocessing is unsafe after distributed signal handlers are installed."""
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: True)
+    def fail_pool(*args, **kwargs):
+        raise AssertionError("Pool should not be constructed for non-positive worker counts")
 
-    assert _resolve_num_tokenizer_workers(-1) == 1
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.Pool", fail_pool)
 
-
-def test_resolve_num_tokenizer_workers_uses_cpu_count_outside_distributed(monkeypatch):
-    """Outside distributed training, the historical default still uses all CPUs."""
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence._distributed_is_initialized", lambda: False)
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.mp.cpu_count", lambda: 12)
-
-    assert _resolve_num_tokenizer_workers(-1) == 12
+    assert _retrieve_tokenized(TinyDataset(), -1).tolist() == [10, 11, 12]
+    assert _retrieve_tokenized(TinyDataset(), 0).tolist() == [10, 11, 12]
