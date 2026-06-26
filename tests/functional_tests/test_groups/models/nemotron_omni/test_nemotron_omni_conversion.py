@@ -35,13 +35,17 @@ _DEFAULT_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 # writing a ~30B (≈60 GB) model. All hidden/head/projector dims and the vision (RADIO)
 # config are left intact so the vision→LLM and sound→LLM projectors stay consistent.
 #
-# ``hybrid_override_pattern`` must stay the same length as ``num_hidden_layers``; we take
-# the leading 6 chars of the real 52-char pattern, which keeps a representative mamba (M),
-# MoE-MLP (E) and attention (*) layer mix.
+# ``hybrid_override_pattern`` and the derived layer-type lists must stay the same
+# length as ``num_hidden_layers``; we take the leading 6 layers of the real
+# 52-layer pattern, which keeps a representative mamba (M), MoE-MLP (E) and
+# attention (*) layer mix.
+_LLM_LAYER_TYPES = ["mamba", "moe", "mamba", "moe", "mamba", "attention"]
 _LLM_OVERRIDES = {
-    "num_hidden_layers": 6,
     "hybrid_override_pattern": "MEMEM*",
+    "layer_types": _LLM_LAYER_TYPES,
+    "layers_block_type": _LLM_LAYER_TYPES,
     "n_routed_experts": 4,
+    "num_hidden_layers": 6,
     "num_experts_per_tok": 2,
     "vocab_size": 4096,
 }
@@ -215,3 +219,6 @@ class TestNemotronOmniConversion:
         assert "llm_config" in saved_config
         assert "vision_config" in saved_config
         assert "sound_config" in saved_config
+        assert saved_config["llm_config"]["num_hidden_layers"] == 6
+        assert saved_config["llm_config"]["layer_types"] == _LLM_LAYER_TYPES
+        assert saved_config["llm_config"]["layers_block_type"] == _LLM_LAYER_TYPES
