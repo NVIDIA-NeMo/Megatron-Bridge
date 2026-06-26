@@ -18,9 +18,14 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -28,6 +33,8 @@ MISSING_QWEN_VL_UTILS_MSG = (
     "qwen_vl_utils is required for Qwen2.5 VL processing. Please `pip install qwen-vl-utils` or"
     " provide compatible vision preprocessing."
 )
+CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
+CHATML_TURN_END = "<|im_end|>"
 
 try:
     from qwen_vl_utils import process_vision_info
@@ -40,17 +47,37 @@ except ImportError:
 def qwen2_5_collate_fn(
     examples: list,
     processor,
-    min_pixels: int = 200704,
-    max_pixels: int = 1003520,
+    min_pixels: int | None = 200704,
+    max_pixels: int | None = 1003520,
+    visual_keys: object = None,
     require_assistant_matches: bool = False,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
+    del visual_keys
+
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=CHATML_ASSISTANT_START,
+        assistant_end=CHATML_TURN_END,
+    )
 
-    texts = [processor.apply_chat_template(example["conversation"], tokenize=False) for example in examples]
+    texts = [
+        processor.apply_chat_template(
+            example["conversation"],
+            tokenize=False,
+            **chat_template_kwargs_from_example(example),
+        )
+        for example in examples
+    ]
     # Build per-example media (list) and split by presence.  Qwen processors accept
     # nested per-example image/video lists; splitting avoids passing empty media
     # kwargs for text-only rows.
@@ -86,9 +113,11 @@ def qwen2_5_collate_fn(
             "text": texts_with,
             "padding": True,
             "return_tensors": "pt",
-            "min_pixels": min_pixels,
-            "max_pixels": max_pixels,
         }
+        if min_pixels is not None:
+            processor_kwargs["min_pixels"] = min_pixels
+        if max_pixels is not None:
+            processor_kwargs["max_pixels"] = max_pixels
         if any(images_with):
             processor_kwargs["images"] = images_with
         if any(videos_with):
@@ -169,7 +198,7 @@ def qwen2_5_collate_fn(
                 input_ids,
                 processor,
                 skipped_tokens,
-                require_matches=require_assistant_matches,
+                boundary_config=boundary_config,
                 warn_on_all_masked=not require_assistant_matches,
             )
             for example, input_ids in zip(examples, batch["input_ids"])
@@ -192,4 +221,13 @@ def qwen2_5_collate_fn(
     for key in THW_GRID_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    pad_or_pack_sequence(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return batch

@@ -21,11 +21,11 @@ so num_hidden_layers must be a multiple of 4.
 
 Run dense test:
   uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest \
-    tests/functional_tests/models/qwen_vl/test_qwen35_vl_conversion.py::TestQwen35VLConversion -v -s
+    tests/functional_tests/test_groups/models/qwen_vl/test_qwen35_vl_conversion.py::TestQwen35VLConversion -v -s
 
 Run MoE test:
   uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest \
-    tests/functional_tests/models/qwen_vl/test_qwen35_vl_conversion.py::TestQwen35VLMoEConversion -v -s
+    tests/functional_tests/test_groups/models/qwen_vl/test_qwen35_vl_conversion.py::TestQwen35VLMoEConversion -v -s
 """
 
 import json

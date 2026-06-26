@@ -48,7 +48,10 @@ class FinetuningDatasetBuilder:
         seed (int, optional): Random seed for data shuffling. Defaults to 1234.
         memmap_workers (int, optional): Number of worker processes for memmap datasets. Defaults to 1.
         max_train_samples (int, optional): Maximum number of training samples. Defaults to None.
-        packed_sequence_specs (Optional[PackedSequenceSpecs], optional): Specifications for packed sequences. Defaults to None.
+        enable_offline_packing (bool, optional): Whether to prepare and load offline packed sequences.
+            Defaults to False.
+        offline_packing_specs (Optional[PackedSequenceSpecs], optional): Specifications for offline packed
+            sequences. Required when enable_offline_packing is True. Defaults to None.
         dataset_kwargs (Optional[dict[str, Any]], optional): Additional dataset creation arguments. Defaults to None.
         do_validation (bool, optional): Whether to build the validation dataset. Defaults to True.
         do_test (bool, optional): Whether to build the test dataset. Defaults to True.
@@ -62,11 +65,21 @@ class FinetuningDatasetBuilder:
         seed: int = 1234,
         memmap_workers: int = 1,
         max_train_samples: Optional[int] = None,
-        packed_sequence_specs: Optional[PackedSequenceSpecs] = None,
+        enable_offline_packing: bool = False,
+        offline_packing_specs: Optional[PackedSequenceSpecs] = None,
         dataset_kwargs: Optional[dict[str, Any]] = None,
         do_validation: bool = True,
         do_test: bool = True,
     ):
+        if enable_offline_packing and offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if offline_packing_specs is not None and not enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+        if enable_offline_packing:
+            assert offline_packing_specs is not None
+            if offline_packing_specs.packed_sequence_size <= 0:
+                raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
             self.dataset_root = msc.Path(dataset_root)
@@ -77,12 +90,13 @@ class FinetuningDatasetBuilder:
         self.seed = seed
         self.memmap_workers = memmap_workers
         self.max_train_samples = max_train_samples
-        self.packed_sequence_specs = packed_sequence_specs
-        self.packed_sequence_size = -1 if not packed_sequence_specs else packed_sequence_specs.packed_sequence_size
+        self.enable_offline_packing = enable_offline_packing
+        self.offline_packing_specs = offline_packing_specs
+        self.packed_sequence_size = -1 if not offline_packing_specs else offline_packing_specs.packed_sequence_size
         self.dataset_kwargs = dataset_kwargs or {}
-        self._pad_cu_seqlens = False if not packed_sequence_specs else packed_sequence_specs.pad_cu_seqlens
-        self._pad_seq_to_mult = None if not packed_sequence_specs else packed_sequence_specs.pad_seq_to_mult
-        self._num_tokenizer_workers = -1 if not packed_sequence_specs else packed_sequence_specs.num_tokenizer_workers
+        self._pad_cu_seqlens = False if not offline_packing_specs else offline_packing_specs.pad_cu_seqlens
+        self._pad_seq_to_mult = None if not offline_packing_specs else offline_packing_specs.pad_seq_to_mult
+        self._num_tokenizer_workers = -1 if not offline_packing_specs else offline_packing_specs.num_tokenizer_workers
 
         self.do_validation = do_validation
         self.do_test = do_test
@@ -352,7 +366,7 @@ class FinetuningDatasetBuilder:
     def pack_metadata(self) -> Path:
         """Path to the metadata file for packed sequences.
 
-        Determined by `packed_sequence_specs` or defaults based on the
+        Determined by `offline_packing_specs` or defaults based on the
         `default_pack_path` and `packed_sequence_size`.
 
         Returns:
@@ -362,8 +376,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.packed_metadata_path is not None:
-                return self.packed_sequence_specs.packed_metadata_path
+            if self.offline_packing_specs.packed_metadata_path is not None:
+                return self.offline_packing_specs.packed_metadata_path
             return self.default_pack_path / f"{self.packed_sequence_size}_metadata.jsonl"
         else:
             raise ValueError("pack_metadata invalid since packed sequence size is not specified.")
@@ -372,7 +386,7 @@ class FinetuningDatasetBuilder:
     def train_path_packed(self) -> Path:
         """Path to the packed training dataset file.
 
-        Determined by `packed_sequence_specs` or defaults based on the
+        Determined by `offline_packing_specs` or defaults based on the
         `default_pack_path` and `packed_sequence_size`.
 
         Returns:
@@ -382,8 +396,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.packed_train_data_path is not None:
-                return self.packed_sequence_specs.packed_train_data_path
+            if self.offline_packing_specs.packed_train_data_path is not None:
+                return self.offline_packing_specs.packed_train_data_path
             return self.default_pack_path / f"training_{self.packed_sequence_size}.idx.parquet"
         else:
             raise ValueError("`train_path_packed` invalid since packed sequence size is not specified.")
@@ -392,7 +406,7 @@ class FinetuningDatasetBuilder:
     def validation_path_packed(self) -> Path:
         """Path to the packed validation dataset file.
 
-        Determined by `packed_sequence_specs` or defaults based on the
+        Determined by `offline_packing_specs` or defaults based on the
         `default_pack_path` and `packed_sequence_size`.
 
         Returns:
@@ -402,8 +416,8 @@ class FinetuningDatasetBuilder:
             ValueError: If packed sequences are not configured.
         """
         if self.packed_sequence_size > 0:
-            if self.packed_sequence_specs.packed_val_data_path is not None:
-                return self.packed_sequence_specs.packed_val_data_path
+            if self.offline_packing_specs.packed_val_data_path is not None:
+                return self.offline_packing_specs.packed_val_data_path
             return self.default_pack_path / f"validation_{self.packed_sequence_size}.idx.parquet"
         else:
             raise ValueError("`validation_path_packed` invalid since packed sequence size is not specified.")
@@ -424,8 +438,8 @@ class FinetuningDatasetBuilder:
         tokenizer_cls = HuggingFaceTokenizer
         tokenizer_instance = self.tokenizer._tokenizer
 
-        if self.packed_sequence_specs and self.packed_sequence_specs.tokenizer_model_name is not None:
-            return self.packed_sequence_specs.tokenizer_model_name
+        if self.offline_packing_specs and self.offline_packing_specs.tokenizer_model_name is not None:
+            return self.offline_packing_specs.tokenizer_model_name
         elif isinstance(tokenizer_instance, tokenizer_cls):
             name = self.tokenizer.path
 

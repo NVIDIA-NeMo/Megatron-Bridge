@@ -19,10 +19,9 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 import modelopt.torch.distill as mtd
 import modelopt.torch.distill.plugins.megatron as mtd_mcore
 from megatron.core.models.common.language_module.language_module import LanguageModule
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
 
 
@@ -35,12 +34,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DistillationProvider(TransformerConfig):
-    """Provider for Megatron Core GPT models in distillation mode.
+    """Provider for Bridge language models in distillation mode.
 
     Please use `convert_to_distillation_provider()` to create an instance of this class.
     """
 
-    teacher: Optional[GPTModelProvider | MambaModelProvider] = None
+    teacher: Optional[GPTModelProvider | HybridModelProvider] = None
     kd_config: Optional["ModelOptDistillConfig"] = None
     # Optional callable run on the freshly built student model, *before* it is converted to a
     # distillation model. It receives the student model and returns the (possibly replaced) student
@@ -72,7 +71,7 @@ class DistillationProvider(TransformerConfig):
         # Hack to dynamically subclass other providers and still use their methods
         self._super_class = self.__class__.__bases__[0]
 
-    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide(self, pre_process=None, post_process=None, vp_stage=None) -> LanguageModule:
         """Configure and instantiate a ModelOpt DistillationModel based on this configuration.
 
         Args:
@@ -81,7 +80,7 @@ class DistillationProvider(TransformerConfig):
             vp_stage: Virtual pipeline stage
 
         Returns:
-            MCoreGPTModel: Configured ModelOpt DistillationModel instance
+            Configured ModelOpt DistillationModel instance.
         """
         if vp_stage is not None:
             raise ValueError("ModelOpt KD currently does not support virtual-pipeline parallel.")
@@ -136,8 +135,8 @@ class DistillationProvider(TransformerConfig):
 
 
 def convert_to_distillation_provider(
-    student_provider: GPTModelProvider | MambaModelProvider,
-    teacher_provider: GPTModelProvider | MambaModelProvider,
+    student_provider: GPTModelProvider | HybridModelProvider,
+    teacher_provider: GPTModelProvider | HybridModelProvider,
     kd_config: Optional["ModelOptDistillConfig"] = None,
     student_pre_conversion_hook: Optional[Callable[[LanguageModule], LanguageModule]] = None,
 ) -> "DistillationProvider":
@@ -152,11 +151,11 @@ def convert_to_distillation_provider(
             Useful to restore ModelOpt state -- e.g. quantizers for Quantization Aware Distillation.
     """
 
-    assert isinstance(student_provider, (GPTModelProvider, MambaModelProvider)), (
-        "Student provider must be a subclass of GPTModelProvider or MambaModelProvider."
+    assert isinstance(student_provider, (GPTModelProvider, HybridModelProvider)), (
+        "Student provider must be a subclass of GPTModelProvider or HybridModelProvider."
     )
-    assert isinstance(teacher_provider, (GPTModelProvider, MambaModelProvider)), (
-        "Teacher provider must be a subclass of GPTModelProvider or MambaModelProvider."
+    assert isinstance(teacher_provider, (GPTModelProvider, HybridModelProvider)), (
+        "Teacher provider must be a subclass of GPTModelProvider or HybridModelProvider."
     )
 
     DistillationProvider.__bases__ = (type(student_provider),)

@@ -44,7 +44,7 @@ PARALLELISM_CONFIGS=("1,2,1,1" "1,2,1,2" "1,2,1,4")
 for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
     for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         IFS=',' read -r EP TP PP CP <<< "$par_config"
-        echo "Running full finetuning pack_sequences_in_batch=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
+        echo "Running full finetuning enable_in_batch_packing=$pack_config with EP=$EP TP=$TP PP=$PP CP=$CP"
         uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_sft_config \
             --step_func qwen3_vl_step \
@@ -64,7 +64,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_seq_pack_${pack_config}_tp${TP}_cp${CP} \
             dataset.maker_name=make_${DATASET_NAME}_dataset \
             dataset.seq_length=$SEQ_LENGTH \
-            dataset.pack_sequences_in_batch=$pack_config \
+            dataset.enable_in_batch_packing=$pack_config \
             model.expert_model_parallel_size=$EP \
             model.tensor_model_parallel_size=$TP \
             model.pipeline_model_parallel_size=$PP \
