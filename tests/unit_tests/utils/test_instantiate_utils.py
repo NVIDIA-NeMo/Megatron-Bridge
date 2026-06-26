@@ -706,7 +706,108 @@ class TestTargetPrefixValidation:
             "_target_": "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
             "_args_": ["os."],
         }
-        with pytest.raises(InstantiationException, match="modify target validation state"):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    def test_instantiate_rejects_direct_transformers_import_target(self):
+        """Test that configs cannot import arbitrary files through Transformers helpers."""
+        config = {
+            "_target_": "transformers.utils.import_utils.direct_transformers_import",
+            "_args_": ["."],
+            "file": "__init__.py",
+        }
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target,args",
+        [
+            ("megatron.bridge.utils.import_utils.safe_import", ["attacker_pkg.payload"]),
+            ("megatron.bridge.utils.import_utils.safe_import_from", ["attacker_pkg.payload", "SomeSymbol"]),
+        ],
+    )
+    def test_instantiate_rejects_safe_import_targets(self, target, args):
+        """Test that configs cannot import attacker-controlled modules through Bridge import helpers."""
+        config = {"_target_": target, "_args_": args}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            "transformers.AutoConfig.from_pretrained",
+            "transformers.AutoTokenizer.from_pretrained",
+            "transformers.AutoProcessor.from_pretrained",
+            "transformers.AutoModel.from_pretrained",
+            "transformers.AutoModelForCausalLM.from_pretrained",
+            "transformers.models.auto.configuration_auto.AutoConfig.from_pretrained",
+            "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
+            "transformers.models.auto.processing_auto.AutoProcessor.from_pretrained",
+            "transformers.models.auto.modeling_auto.AutoModel.from_pretrained",
+            "transformers.models.auto.modeling_auto.AutoModelForCausalLM.from_pretrained",
+        ],
+    )
+    def test_instantiate_rejects_transformers_loader_targets(self, target):
+        """Test that configs cannot opt into HuggingFace custom code loaders."""
+        config = {
+            "_target_": target,
+            "pretrained_model_name_or_path": "./attacker_processor",
+            "trust_remote_code": True,
+        }
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target,kwargs",
+        [
+            (
+                "megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained",
+                {"path": "./attacker_hf_model", "trust_remote_code": True},
+            ),
+            (
+                "megatron.bridge.models.hf_pretrained.safe_config_loader.safe_load_config_with_retry",
+                {"path": "./attacker_hf_model", "trust_remote_code": True},
+            ),
+        ],
+    )
+    def test_instantiate_rejects_bridge_hf_loader_targets(self, target, kwargs):
+        """Test that configs cannot reach Bridge wrappers that load trusted HF code."""
+        config = {"_target_": target, **kwargs}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
+            instantiate(config)
+
+    @pytest.mark.parametrize(
+        "target,kwargs",
+        [
+            ("torch.load", {"f": "/tmp/attacker_pickle.pt", "weights_only": False}),
+            ("torch.ops.load_library", {"path": "/tmp/attacker.so"}),
+            ("torch.classes.load_library", {"path": "/tmp/attacker.so"}),
+            ("torch.ctypes.CDLL", {"name": "/tmp/attacker.so"}),
+            ("torch.ctypes.PyDLL", {"name": "/tmp/attacker.so"}),
+            ("torch.ctypes.cdll.LoadLibrary", {"name": "/tmp/attacker.so"}),
+            ("torch.ctypes.pydll.LoadLibrary", {"name": "/tmp/attacker.so"}),
+            ("torch.ctypes.WinDLL", {"name": "/tmp/attacker.dll"}),
+            ("torch.ctypes.OleDLL", {"name": "/tmp/attacker.dll"}),
+            ("torch.ctypes.windll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
+            ("torch.ctypes.oledll.LoadLibrary", {"name": "/tmp/attacker.dll"}),
+            ("torch.hub.load", {"repo_or_dir": "./attacker_hub_repo", "model": "payload", "source": "local"}),
+            ("torch.utils.cpp_extension.load", {"name": "mb_payload", "sources": ["/tmp/payload.cpp"]}),
+            (
+                "torch.utils.cpp_extension.load_inline",
+                {
+                    "name": "mb_inline_payload",
+                    "cpp_sources": ["#include <cstdlib>\n__attribute__((constructor)) static void init() {}"],
+                    "functions": [],
+                },
+            ),
+            ("numpy.load", {"file": "/tmp/attacker.npy", "allow_pickle": True}),
+            ("numpy.ctypeslib.load_library", {"libname": "attacker", "loader_path": "/tmp"}),
+        ],
+    )
+    def test_instantiate_rejects_deserialization_and_native_loader_targets(self, target, kwargs):
+        """Test that configs cannot invoke deserialization or native library loader gadgets."""
+        config = {"_target_": target, **kwargs}
+        with pytest.raises(InstantiationException, match="bypass target validation"):
             instantiate(config)
 
     @pytest.mark.parametrize(
@@ -721,7 +822,7 @@ class TestTargetPrefixValidation:
     def test_instantiate_rejects_target_allowlist_mutators(self, target):
         """Test that configs cannot mutate the shared target allowlist."""
         config = {"_target_": target, "_args_": ["os."]}
-        with pytest.raises(InstantiationException, match="modify target validation state"):
+        with pytest.raises(InstantiationException, match="bypass target validation"):
             instantiate(config)
 
     def test_instantiate_rejects_private_target_segments(self):
