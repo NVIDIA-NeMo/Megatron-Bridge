@@ -13,16 +13,15 @@
 # limitations under the License.
 
 import gc
+import json
 import os
 
 import pytest
 import torch
-from datasets import Dataset, DatasetDict
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_pretrain_config, llama32_1b_sft_config
+from megatron.bridge.training.config import FinetuningDatasetConfig
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -46,28 +45,14 @@ def _make_functional_test_model_small(model: object) -> None:
     # not the full Llama 3.2 1B model shape.
     for name, value in {
         "num_layers": 2,
-        "hidden_size": 128,
-        "ffn_hidden_size": 512,
+        "hidden_size": 256,
+        "ffn_hidden_size": 1024,
         "num_attention_heads": 4,
         "num_query_groups": 4,
-        "kv_channels": 32,
+        "kv_channels": 64,
         "seq_length": 256,
     }.items():
         _set_existing_attr(model, name, value)
-
-
-def _tiny_squad_dataset() -> DatasetDict:
-    examples = [
-        {
-            "id": str(i),
-            "title": "bridge",
-            "context": "Megatron Bridge converts checkpoints and trains models with packed sequence support.",
-            "question": "What supports packed sequences?",
-            "answers": {"text": ["Megatron Bridge"], "answer_start": [0]},
-        }
-        for i in range(16)
-    ]
-    return DatasetDict({"train": Dataset.from_list(examples)})
 
 
 class TestPeftSftExample:
@@ -86,14 +71,18 @@ class TestPeftSftExample:
         pretrain_tensorboard_dir = os.path.join(shared_dir, "pretrain_tensorboard")
         sft_checkpoint_dir = os.path.join(shared_dir, "sft_checkpoints")
         sft_tensorboard_dir = os.path.join(shared_dir, "sft_tensorboard")
-        dataset_dir = os.path.join(shared_dir, "dataset")
+        dataset_root = os.path.join(shared_dir, "sft_data")
 
         if torch.distributed.get_rank() == 0:
             os.makedirs(pretrain_checkpoint_dir, exist_ok=True)
             os.makedirs(pretrain_tensorboard_dir, exist_ok=True)
             os.makedirs(sft_checkpoint_dir, exist_ok=True)
             os.makedirs(sft_tensorboard_dir, exist_ok=True)
-            os.makedirs(dataset_dir, exist_ok=True)
+            os.makedirs(dataset_root, exist_ok=True)
+            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(32)]
+            with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
         torch.distributed.barrier()
 
         pretrain_cfg = llama32_1b_pretrain_config()
@@ -120,9 +109,6 @@ class TestPeftSftExample:
         cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
         cfg.model.calculate_per_token_loss = True
         cfg.ddp.average_in_collective = False
-        cfg.ddp.grad_reduce_in_fp32 = False
-        cfg.ddp.use_distributed_optimizer = False
-        cfg.optimizer.use_distributed_optimizer = False
 
         # Keep the world-size math simple: tp=1, pp=1, cp=2 -> dp derived from env.
         cfg.model.tensor_model_parallel_size = 1
@@ -139,27 +125,22 @@ class TestPeftSftExample:
         cfg.logger.log_interval = 1
         cfg.logger.tensorboard_dir = sft_tensorboard_dir
 
-        # Use a small packed SQuAD dataset to exercise THD/context-parallel slicing
-        cfg.dataset = HFDatasetConfig(
-            dataset_name="rajpurkar/squad",
-            dataset_dict=_tiny_squad_dataset(),
-            dataset_root=dataset_dir,
-            process_example_fn=process_squad_example,
+        # Use a small packed local SFT dataset to exercise THD/context-parallel slicing
+        cfg.dataset = FinetuningDatasetConfig(
+            dataset_root=dataset_root,
             seq_length=256,
             dataloader_type="batch",
             num_workers=1,
             do_validation=False,
             do_test=False,
-            val_proportion=None,
             dataset_kwargs={"pad_to_max_length": True},
             max_train_samples=16,
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
                 tokenizer_model_name="meta-llama/Llama-3.2-1B",
-                num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
-            rewrite=False,
         )
 
         cfg.checkpoint.save_interval = cfg.train.train_iters

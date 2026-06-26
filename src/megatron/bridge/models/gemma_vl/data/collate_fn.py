@@ -20,9 +20,14 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS, THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    infer_assistant_mask_boundary_config,
+)
 from megatron.bridge.models.ministral3.data.collate_fn import ministral3_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -34,9 +39,15 @@ def gemma3_vl_collate_fn(
     visual_keys: Sequence[str] = THW_GRID_VISUAL_KEYS,
     min_pixels: int | None = None,
     max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Gemma3 VL models."""
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = infer_assistant_mask_boundary_config(processor)
 
     # If pad_token remains unset after the eos_token fallback, disable padding to
     # avoid a ValueError from apply_chat_template.
@@ -78,7 +89,13 @@ def gemma3_vl_collate_fn(
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     ).to(device=batch["input_ids"].device, dtype=torch.float32)
@@ -101,8 +118,46 @@ def gemma3_vl_collate_fn(
     for key in PASSTHROUGH_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    pad_or_pack_sequence(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return batch
 
 
-# Gemma4 VL uses apply_chat_template and returns image_position_ids — same path as ministral3
-gemma4_vl_collate_fn = ministral3_collate_fn
+def gemma4_vl_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
+    """Collate function for Gemma4 VL models."""
+    return ministral3_collate_fn(
+        examples,
+        processor,
+        visual_keys=visual_keys,
+        min_pixels=min_pixels,
+        max_pixels=max_pixels,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        assistant_mask_boundary_config=assistant_mask_boundary_config_from_markers(
+            processor,
+            assistant_start="<|turn>model\n",
+            assistant_end="<turn|>",
+        ),
+    )

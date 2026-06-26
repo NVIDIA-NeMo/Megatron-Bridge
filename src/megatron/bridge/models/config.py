@@ -144,13 +144,6 @@ def from_hf_pretrained(
     else:
         raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: .yaml, .yml, .json, .toml")
 
-    # Check for trust_remote_code requirement
-    if not trust_remote_code and _contains_code_references(config_dict):
-        raise ValueError(
-            "This configuration contains class or function references. "
-            "Loading it requires trust_remote_code=True to prevent arbitrary code execution."
-        )
-
     # Convert to OmegaConf for compatibility with instantiate
     omega_conf = OmegaConf.create(config_dict)
 
@@ -158,6 +151,16 @@ def from_hf_pretrained(
     if kwargs:
         override_conf = OmegaConf.create(kwargs)
         omega_conf = OmegaConf.merge(omega_conf, override_conf)
+
+    user_config = OmegaConf.to_container(omega_conf, resolve=True)
+
+    # Check for trust_remote_code requirement after merging caller-supplied
+    # overrides so kwargs cannot inject executable targets after validation.
+    if not trust_remote_code and _contains_code_references(user_config):
+        raise ValueError(
+            "This configuration contains class or function references. "
+            "Loading it requires trust_remote_code=True to prevent arbitrary code execution."
+        )
 
     # Add _target_ if not present
     if "_target_" not in omega_conf:
@@ -332,7 +335,7 @@ _SAFE_TARGETS = frozenset(
 )
 
 
-def _contains_code_references(config_dict: Dict[str, Any]) -> bool:
+def _contains_code_references(config_dict: Any) -> bool:
     """
     Check if a configuration dictionary contains code references.
 

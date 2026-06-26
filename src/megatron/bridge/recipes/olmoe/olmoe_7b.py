@@ -216,7 +216,7 @@ def olmoe_7b_sft_config() -> ConfigContainer:
     cfg.model.seq_length = seq_length
     # Dataset config - packed_sequence=True by default (from _sft_common)
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -279,7 +279,7 @@ def olmoe_7b_sft_config() -> ConfigContainer:
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - OLMoE uses specific optimizer settings
     cfg.optimizer.adam_beta2 = 0.95
@@ -367,7 +367,7 @@ def olmoe_7b_peft_config(
     cfg.model.seq_length = seq_length
     # Dataset config - packed_sequence=True by default (from _peft_common)
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
     # MoE Token Dispatcher settings
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -446,7 +446,7 @@ def olmoe_7b_peft_config(
 
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Optimizer overrides - PEFT uses higher LR
     cfg.optimizer.adam_beta2 = 0.95

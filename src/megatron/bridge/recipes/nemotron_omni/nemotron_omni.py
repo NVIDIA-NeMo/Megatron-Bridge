@@ -20,8 +20,8 @@ All recipes use ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``)
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -42,7 +42,7 @@ def nemotron_omni_cord_v2_sft_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigC
     """
     cfg = _nemotron_omni_base_config(hf_path=hf_path)
     cfg.model.temporal_patch_dim = 1
-    cfg.dataset = HFDatasetConversationProvider(
+    cfg.dataset = HFConversationDatasetProvider(
         seq_length=4096,
         hf_processor_path=hf_path,
         maker_name="cord_v2",
@@ -52,7 +52,7 @@ def nemotron_omni_cord_v2_sft_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigC
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -94,7 +94,7 @@ def nemotron_omni_cord_v2_peft_config(hf_path: str = _DEFAULT_HF_PATH) -> Config
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = HFDatasetConversationProvider(
+    cfg.dataset = HFConversationDatasetProvider(
         seq_length=4096,
         hf_processor_path=hf_path,
         maker_name="cord_v2",
@@ -104,7 +104,7 @@ def nemotron_omni_cord_v2_peft_config(hf_path: str = _DEFAULT_HF_PATH) -> Config
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -229,7 +229,7 @@ def nemotron_omni_valor32k_sft_config(
         global_batch_size=cfg.train.global_batch_size,
         num_workers=2,
         task_encoder=task_encoder,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
@@ -294,7 +294,7 @@ def nemotron_omni_valor32k_peft_config(
         global_batch_size=cfg.train.global_batch_size,
         num_workers=2,
         task_encoder=task_encoder,
-        pack_sequences_in_batch=False,
+        enable_in_batch_packing=False,
     )
 
     return cfg
