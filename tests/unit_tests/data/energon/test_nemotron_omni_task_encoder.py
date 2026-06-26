@@ -175,7 +175,7 @@ def test_encode_sample_uses_mock_video_frames_for_temporal_metadata(monkeypatch)
 
 def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     processor = _Processor(input_ids=[1, 2])
-    encoder = NemotronOmniTaskEncoder(processor=processor, num_mel_bins=4, pack_sequences=True)
+    encoder = NemotronOmniTaskEncoder(processor=processor, num_mel_bins=4, enable_in_batch_packing=True)
     s1 = NemotronOmniTaskSample(
         __key__="a",
         __subflavors__={},
@@ -229,3 +229,56 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     assert encoded["max_seqlen"] is batch.max_seqlen
     assert isinstance(encoded["visual_inputs"], GenericVisualInputs)
     assert encoded["visual_inputs"].pixel_values.shape == (1, 5, 3)
+
+
+def test_batch_nonpacked_applies_collate_sequence_padding():
+    processor = _Processor(input_ids=[1, 2])
+    samples = [
+        NemotronOmniTaskSample(
+            __key__="a",
+            __subflavors__={},
+            input_ids=torch.tensor([1, 2, 3]),
+            labels=torch.tensor([2, 3, IGNORE_INDEX]),
+            loss_mask=torch.tensor([1.0, 1.0, 0.0]),
+        ),
+        NemotronOmniTaskSample(
+            __key__="b",
+            __subflavors__={},
+            input_ids=torch.tensor([4, 5, 6, 7, 8]),
+            labels=torch.tensor([5, 6, 7, 8, IGNORE_INDEX]),
+            loss_mask=torch.tensor([1.0, 1.0, 1.0, 1.0, 0.0]),
+        ),
+    ]
+
+    multiple_encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=16,
+        num_mel_bins=4,
+        pad_to_max_length=False,
+        pad_to_multiple_of=4,
+    )
+    multiple_batch = multiple_encoder.batch(samples)
+    assert multiple_batch.input_ids.shape == (2, 8)
+    assert multiple_batch.input_ids[0].tolist() == [1, 2, 3, 0, 0, 0, 0, 0]
+    assert multiple_batch.labels[0].tolist() == [
+        2,
+        3,
+        IGNORE_INDEX,
+        IGNORE_INDEX,
+        IGNORE_INDEX,
+        IGNORE_INDEX,
+        IGNORE_INDEX,
+        IGNORE_INDEX,
+    ]
+    assert multiple_batch.position_ids[0].tolist() == list(range(8))
+
+    fixed_encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=6,
+        num_mel_bins=4,
+        pad_to_max_length=True,
+        pad_to_multiple_of=4,
+    )
+    fixed_batch = fixed_encoder.batch(samples)
+    assert fixed_batch.input_ids.shape == (2, 6)
+    assert fixed_batch.position_ids[0].tolist() == list(range(6))

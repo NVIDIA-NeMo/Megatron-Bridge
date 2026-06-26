@@ -48,7 +48,7 @@ def modelopt_hybrid_stack_spec(config: "HybridModelConfig | None" = None) -> Mod
     """
     return get_hybrid_stack_modelopt_spec(
         local_core_attention=False,
-        remap_te_layernorm=False,
+        remap_te_layernorm=True,
     )
 
 
