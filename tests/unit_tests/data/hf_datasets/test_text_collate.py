@@ -24,6 +24,7 @@ pytestmark = pytest.mark.unit
 class _TextChatTokenizer:
     pad_token_id = 0
     pad_token = "<pad>"
+    padding_side = "right"
     eos_token_id = 2
     added_tokens_decoder = {}
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
@@ -67,8 +68,12 @@ class _TextChatTokenizer:
             mask = [1] * len(row)
             if max_len is not None:
                 pad_len = max_len - len(row)
-                row.extend([self.pad_token_id] * pad_len)
-                mask.extend([0] * pad_len)
+                if self.padding_side == "left":
+                    row = [self.pad_token_id] * pad_len + row
+                    mask = [0] * pad_len + mask
+                else:
+                    row.extend([self.pad_token_id] * pad_len)
+                    mask.extend([0] * pad_len)
             input_ids.append(row)
             attention_mask.append(mask)
         return {
@@ -214,6 +219,7 @@ def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
 
 def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     tokenizer = _TextChatTokenizer()
+    tokenizer.padding_side = "left"
     examples = [
         {
             "messages": [
@@ -232,6 +238,7 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     batch = text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=True)
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 11, 12, 21, 22]]
+    assert tokenizer.padding_side == "left"
     assert batch["input_ids"].data_ptr() == batch["tokens"].data_ptr()
     assert batch["labels"].tolist() == [[21, 22, -100, -100, 21, 22, -100]]
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]]

@@ -107,17 +107,24 @@ def _tokenize_texts(
     if not pad_to_max_length and pad_to_multiple_of > 1:
         tokenizer_kwargs["pad_to_multiple_of"] = pad_to_multiple_of
 
-    seen: set[int] = set()
-    for tokenizer_or_processor in (tokenizer, processor):
-        if id(tokenizer_or_processor) in seen:
-            continue
-        seen.add(id(tokenizer_or_processor))
-        try:
-            tokenized = _call_tokenizer(tokenizer_or_processor, texts, tokenizer_kwargs)
-        except (AttributeError, KeyError, TypeError, ValueError):
-            continue
-        if "input_ids" in tokenized:
-            return dict(tokenized)
+    saved_padding_side = getattr(tokenizer, "padding_side", None)
+    if saved_padding_side is not None:
+        tokenizer.padding_side = "right"
+    try:
+        seen: set[int] = set()
+        for tokenizer_or_processor in (tokenizer, processor):
+            if id(tokenizer_or_processor) in seen:
+                continue
+            seen.add(id(tokenizer_or_processor))
+            try:
+                tokenized = _call_tokenizer(tokenizer_or_processor, texts, tokenizer_kwargs)
+            except (AttributeError, KeyError, TypeError, ValueError):
+                continue
+            if "input_ids" in tokenized:
+                return dict(tokenized)
+    finally:
+        if saved_padding_side is not None:
+            tokenizer.padding_side = saved_padding_side
 
     raise ValueError("Text chat collate could not tokenize rendered chat text.")
 

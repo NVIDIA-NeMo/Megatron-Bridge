@@ -105,38 +105,46 @@ def qwen2_5_collate_fn(
     batch_with = None
     batch_without = None
 
-    if idx_with:
-        texts_with = [texts[i] for i in idx_with]
-        images_with = [per_example_images[i] for i in idx_with]
-        videos_with = [per_example_videos[i] for i in idx_with]
-        processor_kwargs = {
-            "text": texts_with,
-            "padding": True,
-            "return_tensors": "pt",
-        }
-        if min_pixels is not None:
-            processor_kwargs["min_pixels"] = min_pixels
-        if max_pixels is not None:
-            processor_kwargs["max_pixels"] = max_pixels
-        if any(images_with):
-            processor_kwargs["images"] = images_with
-        if any(videos_with):
-            processor_kwargs["videos"] = videos_with
-        batch_with = {
-            key: value.contiguous() if isinstance(value, torch.Tensor) else value
-            for key, value in processor(**processor_kwargs).items()
-        }
+    tokenizer_for_padding = getattr(processor, "tokenizer", None)
+    saved_padding_side = getattr(tokenizer_for_padding, "padding_side", None)
+    if tokenizer_for_padding is not None and saved_padding_side is not None:
+        tokenizer_for_padding.padding_side = "right"
+    try:
+        if idx_with:
+            texts_with = [texts[i] for i in idx_with]
+            images_with = [per_example_images[i] for i in idx_with]
+            videos_with = [per_example_videos[i] for i in idx_with]
+            processor_kwargs = {
+                "text": texts_with,
+                "padding": True,
+                "return_tensors": "pt",
+            }
+            if min_pixels is not None:
+                processor_kwargs["min_pixels"] = min_pixels
+            if max_pixels is not None:
+                processor_kwargs["max_pixels"] = max_pixels
+            if any(images_with):
+                processor_kwargs["images"] = images_with
+            if any(videos_with):
+                processor_kwargs["videos"] = videos_with
+            batch_with = {
+                key: value.contiguous() if isinstance(value, torch.Tensor) else value
+                for key, value in processor(**processor_kwargs).items()
+            }
 
-    if idx_without:
-        texts_without = [texts[i] for i in idx_without]
-        batch_without = {
-            key: value.contiguous() if isinstance(value, torch.Tensor) else value
-            for key, value in processor(
-                text=texts_without,
-                padding=True,
-                return_tensors="pt",
-            ).items()
-        }
+        if idx_without:
+            texts_without = [texts[i] for i in idx_without]
+            batch_without = {
+                key: value.contiguous() if isinstance(value, torch.Tensor) else value
+                for key, value in processor(
+                    text=texts_without,
+                    padding=True,
+                    return_tensors="pt",
+                ).items()
+            }
+    finally:
+        if tokenizer_for_padding is not None and saved_padding_side is not None:
+            tokenizer_for_padding.padding_side = saved_padding_side
 
     # Merge batches back to original order
     if batch_with is not None and batch_without is None:

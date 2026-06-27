@@ -293,6 +293,7 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
+            padding_side = "left"
             added_tokens_decoder = {}
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -409,6 +410,7 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
+            padding_side = "left"
             added_tokens_decoder = {}
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -435,8 +437,12 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
             input_ids = torch.full((len(texts), max_len), self.tokenizer.pad_token_id)
             attention_mask = torch.zeros((len(texts), max_len), dtype=torch.long)
             for row, length in enumerate(lengths):
-                input_ids[row, :length] = torch.arange(1, length + 1)
-                attention_mask[row, :length] = 1
+                if self.tokenizer.padding_side == "left":
+                    input_ids[row, max_len - length :] = torch.arange(1, length + 1)
+                    attention_mask[row, max_len - length :] = 1
+                else:
+                    input_ids[row, :length] = torch.arange(1, length + 1)
+                    attention_mask[row, :length] = 1
             return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     examples = [
@@ -454,15 +460,17 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         },
     ]
 
+    processor = _PackableProcessor()
     batch = collate.qwen2_5_collate_fn(
         examples,
-        _PackableProcessor(),
+        processor,
         sequence_length=16,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
+    assert processor.tokenizer.padding_side == "left"
     assert batch["attention_mask"] is None
     assert batch["cu_seqlens_q"].tolist() == [0, 3, 8]
     assert batch["cu_seqlens_kv"].tolist() == [0, 3, 8]

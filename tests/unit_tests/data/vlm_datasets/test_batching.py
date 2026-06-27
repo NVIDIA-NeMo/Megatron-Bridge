@@ -130,6 +130,23 @@ def test_prepare_sequence_batch_packs_directly_with_current_metadata():
     assert "cu_seqlens_unpadded_argmin" not in batch
 
 
+def test_prepare_sequence_batch_rejects_left_padded_direct_packing():
+    batch = {
+        "input_ids": torch.tensor([[0, 0, 1, 2]]),
+        "labels": torch.tensor([[-100, -100, 1, 2]]),
+        "loss_mask": torch.tensor([[0.0, 0.0, 1.0, 1.0]]),
+        "position_ids": torch.arange(4).unsqueeze(0),
+        "attention_mask": torch.tensor([[0, 0, 1, 1]], dtype=torch.long),
+    }
+
+    with pytest.raises(ValueError, match="right-padded"):
+        prepare_padded_or_packed_sequence_batch(
+            batch,
+            sequence_length=16,
+            enable_in_batch_packing=True,
+        )
+
+
 def test_prepare_sequence_batch_packs_without_padded_metadata_when_lengths_are_aligned():
     batch = {
         "input_ids": torch.tensor(

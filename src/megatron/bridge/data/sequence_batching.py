@@ -98,22 +98,21 @@ def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_
     raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
-def _sequence_lengths(tokens: torch.Tensor, *, pad_token_id: int, padding_mask: torch.Tensor | None) -> list[int]:
-    lengths = []
-    batch_size, seq_len = tokens.shape
-    for idx in range(batch_size):
-        if padding_mask is not None:
-            length = int(padding_mask[idx].sum().item())
-        else:
-            non_pad_mask = tokens[idx] != pad_token_id
-            if non_pad_mask.all():
-                length = seq_len
-            elif non_pad_mask.any():
-                length = int(non_pad_mask.nonzero(as_tuple=True)[0][-1].item()) + 1
-            else:
-                length = 0
-        lengths.append(length)
-    return lengths
+def _right_padded_sequence_lengths(
+    tokens: torch.Tensor, *, pad_token_id: int, padding_mask: torch.Tensor | None
+) -> list[int]:
+    if padding_mask is not None:
+        active_mask = padding_mask.to(device=tokens.device, dtype=torch.bool)
+    else:
+        active_mask = tokens != pad_token_id
+
+    lengths_t = active_mask.sum(dim=1)
+    positions = torch.arange(tokens.size(1), device=tokens.device).unsqueeze(0)
+    expected_mask = positions < lengths_t.unsqueeze(1)
+    if not torch.equal(active_mask, expected_mask):
+        raise ValueError("Direct sequence packing requires right-padded input rows.")
+
+    return [int(length.item()) for length in lengths_t]
 
 
 def _validate_sequence_tensor(
@@ -183,7 +182,7 @@ def pack_sequence_batch_to_mcore_thd(
             raise ValueError("'attention_mask' must match token shape for direct sequence packing.")
         padding_mask = attention_mask.to(device=tokens.device)
 
-    lengths = _sequence_lengths(tokens, pad_token_id=pad_token_id, padding_mask=padding_mask)
+    lengths = _right_padded_sequence_lengths(tokens, pad_token_id=pad_token_id, padding_mask=padding_mask)
     valid_indices = [idx for idx, length in enumerate(lengths) if length > 0]
     if not valid_indices:
         raise ValueError("Cannot pack a batch with no non-padding tokens.")
