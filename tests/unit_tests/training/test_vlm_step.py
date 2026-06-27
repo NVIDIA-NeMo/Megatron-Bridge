@@ -436,6 +436,64 @@ def test_forward_step_packs_deferred_in_batch_sequences(monkeypatch):
     assert packed_seq_params.max_seqlen_q == 4
 
 
+def test_forward_step_sets_hybrid_total_tokens_from_available_sequence_tensor(monkeypatch):
+    """Test hybrid packed params derive total tokens from tokens, labels, position_ids, or config."""
+    captured_total_tokens = []
+
+    def fake_get_packed_seq_params(packed_seq_params):
+        captured_total_tokens.append(packed_seq_params["total_tokens"])
+        return packed_seq_params
+
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.get_packed_seq_params", fake_get_packed_seq_params)
+
+    def run_case(batch, *, is_first_stage=True, is_last_stage=True):
+        inner_model = _PackedForwardModel()
+        inner_model.config.is_hybrid_model = True
+        model = _ForwardWrapper(inner_model)
+        _patch_forward_step_deps(monkeypatch, model)
+        monkeypatch.setattr(
+            "megatron.bridge.training.vlm_step.is_pp_first_stage", lambda _: is_first_stage, raising=True
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.vlm_step.is_pp_last_stage", lambda _: is_last_stage, raising=True
+        )
+        state = _make_forward_step_state()
+        state.cfg.model.seq_length = 32
+        state.cfg.dataset.enable_in_batch_packing = True
+
+        output, _ = forward_step(state, _Iterator(batch), model)
+
+        assert output.item() == 0.0
+
+    base_batch = {
+        "input_ids": torch.ones(1, 7, dtype=torch.long),
+        "labels": torch.ones(1, 11, dtype=torch.long),
+        "loss_mask": torch.ones(1, 11),
+        "position_ids": torch.ones(3, 1, 13, dtype=torch.long),
+        "attention_mask": None,
+        "cu_seqlens": torch.tensor([[0, 7]], dtype=torch.int32),
+        "cu_seqlens_argmin": torch.tensor([[7]], dtype=torch.int32),
+        "max_seqlen": torch.tensor([[7]], dtype=torch.int32),
+        "visual_inputs": None,
+    }
+    run_case(base_batch)
+
+    labels_batch = dict(base_batch)
+    labels_batch["input_ids"] = None
+    run_case(labels_batch, is_first_stage=False)
+
+    position_ids_batch = dict(labels_batch)
+    position_ids_batch["labels"] = None
+    position_ids_batch["loss_mask"] = None
+    run_case(position_ids_batch, is_first_stage=False, is_last_stage=False)
+
+    config_batch = dict(position_ids_batch)
+    config_batch["position_ids"] = None
+    run_case(config_batch, is_first_stage=False, is_last_stage=False)
+
+    assert captured_total_tokens == [7, 11, 13, 32]
+
+
 def test_get_batch_consumes_collated_sequence_shape(monkeypatch):
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
