@@ -861,11 +861,16 @@ class TensorInspectConfig:
     feature_dirs: list[str] | None = None
     """Directories containing feature implementations (searched recursively)."""
 
+    allow_custom_feature_dirs: bool = False
+    """Allow user-provided feature implementation directories."""
+
     log_dir: str | None = None
     """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
 
     init_training_step: int = 0
     """Initial training step for the inspector (used when resuming)."""
+
+    _feature_dirs_from_default: bool = field(default=False, init=False, repr=False)
 
     def finalize(self) -> None:
         """Populate sensible defaults when inspection is enabled.
@@ -883,6 +888,7 @@ class TensorInspectConfig:
                 te_features_dir = Path(te_features_mod.__file__).parent
                 if te_features_dir.exists():
                     self.feature_dirs = [str(te_features_dir)]
+                    self._feature_dirs_from_default = True
             except Exception:
                 pass
 

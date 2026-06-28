@@ -191,6 +191,9 @@ class MockQwen25VLDatasetProvider(DatasetProvider):
     # HF processor/model ID for Qwen2.5-VL
     hf_model_path: str = "Qwen/Qwen2.5-VL-3B-Instruct"
 
+    # Qwen2.5-VL processing depends on Hugging Face custom code.
+    trust_remote_code: Optional[bool] = True
+
     # Sample generation options
     prompt: str = "Describe this image."
     random_seed: int = 0
