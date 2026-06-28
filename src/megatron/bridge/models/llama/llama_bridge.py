@@ -51,6 +51,8 @@ class LlamaBridge(MegatronModelBridge):
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> GPTModelConfig:
         """Convert a HuggingFace Llama config directly to ``GPTModelConfig``."""
         model_config = super().hf_config_to_model_config(hf_config)
+        if not isinstance(model_config, GPTModelConfig):
+            raise TypeError(f"Expected GPTModelConfig, got {type(model_config).__name__}.")
 
         model_config.normalization = "RMSNorm"
         model_config.gated_linear_unit = True

@@ -273,6 +273,8 @@ class NemotronHBridge(MegatronModelBridge):
     def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> HybridModelConfig:
         """Convert a HuggingFace Nemotron-H config directly to ``HybridModelConfig``."""
         model_config = super().hf_config_to_model_config(hf_config)
+        if not isinstance(model_config, HybridModelConfig):
+            raise TypeError(f"Expected HybridModelConfig, got {type(model_config).__name__}.")
 
         model_config.position_embedding_type = "none"
         model_config.activation_func = squared_relu
