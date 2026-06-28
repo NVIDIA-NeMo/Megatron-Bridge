@@ -2425,6 +2425,16 @@ def _load_hf_pretrained_checkpoint(
     return 0, 0
 
 
+def _get_model_parallel_size_from_run_config(model_config: dict[str, Any], field_name: str) -> int:
+    """Read a parallelism field from legacy-flat or nested ModelConfig YAML."""
+    if field_name in model_config:
+        return model_config[field_name]
+    transformer_config = model_config.get("transformer")
+    if isinstance(transformer_config, dict) and field_name in transformer_config:
+        return transformer_config[field_name]
+    raise KeyError(field_name)
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -2548,8 +2558,8 @@ def _load_checkpoint_from_path(
             mismatch_msg = ""
         else:
             ckpt_tp_pp = (
-                run_config["model"]["tensor_model_parallel_size"],
-                run_config["model"]["pipeline_model_parallel_size"],
+                _get_model_parallel_size_from_run_config(run_config["model"], "tensor_model_parallel_size"),
+                _get_model_parallel_size_from_run_config(run_config["model"], "pipeline_model_parallel_size"),
             )
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,

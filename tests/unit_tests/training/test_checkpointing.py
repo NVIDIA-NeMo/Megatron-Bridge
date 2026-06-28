@@ -33,6 +33,7 @@ from megatron.bridge.training.checkpointing import (
     _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
+    _get_model_parallel_size_from_run_config,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
@@ -70,6 +71,16 @@ _dummy_obj = _DummyClass()
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    @pytest.mark.parametrize(
+        "model_config,expected",
+        [
+            ({"tensor_model_parallel_size": 2}, 2),
+            ({"transformer": {"tensor_model_parallel_size": 4}}, 4),
+        ],
+    )
+    def test_get_model_parallel_size_from_run_config(self, model_config, expected):
+        assert _get_model_parallel_size_from_run_config(model_config, "tensor_model_parallel_size") == expected
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",
