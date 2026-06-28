@@ -18,6 +18,7 @@ from typing import Dict, Optional, Tuple
 import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.transformer.enums import AttnBackend
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -278,12 +279,17 @@ class NemotronHBridge(MegatronModelBridge):
 
         model_config.position_embedding_type = "none"
         model_config.activation_func = squared_relu
+        model_config.normalization = "RMSNorm"
         model_config.masked_softmax_fusion = True
         model_config.apply_query_key_layer_scaling = False
+        model_config.apply_rope_fusion = True
         model_config.persist_layer_norm = True
         model_config.attention_softmax_in_fp32 = False
+        model_config.attention_backend = AttnBackend.flash
+        model_config.bias_dropout_fusion = True
         model_config.first_last_layers_bf16 = True
         model_config.is_hybrid_model = True
+        model_config.mtp_num_layers = 0
 
         kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
         if kv_channels is not None:

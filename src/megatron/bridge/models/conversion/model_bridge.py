@@ -71,6 +71,7 @@ from megatron.bridge.models.conversion.utils import (
 )
 from megatron.bridge.models.decorators.dispatch import dispatch
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.utils import fusions
 from megatron.bridge.utils.activation_map import ACTIVATION_FUNC_MAP
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -608,6 +609,16 @@ class MegatronModelBridge(
         # Convert activation function (some models use hidden_act, others use hidden_activation)
         hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
         megatron_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
+
+        # Preserve Bridge's established construction defaults while the provider
+        # path and the builder-backed path coexist. The upstream transformer
+        # dataclass intentionally has more conservative defaults for these fields.
+        megatron_kwargs.update(
+            attention_softmax_in_fp32=False,
+            cross_entropy_loss_fusion=True,
+            deallocate_pipeline_outputs=True,
+            gradient_accumulation_fusion=fusions.can_enable_gradient_accumulation_fusion(),
+        )
 
         return megatron_kwargs
 

@@ -221,13 +221,16 @@ class TestNemotronHBridge:
             model_config = bridge.hf_config_to_model_config(mock_pretrained_nemotronh.config)
 
         assert isinstance(model_config, HybridModelConfig)
+        mismatches = {}
         for field in fields(model_config.transformer):
             if field.name.startswith("_") or not hasattr(provider, field.name):
                 continue
             provider_value = getattr(provider, field.name)
             if callable(provider_value):
                 continue
-            assert getattr(model_config.transformer, field.name) == provider_value, field.name
+            model_config_value = getattr(model_config.transformer, field.name)
+            if model_config_value != provider_value:
+                mismatches[f"transformer.{field.name}"] = (model_config_value, provider_value)
         for field in fields(model_config):
             if field.name in {"transformer", "pre_wrap_hooks", "post_wrap_hooks"}:
                 continue
@@ -236,7 +239,10 @@ class TestNemotronHBridge:
             provider_value = getattr(provider, field.name)
             if callable(provider_value):
                 continue
-            assert getattr(model_config, field.name) == provider_value, field.name
+            model_config_value = getattr(model_config, field.name)
+            if model_config_value != provider_value:
+                mismatches[field.name] = (model_config_value, provider_value)
+        assert mismatches == {}
         assert model_config.hybrid_stack_spec is None
         assert model_config.hybrid_layer_pattern == provider.hybrid_layer_pattern
 

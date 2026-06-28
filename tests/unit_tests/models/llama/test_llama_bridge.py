@@ -204,6 +204,7 @@ class TestLlamaBridgeConfigConverter:
     def test_hf_config_to_model_config_matches_provider(self, mock_pretrained_llama):
         """Direct ModelConfig mapping preserves representative provider fields."""
         bridge = LlamaBridge()
+        mock_pretrained_llama.config.rope_theta = 500000.0
 
         provider = bridge.provider_bridge(mock_pretrained_llama)
         with (
@@ -217,13 +218,16 @@ class TestLlamaBridgeConfigConverter:
             model_config = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
 
         assert isinstance(model_config, GPTModelConfig)
+        mismatches = {}
         for field in fields(model_config.transformer):
             if field.name.startswith("_") or not hasattr(provider, field.name):
                 continue
             provider_value = getattr(provider, field.name)
             if callable(provider_value):
                 continue
-            assert getattr(model_config.transformer, field.name) == provider_value, field.name
+            model_config_value = getattr(model_config.transformer, field.name)
+            if model_config_value != provider_value:
+                mismatches[f"transformer.{field.name}"] = (model_config_value, provider_value)
         for field in fields(model_config):
             if field.name in {"transformer", "pre_wrap_hooks", "post_wrap_hooks"}:
                 continue
@@ -232,10 +236,14 @@ class TestLlamaBridgeConfigConverter:
             provider_value = getattr(provider, field.name)
             if callable(provider_value):
                 continue
-            assert getattr(model_config, field.name) == provider_value, field.name
+            model_config_value = getattr(model_config, field.name)
+            if model_config_value != provider_value:
+                mismatches[field.name] = (model_config_value, provider_value)
+        assert mismatches == {}
         assert model_config.transformer_layer_spec is None
         assert model_config.pre_wrap_hooks == []
         assert model_config.post_wrap_hooks == []
+        assert model_config.rotary_base == provider.rotary_base == 500000.0
 
     def test_hf_config_to_model_config_preserves_llama2_rope_defaults(self, mock_pretrained_llama_2):
         """Direct mapping matches provider defaults when RoPE scaling is disabled."""
