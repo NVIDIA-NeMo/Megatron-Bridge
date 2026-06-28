@@ -220,6 +220,12 @@ jobs:
           package-name: megatron.bridge
           python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
+      - name: Check imports for megatron-energon
+        uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@v0.80.1
+        with:
+          package-name: megatron.energon
+          python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
+
   install-test-summary:
     needs: [pre-flight, uv-test-pytorch]
     runs-on: ubuntu-latest
