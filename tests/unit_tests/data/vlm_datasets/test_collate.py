@@ -513,6 +513,8 @@ KIMI_IM_MIDDLE_ID = 603
 KIMI_IM_END_ID = 604
 KIMI_THINK_OPEN_ID = 605
 KIMI_THINK_CLOSE_ID = 606
+LLAMA_FACTORY_THINK_OPEN_ID = 607
+LLAMA_FACTORY_THINK_CLOSE_ID = 608
 KIMI_ASSISTANT_HEADER_IDS = [KIMI_IM_ASSISTANT_ID, KIMI_ASSISTANT_TEXT_ID, KIMI_IM_MIDDLE_ID]
 
 
@@ -530,6 +532,8 @@ class _KimiDummyTokenizer:
             "<|media_pad|>": MEDIA_TOKEN_ID,
             "<think>": KIMI_THINK_OPEN_ID,
             "</think>": KIMI_THINK_CLOSE_ID,
+            "◁think▷": LLAMA_FACTORY_THINK_OPEN_ID,
+            "◁/think▷": LLAMA_FACTORY_THINK_CLOSE_ID,
         }
         return mapping.get(token, MEDIA_TOKEN_ID)
 
@@ -539,6 +543,8 @@ class _KimiDummyTokenizer:
             "<|im_end|>": [KIMI_IM_END_ID],
             "<think>": [KIMI_THINK_OPEN_ID],
             "</think>": [KIMI_THINK_CLOSE_ID],
+            "◁think▷": [LLAMA_FACTORY_THINK_OPEN_ID],
+            "◁/think▷": [LLAMA_FACTORY_THINK_CLOSE_ID],
         }
         return {"input_ids": mapping.get(text, [10, 11, 12])}
 
@@ -593,6 +599,8 @@ class _KimiScenarioTokenizer:
             "<|media_pad|>": MEDIA_TOKEN_ID,
             "<think>": KIMI_THINK_OPEN_ID,
             "</think>": KIMI_THINK_CLOSE_ID,
+            "◁think▷": LLAMA_FACTORY_THINK_OPEN_ID,
+            "◁/think▷": LLAMA_FACTORY_THINK_CLOSE_ID,
         }
         return mapping[token]
 
@@ -602,6 +610,8 @@ class _KimiScenarioTokenizer:
             "<|im_end|>": [KIMI_IM_END_ID],
             "<think>": [KIMI_THINK_OPEN_ID],
             "</think>": [KIMI_THINK_CLOSE_ID],
+            "◁think▷": [LLAMA_FACTORY_THINK_OPEN_ID],
+            "◁/think▷": [LLAMA_FACTORY_THINK_CLOSE_ID],
         }
         return {"input_ids": mapping.get(text, [999])}
 
@@ -640,6 +650,19 @@ def _kimi_target_ids(batch, row=0):
     target = batch["labels"][row][batch["loss_mask"][row].bool()]
     assert torch.all(target != IGNORE_INDEX)
     return target.tolist()
+
+
+def _assert_shifted_labels_follow_megatron_loss_mask(batch, row=0):
+    expected_labels = torch.cat(
+        [
+            batch["input_ids"][row, 1:],
+            torch.full_like(batch["input_ids"][row, :1], IGNORE_INDEX),
+        ]
+    )
+    expected_labels = expected_labels.masked_fill(batch["loss_mask"][row] == 0, IGNORE_INDEX)
+
+    assert torch.equal(batch["labels"][row], expected_labels)
+    assert torch.equal(batch["loss_mask"][row].bool(), batch["labels"][row] != IGNORE_INDEX)
 
 
 def test_kimi_k25_vl_collate_fn_text_only():
@@ -846,6 +869,116 @@ def test_kimi_k25_vl_collate_fn_trains_thinking_but_skips_empty_think_markers():
         KIMI_IM_END_ID,
     ]
     assert _kimi_target_ids(batch, row=1) == [51, KIMI_IM_END_ID]
+
+
+@pytest.mark.parametrize(
+    ("source", "row", "expected_target_ids"),
+    [
+        pytest.param(
+            "hf_kimi_k26_thinking",
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                31,
+                32,
+                KIMI_THINK_CLOSE_ID,
+                41,
+                KIMI_IM_END_ID,
+            ],
+            [KIMI_THINK_OPEN_ID, 31, 32, KIMI_THINK_CLOSE_ID, 41, KIMI_IM_END_ID],
+            id="hf-real-thinking",
+        ),
+        pytest.param(
+            "hf_kimi_k26_instant",
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                KIMI_THINK_CLOSE_ID,
+                51,
+                KIMI_IM_END_ID,
+            ],
+            [51, KIMI_IM_END_ID],
+            id="hf-empty-thinking-is-no-thinking",
+        ),
+        pytest.param(
+            "bridge_multi_assistant_history",
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                KIMI_THINK_CLOSE_ID,
+                61,
+                KIMI_IM_END_ID,
+                20,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                KIMI_THINK_OPEN_ID,
+                62,
+                KIMI_THINK_CLOSE_ID,
+                63,
+                KIMI_IM_END_ID,
+            ],
+            [61, KIMI_IM_END_ID, KIMI_THINK_OPEN_ID, 62, KIMI_THINK_CLOSE_ID, 63, KIMI_IM_END_ID],
+            id="bridge-history-empty-plus-suffix-thinking",
+        ),
+        pytest.param(
+            "bridge_literal_empty_think_inside_answer",
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                72,
+                KIMI_THINK_OPEN_ID,
+                KIMI_THINK_CLOSE_ID,
+                73,
+                KIMI_IM_END_ID,
+            ],
+            [72, KIMI_THINK_OPEN_ID, KIMI_THINK_CLOSE_ID, 73, KIMI_IM_END_ID],
+            id="bridge-empty-thinking-literal-inside-answer",
+        ),
+        pytest.param(
+            "llama_factory_kimi_vl_thinking_enabled",
+            [
+                10,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                LLAMA_FACTORY_THINK_OPEN_ID,
+                LLAMA_FACTORY_THINK_CLOSE_ID,
+                71,
+                KIMI_IM_END_ID,
+            ],
+            [LLAMA_FACTORY_THINK_OPEN_ID, LLAMA_FACTORY_THINK_CLOSE_ID, 71, KIMI_IM_END_ID],
+            id="llama-factory-target-side-thought-markers",
+        ),
+        pytest.param(
+            "llama_factory_kimi_vl_thinking_disabled",
+            [
+                10,
+                LLAMA_FACTORY_THINK_OPEN_ID,
+                LLAMA_FACTORY_THINK_CLOSE_ID,
+                *KIMI_ASSISTANT_HEADER_IDS,
+                81,
+                KIMI_IM_END_ID,
+            ],
+            [81, KIMI_IM_END_ID],
+            id="llama-factory-prompt-side-empty-thought-markers",
+        ),
+    ],
+)
+def test_kimi_k25_vl_collate_fn_matches_cross_stack_masking_samples(source, row, expected_target_ids):
+    proc = _KimiScenarioProcessor(rows=[row])
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "q"}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "a"}]},
+            ],
+        },
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(examples, proc)
+
+    assert _kimi_target_ids(batch) == expected_target_ids, source
+    _assert_shifted_labels_follow_megatron_loss_mask(batch)
 
 
 def test_kimi_k25_vl_collate_fn_trains_tool_calls_but_masks_tool_responses():
