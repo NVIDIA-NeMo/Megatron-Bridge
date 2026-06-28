@@ -698,7 +698,6 @@ class TestStackedExpertGatedMLPMapping:
             param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
         )
         first = MegatronModelBridge._accumulate_grouped_export(
-            None,
             task0,
             {
                 "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 1.0),
@@ -714,7 +713,6 @@ class TestStackedExpertGatedMLPMapping:
             param_name="decoder.layers.5.mlp.experts.linear_fc1.weight1",
         )
         second = MegatronModelBridge._accumulate_grouped_export(
-            None,
             task1,
             {
                 "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 3.0),

@@ -1517,17 +1517,18 @@ class TestAutoBridge:
                         custom_param="test",
                     )
 
-    @patch.object(AutoBridge, "save_megatron_model")
-    @patch.object(AutoBridge, "to_megatron_model")
+    @patch("megatron.bridge.models.conversion.auto_bridge._replace_embedded_transformer_configs")
     @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_basic(self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model):
+    def test_import_ckpt_basic(self, mock_from_hf_pretrained, mock_replace_configs):
         """Test basic import_ckpt functionality."""
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
 
         mock_megatron_model = [Mock()]
-        mock_bridge.to_megatron_model.return_value = mock_megatron_model
+        mock_model_config = Mock()
+        mock_bridge.get_model_config.return_value = mock_model_config
+        mock_bridge.get_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt
@@ -1535,7 +1536,10 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("meta-llama/Meta-Llama-3-8B")
-        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
+        mock_bridge.get_model_config.assert_called_once_with(load_weights=True)
+        mock_replace_configs.assert_called_once_with(mock_model_config, use_cpu_initialization=True)
+        mock_model_config.finalize.assert_called_once_with()
+        mock_bridge.get_megatron_model.assert_called_once_with(mock_model_config, wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
@@ -1544,17 +1548,18 @@ class TestAutoBridge:
             low_memory_save=True,
         )
 
-    @patch.object(AutoBridge, "save_megatron_model")
-    @patch.object(AutoBridge, "to_megatron_model")
+    @patch("megatron.bridge.models.conversion.auto_bridge._replace_embedded_transformer_configs")
     @patch.object(AutoBridge, "from_hf_pretrained")
-    def test_import_ckpt_with_kwargs(self, mock_from_hf_pretrained, mock_to_megatron_model, mock_save_megatron_model):
+    def test_import_ckpt_with_kwargs(self, mock_from_hf_pretrained, mock_replace_configs):
         """Test import_ckpt with custom kwargs."""
         # Setup mocks
         mock_bridge = Mock(spec=AutoBridge)
         mock_from_hf_pretrained.return_value = mock_bridge
 
         mock_megatron_model = [Mock()]
-        mock_bridge.to_megatron_model.return_value = mock_megatron_model
+        mock_model_config = Mock()
+        mock_bridge.get_model_config.return_value = mock_model_config
+        mock_bridge.get_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
 
         # Test import_ckpt with kwargs
@@ -1567,7 +1572,10 @@ class TestAutoBridge:
 
         # Assertions
         mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
-        mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
+        mock_bridge.get_model_config.assert_called_once_with(load_weights=True)
+        mock_replace_configs.assert_called_once_with(mock_model_config, use_cpu_initialization=True)
+        mock_model_config.finalize.assert_called_once_with()
+        mock_bridge.get_megatron_model.assert_called_once_with(mock_model_config, wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",

@@ -1002,8 +1002,8 @@ class TestExportAdapterCkpt:
         assert len(model_config.pre_wrap_hooks) == 2
         model_config.finalize.assert_called_once_with()
         bridge.to_megatron_provider.assert_not_called()
-        builder = model_config.get_builder_cls.return_value.return_value
-        builder.build_distributed_models.assert_called_once_with(
+        bridge.get_megatron_model.assert_called_once_with(
+            model_config,
             pg_collection=bridge._get_or_initialize_pg_collection.return_value,
             wrap_with_ddp=False,
             data_parallel_random_init=False,

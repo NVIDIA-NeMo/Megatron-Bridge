@@ -1682,12 +1682,22 @@ class MegatronModelBridge(
         return base
 
     @staticmethod
-    def _get_model_config_from_model(model: MegatronModule) -> ModelConfig | ModelProviderTarget:
+    def _get_model_config_from_model(
+        model: MegatronModule | list[MegatronModule],
+    ) -> ModelConfig | ModelProviderTarget:
         """Return the builder config, falling back to a legacy provider config."""
+        if isinstance(model, list):
+            if not model:
+                raise ValueError("Cannot extract a model config from an empty model list.")
+            model = model[0]
         bridge_model_config = getattr(model, "_bridge_model_config", None)
         if bridge_model_config is not None:
             return bridge_model_config
         model = unwrap_model(model)
+        if isinstance(model, list):
+            if not model:
+                raise ValueError("Cannot extract a model config from an empty unwrapped model list.")
+            model = model[0]
         bridge_model_config = getattr(model, "_bridge_model_config", None)
         if bridge_model_config is not None:
             return bridge_model_config
