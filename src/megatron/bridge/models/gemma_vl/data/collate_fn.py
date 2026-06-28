@@ -30,7 +30,9 @@ from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_K
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
     infer_assistant_mask_boundary_config,
+    shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.models.ministral3.data.collate_fn import ministral3_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
@@ -76,6 +78,7 @@ def gemma3_vl_collate_fn(
                     template_kwargs["min_pixels"] = min_pixels
                 if max_pixels is not None:
                     template_kwargs["max_pixels"] = max_pixels
+                template_kwargs.update(chat_template_kwargs_from_example(example))
                 sample_batch = processor.apply_chat_template([example["conversation"]], **template_kwargs)
                 input_ids = sample_batch["input_ids"][0]
                 attention_mask = sample_batch.get("attention_mask")
@@ -136,6 +139,7 @@ def gemma3_vl_collate_fn(
             template_kwargs["min_pixels"] = min_pixels
         if max_pixels is not None:
             template_kwargs["max_pixels"] = max_pixels
+        template_kwargs.update(shared_chat_template_kwargs_from_examples(examples))
         batch = processor.apply_chat_template([example["conversation"] for example in examples], **template_kwargs)
 
     if "position_ids" not in batch:

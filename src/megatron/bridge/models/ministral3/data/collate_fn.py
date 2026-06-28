@@ -29,7 +29,9 @@ from megatron.bridge.data.vlm_processing import (
     AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
     infer_assistant_mask_boundary_config,
+    shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -95,6 +97,7 @@ def ministral3_collate_fn(
                         truncation=True,
                         return_tensors="pt",
                         return_dict=True,
+                        **chat_template_kwargs_from_example(example),
                     )
                 else:
                     conversation_text = []
@@ -183,6 +186,7 @@ def ministral3_collate_fn(
                 truncation=True,
                 return_tensors="pt",
                 return_dict=True,
+                **shared_chat_template_kwargs_from_examples(examples),
             )
     else:
         texts = []

@@ -943,6 +943,14 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
         tokenizer = tokenizer._tokenizer
 
     template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
+    from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
+
+    known_boundary_markers = ("<|im_start|>assistant", "<|turn>model", "<start_of_turn>model")
+    boundary_config = (
+        infer_assistant_mask_boundary_config(tokenizer)
+        if any(marker in tokenizer.chat_template for marker in known_boundary_markers)
+        else None
+    )
 
     if template_has_generation_kwd:
         tokenized_chat = tokenizer.apply_chat_template(
@@ -952,12 +960,24 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
             return_dict=True,
             return_assistant_tokens_mask=True,
         )
-        input_ids = tokenized_chat.get("input_ids")
-        mask = tokenized_chat["assistant_masks"]
+        input_ids = _chat_template_input_ids(tokenized_chat)
+        if boundary_config is None:
+            mask = tokenized_chat["assistant_masks"]
+        else:
+            chat_example = {"conversation": chat}
+            if tools is not None:
+                chat_example["tools"] = tools
+            mask = (
+                build_assistant_loss_mask(
+                    chat_example,
+                    torch.LongTensor(input_ids),
+                    tokenizer,
+                    boundary_config=boundary_config,
+                )
+                .to(dtype=torch.bool)
+                .tolist()
+            )
     else:
-        from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
-
-        boundary_config = infer_assistant_mask_boundary_config(tokenizer)
         if boundary_config is None:
             raise ValueError(
                 "The tokenizer's chat_template does not contain a {% generation %} block and Bridge could not "

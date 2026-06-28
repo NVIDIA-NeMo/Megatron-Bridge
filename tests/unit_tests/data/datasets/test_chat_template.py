@@ -137,7 +137,9 @@ class TestChatPreprocess:
             legacy = True
             pad_token_id = 0
             added_tokens_decoder = {}
-            chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>"
+            chat_template = (
+                "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>\n"
+            )
 
             def __init__(self):
                 self._tokenizer = self
@@ -146,14 +148,16 @@ class TestChatPreprocess:
                 del add_special_tokens, kwargs
                 mapping = {
                     "<|im_start|>assistant\n": [101],
+                    "<|im_start|>user\n": [100],
                     "<|im_end|>": [102],
+                    "<|im_end|>\n": [102, 103],
                 }
-                return {"input_ids": mapping.get(text, [100, 10, 102, 101, 21, 22, 102])}
+                return {"input_ids": mapping.get(text, [100, 10, 102, 103, 101, 21, 22, 102, 103])}
 
             def apply_chat_template(self, chat, tools=None, tokenize=True, return_dict=True, **kwargs):
                 del chat, tools, tokenize, return_dict
                 assert "return_assistant_tokens_mask" not in kwargs
-                return {"input_ids": [100, 10, 102, 101, 21, 22, 102]}
+                return {"input_ids": [100, 10, 102, 103, 101, 21, 22, 102, 103]}
 
         source = {
             "messages": [
@@ -164,10 +168,53 @@ class TestChatPreprocess:
 
         result = _chat_preprocess(source, BoundaryTokenizer())
 
-        assert result["input_ids"].tolist() == [100, 10, 102, 101, 21, 22, 102]
-        assert result["loss_mask"].tolist() == [False, False, False, False, True, True, True]
-        assert result["context_ids"].tolist() == [100, 10, 102, 101]
-        assert result["answer_ids"].tolist() == [21, 22, 102]
+        assert result["input_ids"].tolist() == [100, 10, 102, 103, 101, 21, 22, 102, 103]
+        assert result["loss_mask"].tolist() == [False, False, False, False, False, True, True, True, True]
+        assert result["context_ids"].tolist() == [100, 10, 102, 103, 101]
+        assert result["answer_ids"].tolist() == [21, 22, 102, 103]
+
+    def test_chat_preprocess_augments_content_only_generation_mask_with_assistant_end(self):
+        class ContentOnlyMaskTokenizer:
+            eos_id = 2
+            legacy = True
+            pad_token_id = 0
+            added_tokens_decoder = {}
+            chat_template = (
+                "<|im_start|>user\n{{ user }}<|im_end|>\n"
+                "<|im_start|>assistant\n{% generation %}{{ assistant }}{% endgeneration %}<|im_end|>\n"
+            )
+
+            def __init__(self):
+                self._tokenizer = self
+
+            def __call__(self, text, add_special_tokens=False, **kwargs):
+                del add_special_tokens, kwargs
+                mapping = {
+                    "<|im_start|>assistant\n": [101],
+                    "<|im_start|>user\n": [100],
+                    "<|im_end|>": [102],
+                    "<|im_end|>\n": [102, 103],
+                }
+                return {"input_ids": mapping.get(text, [42])}
+
+            def apply_chat_template(self, chat, tools=None, tokenize=True, return_dict=True, **kwargs):
+                del chat, tools, tokenize, return_dict, kwargs
+                return {
+                    "input_ids": [100, 10, 102, 103, 101, 21, 22, 102, 103],
+                    "assistant_masks": [0, 0, 0, 0, 0, 1, 1, 0, 0],
+                }
+
+        source = {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        }
+
+        result = _chat_preprocess(source, ContentOnlyMaskTokenizer())
+
+        assert result["loss_mask"].tolist() == [False, False, False, False, False, True, True, True, True]
+        assert result["answer_ids"].tolist() == [21, 22, 102, 103]
 
     def test_chat_preprocess_trusts_template_eos(self):
         """Test that _chat_preprocess does not append eos_id when template uses a different end token."""
@@ -942,8 +989,8 @@ class TestTruncationWithChatTemplates:
             warning_msg = mock_logger.warning.call_args[0][0]
             assert "no assistant tokens" in warning_msg.lower()
 
-            # Loss mask should be set to all ones as fallback
-            assert result["loss_mask"].sum().item() > 0
+            # Truncated assistant targets stay masked instead of exposing user tokens.
+            assert result["loss_mask"].sum().item() == 0
 
 
 class TestContextAnswerSplit:

@@ -32,9 +32,11 @@ class _TextChatTokenizer:
     def __init__(self):
         self.conversations = []
         self.padding_values = []
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         self.conversations.append(conversation)
+        self.template_kwargs.append(kwargs)
         if tokenize:
             assert kwargs.get("return_assistant_tokens_mask") is True
             if conversation[-1]["content"] == "bye":
@@ -89,7 +91,7 @@ class _ChatMLBoundaryTokenizer:
     pad_token_id = 0
     pad_token = "<pad>"
     added_tokens_decoder = {102: "<|im_end|>"}
-    chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>"
+    chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>\n"
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         if tokenize:
@@ -111,9 +113,11 @@ class _ChatMLBoundaryTokenizer:
             return {"input_ids": [101]}
         if text == "<|im_end|>":
             return {"input_ids": [102]}
+        if text == "<|im_end|>\n":
+            return {"input_ids": [102, 103]}
 
         texts = text if isinstance(text, list) else [text]
-        tokenized = [[100, 10, 102, 101, 21, 22, 102] for _ in texts]
+        tokenized = [[100, 10, 102, 103, 101, 21, 22, 102, 103] for _ in texts]
         if truncation and max_length is not None:
             tokenized = [ids[:max_length] for ids in tokenized]
         max_len = (
@@ -193,9 +197,29 @@ def test_text_chat_collate_fn_uses_chatml_boundary_mask_without_generation_templ
 
     batch = text_chat_collate_fn(examples, tokenizer)
 
-    assert batch["tokens"].tolist() == [[100, 10, 102, 101, 21, 22, 102]]
-    assert batch["labels"].tolist() == [[-100, -100, -100, 21, 22, 102, -100]]
-    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["tokens"].tolist() == [[100, 10, 102, 103, 101, 21, 22, 102, 103]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+
+
+@pytest.mark.parametrize("enable_in_batch_packing", [False, True])
+def test_text_chat_collate_fn_forwards_tools_to_render_and_mask_templates(enable_in_batch_packing):
+    tokenizer = _TextChatTokenizer()
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "tools": tools,
+        }
+    ]
+
+    text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=enable_in_batch_packing)
+
+    assert tokenizer.template_kwargs
+    assert all(template_kwargs.get("tools") == tools for template_kwargs in tokenizer.template_kwargs)
 
 
 def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():

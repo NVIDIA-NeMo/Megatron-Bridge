@@ -31,6 +31,7 @@ from megatron.bridge.data.sequence_batching import (
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
+    chat_template_kwargs_from_example,
     ensure_position_ids,
     get_processor_tokenizer,
     infer_assistant_mask_boundary_config,
@@ -61,7 +62,13 @@ def _normalize_text_conversation(example: Mapping[str, Any]) -> list[dict[str, A
     return normalized
 
 
-def _render_chat(conversation: list[dict[str, Any]], processor: Any, tokenizer: Any) -> str:
+def _render_chat(
+    conversation: list[dict[str, Any]],
+    processor: Any,
+    tokenizer: Any,
+    *,
+    chat_template_kwargs: Mapping[str, Any],
+) -> str:
     seen: set[int] = set()
     for template_owner in (tokenizer, processor):
         if id(template_owner) in seen:
@@ -71,10 +78,15 @@ def _render_chat(conversation: list[dict[str, Any]], processor: Any, tokenizer: 
         if apply_chat_template is None:
             continue
         try:
-            return apply_chat_template(conversation, tokenize=False, add_generation_prompt=False)
+            return apply_chat_template(
+                conversation,
+                tokenize=False,
+                add_generation_prompt=False,
+                **chat_template_kwargs,
+            )
         except TypeError:
             try:
-                return apply_chat_template(conversation, tokenize=False)
+                return apply_chat_template(conversation, tokenize=False, **chat_template_kwargs)
             except TypeError:
                 continue
     raise ValueError("Text chat collate requires a processor or tokenizer with apply_chat_template.")
@@ -178,7 +190,8 @@ def text_chat_collate_fn(
 
     Args:
         examples: HF-style chat rows containing ``messages``, ``conversation``,
-            or legacy ``conversations``.
+            or legacy ``conversations``. Optional top-level ``tools`` are
+            forwarded to the chat template for rendering and assistant masks.
         processor: A HF tokenizer or processor. It must expose
             ``apply_chat_template`` directly or through ``processor.tokenizer``.
         max_length: Optional tokenizer truncation length.
@@ -207,13 +220,25 @@ def text_chat_collate_fn(
     max_length = max_length if max_length is not None else sequence_length
     tokenizer = get_processor_tokenizer(processor)
     conversations = [_normalize_text_conversation(example) for example in examples]
-    rendered_texts = [_render_chat(conversation, processor, tokenizer) for conversation in conversations]
+    chat_template_inputs = [
+        {"conversation": conversation, **chat_template_kwargs_from_example(example)}
+        for example, conversation in zip(examples, conversations, strict=True)
+    ]
+    rendered_texts = [
+        _render_chat(
+            chat_template_input["conversation"],
+            processor,
+            tokenizer,
+            chat_template_kwargs=chat_template_kwargs_from_example(chat_template_input),
+        )
+        for chat_template_input in chat_template_inputs
+    ]
     boundary_config = infer_assistant_mask_boundary_config(processor)
     skipped_tokens = extract_skipped_token_ids(processor)
     if enable_in_batch_packing:
         sequence_rows = []
         token_counts = []
-        for conversation, rendered_text in zip(conversations, rendered_texts):
+        for chat_template_input, rendered_text in zip(chat_template_inputs, rendered_texts, strict=True):
             row_batch = _tensorize_batch(
                 _tokenize_texts(
                     [rendered_text],
@@ -230,7 +255,7 @@ def text_chat_collate_fn(
             input_ids = row_batch["input_ids"][0]
             attention_mask = row_batch["attention_mask"][0]
             assistant_loss_mask = build_assistant_loss_mask(
-                conversation,
+                chat_template_input,
                 input_ids,
                 processor,
                 skipped_tokens,
@@ -284,14 +309,14 @@ def text_chat_collate_fn(
 
     loss_masks = [
         build_assistant_loss_mask(
-            conversation,
+            chat_template_input,
             input_ids,
             processor,
             skipped_tokens,
             boundary_config=boundary_config,
             warn_on_all_masked=warn_on_all_masked,
         )
-        for conversation, input_ids in zip(conversations, batch["input_ids"])
+        for chat_template_input, input_ids in zip(chat_template_inputs, batch["input_ids"], strict=True)
     ]
     loss_mask_t = torch.stack(loss_masks).to(device=batch["input_ids"].device, dtype=torch.float32)
     labels, shifted_loss_mask = build_shifted_labels_and_loss_mask(

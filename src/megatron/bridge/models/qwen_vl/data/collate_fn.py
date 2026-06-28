@@ -38,7 +38,8 @@ MISSING_QWEN_VL_UTILS_MSG = (
     " provide compatible vision preprocessing."
 )
 CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
-CHATML_TURN_END = "<|im_end|>"
+CHATML_ASSISTANT_END = "<|im_end|>\n"
+CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
 QWEN_VISUAL_KEYS = (*THW_GRID_VISUAL_KEYS, "second_per_grid_ts")
 
 try:
@@ -72,7 +73,9 @@ def qwen2_5_collate_fn(
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
         assistant_start=CHATML_ASSISTANT_START,
-        assistant_end=CHATML_TURN_END,
+        assistant_end=CHATML_ASSISTANT_END,
+        assistant_end_fallbacks=("<|im_end|>",),
+        role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
 
     texts = [

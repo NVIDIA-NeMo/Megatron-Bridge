@@ -54,6 +54,7 @@ class _DummyProcessor:
             mapping = {
                 "<|im_start|>assistant\n": [102],
                 "<|im_end|>": [103],
+                "<|im_end|>\n": [103, 104],
             }
             return {"input_ids": mapping.get(text, [1])}
 
@@ -133,6 +134,24 @@ def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
     assert batch["visual_inputs"].image_grid_thw is None
     assert "image_grid_thw" not in batch
     assert "image_sizes" not in batch
+
+
+def test_gemma3_vl_collate_forwards_shared_tools_to_chat_template():
+    proc = _DummyProcessor()
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": "Sunny."},
+            ],
+            "tools": tools,
+        }
+    ]
+
+    collate.gemma3_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["tools"] == tools
 
 
 def test_gemma3_packed_collate_processes_unpadded_rows_directly():
@@ -386,18 +405,21 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
     monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
 
     class _ChatMLProcessor:
-        chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+        chat_template = "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
 
         class _Tok:
             pad_token_id = 0
             pad_token = "<pad>"
             added_tokens_decoder = {103: "<|im_end|>"}
-            chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+            chat_template = (
+                "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
+            )
 
             def __call__(self, text, add_special_tokens=False):
                 mapping = {
                     "<|im_start|>assistant\n": [102],
                     "<|im_end|>": [103],
+                    "<|im_end|>\n": [103, 104],
                 }
                 return {"input_ids": mapping.get(text, [42])}
 
@@ -408,7 +430,7 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
             return "rendered"
 
         def __call__(self, text=None, padding=True, return_tensors="pt", **kwargs):
-            return {"input_ids": torch.tensor([[100, 7, 101, 102, 3, 4, 103]])}
+            return {"input_ids": torch.tensor([[100, 7, 103, 104, 102, 3, 4, 103, 104]])}
 
     examples = [
         {
@@ -421,8 +443,8 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
 
     batch = collate.qwen2_5_collate_fn(examples, _ChatMLProcessor())
 
-    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
-    assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 3, 4, 103, 104, -100]]
 
 
 def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
@@ -1459,6 +1481,7 @@ class _NemotronOmniTokenizer:
             marker_tokens = {
                 "<|im_start|>assistant\n": [101],
                 "<|im_end|>": [102],
+                "<|im_end|>\n": [102, 103],
             }
             return {"input_ids": marker_tokens.get(texts, [1])}
         self.tokenized_texts = list(texts)
@@ -1510,7 +1533,7 @@ def _zero_assistant_loss_mask(
 
 
 def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
-    proc = _NemotronOmniProcessor(tokenized_rows=[[100, 10, 102, 101, 21, 22, 102]])
+    proc = _NemotronOmniProcessor(tokenized_rows=[[100, 10, 102, 103, 101, 21, 22, 102, 103]])
     proc.tokenizer.added_tokens_decoder = {102: "<|im_end|>"}
     examples = [
         {
@@ -1523,8 +1546,8 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
 
     batch = collate.nemotron_omni_collate_fn(examples, proc)
 
-    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
-    assert batch["labels"].tolist() == [[-100, -100, -100, 21, 22, 102, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
 
 
 def test_nemotron_omni_hf_collate_rejects_in_batch_packing():

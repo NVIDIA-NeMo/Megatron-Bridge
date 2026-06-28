@@ -19,12 +19,18 @@ import torch
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch, use_processor_right_padding
-from megatron.bridge.data.vlm_processing import assistant_mask_boundary_config_from_markers, build_assistant_loss_mask
+from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+    shared_chat_template_kwargs_from_examples,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
-CHATML_TURN_END = "<|im_end|>"
+CHATML_ASSISTANT_END = "<|im_end|>\n"
+CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
 
 
 def nemotron_omni_collate_fn(
@@ -72,7 +78,9 @@ def nemotron_omni_collate_fn(
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
         assistant_start=CHATML_ASSISTANT_START,
-        assistant_end=CHATML_TURN_END,
+        assistant_end=CHATML_ASSISTANT_END,
+        assistant_end_fallbacks=("<|im_end|>",),
+        role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
     first_content = examples[0]["conversation"][0]["content"]
     is_video = isinstance(first_content, list) and first_content[0].get("type") == "video"
@@ -101,7 +109,11 @@ def nemotron_omni_collate_fn(
             )
             frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
-        prompt = processor.apply_chat_template([ex["conversation"] for ex in examples], tokenize=False)
+        prompt = processor.apply_chat_template(
+            [ex["conversation"] for ex in examples],
+            tokenize=False,
+            **shared_chat_template_kwargs_from_examples(examples),
+        )
         with use_processor_right_padding(processor):
             batch = processor(
                 text=prompt,
@@ -118,26 +130,32 @@ def nemotron_omni_collate_fn(
             images_for_example = []
             text_conv = []
             for turn in example["conversation"]:
-                if isinstance(turn["content"], list):
+                turn_copy = dict(turn)
+                content = turn_copy.get("content")
+                if isinstance(content, list):
                     text_parts = []
-                    for item in turn["content"]:
+                    for item in content:
                         if item["type"] == "image":
                             text_parts.append("<image>")
                             images_for_example.append(item["image"])
                         elif item["type"] == "text":
                             text_parts.append(item["text"])
-                    text_conv.append({"role": turn["role"], "content": "\n".join(text_parts)})
-                elif isinstance(turn["content"], str):
-                    text_conv.append(turn)
-                else:
-                    text_conv.append({"role": turn["role"], "content": str(turn["content"])})
+                    turn_copy["content"] = "\n".join(text_parts)
+                elif content is not None and not isinstance(content, str):
+                    turn_copy["content"] = str(content)
+                text_conv.append(turn_copy)
             all_images.extend(images_for_example)
             images_per_ex.append(images_for_example)
             text_conversations.append(text_conv)
 
         prompts = [
-            processor.tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=False)
-            for conv in text_conversations
+            processor.tokenizer.apply_chat_template(
+                conv,
+                tokenize=False,
+                add_generation_prompt=False,
+                **chat_template_kwargs_from_example(example),
+            )
+            for example, conv in zip(examples, text_conversations, strict=True)
         ]
         # Normalize audio tokens: replace model-agnostic <|audio_1|> with Nemotron Omni's <so_embedding>
         audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
