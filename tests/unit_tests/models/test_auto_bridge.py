@@ -481,32 +481,22 @@ class TestAutoBridge:
 
         assert provider.hf_model_id == "local/hf/path"
 
-    def test_to_megatron_model_config_applies_strict_overrides(self):
-        """ModelConfig overrides update proxied fields and reject typos atomically."""
+    def test_to_megatron_model_config_uses_direct_config_mapping(self):
+        """AutoBridge delegates to the canonical direct ModelConfig mapping."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         model_config = GPTModelConfig(
             transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=1),
             vocab_size=32000,
         )
         mock_model_bridge = Mock()
-        mock_model_bridge.model_config_bridge.return_value = model_config
+        mock_model_bridge.hf_config_to_model_config.return_value = model_config
 
         with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
             bridge = AutoBridge(mock_hf_model)
-            result = bridge.to_megatron_model_config(overrides={"tensor_model_parallel_size": 2, "seq_length": 4096})
+            result = bridge.to_megatron_model_config()
 
         assert result is model_config
-        assert result.transformer.tensor_model_parallel_size == 2
-        assert result.seq_length == 4096
-        assert result.pre_wrap_hooks == []
-        assert result.post_wrap_hooks == []
-
-        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
-            bridge = AutoBridge(mock_hf_model)
-            with pytest.raises(AttributeError, match="tensor_model_paralell_size"):
-                bridge.to_megatron_model_config(overrides={"seq_length": 8192, "tensor_model_paralell_size": 4})
-
-        assert result.seq_length == 4096
+        mock_model_bridge.hf_config_to_model_config.assert_called_once_with(mock_hf_model.config)
 
     def test_to_megatron_provider_sets_hf_model_id_from_pretrained(self):
         """to_megatron_provider falls back to HF model name_or_path."""

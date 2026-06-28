@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import MISSING, dataclass, fields
+from dataclasses import dataclass, fields
 from typing import (
     Any,
     Callable,
@@ -82,34 +82,6 @@ HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
-
-_PROVIDER_RUNTIME_FIELDS = {"_pg_collection", "hf_model_id"}
-
-
-def _find_unrepresented_provider_fields(provider: object, represented_fields: set[str]) -> list[str]:
-    """Find non-default provider fields that a target ModelConfig cannot represent."""
-    unsupported_fields = []
-    for field in fields(provider):
-        if field.name in represented_fields or field.name in _PROVIDER_RUNTIME_FIELDS:
-            continue
-
-        if field.default is not MISSING:
-            default = field.default
-        elif field.default_factory is not MISSING:
-            default = field.default_factory()
-        else:
-            unsupported_fields.append(field.name)
-            continue
-
-        value = getattr(provider, field.name)
-        try:
-            is_default = bool(value == default)
-        except (RuntimeError, TypeError, ValueError):
-            is_default = value is default
-        if not is_default:
-            unsupported_fields.append(field.name)
-
-    return unsupported_fields
 
 
 class MegatronWeightTuple(NamedTuple):
@@ -427,6 +399,9 @@ class MegatronModelBridge(
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
 
+    # ModelConfig support is opt-in while model families migrate away from providers.
+    MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig] | None] = None
+
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts
     ADDITIONAL_FILE_PATTERNS = None
@@ -530,19 +505,19 @@ class MegatronModelBridge(
         )
 
     def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
-        """Return whether an HF config field should be mapped to provider kwargs."""
+        """Return whether an HF config field should be mapped to Megatron kwargs."""
         return True
 
-    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
-        """Convert HF config to Megatron provider kwargs using CONFIG_MAPPING.
+    def hf_config_to_megatron_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Convert an HF config to flat Megatron config kwargs.
 
         Args:
             hf_config: HuggingFace model configuration object
 
         Returns:
-            dict: Provider kwargs ready for GPTModelProvider or similar
+            Megatron config fields derived from ``CONFIG_MAPPING``.
         """
-        provider_kwargs = {}
+        megatron_kwargs = {}
 
         # Map config fields using CONFIG_MAPPING
         # Supports dot notation for nested dict access (e.g., "rope_scaling.factor")
@@ -562,16 +537,16 @@ class MegatronModelBridge(
                 has_value = hasattr(hf_config, hf_name)
             if (
                 has_value
-                and megatron_name not in provider_kwargs
+                and megatron_name not in megatron_kwargs
                 and self._should_map_hf_config_field(hf_config, hf_name, megatron_name, value)
             ):
-                provider_kwargs[megatron_name] = value
+                megatron_kwargs[megatron_name] = value
 
         # Extract rotary_base via compat function (handles both legacy rope_theta
         # attribute and transformers 5.0+ rope_parameters dict)
-        if "rotary_base" not in provider_kwargs:
+        if "rotary_base" not in megatron_kwargs:
             try:
-                provider_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
+                megatron_kwargs["rotary_base"] = rope_theta_from_hf(hf_config)
             except ValueError:
                 pass
 
@@ -597,16 +572,16 @@ class MegatronModelBridge(
                     if value is not None:
                         mla_params[megatron_key] = value
                 if mla_params:
-                    provider_kwargs["_mla_rope_params"] = mla_params
+                    megatron_kwargs["_mla_rope_params"] = mla_params
             else:
                 # GPT models: use yarn_ prefixed field names (dataclass fields on GPTModelProvider)
-                provider_kwargs["position_embedding_type"] = "yarn"
+                megatron_kwargs["position_embedding_type"] = "yarn"
                 for hf_key, megatron_key in self.YARN_ROPE_SCALING_MAPPING:
                     value = rope_scaling.get(hf_key)
                     if value is not None:
-                        provider_kwargs[megatron_key] = value
+                        megatron_kwargs[megatron_key] = value
                 if "truncate" in rope_scaling:
-                    provider_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+                    megatron_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
         elif is_mla_provider:
             if rope_type not in (None, "default"):
                 logger.warning(
@@ -617,24 +592,28 @@ class MegatronModelBridge(
             # Fill in 1.0 for any missing keys to avoid Megatron's MLATransformerConfig defaults
             # (rotary_scaling_factor=40, mscale_all_dim=0.0), which are hardcoded for DeepSeek-V3's
             # YaRN config and are wrong for models without yarn scaling.
-            provider_kwargs["_mla_rope_params"] = {"rotary_scaling_factor": 1.0, "mscale_all_dim": 1.0}
+            megatron_kwargs["_mla_rope_params"] = {"rotary_scaling_factor": 1.0, "mscale_all_dim": 1.0}
 
         # Handle vocab_size_divisible_by
-        vocab_size = provider_kwargs.get("vocab_size")
+        vocab_size = megatron_kwargs.get("vocab_size")
         if vocab_size is not None:
-            provider_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(vocab_size)
+            megatron_kwargs["make_vocab_size_divisible_by"] = self.make_vocab_size_divisible_by(vocab_size)
 
         # Determine dtype
         params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
-        provider_kwargs["fp16"] = params_dtype == torch.float16
-        provider_kwargs["bf16"] = params_dtype == torch.bfloat16
-        provider_kwargs["params_dtype"] = params_dtype
+        megatron_kwargs["fp16"] = params_dtype == torch.float16
+        megatron_kwargs["bf16"] = params_dtype == torch.bfloat16
+        megatron_kwargs["params_dtype"] = params_dtype
 
         # Convert activation function (some models use hidden_act, others use hidden_activation)
         hidden_act = getattr(hf_config, "hidden_act", None) or getattr(hf_config, "hidden_activation", "silu")
-        provider_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
+        megatron_kwargs["activation_func"] = self.hf_to_megatron_activation(hidden_act)
 
-        return provider_kwargs
+        return megatron_kwargs
+
+    def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+        """Deprecated compatibility alias; use ``hf_config_to_megatron_kwargs``."""
+        return self.hf_config_to_megatron_kwargs(hf_config)
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
@@ -698,93 +677,58 @@ class MegatronModelBridge(
 
         return provider
 
-    def model_config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfig:
-        """Create a builder-compatible model config from HuggingFace configuration.
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> ModelConfig:
+        """Convert a HuggingFace configuration directly to ``ModelConfig``.
 
-        The initial builder migration deliberately adapts the result of
-        :meth:`provider_bridge` instead of maintaining a second HF configuration
-        mapping. This preserves model-specific provider overrides while GPT and
-        Hybrid bridges transition to native ``ModelConfig`` implementations.
+        Model families opt in by setting ``MODEL_CONFIG_CLASS`` and may override
+        this method to apply architecture-specific settings. The provider path is
+        intentionally not used so ``ModelConfig`` can become the canonical config
+        representation.
 
         Args:
-            hf_pretrained: HuggingFace model or configuration shim containing the
-                source architecture configuration.
+            hf_config: HuggingFace architecture configuration.
 
         Returns:
-            A ``GPTModelConfig`` or ``HybridModelConfig`` matching the provider.
+            A builder-compatible model configuration.
 
         Raises:
-            NotImplementedError: If the bridge uses an unsupported provider or a
-                provider-only callable layer specification.
+            NotImplementedError: If this model family has not opted in or a mapped
+                field cannot be represented by its model configuration.
         """
-        from megatron.core.transformer import ModuleSpec
-
-        from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-        from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
-        from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
-        from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-        from megatron.bridge.models.mla_provider import MLAModelProvider
         from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
 
-        provider = self.provider_bridge(hf_pretrained)
-
-        if isinstance(provider, MLAModelProvider):
+        model_config_class = self.MODEL_CONFIG_CLASS
+        if model_config_class is None:
             raise NotImplementedError(
-                "ModelConfig conversion for MLA providers is not available yet. "
-                "Use to_megatron_provider() until an MLA ModelConfig is supported."
+                f"ModelConfig conversion is not implemented for {type(self).__name__}. "
+                "This model family must define MODEL_CONFIG_CLASS and a direct config mapping."
             )
 
-        transformer_kwargs = {
-            field.name: getattr(provider, field.name)
-            for field in fields(BridgeTransformerConfig)
-            if field.init and hasattr(provider, field.name)
+        transformer_fields = {field.name for field in fields(BridgeTransformerConfig) if field.init}
+        model_fields = {
+            field.name for field in fields(model_config_class) if field.init and field.name != "transformer"
         }
-        transformer_config = BridgeTransformerConfig(**transformer_kwargs)
 
-        if type(provider) is HybridModelProvider:
-            hybrid_stack_spec = provider.hybrid_stack_spec
-            if hybrid_stack_spec is not None and not isinstance(hybrid_stack_spec, ModuleSpec):
-                raise NotImplementedError(
-                    "Callable Hybrid provider stack specs require a ModelConfig-compatible adapter."
-                )
-            model_config_type = HybridModelConfig
-        elif type(provider) is GPTModelProvider:
-            transformer_layer_spec = provider.transformer_layer_spec
-            if transformer_layer_spec is default_layer_spec:
-                transformer_layer_spec = None
-            elif not isinstance(transformer_layer_spec, ModuleSpec):
-                raise NotImplementedError(
-                    "Callable GPT provider layer specs require a ModelConfig-compatible adapter."
-                )
-            model_config_type = GPTModelConfig
-        else:
-            raise NotImplementedError(
-                f"ModelConfig conversion is not implemented for {type(provider).__name__}. "
-                "Use to_megatron_provider() for this model family."
-            )
+        transformer_kwargs = {}
+        model_kwargs = {}
+        unsupported_fields = []
+        for name, value in self.hf_config_to_megatron_kwargs(hf_config).items():
+            if name in model_fields:
+                model_kwargs[name] = value
+            elif name in transformer_fields:
+                transformer_kwargs[name] = value
+            elif not name.startswith("_"):
+                unsupported_fields.append(name)
 
-        represented_fields = {field.name for field in fields(BridgeTransformerConfig) if field.init}
-        represented_fields.update(field.name for field in fields(model_config_type) if field.init)
-        unsupported_fields = _find_unrepresented_provider_fields(provider, represented_fields)
         if unsupported_fields:
-            field_names = ", ".join(unsupported_fields)
+            field_names = ", ".join(sorted(unsupported_fields))
             raise NotImplementedError(
-                f"{type(provider).__name__} has non-default fields that {model_config_type.__name__} "
-                f"cannot represent: {field_names}. Add a model-specific ModelConfig adapter."
+                f"{model_config_class.__name__} cannot represent mapped field(s): {field_names}. "
+                "Add a model-specific direct config mapping."
             )
 
-        model_kwargs = {
-            field.name: getattr(provider, field.name)
-            for field in fields(model_config_type)
-            if field.init and field.name != "transformer" and hasattr(provider, field.name)
-        }
-        if model_config_type is GPTModelConfig:
-            model_kwargs["transformer_layer_spec"] = transformer_layer_spec
-        model_config = model_config_type(transformer=transformer_config, **model_kwargs)
-
-        model_config.pre_wrap_hooks.extend(getattr(provider, "_pre_wrap_hooks", ()))
-        model_config.post_wrap_hooks.extend(getattr(provider, "_post_wrap_hooks", ()))
-        return model_config
+        transformer_config = BridgeTransformerConfig(**transformer_kwargs)
+        return model_config_class(transformer=transformer_config, **model_kwargs)
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:

@@ -18,7 +18,6 @@ import warnings
 from pathlib import Path
 from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
-from megatron.bridge.models.common.base import _validate_model_config_overrides, apply_model_config_overrides
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
 
@@ -119,14 +118,15 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
         Returns:
             This provider.
         """
-        _validate_model_config_overrides(self, overrides)
-
         if dtype is not None:
             self.params_dtype = dtype
             self.fp16 = dtype == torch.float16
             self.bf16 = dtype == torch.bfloat16
 
-        apply_model_config_overrides(self, overrides)
+        for name, value in (overrides or {}).items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
+            setattr(self, name, value)
 
         # DeepSeek-V4 hash-routed MoE requires an explicit pipeline_model_parallel_layout
         # when PP > 1 (the hash layers must co-locate with the embedding on the first

@@ -16,6 +16,7 @@ import logging
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
+from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -24,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -43,6 +45,33 @@ class LlamaBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = GPTModelConfig
+
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> GPTModelConfig:
+        """Convert a HuggingFace Llama config directly to ``GPTModelConfig``."""
+        model_config = super().hf_config_to_model_config(hf_config)
+
+        model_config.normalization = "RMSNorm"
+        model_config.gated_linear_unit = True
+        model_config.hidden_dropout = 0.0
+        model_config.bias_activation_fusion = True
+        model_config.masked_softmax_fusion = True
+        model_config.persist_layer_norm = True
+        model_config.bias_dropout_fusion = True
+        model_config.apply_rope_fusion = True
+        model_config.rotary_percent = 1.0
+
+        rope_scaling = getattr(hf_config, "rope_scaling", None) or {}
+        rope_type = rope_scaling.get("type") or rope_scaling.get("rope_type")
+        model_config.position_embedding_type = "yarn" if rope_type == "yarn" else "rope"
+        model_config.rope_scaling = False
+        model_config.rope_scaling_factor = 1.0
+        if rope_type == "llama3":
+            model_config.rope_scaling = True
+            model_config.rope_scaling_factor = rope_scaling.get("factor", 8.0)
+
+        return model_config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace Llama config to Megatron GPTModelProvider.

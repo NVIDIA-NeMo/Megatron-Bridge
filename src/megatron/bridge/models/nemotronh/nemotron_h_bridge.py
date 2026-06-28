@@ -18,6 +18,7 @@ from typing import Dict, Optional, Tuple
 import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,6 +32,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
 
@@ -232,6 +234,8 @@ class NemotronHBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    MODEL_CONFIG_CLASS = HybridModelConfig
+
     # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
     # Common bidirectional config field name mapping: (hf_name, megatron_name)
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
@@ -265,6 +269,44 @@ class NemotronHBridge(MegatronModelBridge):
             self._mtp_layers_per_block = 0
 
         return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
+
+    def hf_config_to_model_config(self, hf_config: PretrainedConfig) -> HybridModelConfig:
+        """Convert a HuggingFace Nemotron-H config directly to ``HybridModelConfig``."""
+        model_config = super().hf_config_to_model_config(hf_config)
+
+        model_config.position_embedding_type = "none"
+        model_config.activation_func = squared_relu
+        model_config.masked_softmax_fusion = True
+        model_config.apply_query_key_layer_scaling = False
+        model_config.persist_layer_norm = True
+        model_config.attention_softmax_in_fp32 = False
+        model_config.first_last_layers_bf16 = True
+        model_config.is_hybrid_model = True
+
+        kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
+        if kv_channels is not None:
+            model_config.kv_channels = kv_channels
+
+        model_config.moe_aux_loss_coeff = 0.0001
+        model_config.moe_router_score_function = "sigmoid"
+        model_config.moe_router_enable_expert_bias = True
+        model_config.moe_router_load_balancing_type = "seq_aux_loss"
+        model_config.moe_router_dtype = "fp32"
+        model_config.moe_grouped_gemm = True
+        model_config.moe_token_dispatcher_type = "alltoall"
+        model_config.moe_permute_fusion = True
+        model_config.moe_shared_expert_overlap = getattr(hf_config, "moe_shared_expert_overlap", True)
+
+        if hasattr(hf_config, "moe_latent_size"):
+            model_config.moe_latent_size = hf_config.moe_latent_size
+        if hasattr(hf_config, "num_nextn_predict_layers"):
+            model_config.mtp_num_layers = hf_config.num_nextn_predict_layers
+        if hasattr(hf_config, "mtp_hybrid_override_pattern"):
+            model_config.mtp_hybrid_override_pattern = hf_config.mtp_hybrid_override_pattern
+        if getattr(hf_config, "keep_mtp_spec_in_bf16", False):
+            raise NotImplementedError("HybridModelConfig does not yet support keep_mtp_spec_in_bf16.")
+
+        return model_config
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
         """Convert HuggingFace Nemotron-H config to HybridModelProvider."""

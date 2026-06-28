@@ -18,12 +18,7 @@ from typing import ClassVar
 
 import pytest
 
-from megatron.bridge.models.common.base import (
-    ModelBuilder,
-    ModelConfig,
-    apply_model_config_overrides,
-    compose_hooks,
-)
+from megatron.bridge.models.common.base import ModelBuilder, ModelConfig, compose_hooks
 from megatron.bridge.utils.instantiate_utils import (
     _ALLOWED_TARGET_PREFIXES,
     InstantiationException,
@@ -136,17 +131,3 @@ def test_compose_hooks_preserves_order() -> None:
 
     assert compose_hooks([first, second])(3) == 8
     assert call_log == ["first", "second"]
-
-
-def test_apply_model_config_overrides_is_strict_and_atomic() -> None:
-    config = DummyModelConfig()
-
-    result = apply_model_config_overrides(config, {"value": 7})
-
-    assert result is config
-    assert config.value == 7
-
-    with pytest.raises(AttributeError, match="'missing_one', 'missing_two'"):
-        apply_model_config_overrides(config, {"value": 99, "missing_one": 1, "missing_two": 2})
-
-    assert config.value == 7

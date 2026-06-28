@@ -18,7 +18,6 @@ from megatron.bridge.models.common.base import (
     ModelConfig,
     ModelT,
     Serializable,
-    apply_model_config_overrides,
     compose_hooks,
 )
 from megatron.bridge.models.common.unimodal import build_virtual_pipeline_stages, unimodal_build_distributed_models
@@ -30,7 +29,6 @@ __all__ = [
     "ModelConfig",
     "ModelT",
     "Serializable",
-    "apply_model_config_overrides",
     "compose_hooks",
     "build_virtual_pipeline_stages",
     "unimodal_build_distributed_models",

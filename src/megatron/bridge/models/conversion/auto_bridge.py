@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
 from pathlib import Path
@@ -38,7 +38,6 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
-from megatron.bridge.models.common import apply_model_config_overrides
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -1597,35 +1596,27 @@ class AutoBridge(Generic[MegatronModelT]):
 
     def to_megatron_model_config(
         self,
-        *,
-        overrides: Mapping[str, object] | None = None,
     ) -> ModelConfig:
         """Convert the HuggingFace architecture to a builder-compatible config.
 
         This method performs configuration conversion only. It does not load
-        weights, initialize distributed state, finalize the config, or build a
-        model. Overrides are validated before any value is applied, including
-        attributes proxied to the nested transformer config.
-
-        Args:
-            overrides: Megatron model configuration attributes to override.
+        weights, initialize distributed state, finalize the config, or build a model.
 
         Returns:
             A builder-compatible GPT or Hybrid model configuration.
 
         Raises:
-            AttributeError: If an override does not name an existing attribute.
             NotImplementedError: If this model family does not yet support the
                 ModelConfig/ModelBuilder path.
 
         Example:
             >>> bridge = AutoBridge.from_hf_config(config)
-            >>> model_config = bridge.to_megatron_model_config(
-            ...     overrides={"tensor_model_parallel_size": 2}
-            ... )
+            >>> model_config = bridge.to_megatron_model_config()
         """
-        model_config = self._model_bridge.model_config_bridge(self._provider_bridge_input)
-        return apply_model_config_overrides(model_config, overrides)
+        hf_config = (
+            self.hf_pretrained.config if isinstance(self.hf_pretrained, PreTrainedCausalLM) else self.hf_pretrained
+        )
+        return self._model_bridge.hf_config_to_model_config(hf_config)
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
         """

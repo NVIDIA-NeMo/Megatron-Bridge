@@ -205,12 +205,20 @@ class TestNemotronHBridge:
         assert result.bf16 == True
         assert result.fp16 == False
 
-    def test_model_config_bridge_matches_provider(self, mock_pretrained_nemotronh):
-        """Builder config preserves representative Hybrid provider fields."""
+    def test_hf_config_to_model_config_matches_provider(self, mock_pretrained_nemotronh):
+        """Direct ModelConfig mapping preserves representative Hybrid fields."""
         bridge = NemotronHBridge()
 
         provider = bridge.provider_bridge(mock_pretrained_nemotronh)
-        model_config = bridge.model_config_bridge(mock_pretrained_nemotronh)
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path must not be used")),
+            patch.object(
+                bridge,
+                "hf_config_to_provider_kwargs",
+                side_effect=AssertionError("provider-era mapping alias must not be used"),
+            ),
+        ):
+            model_config = bridge.hf_config_to_model_config(mock_pretrained_nemotronh.config)
 
         assert isinstance(model_config, HybridModelConfig)
         for field in fields(model_config.transformer):

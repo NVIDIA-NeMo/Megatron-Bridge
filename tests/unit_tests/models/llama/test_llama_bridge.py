@@ -20,7 +20,6 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 import torch.nn.functional as F
-from megatron.core.transformer import ModuleSpec
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
 from megatron.bridge.models import AutoBridge
@@ -202,12 +201,20 @@ class TestLlamaBridgeConfigConverter:
         assert result.bf16 is True
         assert result.fp16 is False
 
-    def test_model_config_bridge_matches_provider(self, mock_pretrained_llama):
-        """Builder config preserves representative provider and Llama fields."""
+    def test_hf_config_to_model_config_matches_provider(self, mock_pretrained_llama):
+        """Direct ModelConfig mapping preserves representative provider fields."""
         bridge = LlamaBridge()
 
         provider = bridge.provider_bridge(mock_pretrained_llama)
-        model_config = bridge.model_config_bridge(mock_pretrained_llama)
+        with (
+            patch.object(bridge, "provider_bridge", side_effect=AssertionError("provider path must not be used")),
+            patch.object(
+                bridge,
+                "hf_config_to_provider_kwargs",
+                side_effect=AssertionError("provider-era mapping alias must not be used"),
+            ),
+        ):
+            model_config = bridge.hf_config_to_model_config(mock_pretrained_llama.config)
 
         assert isinstance(model_config, GPTModelConfig)
         for field in fields(model_config.transformer):
@@ -230,68 +237,16 @@ class TestLlamaBridgeConfigConverter:
         assert model_config.pre_wrap_hooks == []
         assert model_config.post_wrap_hooks == []
 
-    def test_model_config_bridge_preserves_hooks_and_serializes(self, mock_pretrained_llama):
-        """Provider hooks transfer to ModelConfig but stay out of serialization."""
-
-        def pre_hook(model):
-            return model
-
-        def post_hook(model):
-            return model
-
-        provider = LlamaBridge().provider_bridge(mock_pretrained_llama)
-        provider.register_pre_wrap_hook(pre_hook)
-        provider.register_post_wrap_hook(post_hook)
+    def test_hf_config_to_model_config_preserves_llama2_rope_defaults(self, mock_pretrained_llama_2):
+        """Direct mapping matches provider defaults when RoPE scaling is disabled."""
         bridge = LlamaBridge()
 
-        with patch.object(bridge, "provider_bridge", return_value=provider):
-            model_config = bridge.model_config_bridge(mock_pretrained_llama)
+        provider = bridge.provider_bridge(mock_pretrained_llama_2)
+        model_config = bridge.hf_config_to_model_config(mock_pretrained_llama_2.config)
 
-        assert model_config.pre_wrap_hooks == [pre_hook]
-        assert model_config.post_wrap_hooks == [post_hook]
-        serialized = model_config.as_dict()
-        assert "pre_wrap_hooks" not in serialized
-        assert "post_wrap_hooks" not in serialized
-
-    def test_model_config_bridge_rejects_custom_provider_subclass(self, mock_pretrained_llama):
-        """Custom providers require an explicit model-specific ModelConfig adapter."""
-
-        class CustomGPTProvider(GPTModelProvider):
-            pass
-
-        provider = CustomGPTProvider(num_layers=2, hidden_size=128, num_attention_heads=1)
-        bridge = LlamaBridge()
-
-        with patch.object(bridge, "provider_bridge", return_value=provider):
-            with pytest.raises(NotImplementedError, match="CustomGPTProvider"):
-                bridge.model_config_bridge(mock_pretrained_llama)
-
-    def test_model_config_bridge_handles_explicit_layer_specs(self, mock_pretrained_llama):
-        """ModuleSpec is portable, while provider-contract callables are rejected."""
-        provider = LlamaBridge().provider_bridge(mock_pretrained_llama)
-        module_spec = ModuleSpec(module=object)
-        provider.transformer_layer_spec = module_spec
-        bridge = LlamaBridge()
-
-        with patch.object(bridge, "provider_bridge", return_value=provider):
-            model_config = bridge.model_config_bridge(mock_pretrained_llama)
-
-        assert model_config.transformer_layer_spec is module_spec
-
-        provider.transformer_layer_spec = lambda provider_config: module_spec
-        with patch.object(bridge, "provider_bridge", return_value=provider):
-            with pytest.raises(NotImplementedError, match="Callable GPT provider layer specs"):
-                bridge.model_config_bridge(mock_pretrained_llama)
-
-    def test_model_config_bridge_rejects_unrepresented_non_default_fields(self, mock_pretrained_llama):
-        """Provider-only configuration cannot be silently dropped."""
-        provider = LlamaBridge().provider_bridge(mock_pretrained_llama)
-        provider.use_transformer_engine_full_layer_spec = True
-        bridge = LlamaBridge()
-
-        with patch.object(bridge, "provider_bridge", return_value=provider):
-            with pytest.raises(NotImplementedError, match="use_transformer_engine_full_layer_spec"):
-                bridge.model_config_bridge(mock_pretrained_llama)
+        assert model_config.position_embedding_type == provider.position_embedding_type == "rope"
+        assert model_config.rope_scaling == provider.rope_scaling is False
+        assert model_config.rope_scaling_factor == provider.rope_scaling_factor == 1.0
 
     def test_provider_bridge_dtype_handling_float16(self, llama_2_7b_config_dict):
         """Test dtype handling for float16."""
