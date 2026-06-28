@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import tempfile
+from dataclasses import fields
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -25,6 +26,7 @@ from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
     NemotronHBridge,
@@ -202,6 +204,33 @@ class TestNemotronHBridge:
         assert result.params_dtype == torch.bfloat16
         assert result.bf16 == True
         assert result.fp16 == False
+
+    def test_model_config_bridge_matches_provider(self, mock_pretrained_nemotronh):
+        """Builder config preserves representative Hybrid provider fields."""
+        bridge = NemotronHBridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_nemotronh)
+        model_config = bridge.model_config_bridge(mock_pretrained_nemotronh)
+
+        assert isinstance(model_config, HybridModelConfig)
+        for field in fields(model_config.transformer):
+            if field.name.startswith("_") or not hasattr(provider, field.name):
+                continue
+            provider_value = getattr(provider, field.name)
+            if callable(provider_value):
+                continue
+            assert getattr(model_config.transformer, field.name) == provider_value, field.name
+        for field in fields(model_config):
+            if field.name in {"transformer", "pre_wrap_hooks", "post_wrap_hooks"}:
+                continue
+            if not hasattr(provider, field.name):
+                continue
+            provider_value = getattr(provider, field.name)
+            if callable(provider_value):
+                continue
+            assert getattr(model_config, field.name) == provider_value, field.name
+        assert model_config.hybrid_stack_spec is None
+        assert model_config.hybrid_layer_pattern == provider.hybrid_layer_pattern
 
     def test_mapping_registry_implementation(self, mock_pretrained_nemotronh):
         """Test that mapping_registry returns a proper MegatronMappingRegistry."""

@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, fields
 from typing import (
     Any,
     Callable,
@@ -44,6 +44,7 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import get_pg_size
+from megatron.training.models.base import ModelConfig
 from rich.progress import BarColumn, Progress, TextColumn, TimeRemainingColumn
 from torch.distributed._tensor import DTensor
 from transformers.configuration_utils import PretrainedConfig
@@ -81,6 +82,34 @@ HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
+
+_PROVIDER_RUNTIME_FIELDS = {"_pg_collection", "hf_model_id"}
+
+
+def _find_unrepresented_provider_fields(provider: object, represented_fields: set[str]) -> list[str]:
+    """Find non-default provider fields that a target ModelConfig cannot represent."""
+    unsupported_fields = []
+    for field in fields(provider):
+        if field.name in represented_fields or field.name in _PROVIDER_RUNTIME_FIELDS:
+            continue
+
+        if field.default is not MISSING:
+            default = field.default
+        elif field.default_factory is not MISSING:
+            default = field.default_factory()
+        else:
+            unsupported_fields.append(field.name)
+            continue
+
+        value = getattr(provider, field.name)
+        try:
+            is_default = bool(value == default)
+        except (RuntimeError, TypeError, ValueError):
+            is_default = value is default
+        if not is_default:
+            unsupported_fields.append(field.name)
+
+    return unsupported_fields
 
 
 class MegatronWeightTuple(NamedTuple):
@@ -668,6 +697,94 @@ class MegatronModelBridge(
                 setattr(provider, key, value)
 
         return provider
+
+    def model_config_bridge(self, hf_pretrained: HFPreTrained) -> ModelConfig:
+        """Create a builder-compatible model config from HuggingFace configuration.
+
+        The initial builder migration deliberately adapts the result of
+        :meth:`provider_bridge` instead of maintaining a second HF configuration
+        mapping. This preserves model-specific provider overrides while GPT and
+        Hybrid bridges transition to native ``ModelConfig`` implementations.
+
+        Args:
+            hf_pretrained: HuggingFace model or configuration shim containing the
+                source architecture configuration.
+
+        Returns:
+            A ``GPTModelConfig`` or ``HybridModelConfig`` matching the provider.
+
+        Raises:
+            NotImplementedError: If the bridge uses an unsupported provider or a
+                provider-only callable layer specification.
+        """
+        from megatron.core.transformer import ModuleSpec
+
+        from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+        from megatron.bridge.models.gpt_provider import GPTModelProvider, default_layer_spec
+        from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+        from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+        from megatron.bridge.models.mla_provider import MLAModelProvider
+        from megatron.bridge.models.transformer_config import TransformerConfig as BridgeTransformerConfig
+
+        provider = self.provider_bridge(hf_pretrained)
+
+        if isinstance(provider, MLAModelProvider):
+            raise NotImplementedError(
+                "ModelConfig conversion for MLA providers is not available yet. "
+                "Use to_megatron_provider() until an MLA ModelConfig is supported."
+            )
+
+        transformer_kwargs = {
+            field.name: getattr(provider, field.name)
+            for field in fields(BridgeTransformerConfig)
+            if field.init and hasattr(provider, field.name)
+        }
+        transformer_config = BridgeTransformerConfig(**transformer_kwargs)
+
+        if type(provider) is HybridModelProvider:
+            hybrid_stack_spec = provider.hybrid_stack_spec
+            if hybrid_stack_spec is not None and not isinstance(hybrid_stack_spec, ModuleSpec):
+                raise NotImplementedError(
+                    "Callable Hybrid provider stack specs require a ModelConfig-compatible adapter."
+                )
+            model_config_type = HybridModelConfig
+        elif type(provider) is GPTModelProvider:
+            transformer_layer_spec = provider.transformer_layer_spec
+            if transformer_layer_spec is default_layer_spec:
+                transformer_layer_spec = None
+            elif not isinstance(transformer_layer_spec, ModuleSpec):
+                raise NotImplementedError(
+                    "Callable GPT provider layer specs require a ModelConfig-compatible adapter."
+                )
+            model_config_type = GPTModelConfig
+        else:
+            raise NotImplementedError(
+                f"ModelConfig conversion is not implemented for {type(provider).__name__}. "
+                "Use to_megatron_provider() for this model family."
+            )
+
+        represented_fields = {field.name for field in fields(BridgeTransformerConfig) if field.init}
+        represented_fields.update(field.name for field in fields(model_config_type) if field.init)
+        unsupported_fields = _find_unrepresented_provider_fields(provider, represented_fields)
+        if unsupported_fields:
+            field_names = ", ".join(unsupported_fields)
+            raise NotImplementedError(
+                f"{type(provider).__name__} has non-default fields that {model_config_type.__name__} "
+                f"cannot represent: {field_names}. Add a model-specific ModelConfig adapter."
+            )
+
+        model_kwargs = {
+            field.name: getattr(provider, field.name)
+            for field in fields(model_config_type)
+            if field.init and field.name != "transformer" and hasattr(provider, field.name)
+        }
+        if model_config_type is GPTModelConfig:
+            model_kwargs["transformer_layer_spec"] = transformer_layer_spec
+        model_config = model_config_type(transformer=transformer_config, **model_kwargs)
+
+        model_config.pre_wrap_hooks.extend(getattr(provider, "_pre_wrap_hooks", ()))
+        model_config.post_wrap_hooks.extend(getattr(provider, "_post_wrap_hooks", ()))
+        return model_config
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:

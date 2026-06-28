@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
-from typing import Any
+from typing import Any, TypeVar
 
 from megatron.training.models.base import (
     BuildConfigT,  # noqa: F401
@@ -28,6 +29,42 @@ from megatron.training.models.base import (
 )
 
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix
+
+
+ConfigT = TypeVar("ConfigT")
+
+
+def apply_model_config_overrides(
+    config: ConfigT,
+    overrides: Mapping[str, object] | None = None,
+) -> ConfigT:
+    """Apply validated overrides to a model configuration object.
+
+    This helper supports both ``ModelConfig`` instances and the transitional
+    ``ModelProviderMixin`` configuration objects. Attribute validation happens
+    before any values are changed so a typo cannot partially mutate the config
+    or silently create a phantom field.
+
+    Args:
+        config: Model configuration or transitional model provider to update.
+        overrides: Attribute names and values to apply.
+
+    Returns:
+        The updated configuration object.
+
+    Raises:
+        AttributeError: If any override is not an existing configuration attribute.
+    """
+    overrides = overrides or {}
+    unknown_attributes = [name for name in overrides if not hasattr(config, name)]
+    if unknown_attributes:
+        names = ", ".join(repr(name) for name in unknown_attributes)
+        raise AttributeError(f"{type(config).__name__} has no attribute(s): {names}.")
+
+    for name, value in overrides.items():
+        setattr(config, name, value)
+
+    return config
 
 
 class ModelConfig(_MegatronModelConfig):

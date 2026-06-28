@@ -34,9 +34,11 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _mtp_source_key_prefixes,
     _saved_config_disables_mtp,
 )
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.transformer_config import TransformerConfig
 
 
 def create_mock_pretrained_causal_lm():
@@ -478,6 +480,33 @@ class TestAutoBridge:
             provider = bridge.to_megatron_provider(load_weights=False, hf_path="local/hf/path")
 
         assert provider.hf_model_id == "local/hf/path"
+
+    def test_to_megatron_model_config_applies_strict_overrides(self):
+        """ModelConfig overrides update proxied fields and reject typos atomically."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        model_config = GPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=1),
+            vocab_size=32000,
+        )
+        mock_model_bridge = Mock()
+        mock_model_bridge.model_config_bridge.return_value = model_config
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            result = bridge.to_megatron_model_config(overrides={"tensor_model_parallel_size": 2, "seq_length": 4096})
+
+        assert result is model_config
+        assert result.transformer.tensor_model_parallel_size == 2
+        assert result.seq_length == 4096
+        assert result.pre_wrap_hooks == []
+        assert result.post_wrap_hooks == []
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            with pytest.raises(AttributeError, match="tensor_model_paralell_size"):
+                bridge.to_megatron_model_config(overrides={"seq_length": 8192, "tensor_model_paralell_size": 4})
+
+        assert result.seq_length == 4096
 
     def test_to_megatron_provider_sets_hf_model_id_from_pretrained(self):
         """to_megatron_provider falls back to HF model name_or_path."""

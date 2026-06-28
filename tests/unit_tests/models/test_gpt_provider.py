@@ -14,6 +14,9 @@
 
 from unittest.mock import Mock, patch
 
+import pytest
+
+from megatron.bridge.models.common import apply_model_config_overrides
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -43,6 +46,25 @@ class TestGPTModelProvider:
         assert provider.rotary_percent == 1.0
         assert provider.seq_length == 1024
         assert provider.mtp_enabled is False
+
+    def test_apply_overrides_rejects_unknown_attributes_atomically(self):
+        """Legacy provider overrides use the shared strict, atomic helper."""
+        provider = GPTModelProvider(num_layers=12, hidden_size=768, num_attention_heads=12)
+
+        result = apply_model_config_overrides(provider, {"tensor_model_parallel_size": 2})
+        assert result is provider
+        assert provider.tensor_model_parallel_size == 2
+
+        with pytest.raises(AttributeError, match="'tensor_model_paralell_size', 'missing_field'"):
+            provider.apply_overrides_and_finalize(
+                overrides={
+                    "tensor_model_parallel_size": 4,
+                    "tensor_model_paralell_size": 2,
+                    "missing_field": True,
+                }
+            )
+
+        assert provider.tensor_model_parallel_size == 2
 
     def test_gpt_model_provider_with_rope(self):
         """Test GPTModelProvider with RoPE embeddings."""
