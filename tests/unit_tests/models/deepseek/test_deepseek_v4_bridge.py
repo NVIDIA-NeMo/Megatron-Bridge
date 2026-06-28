@@ -18,6 +18,7 @@ Locks in the MTP mapping layout: per-MTP-layer HC head, separate ``e_proj``
 and ``h_proj`` mappings, and no deprecated concatenated ``eh_proj`` path.
 """
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -32,7 +33,11 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     _dsv4_compress_ratios,
     _dsv4_num_hash_layers,
 )
-from megatron.bridge.models.deepseek.deepseek_v4_model_config import deepseek_v4_layer_spec
+from megatron.bridge.models.deepseek.deepseek_v4_model_config import (
+    DeepSeekV4ModelBuilder,
+    DeepSeekV4ModelConfig,
+    deepseek_v4_layer_spec,
+)
 
 
 @pytest.fixture
@@ -515,3 +520,18 @@ def test_deepseek_v4_builder_dispatches_to_installed_mcore(monkeypatch) -> None:
 
     assert deepseek_v4_layer_spec(config) is expected
     mocked_dispatch.assert_called_once_with(config)
+
+
+def test_deepseek_v4_builder_rejects_mcore_without_native_family_fields() -> None:
+    @dataclass
+    class InstalledTransformerConfig:
+        experimental_attention_variant: str | None = None
+
+    config = DeepSeekV4ModelConfig(
+        transformer=InstalledTransformerConfig(),
+        vocab_size=8,
+        seq_length=8,
+    )
+
+    with pytest.raises(NotImplementedError, match="native CSA, mHC, and hash-layer support"):
+        DeepSeekV4ModelBuilder(config).build_model(MagicMock())

@@ -343,9 +343,12 @@ def build_and_load_model(
             # the flag on the config object. This is intentional — we do not want
             # to duplicate TransformerConfig fields like `use_cpu_initialization`
             # as kwargs on `build_distributed_models`.
-            return builder.build_distributed_models(
+            models = builder.build_distributed_models(
                 ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
             )
+            for model_chunk in models:
+                model_chunk._bridge_model_config = model_cfg
+            return models
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
             assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
@@ -546,16 +549,18 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Get model config from the first model instance
-    model_config = get_model_config(model[0])
+    # Builder-backed models keep their serializable outer config separately
+    # from ``MegatronModule.config``, which remains the exact MCore
+    # TransformerConfig consumed by model layers.
+    model_config = getattr(model[0], "_bridge_model_config", None)
+    if not isinstance(model_config, ModelConfig):
+        model_config = get_model_config(model[0])
 
-    # Validate that the model config is a model provider
-    if not isinstance(model_config, ModelProviderMixin):
+    if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be an instance of ModelProviderMixin, "
+            f"Expected model config to be a ModelConfig or ModelProviderMixin, "
             f"but got {type(model_config).__name__}. "
-            f"Model configs must inherit from ModelProviderMixin to ensure proper "
-            f"model instantiation and configuration handling."
+            "Builder-created models must retain their outer ModelConfig for checkpoint serialization."
         )
 
     # Create global state for checkpointing

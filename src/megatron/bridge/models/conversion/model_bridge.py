@@ -357,14 +357,17 @@ class MegatronModelBridge(
             class MegatronCausalLlamaBridge(MegatronModelBridge):
                 pass
 
-    2. Implement provider_bridge to create Megatron configurations:
+    2. Implement a serializable model config and standalone builder:
 
         .. code-block:: python
 
-            def provider_bridge(self, hf_pretrained) -> GPTModelProvider:
-                return GPTModelProvider(
-                    num_layers=hf_pretrained.config.num_hidden_layers,
-                    hidden_size=hf_pretrained.config.hidden_size,
+            def model_config_bridge(self, hf_pretrained) -> LlamaModelConfig:
+                return LlamaModelConfig(
+                    transformer=TransformerConfig(
+                        num_layers=hf_pretrained.config.num_hidden_layers,
+                        hidden_size=hf_pretrained.config.hidden_size,
+                        ...
+                    ),
                     ...
                 )
 
@@ -406,7 +409,6 @@ class MegatronModelBridge(
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig]] = BridgeGPTModelConfig
     TRANSFORMER_CONFIG_CLASS: ClassVar[type[TransformerConfig]] = TransformerConfig
     CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED: ClassVar[bool] = False
-    LEGACY_MODEL_BUILD_ONLY: ClassVar[bool] = False
 
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
     # Set this in bridge subclasses to include model-specific files beyond standard artifacts

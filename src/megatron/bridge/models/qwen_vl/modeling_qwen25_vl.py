@@ -99,6 +99,8 @@ class Qwen25VLModel(MegatronModule):
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
+        self.image_token_id = config.image_token_id
+        self.video_token_id = config.video_token_id
 
         if pre_process:
             if vision_config is None:
@@ -223,8 +225,8 @@ class Qwen25VLModel(MegatronModule):
 
         # Build mm_token_type_ids: 0=text, 1=image, 2=video
         mm_token_type_ids = torch.zeros_like(input_ids, dtype=torch.int)
-        mm_token_type_ids[input_ids == self.config.image_token_id] = 1
-        mm_token_type_ids[input_ids == self.config.video_token_id] = 2
+        mm_token_type_ids[input_ids == self.image_token_id] = 1
+        mm_token_type_ids[input_ids == self.video_token_id] = 2
 
         # In transformers 5.3.0+, get_rope_index requires mm_token_type_ids as the second argument
         if is_transformers_min_version("5.3.0"):

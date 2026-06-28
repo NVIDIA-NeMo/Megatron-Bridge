@@ -31,10 +31,7 @@ if TYPE_CHECKING:
     from megatron.core.models.mimo import MimoModel
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
-    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
-        MegatronMIMOInfra,
-        MegatronMIMOProvider,
-    )
+    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOInfra, MegatronMIMOModelConfig
 
 
 logger = logging.getLogger(__name__)
@@ -43,7 +40,7 @@ logger = logging.getLogger(__name__)
 def save_megatron_mimo_model(
     model: "MimoModel",
     infra: "MegatronMIMOInfra",
-    provider: "MegatronMIMOProvider",
+    model_config: "MegatronMIMOModelConfig",
     path: Union[str, Path],
     *,
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
@@ -55,7 +52,7 @@ def save_megatron_mimo_model(
     Args:
         model: Constructed ``MimoModel``.
         infra: ``MegatronMIMOInfra`` from model construction.
-        provider: Provider used to reconstruct the model on load.
+        model_config: Pure model config used to reconstruct the model on load.
         path: Directory to save the dist-checkpoint into.
         hf_tokenizer_path: Optional HF model ID or path for tokenizer assets.
         hf_tokenizer_kwargs: Optional kwargs for ``AutoTokenizer.from_pretrained``.
@@ -75,7 +72,7 @@ def save_megatron_mimo_model(
 
     state = GlobalState()
     state.cfg = ConfigContainer(
-        model=provider,
+        model=model_config,
         train=None,
         optimizer=OptimizerConfig(use_distributed_optimizer=False),
         ddp=None,
@@ -108,25 +105,18 @@ def save_megatron_mimo_model(
         ckpt_format,
     )
 
-    # Derived ModuleSpec fields don't round-trip through yaml — snapshot,
-    # clear, then restore around the save.
-    _saved_derived = _snapshot_derived_spec_fields(provider)
-    try:
-        _clear_derived_spec_fields(provider)
-        state.initialize_async_checkpoint_worker()
-        save_checkpoint(
-            state=state,
-            model=[model],
-            optimizer=None,
-            opt_param_scheduler=None,
-            num_floating_point_operations_so_far=0,
-            callback_manager=None,
-            pg_collection=local_pg_collection,
-            module_name=active_module_name,
-        )
-        maybe_finalize_async_save(state, state.cfg.checkpoint, blocking=True, terminate=True)
-    finally:
-        _restore_derived_spec_fields(provider, _saved_derived)
+    state.initialize_async_checkpoint_worker()
+    save_checkpoint(
+        state=state,
+        model=[model],
+        optimizer=None,
+        opt_param_scheduler=None,
+        num_floating_point_operations_so_far=0,
+        callback_manager=None,
+        pg_collection=local_pg_collection,
+        module_name=active_module_name,
+    )
+    maybe_finalize_async_save(state, state.cfg.checkpoint, blocking=True, terminate=True)
 
     if tokenizer_config is not None:
         from megatron.bridge.training.checkpointing import get_checkpoint_name, save_tokenizer_assets
@@ -146,7 +136,7 @@ def load_megatron_mimo_model(
     bf16: bool = True,
     wrap_with_ddp: bool = False,
     data_parallel_random_init: bool = False,
-) -> tuple["MimoModel", "MegatronMIMOInfra", "MegatronMIMOProvider"]:
+) -> tuple["MimoModel", "MegatronMIMOInfra", "MegatronMIMOModelConfig"]:
     """Load a MegatronMIMO model from a Megatron distributed-checkpoint.
 
     Args:
@@ -158,16 +148,16 @@ def load_megatron_mimo_model(
         data_parallel_random_init: Forwarded to ``build_megatron_mimo_model``.
 
     Returns:
-        ``(mimo_model, infra, provider)``.
+        ``(mimo_model, infra, model_config)``.
     """
     from megatron.bridge.training.model_load_save import load_model_config
 
     iter_path = _resolve_iter_folder(Path(path))
 
-    provider, _mlm_args = load_model_config(str(iter_path))
+    model_config, _mlm_args = load_model_config(str(iter_path))
 
     if parallelism_config is not None:
-        provider.megatron_mimo_parallelism_config = parallelism_config
+        model_config.megatron_mimo_parallelism_config = parallelism_config
 
     logger.info(
         "load_megatron_mimo_model: loading from %s (resolved iter=%s)",
@@ -178,7 +168,7 @@ def load_megatron_mimo_model(
     from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
 
     mimo_model, infra = build_megatron_mimo_model(
-        provider,
+        model_config,
         ddp_config=ddp_config,
         fp16=fp16,
         bf16=bf16,
@@ -190,7 +180,7 @@ def load_megatron_mimo_model(
 
     state = GlobalState()
     state.cfg = ConfigContainer(
-        model=provider,
+        model=model_config,
         train=None,
         optimizer=OptimizerConfig(use_distributed_optimizer=False),
         ddp=None,
@@ -236,33 +226,7 @@ def load_megatron_mimo_model(
         module_name=active_module_name,
     )
 
-    return mimo_model, infra, provider
-
-
-def _snapshot_derived_spec_fields(provider: "MegatronMIMOProvider") -> dict:
-    """Capture the provider's runtime-derived spec fields for restoration."""
-    return {
-        "language_model_spec": provider.language_model_spec,
-        "modality_submodules_spec": provider.modality_submodules_spec,
-        "special_token_ids": provider.special_token_ids,
-        "_grids": getattr(provider, "_grids", None),
-    }
-
-
-def _clear_derived_spec_fields(provider: "MegatronMIMOProvider") -> None:
-    """Reset derived spec fields so yaml serialisation captures only inputs."""
-    provider.language_model_spec = None
-    provider.modality_submodules_spec = {}
-    provider.special_token_ids = {}
-    provider._grids = None
-
-
-def _restore_derived_spec_fields(provider: "MegatronMIMOProvider", saved: dict) -> None:
-    """Restore derived spec fields after a save, leaving the provider usable."""
-    provider.language_model_spec = saved["language_model_spec"]
-    provider.modality_submodules_spec = saved["modality_submodules_spec"]
-    provider.special_token_ids = saved["special_token_ids"]
-    provider._grids = saved["_grids"]
+    return mimo_model, infra, model_config
 
 
 def _resolve_iter_folder(path: Path) -> Path:

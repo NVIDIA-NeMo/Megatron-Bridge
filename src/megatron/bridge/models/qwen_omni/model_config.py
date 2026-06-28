@@ -14,8 +14,7 @@
 
 """Pure model configurations and builders for Qwen Omni models."""
 
-from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -64,34 +63,9 @@ class QwenOmniModelConfig(BridgeGPTModelConfig):
     multimodal_attn_impl: str = "auto"
 
 
-def _runtime_transformer(config: QwenOmniModelConfig):
-    transformer = copy(config.transformer)
-    for name in (
-        "language_max_sequence_length",
-        "image_token_id",
-        "video_token_id",
-        "audio_token_id",
-        "vision_start_token_id",
-        "vision_end_token_id",
-        "audio_start_token_id",
-        "audio_end_token_id",
-        "bos_token_id",
-        "eos_token_id",
-        "mrope_section",
-        "position_id_per_seconds",
-        "seconds_per_chunk",
-        "patch_size",
-        "temporal_patch_size",
-        "spatial_merge_size",
-        "vit_gradient_checkpointing",
-        "multimodal_attn_impl",
-    ):
-        setattr(transformer, name, getattr(config, name))
-    transformer.vocab_size = config.vocab_size
-    transformer.language_max_sequence_length = config.language_max_sequence_length
-    transformer.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-    transformer.rotary_base = config.rotary_base
-    return transformer
+def _language_transformer(config: QwenOmniModelConfig):
+    """Return an exact MCore config with its declared M-RoPE field populated."""
+    return replace(config.transformer, mrope_section=config.mrope_section)
 
 
 def _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage):
@@ -126,7 +100,7 @@ class _QwenOmniBuilder(GPTModelBuilder):
             Constructed Qwen Omni stage.
         """
         config = self._model_config
-        transformer = _runtime_transformer(config)
+        transformer = _language_transformer(config)
         pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
         thinker_config = self.thinker_cls(**config.thinker_config)
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
@@ -142,6 +116,7 @@ class _QwenOmniBuilder(GPTModelBuilder):
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=pg_collection,
+            model_config=config,
         )
         if config.freeze_language_model or config.freeze_vision_model or config.freeze_audio_model:
             model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_audio_model)

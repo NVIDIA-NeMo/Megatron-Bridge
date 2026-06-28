@@ -19,7 +19,6 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
@@ -87,13 +86,12 @@ class TestGptOssBridge:
         restored = type(result).from_dict(result.as_dict())
         assert restored.yarn_rotary_scaling_factor == 16.0
 
-        def inspect_bound_yarn(_builder, _pg_collection, **_kwargs):
-            assert result.transformer.yarn_rotary_scaling_factor == 16.0
-            assert result.transformer.yarn_original_max_position_embeddings == 2048
-            return Mock()
-
-        with patch.object(GPTModelBuilder, "build_model", autospec=True, side_effect=inspect_bound_yarn):
+        with patch(
+            "megatron.bridge.models.gpt_oss.model_config.build_gpt_with_yarn", return_value=Mock()
+        ) as build_with_yarn:
             GPTOSSModelBuilder(result).build_model(Mock())
+        assert build_with_yarn.call_args.args == (result,)
+        assert build_with_yarn.call_args.kwargs["pg_collection"] is not None
         assert "yarn_rotary_scaling_factor" not in result.transformer.__dict__
 
     def test_provider_bridge_maps_config(self, mock_pretrained):

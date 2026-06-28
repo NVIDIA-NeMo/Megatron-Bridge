@@ -783,7 +783,6 @@ class TestExportAdapterCkpt:
         mock = MagicMock(spec=AutoBridge)
         mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
         mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
-        mock._model_bridge.LEGACY_MODEL_BUILD_ONLY = False
 
         fake_builder = MagicMock()
         fake_builder.build_distributed_models.return_value = [MagicMock()]
@@ -1008,25 +1007,6 @@ class TestExportAdapterCkpt:
             pg_collection=bridge._get_or_initialize_pg_collection.return_value,
             wrap_with_ddp=False,
             data_parallel_random_init=False,
-        )
-
-    def test_legacy_only_bridge_uses_provider_for_adapter_export(self, bridge, ckpt_dir, tmp_path):
-        """Unsupported builder architectures retain adapter export through their provider."""
-        bridge._model_bridge.LEGACY_MODEL_BUILD_ONLY = True
-        provider = MagicMock()
-        provider.provide_distributed_model.return_value = [MagicMock()]
-        bridge.to_megatron_provider.return_value = provider
-
-        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
-
-        bridge.to_megatron_provider.assert_called_once_with(load_weights=True)
-        bridge.to_megatron_model_config.assert_not_called()
-        provider.finalize.assert_called_once_with()
-        provider.register_pre_wrap_hook.assert_called_once()
-        provider.provide_distributed_model.assert_called_once_with(
-            wrap_with_ddp=False,
-            use_cpu_initialization=True,
-            init_model_with_meta_device=False,
         )
 
     def test_export_adapter_ckpt_does_not_pass_output_dtype(self, bridge, ckpt_dir, tmp_path):

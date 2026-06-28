@@ -14,6 +14,8 @@
 
 """Provider-neutral Ministral 3 attention and layer specification."""
 
+from functools import partial
+
 import torch
 from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -33,6 +35,8 @@ class MinistralTEDotProductAttention(TEDotProductAttention):
         attn_mask_type: AttnMaskType,
         attention_type: str,
         attention_dropout: float | None = None,
+        beta: float = 0.0,
+        max_position_embeddings: int = 16384,
         **kwargs: object,
     ) -> None:
         super().__init__(
@@ -43,8 +47,8 @@ class MinistralTEDotProductAttention(TEDotProductAttention):
             attention_dropout=attention_dropout,
             **kwargs,
         )
-        self.beta = config.llama_4_scaling_beta
-        self.max_position_embeddings = config.llama_4_original_max_position_embeddings
+        self.beta = beta
+        self.max_position_embeddings = max_position_embeddings
 
     @staticmethod
     def _get_llama_4_attn_scale(
@@ -84,7 +88,11 @@ def ministral_layer_spec(config: BridgeGPTModelConfig) -> ModuleSpec:
         moe_grouped_gemm=config.moe_grouped_gemm,
         qk_layernorm=config.qk_layernorm,
     )
-    layer_spec.submodules.self_attention.submodules.core_attention = MinistralTEDotProductAttention
+    layer_spec.submodules.self_attention.submodules.core_attention = partial(
+        MinistralTEDotProductAttention,
+        beta=config.llama_4_scaling_beta,
+        max_position_embeddings=config.llama_4_original_max_position_embeddings,
+    )
     return layer_spec
 
 

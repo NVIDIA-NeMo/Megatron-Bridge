@@ -375,7 +375,8 @@ def apply_rotary_pos_emb_absolute(
         "must remain False to avoid misleading configuration state."
     )
     orig_t_dtype = t.dtype
-    if config.apply_rotary_pos_emb_in_fp32:
+    apply_in_fp32 = getattr(config, "apply_rotary_pos_emb_in_fp32", True)
+    if apply_in_fp32:
         t = t.float()
 
     if cu_seqlens is None:
@@ -383,7 +384,7 @@ def apply_rotary_pos_emb_absolute(
     else:
         result = apply_rotary_pos_emb_thd_absolute(t, cu_seqlens, freqs, rotary_interleaved=config.rotary_interleaved)
 
-    if config.apply_rotary_pos_emb_in_fp32:
+    if apply_in_fp32:
         result = result.to(orig_t_dtype)
 
     return result

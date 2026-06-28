@@ -19,8 +19,10 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 from transformers import GenerationConfig, SiglipVisionConfig
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gemma.gemma4_bridge import (
@@ -32,6 +34,12 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import Gemma4VLBridge
 from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
     Gemma4VLModelProvider,
+)
+from megatron.bridge.models.gemma_vl.model_config import (
+    Gemma4DenseVLModelBuilder,
+    Gemma4DenseVLModelConfig,
+    Gemma4VLModelBuilder,
+    Gemma4VLModelConfig,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -259,6 +267,49 @@ def mock_hf_pretrained_dense(mock_hf_config_dense):
 @pytest.fixture
 def vl_bridge():
     return Gemma4VLBridge()
+
+
+def _serializable_text_config(config):
+    values = {
+        key: value
+        for key, value in vars(config).items()
+        if key != "method_calls" and not key.startswith("_") and not callable(value)
+    }
+
+    class SerializableConfig:
+        def to_dict(self):
+            return values.copy()
+
+    result = SerializableConfig()
+    for key, value in values.items():
+        setattr(result, key, value)
+    return result
+
+
+@pytest.mark.parametrize(
+    ("pretrained_fixture", "config_class", "builder_class"),
+    [
+        ("mock_hf_pretrained_moe", Gemma4VLModelConfig, Gemma4VLModelBuilder),
+        ("mock_hf_pretrained_dense", Gemma4DenseVLModelConfig, Gemma4DenseVLModelBuilder),
+    ],
+)
+def test_gemma4_vl_model_config_bridge_roundtrips_exact_mcore_config(
+    request, vl_bridge, pretrained_fixture, config_class, builder_class
+):
+    pretrained = request.getfixturevalue(pretrained_fixture)
+    pretrained.config.text_config = _serializable_text_config(pretrained.config.text_config)
+    pretrained.config.audio_config = None
+    pretrained.config.audio_token_id = 258_881
+    config = vl_bridge.model_config_bridge(pretrained)
+
+    restored = ModelConfig.from_dict(config.as_dict())
+
+    assert type(config) is config_class
+    assert type(config.transformer) is TransformerConfig
+    assert type(restored) is config_class
+    assert type(restored.transformer) is TransformerConfig
+    assert restored.get_builder_cls() is builder_class
+    assert restored.as_dict() == config.as_dict()
 
 
 # ===========================================================================

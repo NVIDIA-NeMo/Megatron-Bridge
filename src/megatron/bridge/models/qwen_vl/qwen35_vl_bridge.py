@@ -325,6 +325,10 @@ class Qwen35VLBridge(MegatronModelBridge):
     """
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
+    mimo_modality_keys = {"images": "qwen_visual"}
+    mimo_special_token_fields = {"images": "image_token_id"}
+    mimo_language_spec_builder = "megatron.bridge.models.qwen_vl.model_config.build_qwen35_mimo_language_spec"
+    mimo_modality_spec_builder = "megatron.bridge.models.qwen_vl.model_config.build_qwen35_mimo_modality_specs"
 
     MODEL_CONFIG_CLASS = Qwen35VLModelConfig
     CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True

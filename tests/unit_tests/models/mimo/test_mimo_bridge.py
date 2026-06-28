@@ -21,6 +21,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
@@ -69,11 +70,14 @@ class TestMimoBridge:
 
     def test_model_config_bridge_maps_mtp_without_phantom_fields(self, mimo_config):
         result = MimoBridge().model_config_bridge(SimpleNamespace(config=SimpleNamespace(**mimo_config)))
+        restored = BridgeGPTModelConfig.from_dict(result.as_dict())
 
         assert type(result.transformer) is TransformerConfig
         assert result.transformer.mtp_num_layers == 1
         assert result.transformer.mtp_loss_scaling_factor == 0.1
         assert "mtp_num_layers" not in result.__dict__
+        assert type(restored.transformer) is TransformerConfig
+        assert restored.as_dict() == result.as_dict()
 
     def test_provider_bridge_maps_mtp_config(self, mock_pretrained_mimo):
         bridge = MimoBridge()

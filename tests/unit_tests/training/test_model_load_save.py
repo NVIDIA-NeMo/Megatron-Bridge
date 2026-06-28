@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -252,7 +253,7 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
-    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    @patch("megatron.bridge.models.common.ModelConfig.from_dict")
     def test_load_mbridge_saved_model_config(
         self,
         mock_from_dict,
@@ -321,6 +322,7 @@ class TestLoadMegatronModel:
 
         result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
+        assert mock_model._bridge_model_config is mock_model_cfg
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
     @pytest.mark.parametrize("model_type", ["gpt", "hybrid", "mamba", "resnet"])
@@ -785,6 +787,46 @@ class TestSaveMegatronModel:
         mock_save_checkpoint.assert_called_once_with(
             state=mock_state,
             model=[mock_model],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            callback_manager=None,
+        )
+
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.get_model_config")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_builder_model_uses_outer_serializable_config(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_get_model_config,
+        mock_save_checkpoint,
+    ):
+        """Builder models checkpoint the outer ModelConfig, not the nested MCore config."""
+        model_config = GPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            vocab_size=32,
+        )
+        model = SimpleNamespace(_bridge_model_config=model_config)
+        state = Mock()
+        mock_global_state.return_value = state
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model([model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
+
+        mock_get_model_config.assert_not_called()
+        assert mock_config_container.call_args.kwargs["model"] is model_config
+        mock_save_checkpoint.assert_called_once_with(
+            state=state,
+            model=[model],
             optimizer=None,
             opt_param_scheduler=None,
             num_floating_point_operations_so_far=0,

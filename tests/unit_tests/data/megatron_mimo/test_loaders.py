@@ -15,6 +15,11 @@ class FakeMegatronMIMOProvider:
         self._grids = grids
 
 
+class FakeMegatronMIMOModelConfig:
+    def __init__(self, megatron_mimo_parallelism_config):
+        self.megatron_mimo_parallelism_config = megatron_mimo_parallelism_config
+
+
 class FakeDataset:
     def __init__(self, size: int):
         self._size = size
@@ -48,6 +53,10 @@ def _patch_megatron_mimo_provider_class(monkeypatch):
         "megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MegatronMIMOProvider",
         FakeMegatronMIMOProvider,
     )
+    monkeypatch.setattr(
+        "megatron.bridge.models.megatron_mimo.model_config.MegatronMIMOModelConfig",
+        FakeMegatronMIMOModelConfig,
+    )
 
 
 def test_build_megatron_mimo_data_loaders_raises_when_model_not_megatron_mimo(monkeypatch):
@@ -55,7 +64,7 @@ def test_build_megatron_mimo_data_loaders_raises_when_model_not_megatron_mimo(mo
     cfg = SimpleNamespace(model=object(), train=SimpleNamespace(micro_batch_size=2))
     provider = FakeProvider()
 
-    with pytest.raises(ValueError, match="cfg.model must be MegatronMIMOProvider"):
+    with pytest.raises(ValueError, match="MegatronMIMO model config"):
         build_megatron_mimo_data_loaders(
             cfg, train_state=None, megatron_mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2
         )
@@ -83,10 +92,35 @@ def test_build_megatron_mimo_data_loaders_raises_when_grids_missing(monkeypatch)
     )
     provider = FakeProvider()
 
-    with pytest.raises(ValueError, match="_grids is None"):
+    with pytest.raises(ValueError, match="Pass grids from MegatronMIMOInfra"):
         build_megatron_mimo_data_loaders(
             cfg, train_state=None, megatron_mimo_provider=provider, train_samples=4, valid_samples=2, test_samples=2
         )
+
+
+def test_build_megatron_mimo_data_loaders_accepts_model_config_with_explicit_grids(monkeypatch):
+    builder_calls = _patch_happy_path_dependencies(monkeypatch)
+    parallelism_config = SimpleNamespace(
+        module_parallelisms={"llm": SimpleNamespace(data_parallel_size=1)},
+    )
+    cfg = SimpleNamespace(
+        model=FakeMegatronMIMOModelConfig(parallelism_config),
+        train=SimpleNamespace(micro_batch_size=2),
+    )
+    grids = {"llm": object()}
+
+    loaders = build_megatron_mimo_data_loaders(
+        cfg,
+        train_state=SimpleNamespace(consumed_train_samples=0),
+        megatron_mimo_provider=FakeProvider(),
+        train_samples=4,
+        valid_samples=2,
+        test_samples=2,
+        grids=grids,
+    )
+
+    assert loaders == ("loader-1", "loader-2", "loader-3")
+    assert len(builder_calls) == 3
 
 
 def _patch_happy_path_dependencies(monkeypatch):

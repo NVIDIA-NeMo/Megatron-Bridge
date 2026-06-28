@@ -11,13 +11,16 @@ from megatron.bridge import AutoBridge
 
 # Load Llama from HuggingFace Hub and convert to Megatron
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-provider = bridge.to_megatron_provider()
+model_config = bridge.to_megatron_model_config()
 
-# The provider is lazy - configure parallelism before creating models
-provider.tensor_model_parallel_size = 8
-provider.pipeline_model_parallel_size = 2
+# The outer config is serializable and owns an exact MCore TransformerConfig.
+payload = model_config.as_dict()
 
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model = bridge.to_megatron_model(
+    tensor_model_parallel_size=8,
+    pipeline_model_parallel_size=2,
+    wrap_with_ddp=False,
+)
 ```
 
 ### Converting Megatron Models back to 🤗Hugging Face
@@ -73,12 +76,14 @@ The bridge uses decorators to register bridge implementations, enabling automati
 ```python
 @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
 class MegatronCausalLlamaBridge(MegatronModelBridge):
-    def provider_bridge(self, hf_pretrained):
-        # Convert HF config to Megatron provider
-        return LlamaModelProvider(
-            num_layers=hf_pretrained.config.num_hidden_layers,
-            hidden_size=hf_pretrained.config.hidden_size,
-            # ... more config mapping
+    def model_config_bridge(self, hf_pretrained):
+        # Keep construction-only fields on the outer config.
+        return LlamaModelConfig(
+            transformer=TransformerConfig(
+                num_layers=hf_pretrained.config.num_hidden_layers,
+                hidden_size=hf_pretrained.config.hidden_size,
+                # ... more MCore config mapping
+            ),
         )
     
     def mapping_registry(self):
@@ -220,9 +225,11 @@ To add support for a new model architecture:
 
 2. **Implement Configuration Mapping**
    ```python
-   def provider_bridge(self, hf_pretrained):
-       return YourModelProvider(
-           # Map HF config to Megatron config
+   def model_config_bridge(self, hf_pretrained):
+       return YourModelConfig(
+           transformer=TransformerConfig(
+               # Map HF fields to an exact MCore config
+           ),
        )
    ```
 

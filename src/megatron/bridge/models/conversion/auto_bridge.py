@@ -249,8 +249,8 @@ class AutoBridge(Generic[MegatronModelT]):
     Example:
         >>> # Load and convert a model to Megatron format
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
-        >>> provider = bridge.to_megatron_provider()
-        >>> megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
+        >>> model_config = bridge.to_megatron_model_config()
+        >>> megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
 
         >>> # Export a Megatron model back to HuggingFace format
         >>> bridge.save_hf_pretrained(megatron_model, "./exported_model")
@@ -422,8 +422,8 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge = AutoBridge.from_hf_config(config)
             >>>
             >>> # Create Megatron model with random initialization
-            >>> provider = bridge.to_megatron_provider(load_weights=False)
-            >>> model = provider.provide_distributed_model(wrap_with_ddp=False)
+            >>> model_config = bridge.to_megatron_model_config()
+            >>> model = bridge.to_megatron_model(load_weights=False, wrap_with_ddp=False)
 
             >>> # Or use for architecture exploration
             >>> transformer_config = bridge.transformer_config
@@ -1551,28 +1551,18 @@ class AutoBridge(Generic[MegatronModelT]):
         # adapter weights are exported at full precision; bfloat16 downstream
         # PEFT merges can introduce ~1e-3 weight errors that compound into
         # large logit diffs.
-        legacy_provider = None
-        model_config = None
-        transformer_config = None
-        if getattr(self._model_bridge, "LEGACY_MODEL_BUILD_ONLY", False):
-            legacy_provider = self.to_megatron_provider(load_weights=True)
-            legacy_provider.pipeline_dtype = torch.float32
-            legacy_provider.params_dtype = torch.float32
-            legacy_provider.finalize()
-            legacy_provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
-        else:
-            model_config = self.to_megatron_model_config(load_weights=True)
-            transformer_config = _replace_embedded_transformer_configs(
-                model_config,
-                pipeline_dtype=torch.float32,
-                params_dtype=torch.float32,
-                autocast_dtype=torch.float32,
-                fp16=False,
-                bf16=False,
-                use_cpu_initialization=True,
-                init_model_with_meta_device=False,
-            )
-            model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+        model_config = self.to_megatron_model_config(load_weights=True)
+        transformer_config = _replace_embedded_transformer_configs(
+            model_config,
+            pipeline_dtype=torch.float32,
+            params_dtype=torch.float32,
+            autocast_dtype=torch.float32,
+            fp16=False,
+            bf16=False,
+            use_cpu_initialization=True,
+            init_model_with_meta_device=False,
+        )
+        model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
 
         def _load_and_export_adapter(model):
             """Load adapter weights into a materialized model and export them as PEFT."""
@@ -1612,22 +1602,14 @@ class AutoBridge(Generic[MegatronModelT]):
             nullcontext() if torch.distributed.is_initialized() else temporary_distributed_context(backend="gloo")
         )
         with model_context:
-            if legacy_provider is not None:
-                model = legacy_provider.provide_distributed_model(
-                    wrap_with_ddp=False,
-                    use_cpu_initialization=True,
-                    init_model_with_meta_device=False,
-                )
-            else:
-                assert model_config is not None and transformer_config is not None
-                model_config.finalize()
-                builder = model_config.get_builder_cls()(model_config)
-                pg_collection = self._get_or_initialize_pg_collection(transformer_config)
-                model = builder.build_distributed_models(
-                    pg_collection=pg_collection,
-                    wrap_with_ddp=False,
-                    data_parallel_random_init=False,
-                )
+            model_config.finalize()
+            builder = model_config.get_builder_cls()(model_config)
+            pg_collection = self._get_or_initialize_pg_collection(transformer_config)
+            model = builder.build_distributed_models(
+                pg_collection=pg_collection,
+                wrap_with_ddp=False,
+                data_parallel_random_init=False,
+            )
             _load_and_export_adapter(model)
 
     def push_to_hub(self, path: str | Path) -> None: ...
@@ -1655,14 +1637,6 @@ class AutoBridge(Generic[MegatronModelT]):
         Returns:
             The distributed Megatron model stages created by the configured builder.
         """
-        if getattr(self._model_bridge, "LEGACY_MODEL_BUILD_ONLY", False):
-            provider = self.to_megatron_provider(load_weights, hf_path)
-            if hasattr(provider, "finalize"):
-                provider.finalize()
-            if pg_collection is not None:
-                kwargs["pg_collection"] = pg_collection
-            return provider.provide_distributed_model(**kwargs)
-
         model_config = self.to_megatron_model_config(load_weights, hf_path)
 
         transformer_config = getattr(model_config, "transformer", None)
@@ -1727,7 +1701,10 @@ class AutoBridge(Generic[MegatronModelT]):
         # upstream GPT builder currently defaults it to True.
         builder_kwargs.setdefault("data_parallel_random_init", False)
 
-        return builder.build_distributed_models(pg_collection=pg_collection, **builder_kwargs)
+        models = builder.build_distributed_models(pg_collection=pg_collection, **builder_kwargs)
+        for model_chunk in models:
+            model_chunk._bridge_model_config = model_config
+        return models
 
     @staticmethod
     def _get_or_initialize_pg_collection(transformer_config: TransformerConfig) -> ProcessGroupCollection:
@@ -2144,7 +2121,7 @@ class AutoBridge(Generic[MegatronModelT]):
                         + "\n".join(f"  • {model}" for model in supported_models)
                         + f"\n\nTo add support for {architecture}, you need to:\n"
                         f"1. Create a new bridge class that inherits from MegatronModelBridge\n"
-                        f"2. Implement the required methods (provider_bridge, mapping_registry)\n"
+                        f"2. Implement the required methods (model_config_bridge, mapping_registry)\n"
                         f"3. Register it with @MegatronModelBridge.register_bridge decorator\n\n"
                         f"Example implementation:\n"
                         f"  from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge\n"
@@ -2152,8 +2129,8 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"  from megatron.core.models.gpt import GPTModel\n\n"
                         f"  @MegatronModelBridge.register_bridge(source={architecture}, target=GPTModel)\n"
                         f"  class Megatron{architecture.replace('ForCausalLM', '')}Bridge(MegatronModelBridge):\n"
-                        f"      def provider_bridge(self, hf_pretrained):\n"
-                        f"          # Return a ModelProvider instance\n"
+                        f"      def model_config_bridge(self, hf_pretrained):\n"
+                        f"          # Return a serializable ModelConfig with a standalone ModelBuilder\n"
                         f"          ...\n\n"
                         f"      def mapping_registry(self):\n"
                         f"          # Return a MegatronMappingRegistry with weight mappings\n"

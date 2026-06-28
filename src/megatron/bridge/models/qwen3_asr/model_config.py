@@ -14,8 +14,7 @@
 
 """Pure model configuration and builder for Qwen3-ASR."""
 
-from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
@@ -69,26 +68,22 @@ class Qwen3ASRModelBuilder(GPTModelBuilder):
             Constructed Qwen3-ASR stage.
         """
         config = self._model_config
-        transformer = copy(config.transformer)
+        transformer = replace(config.transformer, mrope_section=config.mrope_section)
         vp_size = config.transformer.virtual_pipeline_model_parallel_size
         if pre_process is None:
             pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pg_collection.pp)
         if post_process is None:
             post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pg_collection.pp)
-        for name in ("audio_token_id", "audio_start_token_id", "mrope_section", "language_max_sequence_length"):
-            setattr(transformer, name, getattr(config, name))
-        transformer.vocab_size = config.vocab_size
-        transformer.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-        transformer.rotary_base = config.rotary_base
         thinker = Qwen3ASRThinkerConfig(**config.thinker_config)
         spec = get_gpt_layer_with_transformer_engine_spec(None, False, transformer.qk_layernorm, fp8=False)
         model = Qwen3ASRModel(
-            transformer,
-            spec,
-            thinker,
+            language_transformer_config=transformer,
+            language_transformer_layer_spec=spec,
+            thinker_transformer_config=thinker,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=pg_collection,
+            model_config=config,
         )
         if config.freeze_language_model or config.freeze_audio_model:
             model.freeze(config.freeze_language_model, config.freeze_audio_model)

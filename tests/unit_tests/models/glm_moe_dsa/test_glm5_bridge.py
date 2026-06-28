@@ -74,6 +74,7 @@ def test_model_config_bridge_maps_mla_dsa_config() -> None:
     )
 
     model_config = GLM5Bridge().model_config_bridge(SimpleNamespace(config=hf_config))
+    restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
 
     assert isinstance(model_config, BridgeGPTModelConfig)
     assert type(model_config.transformer) is MLATransformerConfig
@@ -88,6 +89,8 @@ def test_model_config_bridge_maps_mla_dsa_config() -> None:
     assert model_config.transformer.mscale == 1.0
     assert model_config.transformer.mscale_all_dim == 1.0
     assert model_config.transformer.mtp_num_layers is None
+    assert type(restored.transformer) is MLATransformerConfig
+    assert restored.as_dict() == model_config.as_dict()
 
 
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:

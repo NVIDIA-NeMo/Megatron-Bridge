@@ -23,6 +23,7 @@ from megatron.core.transformer import ModuleSpec
 from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt.yarn import build_gpt_with_yarn
 from megatron.bridge.models.ministral3.layer_specs import ministral_layer_spec
 from megatron.bridge.models.ministral3.modeling_ministral3 import Ministral3Model
 
@@ -55,18 +56,6 @@ class Ministral3ModelConfig(BridgeGPTModelConfig):
 class Ministral3ModelBuilder(GPTModelBuilder):
     """Build the MCore language model and HF-vision Ministral wrapper."""
 
-    _TRANSIENT_FIELDS = (
-        "yarn_rotary_scaling_factor",
-        "yarn_original_max_position_embeddings",
-        "yarn_beta_fast",
-        "yarn_beta_slow",
-        "yarn_correction_range_round_to_int",
-        "yarn_mscale",
-        "yarn_mscale_all_dim",
-        "llama_4_scaling_beta",
-        "llama_4_original_max_position_embeddings",
-    )
-
     def build_model(
         self,
         pg_collection: ProcessGroupCollection,
@@ -76,24 +65,13 @@ class Ministral3ModelBuilder(GPTModelBuilder):
     ) -> Ministral3Model:
         """Build one Ministral pipeline stage."""
         config = self._model_config
-        transformer = config.transformer
-        missing = object()
-        previous = {name: getattr(transformer, name, missing) for name in self._TRANSIENT_FIELDS}
-        try:
-            for name in self._TRANSIENT_FIELDS:
-                setattr(transformer, name, getattr(config, name))
-            language_model: GPTModel = super().build_model(
-                pg_collection,
-                pre_process=pre_process,
-                post_process=post_process,
-                vp_stage=vp_stage,
-            )
-        finally:
-            for name in self._TRANSIENT_FIELDS:
-                if previous[name] is missing:
-                    delattr(transformer, name)
-                else:
-                    setattr(transformer, name, previous[name])
+        language_model: GPTModel = build_gpt_with_yarn(
+            config,
+            pg_collection=pg_collection,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+        )
 
         model = Ministral3Model(
             config=config,

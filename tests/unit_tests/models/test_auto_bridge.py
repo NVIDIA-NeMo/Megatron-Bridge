@@ -667,11 +667,6 @@ class TestAutoBridge:
         post_wrap_hook = Mock()
 
         with (
-            patch.object(
-                type(bridge),
-                "_model_bridge",
-                PropertyMock(return_value=Mock(LEGACY_MODEL_BUILD_ONLY=False)),
-            ),
             patch.object(bridge, "to_megatron_model_config", return_value=model_config) as mock_to_config,
         ):
             result = bridge.to_megatron_model(
@@ -687,6 +682,7 @@ class TestAutoBridge:
             )
 
         assert result is models
+        assert models[0]._bridge_model_config is model_config
         mock_to_config.assert_called_once_with(True, None)
         assert model_config.transformer.fp16 is True
         assert model_config.transformer.bf16 is False
@@ -705,33 +701,6 @@ class TestAutoBridge:
             data_parallel_random_init=False,
         )
 
-    def test_to_megatron_model_preserves_explicit_legacy_only_bridge(self):
-        """Architectures without an installed builder spec retain their provider path."""
-        bridge = AutoBridge(Mock(spec=PreTrainedCausalLM))
-        legacy_bridge = Mock(LEGACY_MODEL_BUILD_ONLY=True)
-        provider = Mock()
-        models = [Mock()]
-        provider.provide_distributed_model.return_value = models
-        pg_collection = Mock(spec=ProcessGroupCollection)
-
-        with (
-            patch.object(type(bridge), "_model_bridge", PropertyMock(return_value=legacy_bridge)),
-            patch.object(bridge, "to_megatron_provider", return_value=provider) as mock_to_provider,
-        ):
-            result = bridge.to_megatron_model(
-                load_weights=False,
-                pg_collection=pg_collection,
-                wrap_with_ddp=False,
-            )
-
-        assert result is models
-        mock_to_provider.assert_called_once_with(False, None)
-        provider.finalize.assert_called_once_with()
-        provider.provide_distributed_model.assert_called_once_with(
-            pg_collection=pg_collection,
-            wrap_with_ddp=False,
-        )
-
     def test_to_megatron_model_uses_initialized_process_groups_by_default(self):
         """The builder receives the initialized MPU process groups by default."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -746,11 +715,6 @@ class TestAutoBridge:
         pg_collection = Mock(spec=ProcessGroupCollection)
 
         with (
-            patch.object(
-                type(bridge),
-                "_model_bridge",
-                PropertyMock(return_value=Mock(LEGACY_MODEL_BUILD_ONLY=False)),
-            ),
             patch.object(bridge, "to_megatron_model_config", return_value=model_config),
             patch.object(
                 AutoBridge,
@@ -816,11 +780,6 @@ class TestAutoBridge:
         model_config.get_builder_cls.return_value = Mock(return_value=builder)
 
         with (
-            patch.object(
-                type(bridge),
-                "_model_bridge",
-                PropertyMock(return_value=Mock(LEGACY_MODEL_BUILD_ONLY=False)),
-            ),
             patch.object(bridge, "to_megatron_model_config", return_value=model_config),
         ):
             bridge.to_megatron_model(

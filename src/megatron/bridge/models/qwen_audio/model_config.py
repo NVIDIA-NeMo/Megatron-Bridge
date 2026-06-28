@@ -14,7 +14,6 @@
 
 """Pure model configuration and builder for Qwen2-Audio."""
 
-from copy import copy
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
@@ -64,21 +63,14 @@ class Qwen2AudioModelBuilder(GPTModelBuilder):
             Constructed Qwen2-Audio stage.
         """
         config = self._model_config
-        transformer = copy(config.transformer)
-        transformer.audio_token_id = config.audio_token_id
-        transformer.pad_token_id = config.pad_token_id
-        runtime_config = copy(config)
-        runtime_config.transformer = transformer
-        language_model = GPTModelBuilder(runtime_config).build_model(
-            pg_collection, pre_process, post_process, vp_stage
-        )
+        language_model = GPTModelBuilder(config).build_model(pg_collection, pre_process, post_process, vp_stage)
         if pre_process is None:
             pre_process = language_model.pre_process
         if post_process is None:
             post_process = language_model.post_process
         hf_config = Qwen2AudioConfig(**config.hf_config)
         model = Qwen2AudioModel(
-            runtime_config,
+            config,
             pre_process,
             post_process,
             vp_stage,

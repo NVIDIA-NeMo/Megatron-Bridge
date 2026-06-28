@@ -16,8 +16,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import torch
+from megatron.core.transformer import TransformerConfig
 from torch import nn
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
@@ -191,6 +193,21 @@ def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
     assert captured["pg_collection"] is pg_collection
     assert captured["vp_stage"] == 2
     assert projector_kwargs["pg_collection"] is pg_collection
+
+
+def test_nemotron_omni_bridge_config_roundtrips_exact_mcore_config():
+    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained.config = _mock_omni_hf_config()
+    config = NemotronOmniBridge().model_config_bridge(hf_pretrained)
+
+    restored = ModelConfig.from_dict(config.as_dict())
+
+    assert type(config) is NemotronOmniModelConfig
+    assert type(config.transformer) is TransformerConfig
+    assert type(restored) is NemotronOmniModelConfig
+    assert type(restored.transformer) is TransformerConfig
+    assert restored.get_builder_cls() is NemotronOmniModelBuilder
+    assert restored.as_dict() == config.as_dict()
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():

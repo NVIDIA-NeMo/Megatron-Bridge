@@ -14,7 +14,6 @@
 
 """Pure DeepSeek-V4 model config and builder."""
 
-import copy
 from dataclasses import dataclass, field, replace
 from typing import ClassVar
 
@@ -77,8 +76,7 @@ class DeepSeekV4ModelBuilder(GPTModelBuilder):
         """Build one DSv4 pipeline stage."""
         config = self._model_config
         assert isinstance(config, DeepSeekV4ModelConfig)
-        layer_config = copy.deepcopy(config.transformer)
-        for name in (
+        field_names = (
             "experimental_attention_variant",
             "o_groups",
             "o_lora_rank",
@@ -96,8 +94,16 @@ class DeepSeekV4ModelBuilder(GPTModelBuilder):
             "moe_n_hash_layers",
             "actual_vocab_size",
             "activation_func_clamp_value",
-        ):
-            setattr(layer_config, name, getattr(config, name))
+        )
+        transformer_fields = config.transformer.__dataclass_fields__
+        missing_fields = [name for name in field_names if name not in transformer_fields]
+        if missing_fields:
+            missing = ", ".join(missing_fields)
+            raise NotImplementedError(
+                "DeepSeek-V4 requires an MCore TransformerConfig with native CSA, mHC, and hash-layer "
+                f"support; this MCore version is missing: {missing}"
+            )
+        layer_config = replace(config.transformer, **{name: getattr(config, name) for name in field_names})
         runtime_config = replace(config, transformer_layer_spec=deepseek_v4_layer_spec(layer_config))
         return GPTModelBuilder(runtime_config).build_model(pg_collection, pre_process, post_process, vp_stage)
 

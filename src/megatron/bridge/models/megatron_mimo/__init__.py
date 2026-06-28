@@ -10,6 +10,13 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
     MegatronMIMOInfra,
     MegatronMIMOProvider,
 )
+from megatron.bridge.models.megatron_mimo.model_config import (
+    MegatronMIMOInfra as BuilderMegatronMIMOInfra,
+)
+from megatron.bridge.models.megatron_mimo.model_config import (
+    MegatronMIMOModelBuilder,
+    MegatronMIMOModelConfig,
+)
 
 
 def __getattr__(name: str):
@@ -26,6 +33,8 @@ __all__ = [
     "MegatronMIMOInfra",
     "MegatronMIMOProvider",
     "MegatronMIMOParallelismConfig",
+    "MegatronMIMOModelBuilder",
+    "MegatronMIMOModelConfig",
     "ModuleParallelismConfig",
     "build_megatron_mimo_model",
 ]

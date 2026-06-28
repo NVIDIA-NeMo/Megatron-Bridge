@@ -15,8 +15,7 @@
 """Serializable model configurations and standalone builders for Qwen VL."""
 
 import importlib
-from copy import copy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
@@ -30,6 +29,7 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer import ModuleSpec
 from megatron.training.models.gpt import GPTModelBuilder, mtp_block_spec
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
@@ -50,24 +50,9 @@ def _pipeline_flags(
     return pre_process, post_process
 
 
-def _runtime_transformer(config: BridgeGPTModelConfig):
-    """Create an ephemeral legacy-compatible transformer config for model code."""
-    transformer = copy(config.transformer)
-    for name in config.multimodal_field_names:
-        setattr(transformer, name, getattr(config, name))
-    transformer.vocab_size = config.vocab_size
-    transformer.language_max_sequence_length = config.language_max_sequence_length
-    transformer.fp16_lm_cross_entropy = config.fp16_lm_cross_entropy
-    transformer.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
-    transformer.rotary_percent = config.rotary_percent
-    transformer.rotary_base = config.rotary_base
-    return transformer
-
-
-def _runtime_model_config(config: BridgeGPTModelConfig, transformer):
-    runtime_config = copy(config)
-    runtime_config.transformer = transformer
-    return runtime_config
+def _language_transformer(config: BridgeGPTModelConfig):
+    """Return an exact MCore config with its declared M-RoPE field populated."""
+    return replace(config.transformer, mrope_section=config.mrope_section)
 
 
 def _vision_config_from_dict(data: dict[str, Any], target: str):
@@ -94,16 +79,6 @@ class Qwen25VLModelConfig(BridgeGPTModelConfig):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
-    multimodal_field_names: ClassVar[tuple[str, ...]] = (
-        "mrope_section",
-        "bos_token_id",
-        "eos_token_id",
-        "vision_start_token_id",
-        "vision_end_token_id",
-        "vision_token_id",
-        "image_token_id",
-        "video_token_id",
-    )
 
 
 class Qwen25VLModelBuilder(GPTModelBuilder):
@@ -129,14 +104,14 @@ class Qwen25VLModelBuilder(GPTModelBuilder):
         """
         config = self._model_config
         pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
-        transformer = _runtime_transformer(config)
-        runtime_config = _runtime_model_config(config, transformer)
+        transformer = _language_transformer(config)
+        runtime_config = replace(config, transformer=transformer)
         language_model = GPTModelBuilder(runtime_config).build_model(
             pg_collection, pre_process, post_process, vp_stage
         )
         vision_config = Qwen2_5_VLVisionConfig(**config.vision_config)
         model = Qwen25VLModel(
-            runtime_config,
+            config,
             pre_process,
             post_process,
             vp_stage,
@@ -173,20 +148,6 @@ class Qwen3VLModelConfig(BridgeGPTModelConfig):
     freeze_vision_projection: bool = False
     decoder_sparse_step: int = 1
     mlp_only_layers: list[int] = field(default_factory=list)
-    multimodal_field_names: ClassVar[tuple[str, ...]] = (
-        "image_token_id",
-        "video_token_id",
-        "vision_start_token_id",
-        "vision_end_token_id",
-        "bos_token_id",
-        "eos_token_id",
-        "mrope_section",
-        "deepstack_visual_indexes",
-        "use_hf_vision_model",
-        "vision_dp_when_cp",
-        "decoder_sparse_step",
-        "mlp_only_layers",
-    )
 
 
 class Qwen3VLModelBuilder(GPTModelBuilder):
@@ -212,7 +173,7 @@ class Qwen3VLModelBuilder(GPTModelBuilder):
         """
         config = self._model_config
         pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
-        transformer = _runtime_transformer(config)
+        transformer = _language_transformer(config)
         vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=transformer.num_moe_experts,
@@ -231,6 +192,7 @@ class Qwen3VLModelBuilder(GPTModelBuilder):
             add_decoder=config.add_decoder,
             pg_collection=pg_collection,
             vp_stage=vp_stage,
+            model_config=config,
         )
         if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
             model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
@@ -278,7 +240,7 @@ class Qwen35VLModelBuilder(Qwen3VLModelBuilder):
         """
         config = self._model_config
         pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
-        transformer = _runtime_transformer(config)
+        transformer = _language_transformer(config)
         vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
         layer_spec = get_transformer_block_with_experimental_attention_variant_spec(transformer, vp_stage=vp_stage)
         _patch_attention(layer_spec)
@@ -296,6 +258,7 @@ class Qwen35VLModelBuilder(Qwen3VLModelBuilder):
             pg_collection=pg_collection,
             mtp_block_spec=mtp_spec,
             vp_stage=vp_stage,
+            model_config=config,
         )
         if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
             model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
@@ -310,3 +273,78 @@ __all__ = [
     "Qwen3VLModelBuilder",
     "Qwen3VLModelConfig",
 ]
+
+
+def build_qwen35_mimo_language_spec(config: Qwen35VLModelConfig, *, pp_rank: int = 0) -> ModuleSpec:
+    """Build the provider-free Qwen3.5 language ModuleSpec used by MIMO."""
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+
+    transformer = _language_transformer(config)
+    block_spec = get_transformer_block_with_experimental_attention_variant_spec(
+        transformer,
+        pp_rank=pp_rank,
+    )
+    _patch_attention(block_spec)
+    return ModuleSpec(
+        module=Qwen3VLGPTModel,
+        params={
+            "config": transformer,
+            "transformer_layer_spec": block_spec,
+            "vocab_size": config.vocab_size,
+            "max_sequence_length": config.language_max_sequence_length,
+            "fp16_lm_cross_entropy": config.fp16_lm_cross_entropy,
+            "parallel_output": config.parallel_output,
+            "share_embeddings_and_output_weights": config.share_embeddings_and_output_weights,
+            "position_embedding_type": "mrope",
+            "rotary_percent": config.rotary_percent,
+            "rotary_base": config.rotary_base,
+            "scatter_embedding_sequence_parallel": False,
+            "mtp_block_spec": None,
+        },
+    )
+
+
+def build_qwen35_mimo_modality_specs(config: Qwen35VLModelConfig) -> dict[str, ModuleSpec]:
+    """Build provider-free Qwen3.5 vision modality specs used by MIMO."""
+    from megatron.core.extensions.transformer_engine import (
+        TEColumnParallelLinear,
+        TENorm,
+        TERowParallelLinear,
+    )
+    from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+    from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
+    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+
+    if config.use_hf_vision_model:
+        raise ValueError("use_hf_vision_model is not supported by MegatronMIMO")
+    transformer = _language_transformer(config)
+    vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
+    vision_layer_spec = get_vit_layer_with_transformer_engine_spec()
+    vision_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
+    vision_transformer = get_vision_model_config(vision_config, megatron_config=transformer, exact_mcore=True)
+    vision_transformer.pipeline_model_parallel_size = 1
+    encoder_spec = ModuleSpec(
+        module=Qwen3VLVisionModel,
+        params={
+            "transformer_config": vision_transformer,
+            "vision_config": vision_config,
+            "transformer_layer_spec": vision_layer_spec,
+            "patch_merger_spec": PatchMergerSubmodules(
+                patch_norm=TENorm,
+                linear_fc1=TEColumnParallelLinear,
+                linear_fc2=TERowParallelLinear,
+            ),
+            "pre_process": True,
+            "post_process": True,
+        },
+    )
+    return {
+        "images": ModuleSpec(
+            module=VisionModalitySubmodules,
+            params={},
+            submodules={"encoders": {"qwen_visual": encoder_spec}, "input_projections": []},
+        )
+    }

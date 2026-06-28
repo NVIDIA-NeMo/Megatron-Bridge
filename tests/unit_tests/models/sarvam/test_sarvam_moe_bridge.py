@@ -21,6 +21,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -127,6 +128,7 @@ class TestSarvamMoEBridge:
         result = SarvamMoEBridge().model_config_bridge(SimpleNamespace(config=hf_config))
 
         assert type(result) is SarvamMoEModelConfig
+        assert type(result.transformer) is TransformerConfig
         assert result.transformer.normalization == "RMSNorm"
         assert result.transformer.moe_router_score_function == "sigmoid"
         assert result.transformer.moe_layer_freq == [0] + [1] * 18
@@ -135,6 +137,7 @@ class TestSarvamMoEBridge:
 
         restored = type(result).from_dict(result.as_dict())
         assert type(restored) is SarvamMoEModelConfig
+        assert type(restored.transformer) is TransformerConfig
         assert restored.transformer.moe_layer_freq == result.transformer.moe_layer_freq
         assert restored.transformer.activation_func is result.transformer.activation_func
         assert restored.transformer_layer_spec.func is result.transformer_layer_spec.func

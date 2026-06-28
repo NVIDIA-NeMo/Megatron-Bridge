@@ -22,6 +22,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.gpt.yarn import build_gpt_with_yarn
 
 
 @dataclass(kw_only=True)
@@ -41,16 +42,6 @@ class GPTOSSModelConfig(BridgeGPTModelConfig):
 class GPTOSSModelBuilder(GPTModelBuilder):
     """GPT builder that binds outer YaRN config to MCore during construction."""
 
-    _YARN_FIELDS = (
-        "yarn_rotary_scaling_factor",
-        "yarn_original_max_position_embeddings",
-        "yarn_beta_fast",
-        "yarn_beta_slow",
-        "yarn_mscale",
-        "yarn_mscale_all_dim",
-        "yarn_correction_range_round_to_int",
-    )
-
     def build_model(
         self,
         pg_collection: ProcessGroupCollection,
@@ -58,25 +49,14 @@ class GPTOSSModelBuilder(GPTModelBuilder):
         post_process: bool | None = None,
         vp_stage: int | None = None,
     ) -> GPTModel:
-        """Build GPT-OSS while making YaRN values visible to MCore constructors."""
-        transformer = self._model_config.transformer
-        missing = object()
-        previous = {name: getattr(transformer, name, missing) for name in self._YARN_FIELDS}
-        try:
-            for name in self._YARN_FIELDS:
-                setattr(transformer, name, getattr(self._model_config, name))
-            return super().build_model(
-                pg_collection,
-                pre_process=pre_process,
-                post_process=post_process,
-                vp_stage=vp_stage,
-            )
-        finally:
-            for name in self._YARN_FIELDS:
-                if previous[name] is missing:
-                    delattr(transformer, name)
-                else:
-                    setattr(transformer, name, previous[name])
+        """Build GPT-OSS with YaRN sourced only from the outer config."""
+        return build_gpt_with_yarn(
+            self._model_config,
+            pg_collection=pg_collection,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+        )
 
 
 __all__ = ["GPTOSSModelBuilder", "GPTOSSModelConfig"]

@@ -346,9 +346,6 @@ class _ReplicatedOptional(ReplicatedMapping):
 class DeepSeekV4Bridge(MegatronModelBridge):
     """Megatron Bridge implementation for DeepSeek-V4 causal language models."""
 
-    # The pinned MCore does not yet expose the DSv4 CSA/mHC/hash layer spec to
-    # ModelBuilder. Preserve the established provider construction path until it does.
-    LEGACY_MODEL_BUILD_ONLY = True
     MODEL_CONFIG_CLASS = DeepSeekV4ModelConfig
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
 

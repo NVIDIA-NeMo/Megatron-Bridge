@@ -20,13 +20,13 @@ from megatron.core import InferenceParams
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.enums import ModelType
 from megatron.core.transformer.spec_utils import ModuleSpec
 from torch import nn
 from torch.nn import functional as F
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLVisionTransformerBlock
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchEmbed,
     Qwen3VLVisionPatchMerger,
@@ -120,17 +120,22 @@ class Qwen3VLVisionModel(VisionModule):
 
     def __init__(
         self,
-        transformer_config: Qwen3VLTransformerConfig,
+        transformer_config: TransformerConfig,
         transformer_layer_spec: ModuleSpec,
         patch_merger_spec: ModuleSpec,
+        vision_config: object | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         pg_collection: Optional[ProcessGroupCollection] = None,
     ) -> None:
         assert post_process and pre_process, "not support pp for deepstack_merger_list"
         super().__init__(config=transformer_config)
-        self.spatial_merge_size = transformer_config.spatial_merge_size
-        self.patch_size = transformer_config.patch_size
+        vision_config = vision_config if vision_config is not None else transformer_config
+        self.vision_config = vision_config
+        self.spatial_merge_size = vision_config.spatial_merge_size
+        self.patch_size = vision_config.patch_size
+        self.num_position_embeddings = vision_config.num_position_embeddings
+        self.max_vision_cuda_graph_seq_length = getattr(vision_config, "max_vision_cuda_graph_seq_length", None)
         self.spatial_merge_unit = self.spatial_merge_size * self.spatial_merge_size
         self.pg_collection = pg_collection
         if pg_collection is None:
@@ -141,9 +146,9 @@ class Qwen3VLVisionModel(VisionModule):
             f"context_parallel_size should be 1 in vision model but got {transformer_config.context_parallel_size}"
         )
 
-        self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config)
-        self.pos_embed = nn.Embedding(transformer_config.num_position_embeddings, transformer_config.hidden_size)
-        self.num_grid_per_side = int(transformer_config.num_position_embeddings**0.5)
+        self.patch_embed = Qwen3VLVisionPatchEmbed(transformer_config, vision_config=vision_config)
+        self.pos_embed = nn.Embedding(self.num_position_embeddings, transformer_config.hidden_size)
+        self.num_grid_per_side = int(self.num_position_embeddings**0.5)
 
         head_dim = transformer_config.hidden_size // transformer_config.num_attention_heads
         self.rotary_pos_emb = Qwen3VLVisionRotaryEmbedding(head_dim // 2)
@@ -160,6 +165,7 @@ class Qwen3VLVisionModel(VisionModule):
             post_process=self.post_process,
             post_layer_norm=False,
             patch_merger_spec=patch_merger_spec,
+            vision_config=vision_config,
             pg_collection=self.pg_collection,
         )
 
@@ -168,6 +174,7 @@ class Qwen3VLVisionModel(VisionModule):
             self.merger = Qwen3VLVisionPatchMerger(
                 transformer_config,
                 patch_merger_spec,
+                vision_config=vision_config,
                 use_postshuffle_norm=False,
                 tp_group=self.tp_group,
             )
@@ -275,7 +282,7 @@ class Qwen3VLVisionModel(VisionModule):
         patch_pos_embeds = patch_pos_embeds.split([h * w for h, w in zip(grid_hs, grid_ws)])
 
         patch_pos_embeds_permute = []
-        merge_size = self.config.spatial_merge_size
+        merge_size = self.spatial_merge_size
         for pos_embed, t, h, w in zip(patch_pos_embeds, grid_ts, grid_hs, grid_ws):
             pos_embed = pos_embed.repeat(t, 1)
             pos_embed = (
@@ -289,10 +296,10 @@ class Qwen3VLVisionModel(VisionModule):
 
     def _get_max_vision_seq_length(self) -> int:
         """Get the maximum sequence length for vision encoder CUDA graphs."""
-        if hasattr(self.config, "max_vision_cuda_graph_seq_length") and self.config.max_vision_cuda_graph_seq_length:
-            return self.config.max_vision_cuda_graph_seq_length
+        if self.max_vision_cuda_graph_seq_length:
+            return self.max_vision_cuda_graph_seq_length
         # Default: calculate from num_position_embeddings
-        return self.config.num_position_embeddings // (self.config.spatial_merge_size**2)
+        return self.num_position_embeddings // (self.spatial_merge_size**2)
 
     def _uses_vision_cuda_graph(self) -> bool:
         """Check if vision encoder CUDA graphs are enabled."""

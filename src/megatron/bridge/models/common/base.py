@@ -28,7 +28,7 @@ from megatron.training.models.base import (
 )
 
 from megatron.bridge.models.gpt.model_config import restore_model_config_callables
-from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix
+from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix, instantiate
 
 
 class ModelConfig(_MegatronModelConfig):
@@ -47,6 +47,9 @@ class ModelConfig(_MegatronModelConfig):
         data = restore_model_config_callables(data)
 
         def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
+            if "_call_" in subdata or "_partial_" in subdata:
+                return instantiate(subdata)
+
             target = subdata.get("_target_")
             if target is None:
                 raise ValueError("Cannot deserialize: missing '_target_' field")
