@@ -1033,12 +1033,18 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN:  ${{ github.token }}
+          GH_REPO:   ${{ github.repository }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
+          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
+          # any failure (e.g. "failed to determine base repo" when git context is
+          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
+          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
+          # repository, and `set -e -o pipefail` makes any failure here abort the job.
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
 
           UNEXPECTED_SKIPS=0
           check_tier_skips() {
@@ -1046,7 +1052,7 @@ jobs:
             [ "$expect" != "true" ] && return
             local n
             n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length') || n=0
+              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
             if [ "${n:-0}" -gt 0 ]; then
               echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
               gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
