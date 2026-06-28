@@ -42,8 +42,6 @@ class Qwen3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
-
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3 config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)

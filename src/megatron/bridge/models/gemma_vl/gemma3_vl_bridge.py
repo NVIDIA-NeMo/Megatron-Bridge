@@ -61,7 +61,6 @@ class Gemma3VLBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Gemma3VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Gemma3VLModelProvider":
         from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider

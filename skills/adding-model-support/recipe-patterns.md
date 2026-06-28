@@ -24,7 +24,7 @@ def <model>_<size>_sft_config() -> ConfigContainer:
     cfg = _sft_common()  # or _sft_common_vlm() for VLMs
 
     # Model
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # Parallelism
     cfg.model.transformer = dataclasses.replace(
@@ -55,7 +55,7 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     """PEFT config for <Model> <Size>."""
     cfg = _peft_common()  # or _peft_common_vlm() for VLMs
 
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # PEFT typically uses smaller parallelism
     cfg.model.transformer = dataclasses.replace(

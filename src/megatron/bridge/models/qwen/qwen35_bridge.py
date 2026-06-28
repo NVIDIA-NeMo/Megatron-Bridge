@@ -75,7 +75,6 @@ class Qwen35MoEBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = QwenHybridModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     @staticmethod
     def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix=""):
@@ -446,7 +445,6 @@ class Qwen35Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = QwenHybridModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     @staticmethod
     def _get_dense_lm_mappings(hf_prefix="model.", megatron_prefix=""):

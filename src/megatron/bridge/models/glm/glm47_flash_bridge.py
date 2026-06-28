@@ -59,7 +59,6 @@ class GLM47FlashBridge(MegatronModelBridge):
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
     MODEL_CONFIG_CLASS = GLM47FlashModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         """Convert HuggingFace config to MLAModelProvider."""

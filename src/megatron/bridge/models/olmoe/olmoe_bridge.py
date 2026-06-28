@@ -51,7 +51,6 @@ class OlMoEBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = OlMoEModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace OlMoE config to Megatron GPTModelProvider.

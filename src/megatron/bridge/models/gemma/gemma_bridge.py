@@ -54,7 +54,6 @@ class GemmaBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = GemmaModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GemmaModelProvider:
         """Convert HuggingFace config to GemmaModelProvider.

@@ -24,7 +24,6 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
-from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -254,8 +253,6 @@ class Step35Bridge(MegatronModelBridge):
     ]
 
     MODEL_CONFIG_CLASS = Step35ModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Step35ModelProvider":
         """Convert HuggingFace Step3.5 config to GPTModelProvider.

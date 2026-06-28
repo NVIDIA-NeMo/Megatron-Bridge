@@ -15,8 +15,6 @@
 import logging
 from typing import TYPE_CHECKING
 
-from megatron.core.transformer.transformer_config import TransformerConfig
-
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -84,8 +82,6 @@ class FalconH1Bridge(MegatronModelBridge):
     ]
 
     MODEL_CONFIG_CLASS = FalconH1ModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map Falcon-H1 fields before constructing its exact MCore config."""

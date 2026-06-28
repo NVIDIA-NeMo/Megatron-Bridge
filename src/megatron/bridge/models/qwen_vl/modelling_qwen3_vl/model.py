@@ -62,6 +62,8 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config (TransformerConfig): Transformer config for the language model.
         language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
         vision_transformer_config (Qwen3VLConfigHF): HF config for the vision model.
+        model_config (Qwen3VLModelConfig | TransformerConfig): Outer builder config, or a legacy provider config,
+            containing multimodal token IDs and model-construction settings.
         parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This
             is typically True for training and False for inference.
         language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings
@@ -83,6 +85,8 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         vision_transformer_config: Qwen3VLConfigHF,
+        *,
+        model_config: "Qwen3VLModelConfig | TransformerConfig",
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -91,11 +95,9 @@ class Qwen3VLModel(MegatronModule):
         pg_collection: ProcessGroupCollection = None,
         mtp_block_spec: Optional[ModuleSpec] = None,
         vp_stage: Optional[int] = None,
-        model_config: "Qwen3VLModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
-        build_config = model_config if model_config is not None else language_transformer_config
-        self.model_config = build_config
+        self.model_config = model_config
 
         if hasattr(language_transformer_layer_spec, "submodules"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
@@ -109,9 +111,9 @@ class Qwen3VLModel(MegatronModule):
         self.encoder_hidden_state = None
         self.vision_model = None
         self.language_model = None
-        self.image_token_id = build_config.image_token_id
-        self.video_token_id = build_config.video_token_id
-        self.vision_start_token_id = build_config.vision_start_token_id
+        self.image_token_id = model_config.image_token_id
+        self.video_token_id = model_config.video_token_id
+        self.vision_start_token_id = model_config.vision_start_token_id
 
         self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
@@ -136,9 +138,9 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        if hasattr(build_config, "dist_train") and getattr(build_config.dist_train, "use_dist_train", False) is True:
+        if hasattr(model_config, "dist_train") and getattr(model_config.dist_train, "use_dist_train", False) is True:
             self.use_dist_train = True
-            self.vision_to_llm_dp_ratio = build_config.dist_train.vision_to_llm_dp_ratio
+            self.vision_to_llm_dp_ratio = model_config.dist_train.vision_to_llm_dp_ratio
             self.vision_embeds = None
             self.deepstack_feature_lists = None
             assert not (self.add_encoder and self.add_decoder) and (self.add_encoder or self.add_decoder), (
@@ -152,7 +154,7 @@ class Qwen3VLModel(MegatronModule):
             self.use_dist_train = False
 
         if self.pre_process and self.add_encoder:
-            if build_config.use_hf_vision_model:
+            if model_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
             vision_patch_merger_spec = PatchMergerSubmodules(
@@ -180,16 +182,16 @@ class Qwen3VLModel(MegatronModule):
             self.language_model = Qwen3VLGPTModel(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
-                vocab_size=build_config.vocab_size,
-                max_sequence_length=build_config.language_max_sequence_length,
+                vocab_size=model_config.vocab_size,
+                max_sequence_length=model_config.language_max_sequence_length,
                 parallel_output=parallel_output,
                 position_embedding_type="mrope",
-                rotary_percent=build_config.rotary_percent,
+                rotary_percent=model_config.rotary_percent,
                 pre_process=self.pre_process,
                 post_process=self.post_process,
-                rotary_base=build_config.rotary_base,
-                fp16_lm_cross_entropy=build_config.fp16_lm_cross_entropy,
-                share_embeddings_and_output_weights=build_config.share_embeddings_and_output_weights,
+                rotary_base=model_config.rotary_base,
+                fp16_lm_cross_entropy=model_config.fp16_lm_cross_entropy,
+                share_embeddings_and_output_weights=model_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,

@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Dict, Optional, Tuple
 import torch
 from megatron.core.activations import squared_relu
 from megatron.core.models.hybrid.hybrid_model import HybridModel
-from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -255,8 +254,6 @@ class NemotronHBridge(MegatronModelBridge):
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
     MODEL_CONFIG_CLASS = NemotronHModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map Nemotron-H fields before constructing the exact MCore config."""

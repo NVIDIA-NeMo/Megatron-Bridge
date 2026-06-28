@@ -73,7 +73,7 @@ def setup_model_and_tokenizer(
     )
 
     # Initialize model parallel before loading
-    model_config = bridge.to_megatron_model_config(load_weights=False)
+    model_config = bridge.get_model_config()
     model_config.tensor_model_parallel_size = tp
     model_config.pipeline_model_parallel_size = pp
     model_config.pipeline_dtype = torch.bfloat16

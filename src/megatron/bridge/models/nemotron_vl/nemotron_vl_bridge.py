@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 
 from megatron.core.activations import squared_relu
 from megatron.core.ssm.mamba_hybrid_layer_allocation import get_hybrid_total_layer_count
-from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models import ColumnParallelMapping, RowParallelMapping
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -47,8 +46,6 @@ class NemotronVLBridge(MegatronModelBridge):
     """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
 
     MODEL_CONFIG_CLASS = NemotronVLModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     # Extend CONFIG_MAPPING with Nemotron-VL specific fields
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [

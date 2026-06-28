@@ -37,7 +37,6 @@ import logging
 from typing import TYPE_CHECKING, Any, List
 
 import torch
-from megatron.core.transformer import TransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -123,8 +122,6 @@ class Step37Bridge(MegatronModelBridge):
         ("layer_types", "layer_types"),
     ]
     MODEL_CONFIG_CLASS = Step37ModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map nested Step3.7 text and vision settings into pure config data."""

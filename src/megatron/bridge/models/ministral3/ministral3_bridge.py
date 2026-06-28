@@ -101,7 +101,6 @@ class Ministral3Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Ministral3ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Ministral3ModelProvider":
         """

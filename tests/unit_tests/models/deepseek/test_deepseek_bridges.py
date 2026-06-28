@@ -149,6 +149,16 @@ class TestDeepSeekV2Bridge:
         assert isinstance(restored, DeepSeekV2ModelConfig)
         assert callable(restored.transformer_layer_spec)
 
+    def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v2):
+        bridge = DeepSeekV2Bridge()
+        model_config = bridge.model_config_bridge(mock_pretrained_v2)
+
+        hf_config = bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["q_lora_rank"] == mock_pretrained_v2.config.q_lora_rank
+        assert hf_config["first_k_dense_replace"] == mock_pretrained_v2.config.first_k_dense_replace
+        assert hf_config["n_shared_experts"] == mock_pretrained_v2.config.n_shared_experts
+
     def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v2):
         mock_pretrained_v2.config.q_lora_rank = None
         bridge = DeepSeekV2Bridge()
@@ -338,6 +348,16 @@ class TestDeepSeekV3Bridge:
         restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
         assert isinstance(restored, DeepSeekV3ModelConfig)
         assert callable(restored.transformer_layer_spec)
+
+    def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v3):
+        bridge = DeepSeekV3Bridge()
+        model_config = bridge.model_config_bridge(mock_pretrained_v3)
+
+        hf_config = bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["q_lora_rank"] == mock_pretrained_v3.config.q_lora_rank
+        assert hf_config["first_k_dense_replace"] == mock_pretrained_v3.config.first_k_dense_replace
+        assert hf_config["n_shared_experts"] == mock_pretrained_v3.config.n_shared_experts
 
     def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v3):
         mock_pretrained_v3.config.q_lora_rank = None

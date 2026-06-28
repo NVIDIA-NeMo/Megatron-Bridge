@@ -252,7 +252,7 @@ def load_bridge_model(
     if megatron_model_path:
         config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=safe_trust_remote_code)
         bridge = AutoBridge.from_hf_config(config)
-        model_config = bridge.to_megatron_model_config(load_weights=False)
+        model_config = bridge.get_model_config()
         _apply_model_config_parallelism(model_config, cache_mla_latents=cache_mla_latents, **parallelism)
         model_config.finalize()
         bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
@@ -268,12 +268,12 @@ def load_bridge_model(
             torch_dtype=dtype,
             trust_remote_code=safe_trust_remote_code,
         )
-        model_config = bridge.to_megatron_model_config(load_weights=True)
+        model_config = bridge.get_model_config(load_weights=True)
         _apply_model_config_parallelism(model_config, cache_mla_latents=cache_mla_latents, **parallelism)
         model_config.finalize()
         pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
-        builder = model_config.get_builder_cls()(model_config)
-        model_list = builder.build_distributed_models(
+        model_list = bridge.get_megatron_model(
+            model_config,
             pg_collection=pg_collection,
             wrap_with_ddp=False,
             data_parallel_random_init=False,

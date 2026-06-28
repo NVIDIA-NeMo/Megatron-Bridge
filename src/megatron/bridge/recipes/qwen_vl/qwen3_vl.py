@@ -117,7 +117,7 @@ def _qwen3_vl_common(
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
     bridge = AutoBridge.from_hf_pretrained(hf_path)
-    model_cfg = bridge.to_megatron_model_config(load_weights=False)
+    model_cfg = bridge.get_model_config()
     model_cfg.tensor_model_parallel_size = tensor_model_parallel_size
     model_cfg.pipeline_model_parallel_size = pipeline_model_parallel_size
     model_cfg.pipeline_dtype = torch.bfloat16 if pipeline_model_parallel_size > 1 else None
@@ -332,7 +332,7 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -468,7 +468,7 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -605,7 +605,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -751,7 +751,7 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT
@@ -896,7 +896,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCont
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower EP for PEFT
@@ -1042,7 +1042,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower EP for PEFT

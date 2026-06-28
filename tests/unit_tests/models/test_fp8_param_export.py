@@ -176,9 +176,8 @@ class TestFp8ParamExport:
             megatron_module=Mock(),
             param_weight=target_param,
         )
-        # Unmapped global parameters are represented by empty task slots and
-        # must not prevent the remaining mapped weights from loading.
-        monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [None, task])
+        # Standard conversion tasks are synchronized and never contain empty slots.
+        monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [task])
         monkeypatch.setattr(DummyBridge, "_with_progress_tracking", lambda self, tasks, *_a, **_k: tasks)
         monkeypatch.setattr(DummyBridge, "_broadcast_shared_embeddings", lambda self, *_a, **_k: None)
         hf_pretrained = SimpleNamespace(state={"hf.w0": converted}, model_name_or_path="dummy")
@@ -387,17 +386,21 @@ class TestFp8ParamExport:
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [],
         )
-        tasks = bridge.build_export_fp8_tasks(
-            SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
-        )
-        assert len(tasks) == 2
+
+        def build_tasks():
+            return bridge.build_export_fp8_tasks(
+                SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
+            )
+
         if mode == "remote_pp":
+            tasks = build_tasks()
+            assert len(tasks) == 2
             assert tasks[0] and tasks[1]
             assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
             assert isinstance(tasks[1].mapping, _HFNameSuffixMapping)
         else:
-            assert tasks[0] and tasks[0].global_param_name == gname
-            assert tasks[1] is None
+            with pytest.raises(RuntimeError, match="FP8 export tasks must be synchronized"):
+                build_tasks()
             assert "No mapping found for global_name" in caplog.text
 
     @pytest.mark.parametrize(

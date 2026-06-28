@@ -19,7 +19,6 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import MistralForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -49,7 +48,6 @@ class MistralBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = MistralModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
         hf_config = hf_pretrained.config

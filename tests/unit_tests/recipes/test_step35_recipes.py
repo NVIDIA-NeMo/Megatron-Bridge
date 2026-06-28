@@ -55,7 +55,7 @@ class _FakeModelCfg:
 
 
 class _FakeBridge:
-    def to_megatron_model_config(self, load_weights: bool = False):
+    def get_model_config(self, load_weights: bool = False):
         # Recipe always passes load_weights=False, but we don't gate on it.
         return _FakeModelCfg()
 

@@ -67,7 +67,6 @@ class LlamaNemotronBridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = LlamaNemotronModelConfig
     TRANSFORMER_CONFIG_CLASS = HeterogeneousTransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     @staticmethod
     def _validate_heterogeneous_config(hf_config: Any) -> None:

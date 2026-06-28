@@ -44,7 +44,6 @@ class GLM45VBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = GLM45VModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "GLM45VModelProvider":
         from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider

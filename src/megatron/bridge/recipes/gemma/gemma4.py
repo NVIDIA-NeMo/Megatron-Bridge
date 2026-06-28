@@ -66,7 +66,7 @@ def gemma4_e4b_pretrain_config() -> ConfigContainer:
     # gemma-4-E4B-it is a ConditionalGeneration HF model; force the text-only
     # Gemma4 bridge path so this pre-training recipe uses Gemma4DenseProvider.
     with _gemma4_text_conversion_mode():
-        cfg.model = AutoBridge.from_hf_pretrained(_GEMMA4_E4B_HF_PATH).to_megatron_model_config(load_weights=False)
+        cfg.model = AutoBridge.from_hf_pretrained(_GEMMA4_E4B_HF_PATH).get_model_config()
 
     # Tokenizer — NullTokenizer for mock pre-training; override for real data
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

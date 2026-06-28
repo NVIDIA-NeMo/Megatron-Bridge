@@ -114,7 +114,6 @@ class Gemma4Bridge(MegatronModelBridge):
     """
 
     _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map Gemma4 text state to exact MCore and outer family fields."""

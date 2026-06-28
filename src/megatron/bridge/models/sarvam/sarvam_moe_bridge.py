@@ -42,7 +42,6 @@ class SarvamMoEBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = SarvamMoEModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> SarvamMoEModelProvider:
         hf_config = hf_pretrained.config

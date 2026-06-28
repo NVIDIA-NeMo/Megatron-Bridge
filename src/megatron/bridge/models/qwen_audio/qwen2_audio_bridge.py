@@ -189,7 +189,6 @@ class Qwen2AudioBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = Qwen2AudioModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map Qwen2-Audio HF settings to pure model-config fields."""

@@ -56,7 +56,6 @@ class GLM5Bridge(MegatronModelBridge):
     """
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)

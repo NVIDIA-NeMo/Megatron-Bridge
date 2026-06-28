@@ -37,7 +37,7 @@ def qwen3_omni_30b_a3b_sft_config(
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -95,7 +95,7 @@ def qwen3_omni_30b_a3b_sft_preloaded_config(
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

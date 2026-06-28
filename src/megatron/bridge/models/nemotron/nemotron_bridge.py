@@ -47,8 +47,6 @@ class NemotronBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
-
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Nemotron uses norm_eps instead of rms_norm_eps
         ("norm_eps", "layernorm_epsilon"),

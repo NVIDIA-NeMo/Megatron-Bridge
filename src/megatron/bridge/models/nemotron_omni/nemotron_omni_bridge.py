@@ -236,4 +236,3 @@ class NemotronOmniBridge(NemotronVLBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = NemotronOmniModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True

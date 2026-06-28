@@ -42,7 +42,6 @@ class SarvamMLABridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = SarvamMLAModelConfig
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map Sarvam MLA fields before constructing the exact MCore config."""

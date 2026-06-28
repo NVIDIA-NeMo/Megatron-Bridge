@@ -171,7 +171,6 @@ class Qwen3OmniBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = Qwen3OmniModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map Qwen3-Omni HF settings to pure model-config fields."""

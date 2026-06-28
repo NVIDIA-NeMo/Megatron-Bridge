@@ -77,7 +77,9 @@ def main():
     bridge = AutoBridge.from_hf_pretrained(args.hf_path, trust_remote_code=True)
 
     print("Building Megatron GPTModel and loading weights via the bridge...")
-    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+    model_config = bridge.get_model_config(load_weights=True)
+    model_config.finalize()
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
     if not isinstance(megatron_model, list):
         megatron_model = [megatron_model]
 

@@ -42,8 +42,6 @@ class Qwen3MoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
-
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
         """Convert Megatron provider config to HuggingFace Qwen3MoeConfig dict."""

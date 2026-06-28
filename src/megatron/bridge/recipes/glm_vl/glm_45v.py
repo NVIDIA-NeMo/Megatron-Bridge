@@ -96,7 +96,7 @@ def glm_45v_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 8192
 
     # Parallel settings
@@ -248,7 +248,7 @@ def glm_45v_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
 
     # Model configuration
     hf_path = "zai-org/GLM-4.5V"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 8192
 
     # Parallel settings - lower EP for PEFT

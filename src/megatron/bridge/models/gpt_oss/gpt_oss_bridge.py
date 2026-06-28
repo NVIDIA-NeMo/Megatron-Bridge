@@ -56,7 +56,6 @@ class GPTOSSBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = GPTOSSModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""

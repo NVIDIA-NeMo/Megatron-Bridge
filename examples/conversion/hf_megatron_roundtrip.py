@@ -58,7 +58,9 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_co
             hf_path=hf_model_id,
         ),
     )
-    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+    model_config = bridge.get_model_config(load_weights=True)
+    model_config.finalize()
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))
 
     console.print(f"Saving HF-ckpt in {save_path}...")

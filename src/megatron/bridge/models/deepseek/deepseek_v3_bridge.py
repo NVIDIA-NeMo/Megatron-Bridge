@@ -46,7 +46,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
     MODEL_CONFIG_CLASS = DeepSeekV3ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
@@ -132,8 +131,9 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         return config_kwargs
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
-        hf_cfg = super(DeepSeekV3Bridge, cls).megatron_to_hf_config(provider)
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Convert a DeepSeek-V3 model config, retaining legacy provider support."""
+        hf_cfg = super(DeepSeekV3Bridge, cls).megatron_to_hf_config(model_config)
 
         # Megatron uses None="not set/disabled", but HF expects integers
         hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
@@ -141,7 +141,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
 
         # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
-        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        moe_layer_freq = getattr(model_config, "moe_layer_freq", None)
         if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
             first_k_dense_replace = 0
             for val in moe_layer_freq:
@@ -152,8 +152,8 @@ class DeepSeekV3Bridge(MegatronModelBridge):
             hf_cfg["first_k_dense_replace"] = first_k_dense_replace
 
         # Reconstruct n_shared_experts from moe_shared_expert_intermediate_size / moe_ffn_hidden_size
-        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
-        moe_ffn = getattr(provider, "moe_ffn_hidden_size", None)
+        shared_size = getattr(model_config, "moe_shared_expert_intermediate_size", None)
+        moe_ffn = getattr(model_config, "moe_ffn_hidden_size", None)
         if shared_size is not None and moe_ffn is not None and moe_ffn > 0:
             hf_cfg["n_shared_experts"] = shared_size // moe_ffn
 

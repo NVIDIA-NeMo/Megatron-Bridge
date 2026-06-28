@@ -56,9 +56,7 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config via AutoBridge (dispatches to DeepSeekV3Bridge)
-    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B").to_megatron_model_config(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B").get_model_config(load_weights=False)
     # TEMPFIX(yuya): Moonlight has no Q LoRA compression (HF q_lora_rank=null),
     # but CONFIG_MAPPING skips None so MLATransformerConfig default (512) would be used
     cfg.model.q_lora_rank = None

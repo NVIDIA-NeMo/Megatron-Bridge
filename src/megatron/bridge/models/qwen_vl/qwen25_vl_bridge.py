@@ -140,7 +140,6 @@ class Qwen25VLBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = Qwen25VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map Qwen2.5-VL HF settings to pure model-config fields."""

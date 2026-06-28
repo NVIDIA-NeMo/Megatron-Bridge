@@ -169,7 +169,6 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Qwen35VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map MoE Qwen3.5-VL HF settings to pure model-config fields."""
@@ -327,7 +326,6 @@ class Qwen35VLBridge(MegatronModelBridge):
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
 
     MODEL_CONFIG_CLASS = Qwen35VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map dense Qwen3.5-VL HF settings to pure model-config fields."""

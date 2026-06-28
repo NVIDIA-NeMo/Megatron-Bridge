@@ -42,7 +42,7 @@ def qwen25_vl_3b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -150,7 +150,7 @@ def qwen25_vl_7b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-7B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -258,7 +258,7 @@ def qwen25_vl_32b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-32B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -366,7 +366,7 @@ def qwen25_vl_72b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-72B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -483,7 +483,7 @@ def qwen25_vl_3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -600,7 +600,7 @@ def qwen25_vl_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContaine
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-7B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT
@@ -717,7 +717,7 @@ def qwen25_vl_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-32B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP/PP for PEFT
@@ -834,7 +834,7 @@ def qwen25_vl_72b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # Model configuration
     hf_path = "Qwen/Qwen2.5-VL-72B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP/PP for PEFT

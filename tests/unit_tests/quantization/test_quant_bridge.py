@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -27,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
     merge_qkv_weights,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 
 
 def scaled_fp8_blockwise(
@@ -157,6 +159,45 @@ class MockModule(torch.nn.Module):
         if has_bias:
             self.bias = torch.nn.Parameter(torch.randn(weight_shape[0], device=device))
         self.config = config
+
+
+def test_quantized_export_reads_tied_embeddings_from_builder_config() -> None:
+    """Quantized export uses the explicit outer model config after API migration."""
+    tensor = torch.ones(2, 2)
+    mapping = Mock()
+    mapping.megatron_to_hf_quant.return_value = {"model.embed_tokens.weight": tensor}
+    task = SimpleNamespace(
+        mapping=mapping,
+        param_weight=tensor,
+        megatron_module=Mock(),
+        global_param_name="embedding.word_embeddings.weight",
+    )
+    model_config = SimpleNamespace(share_embeddings_and_output_weights=True)
+    model = SimpleNamespace(_bridge_model_config=model_config, config=SimpleNamespace())
+    hf_pretrained = SimpleNamespace(
+        state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: {"lm_head.weight"}))
+    )
+    bridge = SimpleNamespace(
+        _get_model_config_from_model=lambda candidate: candidate._bridge_model_config,
+        _share_embeddings_and_output_weights=lambda config: config.share_embeddings_and_output_weights,
+        _with_progress_tracking=lambda tasks, *_args, **_kwargs: tasks,
+        maybe_modify_converted_hf_weight=lambda _task, weights, _state: weights,
+    )
+
+    with patch("megatron.bridge.models.conversion.quant_bridge.unwrap_model", return_value=[model]):
+        exported = list(
+            MegatronQuantizationBridge.stream_weights_megatron_to_hf_quant(
+                bridge,
+                [model],
+                hf_pretrained,
+                dummy_quantization_checker,
+                scaled_fp8_blockwise,
+                conversion_tasks=[task],
+            )
+        )
+
+    assert [item.param_name for item in exported] == ["model.embed_tokens.weight", "lm_head.weight"]
+    torch.testing.assert_close(exported[0].weight, exported[1].weight)
 
 
 def dummy_quantization_checker(param_name):

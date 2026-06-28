@@ -89,7 +89,6 @@ class Exaone4Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Exaone4ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace EXAONE 4.0 config to Megatron GPTModelProvider.

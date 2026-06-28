@@ -60,7 +60,7 @@ def kimi_k25_vl_sft_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "moonshotai/Kimi-K2.5",
         trust_remote_code=True,
-    ).to_megatron_model_config(load_weights=False)
+    ).get_model_config()
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 2

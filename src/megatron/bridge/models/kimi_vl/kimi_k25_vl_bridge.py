@@ -64,7 +64,6 @@ class KimiK25VLBridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = KimiK25VLModelConfig
     TRANSFORMER_CONFIG_CLASS = KimiK2Bridge.TRANSFORMER_CONFIG_CLASS
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "KimiK25VLModelProvider":
         from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider

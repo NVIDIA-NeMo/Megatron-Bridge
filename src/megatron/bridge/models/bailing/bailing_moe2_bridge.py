@@ -73,7 +73,6 @@ class BailingMoeV2Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = BailingMoeV2ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         provider = super().provider_bridge(hf_pretrained)

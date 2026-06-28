@@ -395,7 +395,6 @@ class Ernie45VLBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Ernie45VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map ERNIE text, vision, and multimodal fields into pure config data."""

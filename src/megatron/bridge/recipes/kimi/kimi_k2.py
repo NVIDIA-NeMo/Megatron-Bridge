@@ -61,9 +61,7 @@ def kimi_k2_pretrain_config(optimizer_type: str = "muon") -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config via AutoBridge (dispatches to KimiK2Bridge)
-    cfg.model = AutoBridge.from_hf_pretrained(
-        "moonshotai/Kimi-K2-Instruct", trust_remote_code=True
-    ).to_megatron_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Kimi-K2-Instruct", trust_remote_code=True).get_model_config()
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2

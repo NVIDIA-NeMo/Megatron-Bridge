@@ -16,7 +16,6 @@ from typing import Any
 
 from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import Gemma2ForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -48,8 +47,6 @@ class Gemma2Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Gemma2ModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma2ModelProvider:
         """Convert HuggingFace config to Gemma2ModelProvider."""

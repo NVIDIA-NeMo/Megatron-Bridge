@@ -146,7 +146,6 @@ class Ernie45Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Ernie45ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     @staticmethod
     def _get_num_experts(hf_config) -> int:

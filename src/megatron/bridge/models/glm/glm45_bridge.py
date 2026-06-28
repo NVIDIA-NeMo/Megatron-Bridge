@@ -47,7 +47,6 @@ class GLM45Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = GLM45ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""

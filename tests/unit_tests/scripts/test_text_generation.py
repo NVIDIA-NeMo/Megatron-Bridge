@@ -215,14 +215,6 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
 
     model = FakeModel()
 
-    class FakeBuilder:
-        def __init__(self, model_config):
-            calls["builder_config"] = model_config
-
-        def build_distributed_models(self, **kwargs):
-            calls["build_kwargs"] = kwargs
-            return [model]
-
     model_config = types.SimpleNamespace(
         transformer=object(),
         tensor_model_parallel_size=1,
@@ -239,17 +231,21 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
         cache_mla_latents=False,
         inference_moe_token_dispatcher_type=None,
         finalize=lambda: calls.setdefault("finalized", True),
-        get_builder_cls=lambda: FakeBuilder,
     )
 
     class FakeBridge:
-        def to_megatron_model_config(self, load_weights):
+        def get_model_config(self, load_weights):
             calls["load_weights"] = load_weights
             return model_config
 
         def _get_or_initialize_pg_collection(self, transformer, *, seed):
             calls["pg"] = (transformer, seed)
             return "pg"
+
+        def get_megatron_model(self, received_model_config, **kwargs):
+            calls["builder_config"] = received_model_config
+            calls["build_kwargs"] = kwargs
+            return [model]
 
     class FakeAutoBridge:
         @classmethod

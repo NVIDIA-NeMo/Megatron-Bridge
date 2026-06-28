@@ -205,7 +205,6 @@ class Qwen3VLBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = Qwen3VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map dense Qwen3-VL HF settings to pure model-config fields."""
@@ -451,7 +450,6 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
     MODEL_CONFIG_CLASS = Qwen3VLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map MoE Qwen3-VL HF settings to pure model-config fields."""

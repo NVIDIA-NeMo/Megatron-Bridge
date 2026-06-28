@@ -133,7 +133,6 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = MiniMaxM2ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""

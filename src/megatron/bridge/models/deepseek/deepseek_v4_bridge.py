@@ -573,19 +573,20 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     # ------------------------------------------------------------------
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: MLAModelProvider) -> dict:
-        hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(provider)
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Convert a DeepSeek-V4 model config, retaining legacy provider support."""
+        hf_cfg = super(DeepSeekV4Bridge, cls).megatron_to_hf_config(model_config)
 
-        hf_cfg["num_nextn_predict_layers"] = getattr(provider, "mtp_num_layers", None) or 0
-        num_hidden_layers = hf_cfg.get("num_hidden_layers", getattr(provider, "num_layers", 0))
-        num_hash_layers = getattr(provider, "moe_n_hash_layers", 0)
+        hf_cfg["num_nextn_predict_layers"] = getattr(model_config, "mtp_num_layers", None) or 0
+        num_hidden_layers = hf_cfg.get("num_hidden_layers", getattr(model_config, "num_layers", 0))
+        num_hash_layers = getattr(model_config, "moe_n_hash_layers", 0)
         hf_cfg["num_hash_layers"] = num_hash_layers
         hf_cfg["mlp_layer_types"] = ["hash_moe"] * min(num_hidden_layers, num_hash_layers) + ["moe"] * max(
             0, num_hidden_layers - num_hash_layers
         )
-        hf_cfg["swiglu_limit"] = getattr(provider, "activation_func_clamp_value", 0.0)
+        hf_cfg["swiglu_limit"] = getattr(model_config, "activation_func_clamp_value", 0.0)
 
-        compress_ratios = getattr(provider, "csa_compress_ratios", None)
+        compress_ratios = getattr(model_config, "csa_compress_ratios", None)
         if compress_ratios is not None:
             num_mtp = hf_cfg.get("num_nextn_predict_layers", 0)
             expected_len = num_hidden_layers + num_mtp
@@ -601,10 +602,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "heavily_compressed_attention": _DSV4_LAYER_TYPE_TO_COMPRESS_RATIO["heavily_compressed_attention"],
             }
 
-        hf_cfg["sliding_window"] = getattr(provider, "csa_window_size", 128)
-        hf_cfg["hc_mult"] = getattr(provider, "num_residual_streams", 4)
-        hf_cfg["hc_sinkhorn_iters"] = getattr(provider, "mhc_sinkhorn_iterations", 20)
-        hf_cfg["n_shared_experts"] = getattr(provider, "moe_shared_expert_intermediate_size", 0) // hf_cfg.get(
+        hf_cfg["sliding_window"] = getattr(model_config, "csa_window_size", 128)
+        hf_cfg["hc_mult"] = getattr(model_config, "num_residual_streams", 4)
+        hf_cfg["hc_sinkhorn_iters"] = getattr(model_config, "mhc_sinkhorn_iterations", 20)
+        hf_cfg["n_shared_experts"] = getattr(model_config, "moe_shared_expert_intermediate_size", 0) // hf_cfg.get(
             "moe_intermediate_size", 1
         )
 

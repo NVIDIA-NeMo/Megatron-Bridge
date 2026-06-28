@@ -36,7 +36,6 @@ class KimiK2Bridge(MegatronModelBridge):
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
     MODEL_CONFIG_CLASS = KimiK2ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)

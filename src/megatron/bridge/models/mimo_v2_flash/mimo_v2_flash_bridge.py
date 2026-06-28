@@ -29,7 +29,6 @@ from typing import Dict, Mapping, Optional
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -144,7 +143,6 @@ class MiMoV2FlashBridge(MegatronModelBridge):
     """Megatron Bridge for MiMo-V2-Flash."""
 
     MODEL_CONFIG_CLASS = MiMoV2FlashModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict[str, object]:
         """Map HF MiMo-V2-Flash state to pure builder config fields."""

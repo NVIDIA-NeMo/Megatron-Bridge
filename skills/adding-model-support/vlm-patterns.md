@@ -54,7 +54,6 @@ Read these from the correct config level:
 )
 class MyVLBridge(MegatronModelBridge):
     MODEL_CONFIG_CLASS = MyVLModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True  # compatibility registration, if present
 
     def model_config_bridge(self, hf_pretrained: PreTrainedVLM) -> MyVLModelConfig:
         hf_config = hf_pretrained.config

@@ -55,7 +55,7 @@ class _FakeAutoBridge:
         _FakeAutoBridge.kwargs = kwargs
         return _FakeAutoBridge()
 
-    def to_megatron_model_config(self, load_weights: bool = False):
+    def get_model_config(self, load_weights: bool = False):
         _FakeAutoBridge.load_weights = load_weights
         return _FakeModelCfg()
 

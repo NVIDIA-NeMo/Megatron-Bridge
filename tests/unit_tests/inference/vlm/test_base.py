@@ -49,7 +49,7 @@ class TestSetupModelAndTokenizer:
 
         mock_model_config = MagicMock()
         mock_model_config.transformer = MagicMock()
-        mock_bridge.to_megatron_model_config.return_value = mock_model_config
+        mock_bridge.get_model_config.return_value = mock_model_config
 
         # Create mock model that will be returned by load_megatron_model
         mock_model = MagicMock()
@@ -83,7 +83,7 @@ class TestSetupModelAndTokenizer:
         assert fb_args[0] == "Qwen/Qwen2.5-VL-3B"
         if "trust_remote_code" in fb_kwargs:
             assert fb_kwargs["trust_remote_code"] is False
-        mock_bridge.to_megatron_model_config.assert_called_once_with(load_weights=False)
+        mock_bridge.get_model_config.assert_called_once_with()
 
         # Verify model config and builder initialization.
         assert mock_model_config.tensor_model_parallel_size == 2
@@ -140,7 +140,7 @@ class TestSetupModelAndTokenizer:
 
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
-        mock_bridge.to_megatron_model_config.return_value = MagicMock()
+        mock_bridge.get_model_config.return_value = MagicMock()
 
         mock_model = MagicMock()
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
@@ -180,7 +180,7 @@ class TestSetupModelAndTokenizer:
 
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
-        mock_bridge.to_megatron_model_config.return_value = MagicMock()
+        mock_bridge.get_model_config.return_value = MagicMock()
 
         # Create mock model with config that has grad_scale_func
         mock_model = MagicMock()
@@ -224,7 +224,7 @@ class TestSetupModelAndTokenizer:
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
 
         mock_model_config = MagicMock()
-        mock_bridge.to_megatron_model_config.return_value = mock_model_config
+        mock_bridge.get_model_config.return_value = mock_model_config
 
         mock_model = MagicMock()
         mock_model.config = MagicMock(spec=Qwen25VLModelProvider)

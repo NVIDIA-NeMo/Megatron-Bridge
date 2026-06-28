@@ -146,20 +146,24 @@ def test_model_config_bridge_rejects_legacy_only_bridge() -> None:
         _LegacyOnlyBridge().model_config_bridge(_hf_pretrained())
 
 
-def test_share_embeddings_reads_builder_model_before_nested_transformer_config() -> None:
+def test_model_config_lookup_prefers_builder_config_and_supports_legacy_models(monkeypatch) -> None:
     bridge = _TestBridge()
-    builder_model = SimpleNamespace(
-        share_embeddings_and_output_weights=True,
-        config=SimpleNamespace(),
-    )
+    builder_config = SimpleNamespace(share_embeddings_and_output_weights=True)
+    builder_model = SimpleNamespace(_bridge_model_config=builder_config, config=SimpleNamespace())
+    wrapped_model = SimpleNamespace(_bridge_model_config=builder_config)
     legacy_model = SimpleNamespace(
         config=SimpleNamespace(share_embeddings_and_output_weights=False),
     )
-    legacy_config = SimpleNamespace(share_embeddings_and_output_weights=True)
 
-    assert bridge._share_embeddings_and_output_weights(builder_model) is True
-    assert bridge._share_embeddings_and_output_weights(legacy_model) is False
-    assert bridge._share_embeddings_and_output_weights(legacy_config) is True
+    assert bridge._get_model_config_from_model(builder_model) is builder_config
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.model_bridge.unwrap_model",
+        lambda model: legacy_model if model is wrapped_model else model,
+    )
+    assert bridge._get_model_config_from_model(wrapped_model) is builder_config
+    assert bridge._get_model_config_from_model(legacy_model) is legacy_model.config
+    assert bridge._share_embeddings_and_output_weights(builder_config) is True
+    assert bridge._share_embeddings_and_output_weights(legacy_model.config) is False
 
 
 def test_silu_activation_round_trips_through_model_config_dict() -> None:

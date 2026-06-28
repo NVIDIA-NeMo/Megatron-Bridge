@@ -83,7 +83,7 @@ def my_model_7b_pretrain_config() -> ConfigContainer:
 When the recipe targets an existing HF checkpoint, derive the model config from HF config:
 
 ```python
-cfg.model = AutoBridge.from_hf_pretrained("org/my-model-7b").to_megatron_model_config(load_weights=False)
+cfg.model = AutoBridge.from_hf_pretrained("org/my-model-7b").get_model_config()
 ```
 
 ## Bridge Pattern

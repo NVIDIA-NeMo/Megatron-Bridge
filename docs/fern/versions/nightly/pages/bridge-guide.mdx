@@ -8,14 +8,14 @@ Megatron Bridge provides seamless bidirectional conversion between 🤗 Hugging 
 - Bidirectional conversion: Import HF → Megatron for training; export Megatron → HF for deployment.
 - Parallelism-aware: Handles TP/PP/VPP/CP/EP/ETP distributions during conversion.
 - Streaming and memory efficiency: per-parameter streaming using safetensors.
-- Provider pattern: Configure Megatron-Core `TransformerConfig`-compatible attributes before instantiation via `to_megatron_provider()`.
+- Builder pattern: Configure a serializable `ModelConfig`, finalize it, and build the distributed model explicitly.
 - Convenience workflows: `import_ckpt` and `export_ckpt` provide one-call HF↔Megatron checkpoint flows.
 
 See the repository `README.md` for installation, supported models, and project highlights.
 
 ## Loading a 🤗 Hugging Face Model into Megatron
 
-The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge for conversion. You can then use `AutoBridge.to_megatron_model()` to initialize the Megatron model from the 🤗 Hugging Face configuration and load 🤗 Hugging Face weights at the same time.
+The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge for conversion. Use `AutoBridge.get_model_config(load_weights=True)` to create a builder-backed configuration, apply any overrides, call `finalize()`, and pass it to `AutoBridge.get_megatron_model()`.
 
 ### Accessing Gated 🤗 Hugging Face Models
 
@@ -185,17 +185,19 @@ bridge = AutoBridge.from_hf_pretrained("any-supported-model")
 ```
 
 ### 2. Configure Before Creating Models
-When using the provider pattern, always configure parallelism and other settings before creating the model. Creating the model first uses default settings that may not be optimal:
+Always configure parallelism and other settings on the model config before finalizing and creating the model:
 
 ```python
-# ✅ Correct: Configure provider before creating model
-provider = bridge.to_megatron_provider()
-provider.tensor_model_parallel_size = 8
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+# ✅ Correct: Configure the builder-backed model config first
+model_config = bridge.get_model_config(load_weights=True)
+model_config.tensor_model_parallel_size = 8
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
 # ❌ Avoid: Creating model before configuring parallelism
-model = bridge.to_megatron_model()  # Uses default settings
+model_config = bridge.get_model_config(load_weights=True)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 ### 3. Leverage the Parameter Streaming API
@@ -298,7 +300,9 @@ AutoBridge.supports(config: Any) -> bool
 
 # Provider/model construction
 AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
-AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
+AutoBridge.get_model_config(load_weights: bool = False, hf_path: str | Path | None = None) -> ModelConfig
+AutoBridge.get_megatron_model(model_config: ModelConfig, **kwargs) -> list[MegatronModule]
+AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]  # Compatibility alias
 
 # HF → Megatron weights
 AutoBridge.load_hf_weights(model: list[MegatronModule], hf_path: str | Path | None = None) -> None
@@ -317,8 +321,7 @@ AutoBridge.import_ckpt(hf_model_id: str | Path, megatron_path: str | Path, **kwa
 AutoBridge.export_ckpt(megatron_path: str | Path, hf_path: str | Path, show_progress: bool = True) -> None  # Megatron → HF
 
 # Config extraction
-AutoBridge.transformer_config -> TransformerConfig
-AutoBridge.mla_transformer_config -> MLATransformerConfig
+AutoBridge.get_model_config(load_weights: bool = False, hf_path: str | Path | None = None) -> ModelConfig
 
 # Introspection / planning
 AutoBridge.get_conversion_tasks(megatron_model: MegatronModule | list[MegatronModule], hf_path: str | Path | None = None) -> list[WeightConversionTask]

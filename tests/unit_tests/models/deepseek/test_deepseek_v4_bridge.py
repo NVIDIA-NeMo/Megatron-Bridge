@@ -24,6 +24,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -520,6 +521,38 @@ def test_deepseek_v4_builder_dispatches_to_installed_mcore(monkeypatch) -> None:
 
     assert deepseek_v4_layer_spec(config) is expected
     mocked_dispatch.assert_called_once_with(config)
+
+
+def test_deepseek_v4_export_accepts_builder_model_config() -> None:
+    config = DeepSeekV4ModelConfig(
+        transformer=MLATransformerConfig(
+            num_layers=4,
+            hidden_size=128,
+            num_attention_heads=4,
+            q_lora_rank=64,
+            kv_lora_rank=32,
+            qk_head_dim=16,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=16,
+            num_moe_experts=8,
+            moe_ffn_hidden_size=32,
+            moe_shared_expert_intermediate_size=32,
+            mtp_num_layers=1,
+        ),
+        vocab_size=256,
+        csa_compress_ratios=[0, 4, 128, 4, 0],
+        csa_window_size=128,
+        moe_n_hash_layers=3,
+        num_residual_streams=4,
+        mhc_sinkhorn_iterations=20,
+    )
+
+    hf_config = DeepSeekV4Bridge.megatron_to_hf_config(config)
+
+    assert hf_config["num_nextn_predict_layers"] == 1
+    assert hf_config["num_hash_layers"] == 3
+    assert hf_config["compress_ratios"] == [0, 4, 128, 4, 0]
+    assert hf_config["n_shared_experts"] == 1
 
 
 def test_deepseek_v4_builder_rejects_mcore_without_native_family_fields() -> None:

@@ -53,7 +53,6 @@ class Qwen3NextBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = QwenHybridModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""

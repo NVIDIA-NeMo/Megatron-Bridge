@@ -18,7 +18,6 @@ from typing import Any
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.enums import AttnBackend
-from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import AutoConfig, Gemma3ForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -55,8 +54,6 @@ class Gemma3ModelBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = Gemma3ModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3ModelProvider:
         """Convert HuggingFace config to Gemma3ModelProvider."""

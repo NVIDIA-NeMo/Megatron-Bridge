@@ -243,7 +243,9 @@ uv run python examples/conversion/list_supported_architectures.py
 💡 Usage:
    To use any of these models, you can load them with:
    >>> bridge = AutoBridge.from_hf_pretrained('model_name')
-   >>> model = bridge.to_megatron_model()
+   >>> config = bridge.get_model_config(load_weights=True)
+   >>> config.finalize()
+   >>> model = bridge.get_megatron_model(config, wrap_with_ddp=False)
 
 🔍 Model Bridge Details:
    Each model has specific implementation details and configurations.
@@ -472,4 +474,3 @@ uv run python examples/conversion/adapter/verify_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter
 ```
-

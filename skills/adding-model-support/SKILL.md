@@ -333,7 +333,7 @@ For detailed recipe patterns, see @skills/adding-model-support/recipe-patterns.m
 
 Recipes are the right API surface for model-size presets. Do not create or
 export size-specific config subclasses for recipes. Derive a builder-backed model config with
-`AutoBridge.from_hf_pretrained(...).to_megatron_model_config(load_weights=False)` or construct the
+`AutoBridge.from_hf_pretrained(...).get_model_config()` or construct the
 family model config with explicit architecture fields inside the recipe function.
 
 ### Export checklist
@@ -399,13 +399,13 @@ After implementing bridge support, prompt the user to run these commands on the 
 uv run python -c "
 from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained('<org>/<model>')
-model_config = bridge.to_megatron_model_config(load_weights=True)
+model_config = bridge.get_model_config(load_weights=True)
 assert type(model_config.transformer) is TransformerConfig
 serialized = model_config.as_dict()
 restored = ModelConfig.from_dict(serialized)
 assert restored.get_builder_cls() is model_config.get_builder_cls()
-model = bridge.to_megatron_model(wrap_with_ddp=False)
-bridge.load_hf_weights(model)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):
     print(name, tuple(tensor.shape))
     if i > 10: break

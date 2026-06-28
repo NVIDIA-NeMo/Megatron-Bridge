@@ -801,7 +801,7 @@ class TestExportAdapterCkpt:
         )
         fake_model_config.pre_wrap_hooks = [MagicMock(name="weight_loader")]
         fake_model_config.get_builder_cls.return_value.return_value = fake_builder
-        mock.to_megatron_model_config.return_value = fake_model_config
+        mock.get_model_config.return_value = fake_model_config
         mock._get_or_initialize_pg_collection.return_value = MagicMock()
         return mock
 
@@ -990,7 +990,7 @@ class TestExportAdapterCkpt:
         """Builder config uses full-precision CPU initialization for adapter export."""
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
-        model_config = bridge.to_megatron_model_config.return_value
+        model_config = bridge.get_model_config.return_value
         transformer_config = model_config.transformer
         assert transformer_config.pipeline_dtype == torch.float32
         assert transformer_config.params_dtype == torch.float32
