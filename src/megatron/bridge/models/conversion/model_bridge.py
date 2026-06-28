@@ -508,7 +508,7 @@ class MegatronModelBridge(
         """Return whether an HF config field should be mapped to Megatron kwargs."""
         return True
 
-    def hf_config_to_megatron_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
+    def _hf_config_to_megatron_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
         """Convert an HF config to flat Megatron config kwargs.
 
         Args:
@@ -612,8 +612,8 @@ class MegatronModelBridge(
         return megatron_kwargs
 
     def hf_config_to_provider_kwargs(self, hf_config: PretrainedConfig) -> dict[str, Any]:
-        """Deprecated compatibility alias; use ``hf_config_to_megatron_kwargs``."""
-        return self.hf_config_to_megatron_kwargs(hf_config)
+        """Compatibility hook for the provider-era config path."""
+        return self._hf_config_to_megatron_kwargs(hf_config)
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
@@ -712,7 +712,7 @@ class MegatronModelBridge(
         transformer_kwargs = {}
         model_kwargs = {}
         unsupported_fields = []
-        for name, value in self.hf_config_to_megatron_kwargs(hf_config).items():
+        for name, value in self._hf_config_to_megatron_kwargs(hf_config).items():
             if name in model_fields:
                 model_kwargs[name] = value
             elif name in transformer_fields:
