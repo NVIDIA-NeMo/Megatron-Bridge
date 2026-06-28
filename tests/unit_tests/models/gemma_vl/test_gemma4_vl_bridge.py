@@ -317,6 +317,9 @@ def test_gemma4_vl_model_config_bridge_preserves_multiple_eos_tokens(vl_bridge, 
     pretrained.config.text_config = _serializable_text_config(pretrained.config.text_config)
     pretrained.config.audio_config = None
     pretrained.config.eos_token_id = [1, 106]
+    pretrained.config.audio_token_id = 258_881
+    pretrained.config.image_token_id = 258_880
+    pretrained.config.video_token_id = 258_884
 
     config = vl_bridge.model_config_bridge(pretrained)
     restored = ModelConfig.from_dict(config.as_dict())
