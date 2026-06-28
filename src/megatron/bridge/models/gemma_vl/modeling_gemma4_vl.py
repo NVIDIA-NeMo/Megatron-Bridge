@@ -25,7 +25,7 @@ Text-only (Dense/MoE) layer specs and providers live in:
 """
 
 import math
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 import torch.nn as nn
@@ -35,7 +35,6 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers import AutoModel
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import (
     hook_hf_module_setattr_for_tp_grad_sync,
     slice_batch_for_context_parallel,
@@ -44,6 +43,7 @@ from megatron.bridge.utils.common_utils import (
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 def _keep_hf_precision_buffers_in_fp32(module: nn.Module) -> None:
@@ -142,17 +142,19 @@ class Gemma4VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: Any,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
         language_model: nn.Module | None = None,
+        pg_collection: Optional["ProcessGroupCollection"] = None,
     ) -> None:
         super().__init__(config=config)
 
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
+        self.pg_collection = pg_collection
 
         if pre_process:
             # Vision encoder
@@ -313,7 +315,7 @@ class Gemma4VLModel(MegatronModule):
 
         attention_mask = self._compute_attention_mask(input_ids) if input_ids is not None else attention_mask
 
-        pg_coll = getattr(self.config, "_pg_collection", None)
+        pg_coll = self.pg_collection
         if pg_coll is not None:
             inputs_embeds, labels, loss_mask, position_ids, attention_mask = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
@@ -326,7 +328,7 @@ class Gemma4VLModel(MegatronModule):
             )
 
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = pg_coll.tp if pg_coll is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(

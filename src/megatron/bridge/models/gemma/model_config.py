@@ -247,6 +247,7 @@ class Gemma4ModelBuilder(GPTModelBuilder):
         )
         if hasattr(model, "output_layer") and config.final_logit_softcapping:
             extend_instance(model.output_layer, Gemma4OutputLayer)
+            model.output_layer.final_logit_softcapping = config.final_logit_softcapping
         _install_tied_kv(model, config)
         return model
 

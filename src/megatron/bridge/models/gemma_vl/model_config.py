@@ -123,7 +123,7 @@ def _hf_config(config_dict: dict[str, object] | None):
 
 
 class _Gemma4VLBuilderMixin:
-    def _wrap_vl(self, config, language_model, pre_process, post_process, vp_stage):
+    def _wrap_vl(self, config, language_model, pg_collection, pre_process, post_process, vp_stage):
         runtime_config = copy.copy(config)
         runtime_config.vision_config = _hf_config(config.vision_config)
         runtime_config.text_config = _hf_config(config.text_config)
@@ -134,6 +134,7 @@ class _Gemma4VLBuilderMixin:
             post_process=True if post_process is None else post_process,
             vp_stage=vp_stage,
             language_model=language_model,
+            pg_collection=pg_collection,
         )
         if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
             model.freeze(
@@ -150,7 +151,7 @@ class Gemma4VLModelBuilder(_Gemma4VLBuilderMixin, Gemma4ModelBuilder):
     def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
         """Build one Gemma4 MoE VL pipeline stage."""
         language_model = super().build_model(pg_collection, pre_process, post_process, vp_stage)
-        return self._wrap_vl(self._model_config, language_model, pre_process, post_process, vp_stage)
+        return self._wrap_vl(self._model_config, language_model, pg_collection, pre_process, post_process, vp_stage)
 
 
 class Gemma4DenseVLModelBuilder(_Gemma4VLBuilderMixin, Gemma4DenseModelBuilder):
@@ -159,7 +160,7 @@ class Gemma4DenseVLModelBuilder(_Gemma4VLBuilderMixin, Gemma4DenseModelBuilder):
     def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
         """Build one Gemma4 Dense VL pipeline stage."""
         language_model = super().build_model(pg_collection, pre_process, post_process, vp_stage)
-        return self._wrap_vl(self._model_config, language_model, pre_process, post_process, vp_stage)
+        return self._wrap_vl(self._model_config, language_model, pg_collection, pre_process, post_process, vp_stage)
 
 
 __all__ = [

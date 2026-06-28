@@ -539,6 +539,7 @@ class TestGemma4SelfAttention:
     def _make_attention(self, *, layer_number):
         attn = object.__new__(Gemma4SelfAttention)
         object.__setattr__(attn, "layer_number", layer_number)
+        object.__setattr__(attn, "interleaved_attn_pattern", (1, 1))
         object.__setattr__(
             attn,
             "config",
@@ -1564,7 +1565,13 @@ class TestGemma4MoEHelpers:
         assert calls == [("config", True, {"extra": "value"})]
         assert layer_spec.module is Gemma4TransformerLayer
         assert layer_spec.submodules.self_attention.module is Gemma4SelfAttention
-        assert attn_submodules.core_attention is Gemma4TEDotProductAttention
+        assert attn_submodules.core_attention.module is Gemma4TEDotProductAttention
+        assert attn_submodules.core_attention.params == {"interleaved_attn_pattern": (5, 1)}
+        assert layer_spec.submodules.self_attention.params == {
+            "global_head_dim": 512,
+            "interleaved_attn_pattern": (5, 1),
+            "num_global_key_value_heads": 2,
+        }
         assert attn_submodules.linear_proj != "old_proj"
         assert layer_spec.submodules.mlp.module is Gemma4MoELayer
         assert mlp_submodules.router is Gemma4TopKRouter
@@ -1588,7 +1595,7 @@ class TestGemma4MoEHelpers:
         _gemma4_block_spec("config", use_transformer_engine=False)
 
         assert layer_spec.module is Gemma4TransformerLayer
-        assert attn_submodules.core_attention is Gemma4TEDotProductAttention
+        assert attn_submodules.core_attention.module is Gemma4TEDotProductAttention
         assert attn_submodules.linear_proj == "old_proj"
 
     def test_transformer_layer_post_mlp_adds_bias_and_layer_scalar(self):
