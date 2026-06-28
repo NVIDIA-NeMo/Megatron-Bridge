@@ -29,7 +29,7 @@ def llama2_7b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

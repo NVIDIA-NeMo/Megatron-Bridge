@@ -95,7 +95,7 @@ def deepseek_v3_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -251,7 +251,7 @@ def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V3").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

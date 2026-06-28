@@ -12,38 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Callable
+from typing import Any
 
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig, kimi_k2_layer_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
-
-
-@dataclass(kw_only=True)
-class KimiK2ModelConfig(BridgeGPTModelConfig):
-    """Serializable Kimi K2 GPT build configuration."""
-
-    transformer_layer_spec: ModuleSpec | Callable[[BridgeGPTModelConfig], ModuleSpec] | None = field(
-        default_factory=lambda: partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-    )
 
 
 @MegatronModelBridge.register_bridge(
@@ -63,7 +42,7 @@ class KimiK2Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = kimi_k2_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.position_embedding_type = "rope"

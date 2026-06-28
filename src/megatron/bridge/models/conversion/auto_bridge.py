@@ -1707,7 +1707,9 @@ class AutoBridge(Generic[MegatronModelT]):
         return models
 
     @staticmethod
-    def _get_or_initialize_pg_collection(transformer_config: TransformerConfig) -> ProcessGroupCollection:
+    def _get_or_initialize_pg_collection(
+        transformer_config: TransformerConfig, *, seed: int = 0
+    ) -> ProcessGroupCollection:
         """Return MPU process groups, initializing standalone execution if needed."""
         if not dist.is_initialized():
             os.environ.setdefault("RANK", "0")
@@ -1733,7 +1735,7 @@ class AutoBridge(Generic[MegatronModelT]):
             if torch.cuda.is_available():
                 from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
 
-                model_parallel_cuda_manual_seed(0)
+                model_parallel_cuda_manual_seed(seed)
 
         return ProcessGroupCollection.use_mpu_process_groups()
 

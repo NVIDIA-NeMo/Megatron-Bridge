@@ -13,13 +13,10 @@
 # limitations under the License.
 
 import logging
-from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer import ModuleSpec
 from transformers import OlmoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -29,32 +26,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.olmoe.olmoe_provider import OLMoESelfAttention, olmoe_layer_spec
+from megatron.bridge.models.olmoe.model_config import OlMoEModelConfig
+from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
 
 
 logger = logging.getLogger(__name__)
-
-
-def _olmoe_model_config_layer_spec(config: Any) -> ModuleSpec:
-    """Build the OLMoE layer spec without relying on provider-only fields."""
-    layer_spec = get_gpt_layer_with_transformer_engine_spec(
-        num_experts=config.num_moe_experts,
-        moe_grouped_gemm=config.moe_grouped_gemm,
-        qk_layernorm=config.qk_layernorm,
-        fp8=bool(config.num_moe_experts and config.fp8 is not None),
-    )
-    layer_spec.submodules.self_attention.module = OLMoESelfAttention
-    return layer_spec
-
-
-@dataclass(kw_only=True)
-class OlMoEModelConfig(BridgeGPTModelConfig):
-    """Builder-backed OLMoE config with its custom self-attention layer spec."""
-
-    transformer_layer_spec: Callable[..., ModuleSpec] = _olmoe_model_config_layer_spec
 
 
 @MegatronModelBridge.register_bridge(source=OlmoeForCausalLM, target=GPTModel, model_type="olmoe")

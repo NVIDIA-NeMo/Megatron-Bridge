@@ -63,7 +63,7 @@ def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
     cfg.model = AutoBridge.from_hf_pretrained(
         "deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True
-    ).to_megatron_provider(load_weights=False)
+    ).to_megatron_model_config(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -295,7 +295,9 @@ def deepseek_v4_flash_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> Co
     model in tests).
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_model_config(
+        load_weights=False
+    )
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -359,7 +361,9 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
     Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_model_config(
+        load_weights=False
+    )
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1

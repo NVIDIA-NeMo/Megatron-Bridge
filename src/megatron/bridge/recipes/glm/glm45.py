@@ -31,7 +31,7 @@ def glm45_355b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -158,7 +158,7 @@ def glm45_air_106b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5-Air").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5-Air").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -291,7 +291,7 @@ def glm45_355b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -422,7 +422,7 @@ def glm45_air_106b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -563,7 +563,7 @@ def glm45_355b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -703,7 +703,7 @@ def glm45_air_106b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path

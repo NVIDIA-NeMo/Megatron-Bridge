@@ -6,7 +6,8 @@ import pytest
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
-from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge, KimiK2ModelConfig
+from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge
+from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig
 
 
 pytestmark = pytest.mark.unit

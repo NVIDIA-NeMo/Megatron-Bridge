@@ -42,7 +42,7 @@ def ministral3_3b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-3B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -153,7 +153,7 @@ def ministral3_8b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-8B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -264,7 +264,7 @@ def ministral3_14b_sft_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-14B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -384,7 +384,7 @@ def ministral3_3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-3B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -504,7 +504,7 @@ def ministral3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContain
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-8B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT
@@ -624,7 +624,7 @@ def ministral3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 
     # Model configuration
     hf_path = "mistralai/Ministral-3-14B-Instruct-2512"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT

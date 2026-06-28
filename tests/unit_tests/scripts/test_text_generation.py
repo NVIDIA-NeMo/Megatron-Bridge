@@ -127,10 +127,10 @@ def text_generation(monkeypatch):
 
 
 def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generation):
-    provider = types.SimpleNamespace(cache_mla_latents=True)
+    model_config = types.SimpleNamespace(cache_mla_latents=True)
 
     overrides = text_generation._megatron_checkpoint_overrides(
-        provider,
+        model_config,
         tp=2,
         pp=2,
         ep=4,
@@ -153,6 +153,137 @@ def test_megatron_checkpoint_overrides_preserve_attention_backend(text_generatio
     assert overrides["fp16"] is False
     assert overrides["cache_mla_latents"] is True
     assert overrides["inference_moe_token_dispatcher_type"] == "nvls"
+
+
+def test_apply_model_config_parallelism_updates_builder_config(text_generation):
+    model_config = types.SimpleNamespace(
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=1,
+        expert_tensor_parallel_size=1,
+        sequence_parallel=False,
+        params_dtype=text_generation.torch.float32,
+        pipeline_dtype=None,
+        bf16=False,
+        fp16=False,
+        attention_backend=None,
+        multi_latent_attention=True,
+        cache_mla_latents=False,
+        inference_moe_token_dispatcher_type=None,
+    )
+
+    text_generation._apply_model_config_parallelism(
+        model_config,
+        tp=2,
+        pp=3,
+        ep=4,
+        etp=2,
+        sequence_parallel=True,
+        dtype=text_generation.torch.bfloat16,
+        attention_backend="local",
+        cache_mla_latents=None,
+        inference_moe_token_dispatcher_type="nvls",
+    )
+
+    assert model_config.tensor_model_parallel_size == 2
+    assert model_config.pipeline_model_parallel_size == 3
+    assert model_config.expert_model_parallel_size == 4
+    assert model_config.expert_tensor_parallel_size == 2
+    assert model_config.sequence_parallel is True
+    assert model_config.params_dtype is text_generation.torch.bfloat16
+    assert model_config.pipeline_dtype is text_generation.torch.bfloat16
+    assert model_config.bf16 is True
+    assert model_config.fp16 is False
+    assert model_config.attention_backend is text_generation.AttnBackend.local
+    assert model_config.cache_mla_latents is True
+    assert model_config.inference_moe_token_dispatcher_type == "nvls"
+
+
+def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generation, monkeypatch):
+    calls: dict[str, object] = {}
+
+    class FakeModel:
+        def __init__(self):
+            self.config = types.SimpleNamespace(grad_scale_func="set")
+
+        def cuda(self):
+            calls["cuda"] = True
+            return self
+
+        def eval(self):
+            calls["eval"] = True
+
+    model = FakeModel()
+
+    class FakeBuilder:
+        def __init__(self, model_config):
+            calls["builder_config"] = model_config
+
+        def build_distributed_models(self, **kwargs):
+            calls["build_kwargs"] = kwargs
+            return [model]
+
+    model_config = types.SimpleNamespace(
+        transformer=object(),
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+        expert_model_parallel_size=1,
+        expert_tensor_parallel_size=1,
+        sequence_parallel=False,
+        params_dtype=text_generation.torch.float32,
+        pipeline_dtype=None,
+        bf16=False,
+        fp16=False,
+        attention_backend=None,
+        multi_latent_attention=False,
+        cache_mla_latents=False,
+        inference_moe_token_dispatcher_type=None,
+        finalize=lambda: calls.setdefault("finalized", True),
+        get_builder_cls=lambda: FakeBuilder,
+    )
+
+    class FakeBridge:
+        def to_megatron_model_config(self, load_weights):
+            calls["load_weights"] = load_weights
+            return model_config
+
+        def _get_or_initialize_pg_collection(self, transformer, *, seed):
+            calls["pg"] = (transformer, seed)
+            return "pg"
+
+    class FakeAutoBridge:
+        @classmethod
+        def from_hf_pretrained(cls, *args, **kwargs):
+            calls["from_hf"] = (args, kwargs)
+            return FakeBridge()
+
+    monkeypatch.setattr(text_generation, "AutoBridge", FakeAutoBridge)
+    result = text_generation.load_bridge_model(
+        hf_model_path="org/model",
+        megatron_model_path=None,
+        tp=1,
+        pp=1,
+        ep=1,
+        etp=1,
+        sequence_parallel=False,
+        dtype=text_generation.torch.bfloat16,
+        seed=17,
+        trust_remote_code=False,
+    )
+
+    assert result is model
+    assert calls["load_weights"] is True
+    assert calls["finalized"] is True
+    assert calls["pg"] == (model_config.transformer, 17)
+    assert calls["builder_config"] is model_config
+    assert calls["build_kwargs"] == {
+        "pg_collection": "pg",
+        "wrap_with_ddp": False,
+        "data_parallel_random_init": False,
+    }
+    assert calls["cuda"] is True
+    assert calls["eval"] is True
+    assert model.config.grad_scale_func is None
 
 
 def test_build_inference_config_rounds_max_requests_up_to_tp(text_generation):

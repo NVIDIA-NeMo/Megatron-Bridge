@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
+from megatron.bridge.diffusion.models.flux.model_config import FluxModelConfig
 from megatron.bridge.diffusion.recipes.flux.flux import flux_12b_pretrain_config, flux_12b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -31,7 +31,7 @@ _flux_recipe_mod = importlib.import_module("megatron.bridge.diffusion.recipes.fl
 
 
 def _fake_flux_diffusers_config() -> SimpleNamespace:
-    """Shape expected by FluxBridge.provider_bridge; values match FLUX.1-dev / recipe defaults."""
+    """Shape expected by FluxBridge.model_config_bridge; values match FLUX.1-dev defaults."""
     return SimpleNamespace(
         num_attention_heads=24,
         attention_head_dim=128,
@@ -74,7 +74,7 @@ class TestPretrainConfig:
         config = flux_12b_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, FluxProvider)
+        assert isinstance(config.model, FluxModelConfig)
         assert isinstance(config.dataset, FluxDatasetConfig)
         assert config.dataset.path is None  # default: mock/synthetic data
 

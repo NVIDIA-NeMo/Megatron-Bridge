@@ -51,7 +51,7 @@ class _FakeAutoBridge:
         self.conversion_modes.append(os.environ.get("GEMMA4_CONVERSION_MODE"))
         return self
 
-    def to_megatron_provider(self, load_weights=True):
+    def to_megatron_model_config(self, load_weights=True):
         self.load_weights.append(load_weights)
         return self.provider
 

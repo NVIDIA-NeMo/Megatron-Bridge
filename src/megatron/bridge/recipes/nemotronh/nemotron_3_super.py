@@ -38,7 +38,9 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (LatentMoE with MTP) — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_model_config(
+        load_weights=False
+    )
 
     # Parallelism Settings
     cfg.model.tensor_model_parallel_size = 4
@@ -92,6 +94,7 @@ def nemotron_3_super_pretrain_config() -> ConfigContainer:
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.calculate_per_token_loss = True
     cfg.model.mtp_loss_scaling_factor = 0.3
@@ -149,7 +152,9 @@ def nemotron_3_super_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_model_config(
+        load_weights=False
+    )
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -184,6 +189,7 @@ def nemotron_3_super_sft_config() -> ConfigContainer:
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
@@ -246,7 +252,9 @@ def nemotron_3_super_peft_config(
     cfg = _peft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_model_config(
+        load_weights=False
+    )
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -281,6 +289,7 @@ def nemotron_3_super_peft_config(
     # MTP Settings (HF config has num_nextn_predict_layers=1 for the shared block;
     # mtp_num_layers=2 controls forward-pass repetitions with mtp_use_repeated_layer)
     cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True

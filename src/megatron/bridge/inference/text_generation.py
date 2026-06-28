@@ -121,8 +121,8 @@ def build_tokenizer(hf_model_path: str, trust_remote_code: bool | None) -> HFTok
     return HFTokenizerAdapter(tokenizer)
 
 
-def _apply_provider_parallelism(
-    provider: object,
+def _apply_model_config_parallelism(
+    model_config: object,
     *,
     tp: int,
     pp: int,
@@ -134,34 +134,44 @@ def _apply_provider_parallelism(
     cache_mla_latents: bool | None,
     inference_moe_token_dispatcher_type: str | None,
 ) -> None:
-    setattr(provider, "tensor_model_parallel_size", tp)
-    setattr(provider, "pipeline_model_parallel_size", pp)
-    setattr(provider, "expert_model_parallel_size", ep)
-    setattr(provider, "expert_tensor_parallel_size", etp)
-    setattr(provider, "sequence_parallel", sequence_parallel)
-    setattr(provider, "params_dtype", dtype)
-    setattr(provider, "pipeline_dtype", dtype)
-    setattr(provider, "bf16", dtype == torch.bfloat16)
-    setattr(provider, "fp16", dtype == torch.float16)
+    overrides = {
+        "tensor_model_parallel_size": tp,
+        "pipeline_model_parallel_size": pp,
+        "expert_model_parallel_size": ep,
+        "expert_tensor_parallel_size": etp,
+        "sequence_parallel": sequence_parallel,
+        "params_dtype": dtype,
+        "pipeline_dtype": dtype,
+        "bf16": dtype == torch.bfloat16,
+        "fp16": dtype == torch.float16,
+    }
+    for name, value in overrides.items():
+        if not hasattr(model_config, name):
+            raise ValueError(f"{type(model_config).__name__} does not expose required inference field {name!r}.")
+        setattr(model_config, name, value)
     if attention_backend is not None:
-        setattr(provider, "attention_backend", AttnBackend[attention_backend])
-    is_mla_model = bool(getattr(provider, "multi_latent_attention", False))
+        if not hasattr(model_config, "attention_backend"):
+            raise ValueError(f"{type(model_config).__name__} does not expose 'attention_backend'.")
+        setattr(model_config, "attention_backend", AttnBackend[attention_backend])
+    is_mla_model = bool(getattr(model_config, "multi_latent_attention", False))
     use_mla_latent_cache = cache_mla_latents
     if use_mla_latent_cache is None:
         use_mla_latent_cache = is_mla_model
-    if cache_mla_latents is not None or is_mla_model or hasattr(provider, "cache_mla_latents"):
-        setattr(provider, "cache_mla_latents", use_mla_latent_cache)
+    if cache_mla_latents is not None or is_mla_model or hasattr(model_config, "cache_mla_latents"):
+        if not hasattr(model_config, "cache_mla_latents"):
+            raise ValueError(f"{type(model_config).__name__} does not expose 'cache_mla_latents'.")
+        setattr(model_config, "cache_mla_latents", use_mla_latent_cache)
     if inference_moe_token_dispatcher_type is not None:
-        if not hasattr(provider, "inference_moe_token_dispatcher_type"):
+        if not hasattr(model_config, "inference_moe_token_dispatcher_type"):
             raise ValueError(
-                "--inference-moe-token-dispatcher-type was set, but the selected provider "
+                "--inference-moe-token-dispatcher-type was set, but the selected model config "
                 "does not expose inference_moe_token_dispatcher_type."
             )
-        setattr(provider, "inference_moe_token_dispatcher_type", inference_moe_token_dispatcher_type)
+        setattr(model_config, "inference_moe_token_dispatcher_type", inference_moe_token_dispatcher_type)
 
 
 def _megatron_checkpoint_overrides(
-    provider: object,
+    model_config: object,
     *,
     tp: int,
     pp: int,
@@ -185,8 +195,8 @@ def _megatron_checkpoint_overrides(
     }
     if attention_backend is not None:
         overrides["attention_backend"] = AttnBackend[attention_backend]
-    if hasattr(provider, "cache_mla_latents"):
-        overrides["cache_mla_latents"] = bool(getattr(provider, "cache_mla_latents"))
+    if hasattr(model_config, "cache_mla_latents"):
+        overrides["cache_mla_latents"] = bool(getattr(model_config, "cache_mla_latents"))
     if inference_moe_token_dispatcher_type is not None:
         overrides["inference_moe_token_dispatcher_type"] = inference_moe_token_dispatcher_type
     return overrides
@@ -242,11 +252,11 @@ def load_bridge_model(
     if megatron_model_path:
         config = AutoConfig.from_pretrained(hf_model_path, trust_remote_code=safe_trust_remote_code)
         bridge = AutoBridge.from_hf_config(config)
-        provider = bridge.to_megatron_provider(load_weights=False)
-        _apply_provider_parallelism(provider, cache_mla_latents=cache_mla_latents, **parallelism)
-        provider.finalize()
-        provider.initialize_model_parallel(seed=seed)
-        mp_overrides = _megatron_checkpoint_overrides(provider, **parallelism)
+        model_config = bridge.to_megatron_model_config(load_weights=False)
+        _apply_model_config_parallelism(model_config, cache_mla_latents=cache_mla_latents, **parallelism)
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
+        mp_overrides = _megatron_checkpoint_overrides(model_config, **parallelism)
         model_list = bridge.load_megatron_model(
             megatron_model_path,
             mp_overrides=mp_overrides,
@@ -258,11 +268,16 @@ def load_bridge_model(
             torch_dtype=dtype,
             trust_remote_code=safe_trust_remote_code,
         )
-        provider = bridge.to_megatron_provider(load_weights=True)
-        _apply_provider_parallelism(provider, cache_mla_latents=cache_mla_latents, **parallelism)
-        provider.finalize()
-        provider.initialize_model_parallel(seed=seed)
-        model_list = provider.provide_distributed_model(wrap_with_ddp=False)
+        model_config = bridge.to_megatron_model_config(load_weights=True)
+        _apply_model_config_parallelism(model_config, cache_mla_latents=cache_mla_latents, **parallelism)
+        model_config.finalize()
+        pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
+        builder = model_config.get_builder_cls()(model_config)
+        model_list = builder.build_distributed_models(
+            pg_collection=pg_collection,
+            wrap_with_ddp=False,
+            data_parallel_random_init=False,
+        )
 
     return _prepare_model_list(model_list)
 

@@ -13,13 +13,11 @@
 # limitations under the License.
 
 from collections.abc import Mapping
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Dict, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -30,21 +28,14 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
-from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
+from megatron.bridge.models.minimax_m2.layer_specs import minimax_m2_layer_spec
+from megatron.bridge.models.minimax_m2.model_config import MiniMaxM2ModelConfig
 
 
 __all__ = ["MiniMaxM2Bridge", "_FullDimQKNormMapping", "_dequant_fp8_blockwise"]
 
 
 _dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
-
-
-@dataclass(kw_only=True)
-class MiniMaxM2ModelConfig(BridgeGPTModelConfig):
-    """Builder-backed MiniMax-M2 config with full-dimension QK normalization."""
-
-    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: minimax_m2_layer_spec)
 
 
 class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):

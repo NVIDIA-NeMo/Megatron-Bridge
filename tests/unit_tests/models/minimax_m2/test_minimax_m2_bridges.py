@@ -312,11 +312,11 @@ class TestFullDimRMSNorm:
 
         with (
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.get_world_size",
+                "megatron.bridge.models.minimax_m2.layer_specs.dist.get_world_size",
                 return_value=4,
             ),
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.dist.all_reduce",
+                "megatron.bridge.models.minimax_m2.layer_specs.dist.all_reduce",
                 side_effect=fake_all_reduce,
             ),
         ):
@@ -345,11 +345,11 @@ class TestFullDimRMSNorm:
 
         with (
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_size",
+                "megatron.bridge.models.minimax_m2.layer_specs.get_pg_size",
                 side_effect=fake_get_pg_size,
             ),
             patch(
-                "megatron.bridge.models.minimax_m2.minimax_m2_provider.get_pg_rank",
+                "megatron.bridge.models.minimax_m2.layer_specs.get_pg_rank",
                 side_effect=fake_get_pg_rank,
             ),
         ):

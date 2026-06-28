@@ -12,15 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import torch
 import torch.nn.functional as F
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -29,46 +25,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
-from megatron.bridge.models.sarvam.model_config import get_sarvam_moe_pipeline_layout
+from megatron.bridge.models.sarvam.model_config import SarvamMoEModelConfig
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
-
-
-@dataclass(kw_only=True)
-class SarvamMoEModelConfig(BridgeGPTModelConfig):
-    """Builder-backed Sarvam MoE config with its mixed dense/MoE layer spec."""
-
-    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
-        default_factory=lambda: partial(
-            get_gpt_decoder_block_spec,
-            use_transformer_engine=HAVE_TE,
-            normalization="RMSNorm",
-            vp_stage=None,
-        )
-    )
-
-    def finalize(self) -> None:
-        """Apply Sarvam's supported uneven pipeline layouts before validation."""
-        transformer = self.transformer
-        pipeline_size = transformer.pipeline_model_parallel_size or 1
-        has_explicit_flexible_pipeline = (
-            transformer.pipeline_model_parallel_layout is not None
-            or transformer.num_layers_in_first_pipeline_stage is not None
-            or transformer.num_layers_in_last_pipeline_stage is not None
-        )
-        if pipeline_size > 1 and transformer.num_layers % pipeline_size != 0 and not has_explicit_flexible_pipeline:
-            transformer.pipeline_model_parallel_layout = get_sarvam_moe_pipeline_layout(pipeline_size)
-        super().finalize()
 
 
 @MegatronModelBridge.register_bridge(source="SarvamMoEForCausalLM", target=GPTModel)

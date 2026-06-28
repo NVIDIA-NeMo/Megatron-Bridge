@@ -73,13 +73,13 @@ def setup_model_and_tokenizer(
     )
 
     # Initialize model parallel before loading
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.parallel_output = False
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config = bridge.to_megatron_model_config(load_weights=False)
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.parallel_output = False
+    model_config.finalize()
+    bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
     # Load the Megatron model directly
     model = bridge.load_megatron_model(
         megatron_model_path,

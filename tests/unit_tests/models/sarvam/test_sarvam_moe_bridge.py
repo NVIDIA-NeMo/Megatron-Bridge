@@ -25,7 +25,8 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge, SarvamMoEModelConfig
+from megatron.bridge.models.sarvam.model_config import SarvamMoEModelConfig
+from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
 
 

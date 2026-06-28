@@ -20,7 +20,7 @@ from typing import ClassVar
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
-from megatron.bridge.models.glm.glm45_bridge import GLM45ModelConfig
+from megatron.bridge.models.glm.model_config import GLM45ModelConfig
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 
 

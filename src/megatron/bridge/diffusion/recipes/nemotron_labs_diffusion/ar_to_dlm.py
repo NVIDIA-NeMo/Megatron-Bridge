@@ -206,11 +206,11 @@ def _nemotron_labs_diffusion_common(
     if hf_path is not None:
         hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
         bridge = NemotronLabsDiffusionBridge()
-        model_cfg = bridge.provider_bridge(hf_pretrained)
+        model_cfg = bridge.model_config_bridge(hf_pretrained)
         model_cfg.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
         model_cfg.perform_initialization = False
         if load_hf_checkpoint:
-            model_cfg.register_pre_wrap_hook(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
+            model_cfg.pre_wrap_hooks.append(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
     else:
         model_cfg = model_provider()
 

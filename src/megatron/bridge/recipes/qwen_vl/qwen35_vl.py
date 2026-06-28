@@ -56,7 +56,7 @@ def _qwen35_vl_apply_common(
     dataset, DDP, and mixed-precision options.
     """
     # Model configuration
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = 4096
 
     # Parallel settings (dense defaults; MoE overrides EP/SP via _apply_moe)

@@ -31,7 +31,7 @@ def qwen3_600m_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
@@ -112,7 +112,7 @@ def qwen3_1p7b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-1.7B"
@@ -193,7 +193,7 @@ def qwen3_4b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-4B"
@@ -274,7 +274,7 @@ def qwen3_8b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
@@ -355,7 +355,7 @@ def qwen3_14b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-14B"
@@ -435,7 +435,7 @@ def qwen3_32b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_model_config(load_weights=False)
 
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-32B"
 
@@ -509,7 +509,7 @@ def qwen3_600m_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
@@ -645,7 +645,7 @@ def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
     hf_path = "Qwen/Qwen3-0.6B"
 
     # Model and tokenizer use the same HF checkpoint so the chat template matches the dataset.
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.tokenizer.tokenizer_model = hf_path
 
     # 128K context parallelism.
@@ -713,7 +713,7 @@ def qwen3_1p7b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-1.7B"
@@ -801,7 +801,7 @@ def qwen3_4b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-4B"
@@ -889,7 +889,7 @@ def qwen3_8b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
@@ -977,7 +977,7 @@ def qwen3_14b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-14B"
@@ -1066,7 +1066,7 @@ def qwen3_32b_sft_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-32B"
@@ -1164,7 +1164,7 @@ def qwen3_600m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-0.6B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-0.6B"
@@ -1258,7 +1258,7 @@ def qwen3_1p7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-1.7B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-1.7B"
@@ -1352,7 +1352,7 @@ def qwen3_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-4B"
@@ -1446,7 +1446,7 @@ def qwen3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
@@ -1540,7 +1540,7 @@ def qwen3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-14B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-14B"
@@ -1635,7 +1635,7 @@ def qwen3_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-32B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-32B"

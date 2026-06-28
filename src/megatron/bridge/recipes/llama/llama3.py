@@ -48,7 +48,7 @@ def llama32_1b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -144,7 +144,7 @@ def llama32_3b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-3B").to_megatron_model_config(load_weights=False)
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -230,7 +230,9 @@ def llama3_8b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -311,7 +313,9 @@ def llama3_8b_16k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -392,7 +396,9 @@ def llama3_8b_64k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -473,7 +479,9 @@ def llama3_8b_128k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -574,7 +582,9 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
 
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -663,7 +673,9 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -766,7 +778,9 @@ def llama3_70b_16k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -855,7 +869,9 @@ def llama3_70b_64k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -949,7 +965,9 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1032,7 +1050,9 @@ def llama31_70b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").to_megatron_model_config(
+        load_weights=False
+    )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1121,7 +1141,7 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").to_megatron_provider(
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").to_megatron_model_config(
         load_weights=False
     )
 
@@ -1239,7 +1259,7 @@ def llama32_1b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-1B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1350,7 +1370,7 @@ def llama32_3b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1459,7 +1479,7 @@ def llama3_8b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1562,7 +1582,7 @@ def llama31_8b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1665,7 +1685,7 @@ def llama3_70b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1768,7 +1788,7 @@ def llama31_70b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1872,7 +1892,7 @@ def llama31_405b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-405B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -1998,7 +2018,7 @@ def llama32_1b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-1B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2111,7 +2131,7 @@ def llama32_3b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Llama-3.2-3B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2224,7 +2244,7 @@ def llama3_8b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2340,7 +2360,7 @@ def llama31_8b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-8B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2456,7 +2476,7 @@ def llama3_70b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2572,7 +2592,7 @@ def llama31_70b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-70B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -2689,7 +2709,7 @@ def llama31_405b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "meta-llama/Meta-Llama-3.1-405B"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path

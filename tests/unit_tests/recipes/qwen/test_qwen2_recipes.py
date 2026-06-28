@@ -77,7 +77,7 @@ class _FakeBridge:
     def __init__(self):
         pass
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def to_megatron_model_config(self, load_weights: bool = False):
         return _FakeModelCfg()
 
     @staticmethod

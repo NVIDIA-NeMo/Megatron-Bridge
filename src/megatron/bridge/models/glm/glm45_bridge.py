@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers import Glm4MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -31,26 +27,9 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.glm.model_config import GLM45ModelConfig, glm_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
-
-
-@dataclass(kw_only=True)
-class GLM45ModelConfig(BridgeGPTModelConfig):
-    """Builder-backed GLM 4.5 config with its mixed dense/MoE layer spec."""
-
-    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
-        default_factory=lambda: partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-    )
 
 
 @MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel, model_type="glm4_moe")
@@ -76,7 +55,7 @@ class GLM45Bridge(MegatronModelBridge):
         hf_config = hf_pretrained.config
 
         # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = glm_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False

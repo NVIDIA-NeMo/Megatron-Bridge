@@ -30,7 +30,7 @@ _qwen2_audio_module = importlib.import_module("megatron.bridge.recipes.qwen2_aud
 
 
 class _FakeAudioModelCfg:
-    """Fake provider returned by AutoBridge.to_megatron_provider.
+    """Fake provider returned by AutoBridge.to_megatron_model_config.
 
     The recipe sets a number of attributes on the provider (parallelism,
     freeze flags, seq_length). This stub mirrors the attribute surface so
@@ -64,7 +64,7 @@ class _FakeAutoBridge:
     def from_hf_pretrained(cls, *args, **kwargs):
         return cls()
 
-    def to_megatron_provider(self, *args, **kwargs):
+    def to_megatron_model_config(self, *args, **kwargs):
         return _FakeAudioModelCfg()
 
 

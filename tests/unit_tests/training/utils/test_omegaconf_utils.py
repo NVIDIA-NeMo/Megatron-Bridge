@@ -23,8 +23,10 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
     _apply_overrides,
@@ -92,6 +94,18 @@ class ConfigWithOptionalProfilingConfig:
 
     name: str = "test"
     profiling: Optional[ProfilingConfig] = None
+
+
+@dataclasses.dataclass
+class ConfigWithBuilderModel:
+    """Container with a nested builder-backed model config."""
+
+    model: BridgeGPTModelConfig = dataclasses.field(
+        default_factory=lambda: BridgeGPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            vocab_size=32,
+        )
+    )
 
 
 def dummy_function():
@@ -465,6 +479,20 @@ class TestSafeCreateOmegaconfWithPreservation:
         # activation_func is serialized as a string, not excluded
         assert omega_conf.with_callable.activation_func == "relu"
         assert "root.with_callable.activation_func" not in excluded
+
+    @pytest.mark.parametrize(
+        "override",
+        ["model.recompute_modules=[mlp]", "model.transformer.recompute_modules=[mlp]"],
+    )
+    def test_builder_model_supports_flat_and_nested_transformer_overrides(self, override):
+        """Flat compatibility aliases and nested paths remain synchronized."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, [override])
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert config.model.transformer.recompute_modules == ["mlp"]
 
 
 class TestApplyOverrides:

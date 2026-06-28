@@ -20,7 +20,7 @@ from typing import ClassVar
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
-from megatron.bridge.models.kimi.kimi_bridge import KimiK2ModelConfig
+from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
 

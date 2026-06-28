@@ -70,6 +70,21 @@ def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dic
     if base_dict is _EXCLUDE_FIELD:
         raise ValueError("Root configuration object was excluded (likely a callable)")
 
+    # Builder-backed model configs keep MCore fields under ``model.transformer``
+    # while their Python API proxies those fields at ``model.<field>`` for
+    # compatibility. Mirror that proxy in the temporary OmegaConf tree so
+    # existing Hydra overrides keep working. The aliases are inserted after the
+    # nested config, which also makes the recursive apply step preserve an
+    # explicitly overridden alias.
+    model_dict = base_dict.get("model") if isinstance(base_dict, dict) else None
+    if isinstance(model_dict, dict):
+        transformer_dict = model_dict.get("transformer")
+        if isinstance(transformer_dict, dict):
+            for field_name in transformer_dict:
+                # Keep untouched aliases synchronized with nested overrides;
+                # overriding the alias itself replaces this interpolation.
+                model_dict.setdefault(field_name, f"${{model.transformer.{field_name}}}")
+
     # Verify no callables remain
     if not _verify_no_callables(base_dict, "root"):
         raise ValueError("Callable objects found in converted dictionary")

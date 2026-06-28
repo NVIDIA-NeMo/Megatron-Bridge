@@ -100,7 +100,7 @@ def step37_sft_flickr8k_config(
     cfg = _sft_common()
 
     # ── Model: AutoBridge load from HF id or local snapshot ──────────────
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     cfg.model.seq_length = max_packing_seqlen
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8

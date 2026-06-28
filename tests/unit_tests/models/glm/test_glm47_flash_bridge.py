@@ -23,7 +23,8 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge, GLM47FlashModelConfig
+from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
+from megatron.bridge.models.glm.model_config import GLM47FlashModelConfig
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider

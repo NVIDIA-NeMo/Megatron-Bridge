@@ -24,12 +24,12 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge, DeepSeekV2ModelConfig
+from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import (
     DeepSeekV3Bridge,
-    DeepSeekV3ModelConfig,
     _dequant_fp8_blockwise,
 )
+from megatron.bridge.models.deepseek.model_config import DeepSeekV2ModelConfig, DeepSeekV3ModelConfig
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider

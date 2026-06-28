@@ -14,10 +14,13 @@
 
 """Provider-neutral configuration and build helpers for Sarvam models."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Callable
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
@@ -37,6 +40,22 @@ class SarvamMLAModelConfig(BridgeGPTModelConfig):
     """Serializable builder config for Sarvam MLA models."""
 
     transformer_layer_spec = sarvam_mla_layer_spec
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+sarvam_moe_layer_spec = partial(
+    get_gpt_decoder_block_spec,
+    use_transformer_engine=HAVE_TE,
+    normalization="RMSNorm",
+    vp_stage=None,
+)
 
 
 def get_sarvam_moe_pipeline_layout(pipeline_size: int) -> list[list[str]] | None:
@@ -66,4 +85,32 @@ def get_sarvam_moe_pipeline_layout(pipeline_size: int) -> list[list[str]] | None
     return None if layout is None else [list(stage) for stage in layout]
 
 
-__all__ = ["SarvamMLAModelConfig", "get_sarvam_moe_pipeline_layout", "sarvam_mla_layer_spec"]
+@dataclass(kw_only=True)
+class SarvamMoEModelConfig(BridgeGPTModelConfig):
+    """Builder-backed Sarvam MoE config with its mixed dense/MoE layer spec."""
+
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: sarvam_moe_layer_spec
+    )
+
+    def finalize(self) -> None:
+        """Apply Sarvam's supported uneven pipeline layouts before validation."""
+        transformer = self.transformer
+        pipeline_size = transformer.pipeline_model_parallel_size or 1
+        has_explicit_flexible_pipeline = (
+            transformer.pipeline_model_parallel_layout is not None
+            or transformer.num_layers_in_first_pipeline_stage is not None
+            or transformer.num_layers_in_last_pipeline_stage is not None
+        )
+        if pipeline_size > 1 and transformer.num_layers % pipeline_size != 0 and not has_explicit_flexible_pipeline:
+            transformer.pipeline_model_parallel_layout = get_sarvam_moe_pipeline_layout(pipeline_size)
+        super().finalize()
+
+
+__all__ = [
+    "SarvamMLAModelConfig",
+    "SarvamMoEModelConfig",
+    "get_sarvam_moe_pipeline_layout",
+    "sarvam_mla_layer_spec",
+    "sarvam_moe_layer_spec",
+]

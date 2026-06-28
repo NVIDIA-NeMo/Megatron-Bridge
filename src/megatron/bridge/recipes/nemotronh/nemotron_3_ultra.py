@@ -42,7 +42,7 @@ def nemotron_3_ultra_pretrain_config(
     cfg = _pretrain_common()
     model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_model_config(load_weights=False)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 3
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -130,7 +130,7 @@ def nemotron_3_ultra_sft_openmathinstruct2_packed_config(
     cfg = _sft_common()
     model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_model_config(load_weights=False)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -224,7 +224,7 @@ def nemotron_3_ultra_peft_openmathinstruct2_packed_config(
     cfg = _peft_common()
     model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_model_config(load_weights=False)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16

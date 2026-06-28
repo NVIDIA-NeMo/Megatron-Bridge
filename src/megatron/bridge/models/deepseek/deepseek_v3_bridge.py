@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Any, Callable, Dict, Mapping, Union
+from typing import Any, Dict, Mapping, Union
 
 import torch
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion import quantization_utils
@@ -28,32 +24,15 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.deepseek.model_config import DeepSeekV3ModelConfig, deepseek_layer_spec
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
 
 
 __all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
 
 
 _dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
-
-
-@dataclass(kw_only=True)
-class DeepSeekV3ModelConfig(BridgeGPTModelConfig):
-    """Serializable DeepSeek-V3 GPT build configuration."""
-
-    transformer_layer_spec: ModuleSpec | Callable[[BridgeGPTModelConfig], ModuleSpec] | None = field(
-        default_factory=lambda: partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
-    )
 
 
 @MegatronModelBridge.register_bridge(
@@ -73,7 +52,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = deepseek_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False

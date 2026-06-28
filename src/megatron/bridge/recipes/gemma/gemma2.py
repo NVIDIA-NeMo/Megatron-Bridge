@@ -33,7 +33,7 @@ def gemma2_2b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-2b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-2b").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses HuggingFaceTokenizer
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
@@ -117,7 +117,7 @@ def gemma2_9b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-9b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-9b").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses HuggingFaceTokenizer
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
@@ -199,7 +199,7 @@ def gemma2_27b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-27b").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-27b").to_megatron_model_config(load_weights=False)
 
     # Tokenizer - uses HuggingFaceTokenizer
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
@@ -309,7 +309,7 @@ def gemma2_2b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-2b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -413,7 +413,7 @@ def gemma2_9b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-9b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -517,7 +517,7 @@ def gemma2_27b_sft_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-27b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -631,7 +631,7 @@ def gemma2_2b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-2b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -743,7 +743,7 @@ def gemma2_9b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-9b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -855,7 +855,7 @@ def gemma2_27b_peft_config(
 
     # Model config from HuggingFace
     hf_path = "google/gemma-2-27b"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_model_config(load_weights=False)
     _adjust_gemma2_vocab_size(cfg.model, hf_path)
 
     # Tokenizer

@@ -20,12 +20,10 @@ Megatron-Core GPTModel with single-pool MoE (64 experts, top-6 routing,
 shared experts, expert bias for aux-free load balancing).
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -35,38 +33,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.ernie.model_config import (
+    Ernie45ModelConfig,
+)
+from megatron.bridge.models.ernie.model_config import (
+    ernie45_decoder_block_spec as _ernie45_decoder_block_spec,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-
-
-def _ernie45_decoder_block_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> ModuleSpec:
-    """Create a decoder block spec that respects ``moe_layer_freq``.
-
-    The default ``GPTModelProvider.transformer_layer_spec`` calls
-    ``get_gpt_layer_with_transformer_engine_spec`` which returns a single
-    MoE layer spec applied uniformly to ALL layers, ignoring
-    ``moe_layer_freq``.
-
-    ERNIE 4.5 has mixed dense/MoE layers (layer 0 is dense, layers 1-N
-    are MoE).  This function uses ``get_gpt_decoder_block_spec`` which
-    calls ``get_gpt_decoder_layer_specs`` — the code path that parses
-    ``config.moe_layer_freq`` and creates per-layer specs (dense for
-    pattern=0, MoE for pattern=1).
-    """
-    from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-
-    return get_gpt_decoder_block_spec(
-        config=config,
-        use_transformer_engine=True,
-        vp_stage=vp_stage,
-    )
-
-
-@dataclass(kw_only=True)
-class Ernie45ModelConfig(BridgeGPTModelConfig):
-    """Builder-backed ERNIE 4.5 config with mixed dense/MoE layer selection."""
-
-    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: _ernie45_decoder_block_spec)
 
 
 # HF class name string; avoids requiring the HF modeling module at import time.
