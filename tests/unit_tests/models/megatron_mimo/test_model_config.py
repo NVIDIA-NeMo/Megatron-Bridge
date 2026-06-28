@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 import yaml
 from megatron.core.transformer import TransformerConfig
 from megatron.training.config.yaml_utils import safe_yaml_representers

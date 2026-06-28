@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 from megatron.core.activations import squared_relu
 from megatron.core.transformer import MLATransformerConfig, TransformerConfig
 
