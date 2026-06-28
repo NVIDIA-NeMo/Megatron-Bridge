@@ -176,7 +176,9 @@ class TestFp8ParamExport:
             megatron_module=Mock(),
             param_weight=target_param,
         )
-        monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [task])
+        # Unmapped global parameters are represented by empty task slots and
+        # must not prevent the remaining mapped weights from loading.
+        monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [None, task])
         monkeypatch.setattr(DummyBridge, "_with_progress_tracking", lambda self, tasks, *_a, **_k: tasks)
         monkeypatch.setattr(DummyBridge, "_broadcast_shared_embeddings", lambda self, *_a, **_k: None)
         hf_pretrained = SimpleNamespace(state={"hf.w0": converted}, model_name_or_path="dummy")
