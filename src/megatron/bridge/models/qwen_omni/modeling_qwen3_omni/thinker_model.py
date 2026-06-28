@@ -199,7 +199,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
         self.thinker_transformer_config = thinker_transformer_config
 
         if self.pre_process:
-            multimodal_attn_impl = build_config.multimodal_attn_impl
+            multimodal_attn_impl = getattr(build_config, "multimodal_attn_impl", "auto")
             _configure_multimodal_attn_impl(thinker_transformer_config.vision_config, multimodal_attn_impl)
             _configure_multimodal_attn_impl(thinker_transformer_config.audio_config, multimodal_attn_impl)
 
@@ -216,7 +216,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
             _configure_multimodal_attn_impl(
                 getattr(self.audio_model, "config", self.thinker_transformer_config.audio_config), multimodal_attn_impl
             )
-            if build_config.vit_gradient_checkpointing:
+            if getattr(build_config, "vit_gradient_checkpointing", False):
                 _enable_multimodal_gradient_checkpointing(self.visual)
                 _enable_multimodal_gradient_checkpointing(self.audio_model)
 

@@ -19,7 +19,7 @@ from torch import Tensor
 
 
 @dataclass
-class _LegacyFalconH1Settings:
+class FalconH1Config(TransformerConfig):
     """Configuration object for Falcon-H1 hybrid transformer-Mamba models.
 
     This config extends TransformerConfig to add the support for passing
@@ -104,6 +104,8 @@ class _LegacyFalconH1Settings:
 
     def __post_init__(self):
         """Post-initialization to set derived parameters and validate configuration."""
+        super().__post_init__()
+
         # Set mamba_num_heads if not provided
         self.d_inner = self.expand * self.hidden_size
         if self.mamba_num_heads is None:
@@ -120,9 +122,6 @@ class _LegacyFalconH1Settings:
                 raise ValueError(
                     f"d_inner ({self.d_inner}) must be divisible by mamba_head_dim ({self.mamba_head_dim})"
                 )
-
-
-FalconH1Config = TransformerConfig
 
 
 class FalconH1Model(LanguageModule):

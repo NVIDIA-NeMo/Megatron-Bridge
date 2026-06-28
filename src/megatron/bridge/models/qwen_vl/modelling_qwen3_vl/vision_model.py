@@ -296,10 +296,21 @@ class Qwen3VLVisionModel(VisionModule):
 
     def _get_max_vision_seq_length(self) -> int:
         """Get the maximum sequence length for vision encoder CUDA graphs."""
-        if self.max_vision_cuda_graph_seq_length:
-            return self.max_vision_cuda_graph_seq_length
+        max_seq_length = getattr(
+            self,
+            "max_vision_cuda_graph_seq_length",
+            getattr(self.config, "max_vision_cuda_graph_seq_length", None),
+        )
+        if max_seq_length:
+            return max_seq_length
         # Default: calculate from num_position_embeddings
-        return self.num_position_embeddings // (self.spatial_merge_size**2)
+        num_position_embeddings = getattr(self, "num_position_embeddings", None)
+        if num_position_embeddings is None:
+            num_position_embeddings = self.config.num_position_embeddings
+        spatial_merge_size = getattr(self, "spatial_merge_size", None)
+        if spatial_merge_size is None:
+            spatial_merge_size = self.config.spatial_merge_size
+        return num_position_embeddings // (spatial_merge_size**2)
 
     def _uses_vision_cuda_graph(self) -> bool:
         """Check if vision encoder CUDA graphs are enabled."""

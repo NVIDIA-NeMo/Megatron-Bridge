@@ -96,7 +96,28 @@ class Step35DecoderLayer(TransformerLayer):
         swiglu_limits: list[float | None] | None = None,
         swiglu_limits_shared: list[float | None] | None = None,
     ):
-        config = copy.deepcopy(config)
+        # The builder-backed path passes family settings explicitly so the
+        # nested MCore config remains exact. Legacy providers still carry the
+        # same settings on ``config``; retain that call contract without
+        # requiring those fields on new TransformerConfig instances.
+        explicit_family_settings = any(
+            value is not None
+            for value in (
+                layer_types,
+                rotary_percents,
+                sliding_attention_setting,
+                swiglu_limits,
+                swiglu_limits_shared,
+            )
+        )
+        if explicit_family_settings:
+            config = copy.deepcopy(config)
+        else:
+            layer_types = getattr(config, "layer_types", None)
+            rotary_percents = getattr(config, "rotary_percents", None)
+            sliding_attention_setting = getattr(config, "sliding_attention_setting", None)
+            swiglu_limits = getattr(config, "swiglu_limits", None)
+            swiglu_limits_shared = getattr(config, "swiglu_limits_shared", None)
         pp_rank = get_pg_rank(pg_collection.pp)
         if is_mtp_layer:
             layer_idx = layer_number + config.num_layers + get_transformer_layer_offset(config, vp_stage, pp_rank) - 1
@@ -119,6 +140,8 @@ class Step35DecoderLayer(TransformerLayer):
         )
         if is_sliding:
             if sliding_attention_setting:
+                if not explicit_family_settings:
+                    config = copy.deepcopy(config)
                 config.window_size = sliding_attention_setting["window_size"]
                 config.num_attention_heads = sliding_attention_setting["num_attention_heads"]
                 config.num_query_groups = sliding_attention_setting["num_query_groups"]
@@ -136,6 +159,8 @@ class Step35DecoderLayer(TransformerLayer):
         if 0 <= layer_idx < len(swiglu_limits_shared):
             v = swiglu_limits_shared[layer_idx]
             shared_expert_clamp = None if (v is None or float(v) == 0.0) else float(v)
+            if not explicit_family_settings:
+                config.activation_func_clamp_value_shared_expert = shared_expert_clamp
         super().__init__(
             config=config,
             submodules=submodules,
@@ -149,7 +174,7 @@ class Step35DecoderLayer(TransformerLayer):
             name=name,
         )
         shared_experts = getattr(getattr(self, "mlp", None), "shared_experts", None)
-        if shared_experts is not None:
+        if explicit_family_settings and shared_experts is not None:
             shared_experts.activation_func_clamp_value_shared_expert = shared_expert_clamp
 
 
@@ -176,7 +201,11 @@ class Step35SharedExpertMLP(SharedExpertMLP):
         # None), temporarily override the field on this instance's config (which
         # is a private deepcopy and is not shared with routed experts) and
         # restore it after ``super().forward`` returns.
-        shared_clamp = getattr(self, "activation_func_clamp_value_shared_expert", None)
+        shared_clamp = getattr(
+            self,
+            "activation_func_clamp_value_shared_expert",
+            getattr(self.config, "activation_func_clamp_value_shared_expert", None),
+        )
         if shared_clamp is not None:
             original_clamp = self.config.activation_func_clamp_value
             self.config.activation_func_clamp_value = shared_clamp

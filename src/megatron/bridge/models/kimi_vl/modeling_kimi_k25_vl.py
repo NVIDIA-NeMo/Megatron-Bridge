@@ -150,7 +150,9 @@ class KimiK25VLModel(MegatronModule):
         self.post_process = post_process
         self.vp_stage = vp_stage
 
-        hf_model_id = getattr(config, "hf_model_id", None) or getattr(config, "hf_model_path", None)
+        hf_model_id = getattr(config, "hf_model_id", None)
+        if not isinstance(hf_model_id, str) or not hf_model_id:
+            hf_model_id = getattr(config, "hf_model_path", None)
         if not hf_model_id:
             raise ValueError("hf_model_id must be set.")
 

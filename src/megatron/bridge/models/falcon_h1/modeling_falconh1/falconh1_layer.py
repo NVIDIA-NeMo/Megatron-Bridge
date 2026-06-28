@@ -55,7 +55,11 @@ class FalconH1MambaMixer(MambaMixer):
         super().__init__(*args, **kwargs)
 
     def _scale_zxbc_dt(self, zxbc_dt: torch.Tensor, *, use_context_parallel_dims: bool) -> torch.Tensor:
-        multipliers = self.ssm_multipliers
+        multipliers = getattr(
+            self,
+            "ssm_multipliers",
+            getattr(self.config, "ssm_multipliers", (1.0, 1.0, 1.0, 1.0, 1.0)),
+        )
         if tuple(multipliers) == (1.0, 1.0, 1.0, 1.0, 1.0):
             return zxbc_dt
 
@@ -120,7 +124,7 @@ class FalconH1SelfAttention(SelfAttention):
             split_qkv=split_qkv,
         )
 
-        key_multiplier = self.key_multiplier
+        key_multiplier = getattr(self, "key_multiplier", getattr(self.config, "key_multiplier", 1.0))
         if key_multiplier == 1.0:
             return qkv
 
@@ -162,12 +166,20 @@ class FalconH1MLP(MLP):
             if (clamp_value := self.config.activation_func_clamp_value) is not None:
                 gate = gate.clamp(min=None, max=clamp_value)
                 linear = linear.clamp(min=-clamp_value, max=clamp_value)
-            gate_multiplier, down_multiplier = self.mlp_multipliers
+            gate_multiplier, down_multiplier = getattr(
+                self,
+                "mlp_multipliers",
+                getattr(self.config, "mlp_multipliers", (1.0, 1.0)),
+            )
             intermediate_parallel = self.config.activation_func(gate * gate_multiplier) * (
                 linear + self.config.glu_linear_offset
             )
         else:
-            down_multiplier = self.mlp_multipliers[1]
+            down_multiplier = getattr(
+                self,
+                "mlp_multipliers",
+                getattr(self.config, "mlp_multipliers", (1.0, 1.0)),
+            )[1]
             intermediate_parallel = self.activation_func(intermediate_parallel)
 
         output, output_bias = self.linear_fc2(intermediate_parallel)

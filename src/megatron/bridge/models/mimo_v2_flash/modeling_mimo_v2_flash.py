@@ -252,13 +252,22 @@ class MiMoV2FlashTEDotProductAttention(TEDotProductAttention):
         layer_number: int,
         attn_mask_type: AttnMaskType,
         attention_type: str,
-        hybrid_attention_pattern: list[int],
-        sliding_window_size: int,
-        v_head_dim: int,
-        attention_value_scale: float | None,
+        hybrid_attention_pattern: list[int] | None = None,
+        sliding_window_size: int | None = None,
+        v_head_dim: int | None = None,
+        attention_value_scale: float | None = None,
         attention_dropout: Optional[float] = None,
         **kwargs,
     ):
+        if hybrid_attention_pattern is None:
+            hybrid_attention_pattern = config.hybrid_attention_pattern
+        if sliding_window_size is None:
+            sliding_window_size = config.window_size
+        if v_head_dim is None:
+            v_head_dim = config.v_head_dim
+        if attention_value_scale is None:
+            attention_value_scale = getattr(config, "attention_value_scale", None)
+
         config = copy.deepcopy(config)
         if _is_local_attn_layer(layer_number, hybrid_attention_pattern):
             config.window_size = (sliding_window_size - 1, 0)
