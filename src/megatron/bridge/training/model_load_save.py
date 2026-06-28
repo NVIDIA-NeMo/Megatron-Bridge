@@ -26,7 +26,7 @@ from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_model_config, unwrap_model
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
@@ -325,12 +325,27 @@ def build_and_load_model(
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
 
+    def _attach_bridge_model_config(models, model_cfg) -> None:
+        """Attach the outer config to model chunks and their unwrapped modules."""
+        model_chunks = models if isinstance(models, list) else [models]
+        for model_chunk in model_chunks:
+            model_chunk._bridge_model_config = model_cfg
+            unwrapped_model = unwrap_model(model_chunk)
+            unwrapped_chunks = unwrapped_model if isinstance(unwrapped_model, list) else [unwrapped_model]
+            for unwrapped_chunk in unwrapped_chunks:
+                unwrapped_chunk._bridge_model_config = model_cfg
+
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
-            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+            models = model_cfg.provide_distributed_model(
+                wrap_with_ddp=False,
+                use_cpu_initialization=use_cpu_init,
+            )
+            _attach_bridge_model_config(models, model_cfg)
+            return models
         elif isinstance(model_cfg, ModelConfig):
             if hasattr(model_cfg, "finalize"):
                 model_cfg.finalize()
@@ -346,8 +361,7 @@ def build_and_load_model(
             models = builder.build_distributed_models(
                 ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
             )
-            for model_chunk in models:
-                model_chunk._bridge_model_config = model_cfg
+            _attach_bridge_model_config(models, model_cfg)
             return models
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."

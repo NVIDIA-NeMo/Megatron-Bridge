@@ -216,6 +216,7 @@ class TestLoadMegatronModel:
         mock_run_config.return_value = mock_run_cfg_dict
 
         mock_model = Mock()
+        mock_inner_model = Mock()
         mock_model_cfg = Mock(spec=ModelProviderMixin)
         mock_model_cfg.params_dtype = torch.float32
         mock_model_cfg.bf16 = True
@@ -227,7 +228,13 @@ class TestLoadMegatronModel:
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
-        with tempfile.TemporaryDirectory() as ckpt_path:
+        with (
+            tempfile.TemporaryDirectory() as ckpt_path,
+            patch(
+                "megatron.bridge.training.model_load_save.unwrap_model",
+                return_value=mock_inner_model,
+            ),
+        ):
             config_file = Path(ckpt_path) / "run_config.yaml"
             config_file.touch()
             result = load_megatron_model(ckpt_path, return_state_dict=True, use_cpu_init=True)
@@ -242,8 +249,14 @@ class TestLoadMegatronModel:
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
-        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+        with patch(
+            "megatron.bridge.training.model_load_save.unwrap_model",
+            return_value=mock_inner_model,
+        ):
+            result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
         assert result == [mock_model]
+        assert mock_model._bridge_model_config is mock_model_cfg
+        assert mock_inner_model._bridge_model_config is mock_model_cfg
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
