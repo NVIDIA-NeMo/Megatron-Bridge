@@ -1107,6 +1107,7 @@ class TestEOSIndexFixInPackedDataset:
 
         # Expect a single non-EOS token tracked without indexing errors.
         assert cu_unpadded == [0, 1]
+        assert processed["attention_mask"] is None
 
 
 class TestPackedChatDatasetIntegration:

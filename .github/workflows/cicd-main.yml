@@ -388,37 +388,6 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Install GH CLI
-        shell: bash
-        run: |
-          for i in 1 2 3; do
-            apt-get update && apt-get install -y gh && break
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-
-      - name: Get last merged PR
-        id: cache_from
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          LAST_PRS=$(gh api graphql -f query='
-            query {
-              repository(owner: "NVIDIA-NeMo", name: "Megatron-Bridge") {
-                pullRequests(states: MERGED, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
-                  nodes {
-                    number
-                  }
-                }
-              }
-            }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ matrix.registry }}/megatron-bridge:$number-buildcache,mode=max"
-            done)
-
-          echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
-          echo "$LAST_PRS" | tee -a $GITHUB_OUTPUT
-          echo "EOF" | tee -a $GITHUB_OUTPUT
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -435,7 +404,21 @@ jobs:
           else
             KEY="$BRANCH_SANITIZED"
           fi
+
+          # Single coherent cache donor. Dockerfile.ci builds non-reproducible
+          # from-source layers (DeepEP): same BuildKit cache key, different result
+          # digest on every cold build. Listing more than one cache-from donor lets
+          # BuildKit chain from a conflicting copy of such a layer and miss every
+          # layer downstream — a ~40 min cold rebuild even when a warm cache exists.
+          # So read EXACTLY ONE donor: PR builds integrate into main, so they seed
+          # from main; main/branch builds seed from their own chain.
+          if [[ -n "$PR_NUMBER" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+            SEED="main"
+          else
+            SEED="$KEY"
+          fi
           echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "seed=$SEED" | tee -a "$GITHUB_OUTPUT"
           echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
 
       - name: Compute platform
@@ -458,10 +441,7 @@ jobs:
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
-          cache-from: |
-            type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ matrix.registry }}/megatron-bridge:main-buildcache,mode=max
-            ${{ steps.cache_from.outputs.LAST_PRS }}
+          cache-from: type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.seed }}-buildcache,mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
@@ -1053,12 +1033,18 @@ jobs:
         shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN:  ${{ github.token }}
+          GH_REPO:   ${{ github.repository }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
+          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
+          # any failure (e.g. "failed to determine base repo" when git context is
+          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
+          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
+          # repository, and `set -e -o pipefail` makes any failure here abort the job.
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
 
           UNEXPECTED_SKIPS=0
           check_tier_skips() {
@@ -1066,7 +1052,7 @@ jobs:
             [ "$expect" != "true" ] && return
             local n
             n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length') || n=0
+              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
             if [ "${n:-0}" -gt 0 ]; then
               echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
               gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \

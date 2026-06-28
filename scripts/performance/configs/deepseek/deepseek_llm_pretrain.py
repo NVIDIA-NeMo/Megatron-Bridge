@@ -289,6 +289,7 @@ def deepseek_v3_pretrain_config_h100(
         set_full_iter_cg_configs(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
+    cfg.ddp.overlap_grad_reduce = False
     cfg.comm_overlap.overlap_grad_reduce = False
 
     return cfg

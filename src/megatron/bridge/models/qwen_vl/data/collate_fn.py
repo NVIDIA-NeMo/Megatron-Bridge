@@ -37,6 +37,8 @@ MISSING_QWEN_VL_UTILS_MSG = (
     "qwen_vl_utils is required for Qwen2.5 VL processing. Please `pip install qwen-vl-utils` or"
     " provide compatible vision preprocessing."
 )
+QWEN_VL_MIN_PIXELS = 200704
+QWEN_VL_MAX_PIXELS = 1003520
 CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
 CHATML_ASSISTANT_END = "<|im_end|>\n"
 CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
@@ -53,8 +55,8 @@ except ImportError:
 def qwen2_5_collate_fn(
     examples: list,
     processor,
-    min_pixels: int | None = 200704,
-    max_pixels: int | None = 1003520,
+    min_pixels: int | None = QWEN_VL_MIN_PIXELS,
+    max_pixels: int | None = QWEN_VL_MAX_PIXELS,
     visual_keys: object = None,
     require_assistant_matches: bool = False,
     sequence_length: int | None = None,
