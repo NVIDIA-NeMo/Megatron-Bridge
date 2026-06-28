@@ -220,6 +220,8 @@ jobs:
           package-name: megatron.bridge
           python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
+      # Verify megatron.energon imports cleanly (or is appropriately guarded)
+      # in the basic install, mirroring the megatron.bridge import check above.
       - name: Check imports for megatron-energon
         uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@v0.80.1
         with:
