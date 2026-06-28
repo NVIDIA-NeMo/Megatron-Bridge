@@ -15,6 +15,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import torch
 
 from megatron.bridge.models.common import apply_model_config_overrides
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -65,6 +66,19 @@ class TestGPTModelProvider:
             )
 
         assert provider.tensor_model_parallel_size == 2
+
+    def test_explicit_overrides_keep_precedence_over_dtype(self):
+        """Explicit dtype-related overrides retain their legacy precedence."""
+        provider = GPTModelProvider(num_layers=12, hidden_size=768, num_attention_heads=12)
+
+        provider.apply_overrides_and_finalize(
+            dtype=torch.bfloat16,
+            overrides={"params_dtype": torch.float32, "bf16": False},
+        )
+
+        assert provider.params_dtype == torch.float32
+        assert provider.bf16 is False
+        assert provider.fp16 is False
 
     def test_gpt_model_provider_with_rope(self):
         """Test GPTModelProvider with RoPE embeddings."""

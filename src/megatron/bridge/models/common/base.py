@@ -34,6 +34,25 @@ from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_t
 ConfigT = TypeVar("ConfigT")
 
 
+def _validate_model_config_overrides(
+    config: object,
+    overrides: Mapping[str, object] | None = None,
+) -> None:
+    """Validate that every override names an existing config attribute.
+
+    Args:
+        config: Model configuration or transitional model provider to validate.
+        overrides: Attribute names and values intended for the config.
+
+    Raises:
+        AttributeError: If any override is not an existing configuration attribute.
+    """
+    unknown_attributes = [name for name in (overrides or {}) if not hasattr(config, name)]
+    if unknown_attributes:
+        names = ", ".join(repr(name) for name in unknown_attributes)
+        raise AttributeError(f"{type(config).__name__} has no attribute(s): {names}.")
+
+
 def apply_model_config_overrides(
     config: ConfigT,
     overrides: Mapping[str, object] | None = None,
@@ -56,10 +75,7 @@ def apply_model_config_overrides(
         AttributeError: If any override is not an existing configuration attribute.
     """
     overrides = overrides or {}
-    unknown_attributes = [name for name in overrides if not hasattr(config, name)]
-    if unknown_attributes:
-        names = ", ".join(repr(name) for name in unknown_attributes)
-        raise AttributeError(f"{type(config).__name__} has no attribute(s): {names}.")
+    _validate_model_config_overrides(config, overrides)
 
     for name, value in overrides.items():
         setattr(config, name, value)
