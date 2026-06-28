@@ -214,7 +214,3 @@ class NemotronVLBridge(MegatronModelBridge):
         )
         AutoMapping.register_module_type("RADIOViTModel", "replicated")
         return MegatronMappingRegistry(*mapping_list)
-
-    MODEL_CONFIG_CLASS = NemotronVLModelConfig
-    TRANSFORMER_CONFIG_CLASS = TransformerConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
