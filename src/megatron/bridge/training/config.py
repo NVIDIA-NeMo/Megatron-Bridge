@@ -51,7 +51,6 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -1039,7 +1038,6 @@ class ConfigContainer(Container):
         | T5ModelProvider
         | HybridModelProvider
         | MegatronMIMOProvider
-        | MegatronMIMOModelConfig
         | GPTModelConfig
         | HybridModelConfig
     )

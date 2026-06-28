@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
-
 import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.configuration_utils import PretrainedConfig
@@ -32,7 +30,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 
 
 def _two_component_config() -> MegatronMIMOParallelismConfig:
@@ -181,14 +179,6 @@ class _FakeSourceBridgeWithProvider:
 
 class _FakeSourceBridgeWithDefaultRoutes(_FakeSourceBridgeWithProvider):
     mimo_source_prefixes = {"language": "language_model.", "vision": "vision_model."}
-    mimo_modality_keys = {"vision": "fake_visual"}
-    mimo_special_token_fields = {"vision": "image_token_id"}
-    mimo_language_spec_builder = "tests.fake.language_spec"
-    mimo_modality_spec_builder = "tests.fake.modality_specs"
-
-    def model_config_bridge(self, hf_pretrained):
-        self.hf_pretrained = hf_pretrained
-        return SimpleNamespace(image_token_id=7)
 
 
 class TestConversionSpecRegistry:
@@ -234,14 +224,14 @@ class TestConversionSpecRegistry:
 
         source_bridge = _FakeSourceBridgeWithDefaultRoutes()
         hf_pretrained = object()
-        config, route_table = get_mimo_conversion_spec(_FakeSourceBridgeWithDefaultRoutes)(
+        provider, route_table = get_mimo_conversion_spec(_FakeSourceBridgeWithDefaultRoutes)(
             source_bridge,
             hf_pretrained,
             _two_component_config(),
         )
 
-        assert isinstance(config, MegatronMIMOModelConfig)
-        assert config.special_token_ids == {"vision": 7}
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert provider.standard_provider is source_bridge.provider
         assert source_bridge.hf_pretrained is hf_pretrained
         assert route_table == [
             MIMOComponent("language", "language_model.", "language_model"),
@@ -255,7 +245,7 @@ class TestConversionSpecRegistry:
         with pytest.raises(KeyError, match="mimo_source_prefixes"):
             get_mimo_conversion_spec(_FakeBridgeA)
 
-    def test_validate_mimo_conversion_support_resolves_config_and_routes(self):
+    def test_validate_mimo_conversion_support_resolves_provider_and_routes(self):
         source_bridge = _FakeSourceBridgeWithDefaultRoutes()
         bridge = MegatronMIMOBridge(
             PretrainedConfig(),
@@ -265,7 +255,7 @@ class TestConversionSpecRegistry:
 
         bridge.validate_mimo_conversion_support()
 
-        assert isinstance(bridge.to_megatron_model_config(load_weights=False), MegatronMIMOModelConfig)
+        assert isinstance(bridge.to_megatron_mimo_provider(load_weights=False), MegatronMIMOProvider)
         assert bridge.routes == [
             MIMOComponent("language", "language_model.", "language_model"),
             MIMOComponent("vision", "vision_model.", "modality_submodules.vision.encoders.fake_visual"),

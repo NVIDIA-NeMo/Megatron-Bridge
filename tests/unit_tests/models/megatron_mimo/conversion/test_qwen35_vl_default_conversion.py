@@ -17,6 +17,7 @@
 from unittest.mock import MagicMock
 
 import pytest
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo.conversion import (
     MIMOComponent,
@@ -29,9 +30,9 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -47,6 +48,32 @@ def _make_parallelism_config() -> MegatronMIMOParallelismConfig:
     )
 
 
+def _make_language_provider() -> Qwen35VLModelProvider:
+    """Small Qwen35VLModelProvider; ``deepstack_visual_indexes`` patched in.
+
+    Bare ``Qwen3_5VisionConfig()`` constructor lacks ``deepstack_visual_indexes``;
+    real loaded HF configs supply it (defaulted to empty). Setting it here so
+    the MIMO provider's eager ``_build_vision_modality_spec`` doesn't trip
+    inside ``get_vision_model_config``.
+    """
+    provider = Qwen35VLModelProvider(
+        num_layers=64,
+        hidden_size=5120,
+        num_attention_heads=24,
+        vocab_size=128,
+    )
+    provider.vision_config.deepstack_visual_indexes = []
+    return provider
+
+
+def _patch_language_spec(monkeypatch, language_provider: Qwen35VLModelProvider) -> None:
+    monkeypatch.setattr(
+        language_provider,
+        "build_language_spec",
+        lambda vp_stage=None, pp_rank=None: ModuleSpec(module=object),
+    )
+
+
 def _get_qwen35_conversion_spec():
     _reset_registry_for_tests()
     return get_mimo_conversion_spec(Qwen35VLBridge)
@@ -54,15 +81,14 @@ def _get_qwen35_conversion_spec():
 
 def _run_qwen35_conversion_spec(
     monkeypatch,
+    language_provider: Qwen35VLModelProvider,
     parallelism_config: MegatronMIMOParallelismConfig,
-) -> tuple[MegatronMIMOModelConfig, list[MIMOComponent], Qwen35VLBridge, object]:
+) -> tuple[MegatronMIMOProvider, list[MIMOComponent], Qwen35VLBridge, object]:
     source_bridge = Qwen35VLBridge()
-    source_model_config = MagicMock(image_token_id=248056)
-    monkeypatch.setattr(source_bridge, "model_config_bridge", MagicMock(return_value=source_model_config))
-    monkeypatch.setattr(source_bridge, "provider_bridge", MagicMock(side_effect=AssertionError("provider path used")))
+    monkeypatch.setattr(source_bridge, "provider_bridge", MagicMock(return_value=language_provider))
     hf_pretrained = object()
-    config, routes = _get_qwen35_conversion_spec()(source_bridge, hf_pretrained, parallelism_config)
-    return config, routes, source_bridge, hf_pretrained
+    provider, routes = _get_qwen35_conversion_spec()(source_bridge, hf_pretrained, parallelism_config)
+    return provider, routes, source_bridge, hf_pretrained
 
 
 class TestQwen35VLDefaultMIMOConversion:
@@ -72,18 +98,35 @@ class TestQwen35VLDefaultMIMOConversion:
         assert callable(conversion_spec)
         assert supports_mimo_conversion(Qwen35VLBridge)
 
-    def test_returns_config_and_routes(self, monkeypatch):
+    def test_returns_provider_and_routes(self, monkeypatch):
+        language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
         parallelism_config = _make_parallelism_config()
 
-        config, routes, source_bridge, hf_pretrained = _run_qwen35_conversion_spec(monkeypatch, parallelism_config)
+        provider, routes, source_bridge, hf_pretrained = _run_qwen35_conversion_spec(
+            monkeypatch,
+            language_provider,
+            parallelism_config,
+        )
 
-        source_bridge.model_config_bridge.assert_called_once_with(hf_pretrained)
-        source_bridge.provider_bridge.assert_not_called()
-        assert isinstance(config, MegatronMIMOModelConfig)
-        assert config.megatron_mimo_parallelism_config is parallelism_config
+        source_bridge.provider_bridge.assert_called_once_with(hf_pretrained)
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert provider.language_model_spec.params["config"] is language_provider
+        assert provider.megatron_mimo_parallelism_config is parallelism_config
 
         assert len(routes) == 2
         assert all(isinstance(r, MIMOComponent) for r in routes)
+
+    def test_forces_mtp_off(self, monkeypatch):
+        """MIMO conversion disables MTP for the standard provider."""
+        language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        language_provider.mtp_num_layers = 4
+        parallelism_config = _make_parallelism_config()
+
+        provider, _, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
+        assert isinstance(provider, MegatronMIMOProvider)
+        assert language_provider.mtp_num_layers is None
 
     def test_route_table_contents(self, monkeypatch):
         """Routes match the parameter prefixes used by Qwen35VLBridge.mapping_registry.
@@ -94,7 +137,9 @@ class TestQwen35VLDefaultMIMOConversion:
           - ``mimo_model.language_model``
           - ``mimo_model.modality_submodules.images.encoders.qwen_visual``
         """
-        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, _make_parallelism_config())
+        language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, _make_parallelism_config())
 
         names = {route.name: route for route in routes}
         assert set(names.keys()) == {"language", "images"}
@@ -114,6 +159,8 @@ class TestQwen35VLDefaultMIMOConversion:
         routes without spurious "unmapped component" errors.
         """
         parallelism_config = _make_parallelism_config()
-        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, parallelism_config)
+        language_provider = _make_language_provider()
+        _patch_language_spec(monkeypatch, language_provider)
+        _, routes, _, _ = _run_qwen35_conversion_spec(monkeypatch, language_provider, parallelism_config)
 
         validate_route_table(routes, parallelism_config=parallelism_config)

@@ -18,6 +18,7 @@ from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_
     NemotronLabsDiffusionBridge,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -48,13 +49,19 @@ def _nemotron_labs_diffusion_cpt_config(
     # which strips the vision encoder from VLM checkpoints.
     hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
     bridge = NemotronLabsDiffusionBridge()
-    cfg.model = bridge.model_config_bridge(hf_pretrained)
-    # For CPT, use the stock GPT builder layer spec rather than diffusion attention.
-    cfg.model.transformer_layer_spec = None
+    provider = bridge.provider_bridge(hf_pretrained)
+    # For CPT, use standard attention (not NemotronLabsDiffusionAttention) by calling
+    # the grandparent's provide method which creates a plain GPTModel
+    provider.provide = (
+        lambda pre_process=None, post_process=None, vp_stage=None: Ministral3ModelProvider.provide_language_model(
+            provider, pre_process, post_process, vp_stage
+        )
+    )
+    cfg.model = provider
     cfg.model.perform_initialization = False
-    cfg.model.pre_wrap_hooks.append(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
+    cfg.model.register_pre_wrap_hook(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
     cfg.model.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
-    cfg.model.pre_wrap_hooks.append(_copy_embedding_to_output_layer)
+    cfg.model.register_pre_wrap_hook(_copy_embedding_to_output_layer)
     cfg.model.seq_length = 4096
 
     # Parallel settings

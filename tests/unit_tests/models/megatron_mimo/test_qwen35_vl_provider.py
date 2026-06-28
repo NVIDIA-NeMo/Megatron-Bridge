@@ -2,9 +2,11 @@
 """Unit tests for Qwen3.5-VL standard-provider MegatronMIMO hooks."""
 
 import pytest
+import yaml
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import _clear_derived_spec_fields
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -13,6 +15,9 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import Megatron
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.instantiate_utils import instantiate
+from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
@@ -164,6 +169,33 @@ class TestMegatronMIMOProviderFactory:
         images_spec = provider.modality_submodules_spec["images"]
         assert images_spec.module is VisionModalitySubmodules
         assert list(images_spec.submodules["encoders"].keys()) == ["dummy_visual"]
+
+    def test_yaml_round_trip_rebuilds_specs_after_clear(self, tmp_path):
+        language_provider = _make_language_provider()
+        provider = MegatronMIMOProvider.from_standard_provider(
+            standard_provider=language_provider,
+            megatron_mimo_parallelism_config=_make_parallelism_config(),
+        )
+
+        _clear_derived_spec_fields(provider)
+        model_dict = ConfigContainer._convert_value_to_dict(provider)
+        assert model_dict["language_model_spec"] is None
+        assert model_dict["modality_submodules_spec"] == {}
+        assert model_dict["special_token_ids"] == {}
+        assert "standard_provider" in model_dict
+
+        yaml_path = tmp_path / "run_config.yaml"
+        with safe_yaml_representers():
+            yaml_path.write_text(yaml.safe_dump({"model": model_dict}))
+
+        loaded_dict = yaml.safe_load(yaml_path.read_text())
+        loaded_provider = instantiate(loaded_dict["model"])
+
+        assert isinstance(loaded_provider, MegatronMIMOProvider)
+        assert isinstance(loaded_provider.standard_provider, Qwen35VLModelProvider)
+        assert loaded_provider.language_model_spec is not None
+        assert loaded_provider.modality_submodules_spec
+        assert loaded_provider.special_token_ids == {"images": language_provider.image_token_id}
 
     def test_from_standard_provider_requires_language_model_spec_api(self):
         with pytest.raises(TypeError, match="build_language_model_spec"):

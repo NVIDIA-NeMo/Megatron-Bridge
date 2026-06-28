@@ -16,8 +16,9 @@
 
 from __future__ import annotations
 
-import copy
+from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 import torch
@@ -25,13 +26,11 @@ import torch.distributed as dist
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
-from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.models.vision.clip_vit_model import CLIPViTModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import (
     load_megatron_mimo_model,
@@ -41,7 +40,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
+from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.utils.instantiate_utils import register_allowed_target_prefix
 from tests.functional_tests.utils import broadcast_path, initialize_distributed
 
@@ -50,40 +49,57 @@ _IMAGE_TOKEN_ID = 63
 register_allowed_target_prefix(f"{__name__}.")
 
 
-def build_tiny_language_spec(config: BridgeGPTModelConfig, pp_rank: int = 0) -> ModuleSpec:
-    """Build the tiny language module from a serializable source config."""
-    return ModuleSpec(
-        module=GPTModel,
-        params={
-            "config": copy.deepcopy(config.transformer),
-            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
-            "vocab_size": config.vocab_size,
-            "max_sequence_length": config.seq_length,
-            "pre_process": pp_rank == 0,
-            "post_process": True,
-        },
-    )
+@dataclass
+class TinyStandardMIMOProvider:
+    """Tiny modality-aware provider used to test conversion-generated MIMO providers."""
 
+    vocab_size: int = 64
+    hidden_size: int = 16
+    num_layers: int = 1
+    num_attention_heads: int = 4
+    seq_length: int = 16
+    image_size: int = 16
+    patch_dim: int = 8
+    modality_keys: ClassVar[dict[str, str]] = {"images": "clip"}
+    special_token_ids: ClassVar[dict[str, int]] = {"images": _IMAGE_TOKEN_ID}
 
-def build_tiny_modality_specs(config: BridgeGPTModelConfig) -> dict[str, ModuleSpec]:
-    """Build the tiny vision module from a serializable source config."""
-    vision_encoder = ModuleSpec(
-        module=CLIPViTModel,
-        params={
-            "transformer_config": copy.deepcopy(config.transformer),
-            "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
-            "patch_dim": 8,
-            "img_h": 16,
-            "img_w": 16,
-        },
-    )
-    return {
-        "images": ModuleSpec(
-            module=VisionModalitySubmodules,
-            params={},
-            submodules={"encoders": {"clip": vision_encoder}, "input_projections": []},
+    def _transformer_config(self) -> TransformerConfig:
+        return TransformerConfig(
+            num_layers=self.num_layers,
+            hidden_size=self.hidden_size,
+            ffn_hidden_size=self.hidden_size * 4,
+            num_attention_heads=self.num_attention_heads,
+            bf16=True,
+            variable_seq_lengths=True,
+            moe_token_dispatcher_type="alltoall",
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
         )
-    }
+
+    def build_language_model_spec(self, pp_rank: int = 0) -> ModuleSpec:
+        return ModuleSpec(
+            module=GPTModel,
+            params={
+                "config": self._transformer_config(),
+                "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
+                "vocab_size": self.vocab_size,
+                "max_sequence_length": self.seq_length,
+                "pre_process": pp_rank == 0,
+                "post_process": True,
+            },
+        )
+
+    def build_vision_encoder_spec(self) -> ModuleSpec:
+        return ModuleSpec(
+            module=CLIPViTModel,
+            params={
+                "transformer_config": self._transformer_config(),
+                "transformer_layer_spec": get_vit_layer_with_transformer_engine_spec(),
+                "patch_dim": self.patch_dim,
+                "img_h": self.image_size,
+                "img_w": self.image_size,
+            },
+        )
 
 
 def _parallelism_config() -> MegatronMIMOParallelismConfig:
@@ -105,30 +121,10 @@ def _parallelism_config() -> MegatronMIMOParallelismConfig:
     )
 
 
-def _mimo_model_config() -> MegatronMIMOModelConfig:
-    source_config = BridgeGPTModelConfig(
-        transformer=TransformerConfig(
-            num_layers=1,
-            hidden_size=16,
-            ffn_hidden_size=64,
-            num_attention_heads=4,
-            bf16=True,
-            variable_seq_lengths=True,
-            moe_token_dispatcher_type="alltoall",
-            attention_dropout=0.0,
-            hidden_dropout=0.0,
-        ),
-        vocab_size=64,
-        make_vocab_size_divisible_by=1,
-        seq_length=16,
-    )
-    return MegatronMIMOModelConfig(
-        source_model_config=source_config,
+def _mimo_provider() -> MegatronMIMOProvider:
+    return MegatronMIMOProvider.from_standard_provider(
+        standard_provider=TinyStandardMIMOProvider(),
         megatron_mimo_parallelism_config=_parallelism_config(),
-        language_spec_builder=f"{__name__}.build_tiny_language_spec",
-        modality_spec_builder=f"{__name__}.build_tiny_modality_specs",
-        modality_keys={"images": "clip"},
-        special_token_ids={"images": _IMAGE_TOKEN_ID},
     )
 
 
@@ -163,9 +159,9 @@ def test_megatron_mimo_conversion_checkpoint_save_load_roundtrip(tmp_path):
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     dist.barrier()
 
-    model_config = _mimo_model_config()
+    provider = _mimo_provider()
     model, infra = build_megatron_mimo_model(
-        model_config,
+        provider,
         bf16=True,
         wrap_with_ddp=False,
         data_parallel_random_init=False,
@@ -174,10 +170,10 @@ def test_megatron_mimo_conversion_checkpoint_save_load_roundtrip(tmp_path):
     _fill_active_submodule(model, active_module)
     expected_sum = _active_parameter_sum(model, active_module)
 
-    save_megatron_mimo_model(model, infra, model_config, checkpoint_path)
+    save_megatron_mimo_model(model, infra, provider, checkpoint_path)
     dist.barrier()
 
-    loaded_model, loaded_infra, loaded_config = load_megatron_mimo_model(
+    loaded_model, loaded_infra, loaded_provider = load_megatron_mimo_model(
         checkpoint_path,
         parallelism_config=_parallelism_config(),
         bf16=True,
@@ -187,8 +183,7 @@ def test_megatron_mimo_conversion_checkpoint_save_load_roundtrip(tmp_path):
     loaded_active_module = loaded_infra.participating_modules[0]
 
     assert loaded_active_module == active_module
-    assert isinstance(loaded_config, MegatronMIMOModelConfig)
-    assert isinstance(loaded_config.source_model_config, BridgeGPTModelConfig)
-    assert loaded_config.language_spec_builder == f"{__name__}.build_tiny_language_spec"
-    assert loaded_config.modality_spec_builder == f"{__name__}.build_tiny_modality_specs"
+    assert loaded_provider.standard_provider is not None
+    assert loaded_provider.language_model_spec is not None
+    assert loaded_provider.modality_submodules_spec
     assert _active_parameter_sum(loaded_model, loaded_active_module) == pytest.approx(expected_sum)

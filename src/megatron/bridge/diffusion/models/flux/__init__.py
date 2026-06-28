@@ -33,6 +33,12 @@ Components:
 """
 
 from megatron.bridge.diffusion.models.common.normalization import RMSNorm
+from megatron.bridge.diffusion.models.flux.flow_matching.flux_inference_pipeline import (
+    ClipConfig,
+    FlowMatchEulerDiscreteScheduler,
+    FluxInferencePipeline,
+    T5Config,
+)
 from megatron.bridge.diffusion.models.flux.flux_attention import (
     FluxSingleAttention,
     JointSelfAttention,
@@ -47,6 +53,7 @@ from megatron.bridge.diffusion.models.flux.flux_layer_spec import (
     get_flux_single_transformer_engine_spec,
 )
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
+from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 from megatron.bridge.diffusion.models.flux.layers import (
     EmbedND,
     MLPEmbedder,
@@ -54,19 +61,6 @@ from megatron.bridge.diffusion.models.flux.layers import (
     Timesteps,
     rope,
 )
-
-
-def __getattr__(name: str):
-    """Lazily resolve heavyweight FLUX compatibility exports."""
-    if name == "FluxProvider":
-        from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-
-        return FluxProvider
-    if name in {"ClipConfig", "FlowMatchEulerDiscreteScheduler", "FluxInferencePipeline", "T5Config"}:
-        from megatron.bridge.diffusion.models.flux.flow_matching import flux_inference_pipeline
-
-        return getattr(flux_inference_pipeline, name)
-    raise AttributeError(name)
 
 
 __all__ = [

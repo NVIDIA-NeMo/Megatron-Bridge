@@ -25,7 +25,6 @@ pytestmark = pytest.mark.unit
 SRC_ROOT = Path(__file__).parents[3] / "src" / "megatron" / "bridge"
 PRIMARY_CONSUMER_ROOTS = (
     SRC_ROOT / "recipes",
-    SRC_ROOT / "diffusion" / "recipes",
     SRC_ROOT / "inference",
 )
 FORBIDDEN_CALLS = {"provider_bridge", "to_megatron_provider"}

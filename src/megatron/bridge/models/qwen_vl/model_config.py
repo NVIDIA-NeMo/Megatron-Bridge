@@ -29,7 +29,6 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import ModuleSpec
 from megatron.training.models.gpt import GPTModelBuilder, mtp_block_spec
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
@@ -273,78 +272,3 @@ __all__ = [
     "Qwen3VLModelBuilder",
     "Qwen3VLModelConfig",
 ]
-
-
-def build_qwen35_mimo_language_spec(config: Qwen35VLModelConfig, *, pp_rank: int = 0) -> ModuleSpec:
-    """Build the provider-free Qwen3.5 language ModuleSpec used by MIMO."""
-    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
-
-    transformer = _language_transformer(config)
-    block_spec = get_transformer_block_with_experimental_attention_variant_spec(
-        transformer,
-        pp_rank=pp_rank,
-    )
-    _patch_attention(block_spec)
-    return ModuleSpec(
-        module=Qwen3VLGPTModel,
-        params={
-            "config": transformer,
-            "transformer_layer_spec": block_spec,
-            "vocab_size": config.vocab_size,
-            "max_sequence_length": config.language_max_sequence_length,
-            "fp16_lm_cross_entropy": config.fp16_lm_cross_entropy,
-            "parallel_output": config.parallel_output,
-            "share_embeddings_and_output_weights": config.share_embeddings_and_output_weights,
-            "position_embedding_type": "mrope",
-            "rotary_percent": config.rotary_percent,
-            "rotary_base": config.rotary_base,
-            "scatter_embedding_sequence_parallel": False,
-            "mtp_block_spec": None,
-        },
-    )
-
-
-def build_qwen35_mimo_modality_specs(config: Qwen35VLModelConfig) -> dict[str, ModuleSpec]:
-    """Build provider-free Qwen3.5 vision modality specs used by MIMO."""
-    from megatron.core.extensions.transformer_engine import (
-        TEColumnParallelLinear,
-        TENorm,
-        TERowParallelLinear,
-    )
-    from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
-    from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
-
-    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import get_vision_model_config
-    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import PatchMergerSubmodules
-    from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-
-    if config.use_hf_vision_model:
-        raise ValueError("use_hf_vision_model is not supported by MegatronMIMO")
-    transformer = _language_transformer(config)
-    vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
-    vision_layer_spec = get_vit_layer_with_transformer_engine_spec()
-    vision_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-    vision_transformer = get_vision_model_config(vision_config, megatron_config=transformer, exact_mcore=True)
-    vision_transformer.pipeline_model_parallel_size = 1
-    encoder_spec = ModuleSpec(
-        module=Qwen3VLVisionModel,
-        params={
-            "transformer_config": vision_transformer,
-            "vision_config": vision_config,
-            "transformer_layer_spec": vision_layer_spec,
-            "patch_merger_spec": PatchMergerSubmodules(
-                patch_norm=TENorm,
-                linear_fc1=TEColumnParallelLinear,
-                linear_fc2=TERowParallelLinear,
-            ),
-            "pre_process": True,
-            "post_process": True,
-        },
-    )
-    return {
-        "images": ModuleSpec(
-            module=VisionModalitySubmodules,
-            params={},
-            submodules={"encoders": {"qwen_visual": encoder_spec}, "input_projections": []},
-        )
-    }

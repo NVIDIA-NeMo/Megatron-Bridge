@@ -25,7 +25,6 @@ def build_megatron_mimo_data_loaders(
     train_samples: int,
     valid_samples: int,
     test_samples: int,
-    grids: Optional[dict] = None,
 ) -> Tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build MegatronMIMO data loaders with globally consistent sampling.
 
@@ -36,24 +35,20 @@ def build_megatron_mimo_data_loaders(
     Only ranks that need data (first/last PP stage) will get non-None loaders.
 
     Args:
-        cfg: Configuration container with MegatronMIMOModelConfig or the legacy
-            MegatronMIMOProvider as cfg.model.
+        cfg: Configuration container with MegatronMIMOProvider as cfg.model.
         train_state: Current training state.
         megatron_mimo_provider: MegatronMIMO dataset provider (e.g., MockMegatronMIMOProvider)
             with get_collate_fn() method.
         train_samples: Number of training samples.
         valid_samples: Number of validation samples.
         test_samples: Number of test samples.
-        grids: Process grids from the constructed MegatronMIMO infrastructure.
-            Legacy providers may instead expose these through ``_grids``.
 
     Returns:
         Tuple of (train_loader, valid_loader, test_loader).
         Returns (None, None, None) if this rank doesn't need data.
 
     Raises:
-        ValueError: If cfg.model is not a supported MegatronMIMO config, its
-            parallelism config is missing, or no process grids are available.
+        ValueError: If cfg.model is not MegatronMIMOProvider or megatron_mimo_parallelism_config is None.
 
     Example:
         >>> from megatron.bridge.data.megatron_mimo import MockMegatronMIMOProvider, build_megatron_mimo_data_loaders
@@ -70,18 +65,16 @@ def build_megatron_mimo_data_loaders(
         ... )
     """
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 
-    if not isinstance(cfg.model, (MegatronMIMOModelConfig, MegatronMIMOProvider)):
-        raise ValueError("cfg.model must be a MegatronMIMO model config for data loading.")
+    if not isinstance(cfg.model, MegatronMIMOProvider):
+        raise ValueError("cfg.model must be MegatronMIMOProvider for MegatronMIMO data loading.")
 
     if cfg.model.megatron_mimo_parallelism_config is None:
         raise ValueError("megatron_mimo_parallelism_config must be set for MegatronMIMO data loading.")
 
-    grids = grids or getattr(cfg.model, "_grids", None)
-    if grids is None:
+    if cfg.model._grids is None:
         raise ValueError(
-            "MegatronMIMO grids are required. Pass grids from MegatronMIMOInfra after model construction."
+            "MegatronMIMOProvider._grids is None. Ensure build_model() is called before building data loaders."
         )
 
     # Validate that micro_batch_size is divisible by every module's DP size.
@@ -98,6 +91,9 @@ def build_megatron_mimo_data_loaders(
             )
 
     print_rank_0("> building MegatronMIMO train, validation, and test datasets ...")
+
+    # Use cached grids from build_model()
+    grids = cfg.model._grids
 
     sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
         cfg.model.megatron_mimo_parallelism_config, grids

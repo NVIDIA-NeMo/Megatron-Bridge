@@ -12,16 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-def __getattr__(name: str):
-    """Lazily resolve the legacy Nemotron Labs Diffusion provider export."""
-    if name == "NemotronLabsDiffusionModelProvider":
-        from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
-            NemotronLabsDiffusionModelProvider,
-        )
-
-        return NemotronLabsDiffusionModelProvider
-    raise AttributeError(name)
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
+    NemotronLabsDiffusionModelProvider,
+)
 
 
 __all__ = ["NemotronLabsDiffusionModelProvider"]
