@@ -42,7 +42,7 @@ class Gemma3VLModelConfig(Gemma3ModelConfig):
     vision_projector_hidden_size: int = 0
     mm_tokens_per_image: int = 256
     bos_token_id: int = 2
-    eos_token_id: int = 1
+    eos_token_id: int | list[int] = 1
     vision_start_token_id: int = 255999
     vision_end_token_id: int = 256000
     image_token_id: int = 262144
@@ -89,7 +89,7 @@ class _Gemma4VLFields:
     audio_config: dict[str, object] | None = None
     vision_soft_tokens_per_image: int = 280
     bos_token_id: int = 2
-    eos_token_id: int = 1
+    eos_token_id: int | list[int] = 1
     image_token_id: int = 258_880
     video_token_id: int = 258_884
     audio_token_id: int = 258_881

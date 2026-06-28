@@ -20,10 +20,16 @@ from unittest.mock import Mock, patch
 
 import pytest
 import yaml
+from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.config import DistributedInitConfig
-from megatron.bridge.training.initialize import _initialize_tp_communicators, _setup_flight_recorder_env
+from megatron.bridge.training.initialize import (
+    _initialize_tp_communicators,
+    _setup_flight_recorder_env,
+    set_jit_fusion_options,
+)
 
 
 _FR_ENV_VARS = [
@@ -35,6 +41,16 @@ _FR_ENV_VARS = [
     "TORCH_INCLUDE_ONLY_ACTIVE",
     "TORCH_NCCL_EXTRA_DUMP_ON_EXEC",
 ]
+
+
+def test_set_jit_fusion_options_preserves_outer_model_sequence_length() -> None:
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    model_config = BridgeGPTModelConfig(transformer=transformer, vocab_size=32, seq_length=4096)
+
+    with patch("megatron.bridge.training.initialize._warmup_jit_function") as warmup:
+        set_jit_fusion_options(model_config, micro_batch_size=2)
+
+    warmup.assert_called_once_with(transformer, 2, seq_length=4096)
 
 
 class TestInitializeTPCommunicators:

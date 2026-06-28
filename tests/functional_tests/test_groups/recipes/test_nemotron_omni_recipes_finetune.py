@@ -89,7 +89,7 @@ class _TinyAutoBridge:
     def from_hf_pretrained(*_, **__):
         return _TinyAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
+    def to_megatron_model_config(self, load_weights: bool = False):
         return _TinyNemotronOmniModelProvider()
 
 

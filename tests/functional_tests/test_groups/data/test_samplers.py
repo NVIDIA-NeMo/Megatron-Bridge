@@ -57,10 +57,15 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+                def to_megatron_model_config(self, load_weights=False):
+                    from megatron.core.transformer import TransformerConfig
 
-                    return GPTModelProvider()
+                    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+                    return BridgeGPTModelConfig(
+                        transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
+                        vocab_size=128,
+                    )
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -101,10 +106,15 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+                def to_megatron_model_config(self, load_weights=False):
+                    from megatron.core.transformer import TransformerConfig
 
-                    return GPTModelProvider()
+                    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+                    return BridgeGPTModelConfig(
+                        transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
+                        vocab_size=128,
+                    )
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -154,10 +164,15 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+                def to_megatron_model_config(self, load_weights=False):
+                    from megatron.core.transformer import TransformerConfig
 
-                    return GPTModelProvider()
+                    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+                    return BridgeGPTModelConfig(
+                        transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
+                        vocab_size=128,
+                    )
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -578,10 +593,15 @@ class TestBatchDataloaderIntegration:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+                def to_megatron_model_config(self, load_weights=False):
+                    from megatron.core.transformer import TransformerConfig
 
-                    return GPTModelProvider()
+                    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+                    return BridgeGPTModelConfig(
+                        transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
+                        vocab_size=128,
+                    )
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()
@@ -616,10 +636,15 @@ class TestBatchDataloaderIntegration:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def to_megatron_provider(self, load_weights=False):
-                    from megatron.bridge.models.gpt_provider import GPTModelProvider
+                def to_megatron_model_config(self, load_weights=False):
+                    from megatron.core.transformer import TransformerConfig
 
-                    return GPTModelProvider()
+                    from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+                    return BridgeGPTModelConfig(
+                        transformer=TransformerConfig(num_layers=1, hidden_size=128, num_attention_heads=4),
+                        vocab_size=128,
+                    )
 
             mock_from.return_value = _DummyBridge()
             cfg = pretrain_config()

@@ -312,6 +312,19 @@ def test_gemma4_vl_model_config_bridge_roundtrips_exact_mcore_config(
     assert restored.as_dict() == config.as_dict()
 
 
+def test_gemma4_vl_model_config_bridge_preserves_multiple_eos_tokens(vl_bridge, mock_hf_pretrained_moe):
+    pretrained = mock_hf_pretrained_moe
+    pretrained.config.text_config = _serializable_text_config(pretrained.config.text_config)
+    pretrained.config.audio_config = None
+    pretrained.config.eos_token_id = [1, 106]
+
+    config = vl_bridge.model_config_bridge(pretrained)
+    restored = ModelConfig.from_dict(config.as_dict())
+
+    assert config.eos_token_id == [1, 106]
+    assert restored.eos_token_id == [1, 106]
+
+
 # ===========================================================================
 # Gemma4Bridge (CausalLM) tests
 # ===========================================================================

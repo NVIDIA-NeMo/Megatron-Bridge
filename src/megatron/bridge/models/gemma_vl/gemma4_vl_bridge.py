@@ -391,7 +391,7 @@ class Gemma4VLBridge(Gemma4Bridge):
             ),
             vision_soft_tokens_per_image=int(getattr(hf_config, "vision_soft_tokens_per_image", 280)),
             bos_token_id=int(getattr(hf_config, "bos_token_id", 2)),
-            eos_token_id=int(getattr(hf_config, "eos_token_id", 1)),
+            eos_token_id=getattr(hf_config, "eos_token_id", 1),
             image_token_id=int(getattr(hf_config, "image_token_id", 258_880)),
             video_token_id=int(getattr(hf_config, "video_token_id", 258_884)),
             audio_token_id=int(getattr(hf_config, "audio_token_id", 258_881)),
