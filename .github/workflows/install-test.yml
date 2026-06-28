@@ -222,7 +222,7 @@ jobs:
 
       - name: Install megatron-energon
         shell: bash -x -e -u -o pipefail {0}
-        run: uv pip install --python ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python --no-deps megatron-energon
+        run: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python -m pip install megatron-energon
 
       - name: Check imports for megatron-energon
         uses: NVIDIA-NeMo/FW-CI-templates/.github/actions/check-imports@v0.80.1
