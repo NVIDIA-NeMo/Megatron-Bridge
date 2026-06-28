@@ -24,7 +24,7 @@ Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
 import types
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -56,6 +56,13 @@ except ImportError:
     Mistral3ForConditionalGeneration = None
     HFMistral3Model = None
     HAS_MISTRAL3 = False
+
+
+def _get_hf_config_value(hf_config: object, name: str, default: Any) -> Any:
+    """Read a field from serialized builder configs or legacy HF config objects."""
+    if isinstance(hf_config, dict):
+        return hf_config.get(name, default)
+    return getattr(hf_config, name, default)
 
 
 class Ministral3Model(MegatronModule):
@@ -187,8 +194,8 @@ class Ministral3Model(MegatronModule):
             self.get_image_features = types.MethodType(HFMistral3Model.get_image_features, self)
 
         # Some config requires from HF vision tower
-        self.config.spatial_merge_size = self.config.hf_config.get("spatial_merge_size", 2)
-        self.config.vision_feature_layer = self.config.hf_config.get("vision_feature_layer", -1)
+        self.config.spatial_merge_size = _get_hf_config_value(self.config.hf_config, "spatial_merge_size", 2)
+        self.config.vision_feature_layer = _get_hf_config_value(self.config.hf_config, "vision_feature_layer", -1)
         self.config.return_dict = True
 
     def set_input_tensor(self, input_tensor) -> None:
