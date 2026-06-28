@@ -27,6 +27,7 @@ REPO_ROOT = SRC_ROOT.parents[2]
 FUNCTIONAL_ROOT = REPO_ROOT / "tests" / "functional_tests"
 PRIMARY_CONSUMER_ROOTS = (
     SRC_ROOT / "recipes",
+    SRC_ROOT / "diffusion" / "recipes",
     SRC_ROOT / "inference",
 )
 FORBIDDEN_CALLS = {"provider_bridge", "to_megatron_provider"}

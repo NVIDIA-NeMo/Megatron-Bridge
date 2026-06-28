@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Mapping
+from typing import TYPE_CHECKING, Any, Dict, List, Mapping
 
 import torch
 from diffusers import FluxTransformer2DModel
+from megatron.core.transformer.utils import openai_gelu
 
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
-from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
+from megatron.bridge.diffusion.models.flux.model_config import FluxModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
@@ -27,6 +28,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     RowParallelMapping,
 )
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
 
 
 def _flux_axes_dims_rope(hf_config) -> List[int]:
@@ -56,10 +61,48 @@ class FluxBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("black-forest-labs/FLUX.1-dev")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.to_megatron_model_config(load_weights=False)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedFlux) -> FluxProvider:
+    MODEL_CONFIG_CLASS = FluxModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map diffusers FLUX settings to pure model-config fields."""
+        hidden_size = hf_config.num_attention_heads * hf_config.attention_head_dim
+        self.hidden_size = hidden_size
+        return {
+            "num_layers": 1,
+            "hidden_size": hidden_size,
+            "ffn_hidden_size": _flux_ffn_hidden_size(hf_config, hidden_size),
+            "num_attention_heads": hf_config.num_attention_heads,
+            "num_query_groups": hf_config.num_attention_heads,
+            "kv_channels": hf_config.attention_head_dim,
+            "qk_layernorm": True,
+            "layernorm_epsilon": 1e-6,
+            "hidden_dropout": 0.0,
+            "attention_dropout": 0.0,
+            "activation_func": openai_gelu,
+            "add_qkv_bias": True,
+            "rotary_interleaved": True,
+            "apply_rope_fusion": False,
+            "gradient_accumulation_fusion": False,
+            "use_cpu_initialization": True,
+            "params_dtype": torch.float32,
+            "num_joint_layers": hf_config.num_layers,
+            "num_single_layers": hf_config.num_single_layers,
+            "in_channels": hf_config.in_channels,
+            "patch_size": hf_config.patch_size,
+            "context_dim": hf_config.joint_attention_dim,
+            "vec_in_dim": hf_config.pooled_projection_dim,
+            "guidance_embed": hf_config.guidance_embeds,
+            "axes_dims_rope": _flux_axes_dims_rope(hf_config),
+            "position_embedding_type": "none",
+        }
+
+    def provider_bridge(self, hf_pretrained: PreTrainedFlux) -> "FluxProvider":
+        from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
+
         hf_config = hf_pretrained.config
 
         # Diffusers FLUX width is heads * per-head dim; defaults were wrong if we only set attention fields.

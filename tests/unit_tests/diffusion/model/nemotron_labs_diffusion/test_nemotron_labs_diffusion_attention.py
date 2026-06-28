@@ -300,6 +300,26 @@ class TestMinistral3RotaryEmbedding:
 
 
 class TestNemotronLabsDiffusionAttentionInit:
+    def test_block_size_falls_back_to_legacy_config_field(self):
+        cfg = _make_config(block_size=7)
+        from megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention import (
+            NemotronLabsDiffusionAttention,
+        )
+
+        with patch(
+            "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_mask",
+            return_value=MagicMock(),
+        ) as compute_mask:
+            NemotronLabsDiffusionAttention(
+                cfg,
+                1,
+                AttnMaskType.causal,
+                "self",
+                pg_collection=_make_pg_collection(),
+            )
+
+        compute_mask.assert_called_once_with(block_size=7, max_seq_length=cfg.seq_length)
+
     def test_softmax_scale_computed_correctly(self):
         head_dim = 8
         attn = _make_attention(head_dim=head_dim)

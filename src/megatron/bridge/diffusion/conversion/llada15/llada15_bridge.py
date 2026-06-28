@@ -34,11 +34,13 @@ Key mapping decisions, anchored to the reference implementation
   fused into Megatron's TE ``linear_qkv``/``linear_fc1`` ``layer_norm_weight``.
 """
 
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 
-from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+from megatron.bridge.diffusion.models.llada15.model_config import LLaDA15ModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -49,19 +51,62 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
+if TYPE_CHECKING:
+    from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+
+
 # Registered under the trust_remote_code class name as a string so AutoBridge
 # can resolve it without importing the HF class (which lives in a dynamic
 # trust_remote_code module).
 @MegatronModelBridge.register_bridge(
     source="LLaDAModelLM",
     target=GPTModel,
-    provider=LLaDA15ModelProvider,
     model_type="llada",
 )
 class LLaDA15Bridge(MegatronModelBridge):
     """HF ``LLaDAModelLM`` ↔ Megatron ``GPTModel`` bridge."""
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LLaDA15ModelProvider:
+    MODEL_CONFIG_CLASS = LLaDA15ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
+        """Map LLaDA1.5 HF settings to builder-backed GPT config fields."""
+        num_kv_heads = hf_config.n_kv_heads if hf_config.n_kv_heads is not None else hf_config.n_heads
+        hidden_size = hf_config.d_model
+        ffn_hidden_size = (
+            hf_config.mlp_hidden_size if hf_config.mlp_hidden_size is not None else hf_config.mlp_ratio * hidden_size
+        )
+        vocab_size = hf_config.embedding_size or hf_config.vocab_size
+        return {
+            "num_layers": hf_config.n_layers,
+            "hidden_size": hidden_size,
+            "ffn_hidden_size": ffn_hidden_size,
+            "num_attention_heads": hf_config.n_heads,
+            "num_query_groups": num_kv_heads,
+            "kv_channels": hidden_size // hf_config.n_heads,
+            "vocab_size": vocab_size,
+            "seq_length": hf_config.max_sequence_length,
+            "layernorm_epsilon": hf_config.rms_norm_eps,
+            "rotary_base": hf_config.rope_theta,
+            "rotary_percent": 1.0,
+            "position_embedding_type": "rope",
+            "share_embeddings_and_output_weights": hf_config.weight_tying,
+            "add_bias_linear": hf_config.include_bias,
+            "add_qkv_bias": bool(hf_config.include_bias or hf_config.include_qkv_bias),
+            "normalization": "RMSNorm",
+            "gated_linear_unit": True,
+            "activation_func": F.silu,
+            "qk_layernorm": hf_config.attention_layer_norm,
+            "hidden_dropout": hf_config.residual_dropout,
+            "attention_dropout": hf_config.attention_dropout,
+            "bf16": True,
+            "params_dtype": torch.bfloat16,
+            "make_vocab_size_divisible_by": self.make_vocab_size_divisible_by(vocab_size),
+        }
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "LLaDA15ModelProvider":
+        from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+
         hf_config = hf_pretrained.config
 
         # LLaDAConfig uses OLMo-style names (n_layers, d_model, n_heads, ...).
