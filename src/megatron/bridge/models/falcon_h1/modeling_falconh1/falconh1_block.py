@@ -122,6 +122,7 @@ class FalconH1Stack(MegatronModule):
     def __init__(
         self,
         config: FalconH1Config,
+        model_config,
         submodules: FalconH1StackSubmodules,
         residual_in_fp32=False,
         pre_process: bool = True,
@@ -136,6 +137,7 @@ class FalconH1Stack(MegatronModule):
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
         super().__init__(config=config)
+        self.model_config = model_config
         self.residual_in_fp32 = residual_in_fp32
         self.pre_process = pre_process
         self.post_layer_norm = post_layer_norm
@@ -197,23 +199,27 @@ class FalconH1Stack(MegatronModule):
                     layer = build_module(
                         submodules.falconh1_layer,
                         config=self.config,
+                        model_config=self.model_config,
                         layer_number=i + 1 + pp_layer_offset,
                         pg_collection=pg_collection,
                         residual_in_fp32=True,
-                        d_conv=self.config.d_conv,
-                        conv_init=self.config.conv_init,
-                        expand=self.config.expand,
-                        A_init_range=self.config.A_init_range,
-                        D_has_hdim=self.config.D_has_hdim,
-                        rmsnorm=self.config.rmsnorm,
-                        norm_before_gate=self.config.norm_before_gate,
-                        dt_min=self.config.dt_min,
-                        dt_max=self.config.dt_max,
-                        dt_init=self.config.dt_init,
-                        dt_scale=self.config.dt_scale,
-                        dt_init_floor=self.config.dt_init_floor,
-                        conv_bias=self.config.conv_bias,
-                        chunk_size=self.config.chunk_size,
+                        use_mamba=self.model_config.use_mamba,
+                        use_attention=self.model_config.use_attention,
+                        use_mlp=self.model_config.use_mlp,
+                        d_conv=self.model_config.d_conv,
+                        conv_init=self.model_config.conv_init,
+                        expand=self.model_config.expand,
+                        A_init_range=self.model_config.A_init_range,
+                        D_has_hdim=self.model_config.D_has_hdim,
+                        rmsnorm=self.model_config.rmsnorm,
+                        norm_before_gate=self.model_config.norm_before_gate,
+                        dt_min=self.model_config.dt_min,
+                        dt_max=self.model_config.dt_max,
+                        dt_init=self.model_config.dt_init,
+                        dt_scale=self.model_config.dt_scale,
+                        dt_init_floor=self.model_config.dt_init_floor,
+                        conv_bias=self.model_config.conv_bias,
+                        chunk_size=self.model_config.chunk_size,
                     )
                 else:
                     raise AssertionError(f"unexpected layer_type: {layer_type}")

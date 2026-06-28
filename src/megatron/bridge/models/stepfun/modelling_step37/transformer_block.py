@@ -21,12 +21,12 @@ per-layer ``TransformerLayerSubmodules`` spec consumed by Megatron's
 ``step35_bridge`` to keep all Step-3.5 spec-construction logic in one place.
 """
 
-from megatron.bridge.models.stepfun.step35_bridge import _build_step35_layer_spec
+from megatron.bridge.models.stepfun.step35_modeling import build_step35_layer_spec
 
 
 def get_step37_text_layer_spec(*args, **kwargs):
     """Return the Step-3.5 hybrid layer spec used as Step3.7's text decoder."""
-    return _build_step35_layer_spec(*args, **kwargs)
+    return build_step35_layer_spec(*args, **kwargs)
 
 
 __all__ = ["get_step37_text_layer_spec"]

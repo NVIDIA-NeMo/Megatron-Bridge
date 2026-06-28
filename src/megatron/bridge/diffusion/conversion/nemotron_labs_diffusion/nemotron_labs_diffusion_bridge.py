@@ -27,10 +27,13 @@ Supports two HF checkpoint formats (auto-detected from config):
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.model_config import (
+    NemotronLabsDiffusionModelConfig,
+)
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, register_bridge_implementation
 from megatron.bridge.models.conversion.param_mapping import (
@@ -58,6 +61,34 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
     """
 
     _is_text_only: bool = True
+    MODEL_CONFIG_CLASS = NemotronLabsDiffusionModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Nemotron Labs Diffusion HF settings to pure GPT config fields."""
+        text_config = getattr(hf_config, "text_config", hf_config)
+        self._is_text_only = not hasattr(hf_config, "text_config")
+        return {
+            "hidden_size": text_config.hidden_size,
+            "ffn_hidden_size": text_config.intermediate_size,
+            "num_layers": text_config.num_hidden_layers,
+            "num_attention_heads": text_config.num_attention_heads,
+            "num_query_groups": getattr(text_config, "num_key_value_heads", text_config.num_attention_heads),
+            "kv_channels": getattr(
+                text_config, "head_dim", text_config.hidden_size // text_config.num_attention_heads
+            ),
+            "vocab_size": text_config.vocab_size,
+            "seq_length": text_config.max_position_embeddings,
+            "layernorm_epsilon": getattr(text_config, "rms_norm_eps", 1e-5),
+            "share_embeddings_and_output_weights": getattr(text_config, "tie_word_embeddings", False),
+            "rotary_base": text_config.rope_parameters["rope_theta"],
+            "position_embedding_type": "none",
+            "normalization": "RMSNorm",
+            "gated_linear_unit": True,
+            "add_bias_linear": False,
+            "add_qkv_bias": False,
+            "hf_config": hf_config.to_dict(),
+        }
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "NemotronLabsDiffusionModelProvider":
         # Imported lazily: the provider pulls in NemotronLabsDiffusionAttention ->

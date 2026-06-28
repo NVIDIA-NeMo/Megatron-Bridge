@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 from transformers import Qwen2_5_VLForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -24,14 +26,17 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.qwen_vl.model_config import Qwen25VLModelConfig
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
-from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source=Qwen2_5_VLForConditionalGeneration,
     target=Qwen25VLModel,
-    provider=Qwen25VLModelProvider,
     model_type="qwen2_5_vl",
 )
 class Qwen25VLBridge(MegatronModelBridge):
@@ -48,7 +53,9 @@ class Qwen25VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen25VLModelProvider":
+        from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -131,3 +138,32 @@ class Qwen25VLBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen25VLModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Qwen2.5-VL HF settings to pure model-config fields."""
+        text_config = hf_config.text_config
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            rotary_base=rope_theta_from_hf(text_config),
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            language_max_sequence_length=text_config.max_position_embeddings,
+            vision_config=hf_config.vision_config.to_dict(),
+            bos_token_id=getattr(text_config, "bos_token_id", 151643),
+            eos_token_id=getattr(text_config, "eos_token_id", 151645),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
+            vision_token_id=getattr(hf_config, "vision_token_id", 151654),
+            image_token_id=getattr(hf_config, "image_token_id", 151655),
+            video_token_id=getattr(hf_config, "video_token_id", 151656),
+        )
+        return config_kwargs

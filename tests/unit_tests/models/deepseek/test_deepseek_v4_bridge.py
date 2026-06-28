@@ -32,6 +32,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     _dsv4_compress_ratios,
     _dsv4_num_hash_layers,
 )
+from megatron.bridge.models.deepseek.deepseek_v4_model_config import deepseek_v4_layer_spec
 
 
 @pytest.fixture
@@ -501,3 +502,16 @@ class TestDeepSeekV4ExportWeightDtype:
         out = bridge.maybe_modify_converted_hf_weight(task, {"a.weight": torch.ones(1)}, {})
 
         assert called.get("hit") and "quantized" in out
+
+
+def test_deepseek_v4_builder_dispatches_to_installed_mcore(monkeypatch) -> None:
+    config = object()
+    expected = object()
+    dispatcher = "megatron.core.models.gpt.experimental_attention_variant_module_specs"
+    mocked_dispatch = MagicMock(return_value=expected)
+    monkeypatch.setattr(
+        f"{dispatcher}.get_transformer_block_with_experimental_attention_variant_spec", mocked_dispatch
+    )
+
+    assert deepseek_v4_layer_spec(config) is expected
+    mocked_dispatch.assert_called_once_with(config)

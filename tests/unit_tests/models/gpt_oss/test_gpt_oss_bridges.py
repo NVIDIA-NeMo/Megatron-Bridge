@@ -13,13 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
+from megatron.bridge.models.gpt_oss.model_config import GPTOSSModelBuilder
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -56,6 +60,41 @@ class TestGptOssBridge:
 
     def test_registration(self):
         assert issubclass(GPTOSSBridge, MegatronModelBridge)
+
+    def test_model_config_bridge_preserves_complete_yarn_config(self, gpt_oss_cfg):
+        config = dict(gpt_oss_cfg)
+        config["rope_scaling"] = {
+            "rope_type": "yarn",
+            "factor": 16.0,
+            "original_max_position_embeddings": 2048,
+            "beta_fast": 24.0,
+            "beta_slow": 2.0,
+            "mscale": 1.25,
+            "mscale_all_dim": 0.5,
+            "truncate": True,
+        }
+        result = GPTOSSBridge().model_config_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.yarn_rotary_scaling_factor == 16.0
+        assert result.yarn_original_max_position_embeddings == 2048
+        assert result.yarn_beta_fast == 24.0
+        assert result.yarn_beta_slow == 2.0
+        assert result.yarn_mscale == 1.25
+        assert result.yarn_mscale_all_dim == 0.5
+        assert result.yarn_correction_range_round_to_int is True
+        assert "yarn_rotary_scaling_factor" not in result.transformer.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.yarn_rotary_scaling_factor == 16.0
+
+        def inspect_bound_yarn(_builder, _pg_collection, **_kwargs):
+            assert result.transformer.yarn_rotary_scaling_factor == 16.0
+            assert result.transformer.yarn_original_max_position_embeddings == 2048
+            return Mock()
+
+        with patch.object(GPTModelBuilder, "build_model", autospec=True, side_effect=inspect_bound_yarn):
+            GPTOSSModelBuilder(result).build_model(Mock())
+        assert "yarn_rotary_scaling_factor" not in result.transformer.__dict__
 
     def test_provider_bridge_maps_config(self, mock_pretrained):
         bridge = GPTOSSBridge()

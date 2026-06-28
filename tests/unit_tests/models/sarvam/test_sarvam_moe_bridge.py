@@ -24,7 +24,7 @@ import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
+from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge, SarvamMoEModelConfig
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
 
 
@@ -121,6 +121,24 @@ class TestSarvamMoEBridge:
         assert provider.add_qkv_bias is False
         assert provider.gated_linear_unit is True
         assert provider.position_embedding_type == "rope"
+
+    def test_model_config_bridge_preserves_sarvam_specialization(self, sarvam_moe_config_dict_small):
+        hf_config = SimpleNamespace(**sarvam_moe_config_dict_small)
+        result = SarvamMoEBridge().model_config_bridge(SimpleNamespace(config=hf_config))
+
+        assert type(result) is SarvamMoEModelConfig
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.moe_router_score_function == "sigmoid"
+        assert result.transformer.moe_layer_freq == [0] + [1] * 18
+        assert result.transformer.recompute_modules == ["layernorm", "shared_experts", "mlp", "moe_act"]
+        assert "moe_layer_freq" not in result.__dict__
+
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored) is SarvamMoEModelConfig
+        assert restored.transformer.moe_layer_freq == result.transformer.moe_layer_freq
+        assert restored.transformer.activation_func is result.transformer.activation_func
+        assert restored.transformer_layer_spec.func is result.transformer_layer_spec.func
+        assert restored.transformer_layer_spec.keywords == result.transformer_layer_spec.keywords
 
     def test_provider_bridge_maps_moe_specific_gqa_fields(self, mock_pretrained_moe):
         bridge = SarvamMoEBridge()

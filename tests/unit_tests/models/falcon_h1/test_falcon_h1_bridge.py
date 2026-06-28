@@ -14,7 +14,9 @@
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
@@ -24,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.falcon_h1.falconh1_bridge import FalconH1Bridge
 from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
+from megatron.bridge.models.falcon_h1.model_config import FalconH1ModelConfig
 
 
 pytestmark = pytest.mark.unit
@@ -128,6 +131,20 @@ def test_provider_bridge_maps_shared_and_falcon_config(falcon_h1_pretrained):
     assert provider.chunk_size == hf_config.mamba_chunk_size
     assert provider.rmsnorm == hf_config.mamba_rms_norm
     assert provider.norm_before_gate == hf_config.mamba_norm_before_gate
+
+
+def test_model_config_bridge_uses_exact_mcore_config_and_roundtrips(falcon_h1_pretrained):
+    model_config = FalconH1Bridge().model_config_bridge(falcon_h1_pretrained)
+
+    assert isinstance(model_config, FalconH1ModelConfig)
+    assert type(model_config.transformer) is TransformerConfig
+    assert model_config.mamba_state_dim == falcon_h1_pretrained.config.mamba_d_state
+    assert model_config.ssm_multipliers == tuple(falcon_h1_pretrained.config.ssm_multipliers)
+
+    restored = ModelConfig.from_dict(model_config.as_dict())
+    assert isinstance(restored, FalconH1ModelConfig)
+    assert type(restored.transformer) is TransformerConfig
+    assert restored.mamba_state_dim == model_config.mamba_state_dim
 
 
 def test_provider_bridge_applies_falcon_h1_defaults(falcon_h1_pretrained):

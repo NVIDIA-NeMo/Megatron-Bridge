@@ -28,7 +28,6 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
     Qwen2_5_VLModel,
 )
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -88,24 +87,32 @@ class Qwen25VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
+        language_model=None,
+        vision_config=None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
 
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
 
         if pre_process:
-            self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
+            if vision_config is None:
+                vision_config = config.vision_config
+            self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(vision_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            # Legacy provider compatibility. Builder-backed construction passes
+            # the language model explicitly and never invokes provider logic.
+            language_model = self.config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad will need these to be bind with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights

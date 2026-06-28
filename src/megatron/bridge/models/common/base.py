@@ -27,6 +27,7 @@ from megatron.training.models.base import (
     ModelConfig as _MegatronModelConfig,
 )
 
+from megatron.bridge.models.gpt.model_config import restore_model_config_callables
 from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_target_prefix
 
 
@@ -43,6 +44,7 @@ class ModelConfig(_MegatronModelConfig):
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "ModelConfig":
         """Deserialize config from dictionary with Bridge target validation."""
+        data = restore_model_config_callables(data)
 
         def _from_dict(subdata: dict[str, Any], full_key: str) -> Any:
             target = subdata.get("_target_")
@@ -55,7 +57,7 @@ class ModelConfig(_MegatronModelConfig):
             if not isinstance(config_cls, type) or not is_dataclass(config_cls):
                 raise ValueError(f"Cannot deserialize: target '{target}' did not resolve to a dataclass type")
 
-            valid_fields = {f.name for f in dataclass_fields(config_cls)}
+            valid_fields = {f.name for f in dataclass_fields(config_cls) if f.init}
             filtered_data = {k: v for k, v in subdata.items() if k in valid_fields and not k.startswith("_")}
 
             subconfigs = {}

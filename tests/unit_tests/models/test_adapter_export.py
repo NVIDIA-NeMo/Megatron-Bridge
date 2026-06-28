@@ -28,6 +28,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 import yaml
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import HFWeightTuple
 from megatron.bridge.models.conversion.peft_bridge import (
@@ -782,10 +783,27 @@ class TestExportAdapterCkpt:
         mock = MagicMock(spec=AutoBridge)
         mock.export_adapter_ckpt = AutoBridge.export_adapter_ckpt.__get__(mock, AutoBridge)
         mock.hf_pretrained = SimpleNamespace(model_name_or_path="test-org/test-model")
+        mock._model_bridge.LEGACY_MODEL_BUILD_ONLY = False
 
-        fake_provider = MagicMock()
-        fake_provider.provide_distributed_model.return_value = [MagicMock()]
-        mock.to_megatron_provider.return_value = fake_provider
+        fake_builder = MagicMock()
+        fake_builder.build_distributed_models.return_value = [MagicMock()]
+        fake_model_config = MagicMock()
+        fake_model_config.transformer = TransformerConfig(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_dtype=torch.bfloat16,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            fp16=False,
+            bf16=True,
+            use_cpu_initialization=False,
+            init_model_with_meta_device=True,
+        )
+        fake_model_config.pre_wrap_hooks = [MagicMock(name="weight_loader")]
+        fake_model_config.get_builder_cls.return_value.return_value = fake_builder
+        mock.to_megatron_model_config.return_value = fake_model_config
+        mock._get_or_initialize_pg_collection.return_value = MagicMock()
         return mock
 
     @pytest.fixture()
@@ -969,14 +987,47 @@ class TestExportAdapterCkpt:
         assert isinstance(peft_config, LoRA)
         assert peft_config.dim == LoRA().dim
 
-    def test_provider_defaults_to_float32(self, bridge, ckpt_dir, tmp_path):
-        """Provider dtypes default to float32 for full-precision adapter export."""
+    def test_builder_config_uses_float32_cpu_initialization(self, bridge, ckpt_dir, tmp_path):
+        """Builder config uses full-precision CPU initialization for adapter export."""
         bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
 
-        provider = bridge.to_megatron_provider.return_value
-        assert provider.pipeline_dtype == torch.float32
-        assert provider.params_dtype == torch.float32
-        provider.finalize.assert_called_once()
+        model_config = bridge.to_megatron_model_config.return_value
+        transformer_config = model_config.transformer
+        assert transformer_config.pipeline_dtype == torch.float32
+        assert transformer_config.params_dtype == torch.float32
+        assert transformer_config.autocast_dtype == torch.float32
+        assert transformer_config.fp16 is False
+        assert transformer_config.bf16 is False
+        assert transformer_config.use_cpu_initialization is True
+        assert transformer_config.init_model_with_meta_device is False
+        assert len(model_config.pre_wrap_hooks) == 2
+        model_config.finalize.assert_called_once_with()
+        bridge.to_megatron_provider.assert_not_called()
+        builder = model_config.get_builder_cls.return_value.return_value
+        builder.build_distributed_models.assert_called_once_with(
+            pg_collection=bridge._get_or_initialize_pg_collection.return_value,
+            wrap_with_ddp=False,
+            data_parallel_random_init=False,
+        )
+
+    def test_legacy_only_bridge_uses_provider_for_adapter_export(self, bridge, ckpt_dir, tmp_path):
+        """Unsupported builder architectures retain adapter export through their provider."""
+        bridge._model_bridge.LEGACY_MODEL_BUILD_ONLY = True
+        provider = MagicMock()
+        provider.provide_distributed_model.return_value = [MagicMock()]
+        bridge.to_megatron_provider.return_value = provider
+
+        bridge.export_adapter_ckpt(str(ckpt_dir), tmp_path / "out")
+
+        bridge.to_megatron_provider.assert_called_once_with(load_weights=True)
+        bridge.to_megatron_model_config.assert_not_called()
+        provider.finalize.assert_called_once_with()
+        provider.register_pre_wrap_hook.assert_called_once()
+        provider.provide_distributed_model.assert_called_once_with(
+            wrap_with_ddp=False,
+            use_cpu_initialization=True,
+            init_model_with_meta_device=False,
+        )
 
     def test_export_adapter_ckpt_does_not_pass_output_dtype(self, bridge, ckpt_dir, tmp_path):
         """CPU checkpoint export should keep full precision and not override saved dtype."""

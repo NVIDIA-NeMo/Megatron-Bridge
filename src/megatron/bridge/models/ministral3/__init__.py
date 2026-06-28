@@ -37,10 +37,16 @@ Example usage:
 """
 
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
-from megatron.bridge.models.ministral3.ministral3_provider import (
-    Ministral3ModelProvider,
-)
 from megatron.bridge.models.ministral3.modeling_ministral3 import Ministral3Model
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "Ministral3ModelProvider":
+        from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+
+        return Ministral3ModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

@@ -14,21 +14,25 @@
 
 
 from megatron.bridge.models.gemma.gemma2_bridge import Gemma2Bridge  # noqa: F401
-from megatron.bridge.models.gemma.gemma2_provider import (
-    Gemma2ModelProvider,
-)
 from megatron.bridge.models.gemma.gemma3_bridge import Gemma3ModelBridge  # noqa: F401
-from megatron.bridge.models.gemma.gemma3_provider import (
-    Gemma3ModelProvider,
-)
-from megatron.bridge.models.gemma.gemma4_provider import (
-    Gemma4DenseProvider,
-    Gemma4ModelProvider,
-)
 from megatron.bridge.models.gemma.gemma_bridge import GemmaBridge  # noqa: F401
-from megatron.bridge.models.gemma.gemma_provider import (
-    GemmaModelProvider,
-)
+
+
+def __getattr__(name: str):
+    """Lazily resolve legacy Gemma provider exports."""
+    modules = {
+        "GemmaModelProvider": "megatron.bridge.models.gemma.gemma_provider",
+        "Gemma2ModelProvider": "megatron.bridge.models.gemma.gemma2_provider",
+        "Gemma3ModelProvider": "megatron.bridge.models.gemma.gemma3_provider",
+        "Gemma4DenseProvider": "megatron.bridge.models.gemma.gemma4_provider",
+        "Gemma4ModelProvider": "megatron.bridge.models.gemma.gemma4_provider",
+    }
+    module = modules.get(name)
+    if module is None:
+        raise AttributeError(name)
+    import importlib
+
+    return getattr(importlib.import_module(module), name)
 
 
 __all__ = [

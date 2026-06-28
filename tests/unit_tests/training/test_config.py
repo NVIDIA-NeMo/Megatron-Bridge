@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -2173,6 +2174,27 @@ class TestCheckpointConfig:
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=create_test_gpt_config(hf_model_id="hf/model"),
+            tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
+            checkpoint_config=checkpoint_cfg,
+        )
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_also_save_hf_checkpoint_accepts_builder_model_metadata(self):
+        """Test that builder model metadata satisfies HF extra export validation."""
+        checkpoint_cfg = create_test_checkpoint_config(also_save_hf_checkpoint=True)
+        model_cfg = GPTModelConfig(
+            transformer=create_test_gpt_config(hf_model_id=None),
+            vocab_size=128,
+            extra_checkpoint_metadata={"hf_model_id": "hf/model"},
+        )
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=model_cfg,
+            dataset_config_override=create_test_gpt_dataset_config(sequence_length=model_cfg.seq_length),
             tokenizer_config=create_test_tokenizer_config(tokenizer_model=None),
             checkpoint_config=checkpoint_cfg,
         )

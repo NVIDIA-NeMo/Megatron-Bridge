@@ -62,10 +62,8 @@ from megatron.core.typed_torch import apply_module
 from megatron.core.utils import deprecate_inference_params, get_pg_rank
 from torch import Tensor
 
-from megatron.bridge.models.gemma.gemma3_provider import (
-    TERowParallelLinearLayerNorm,
-    _is_local_attn_layer,
-)
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
+from megatron.bridge.models.gemma.modeling_gemma3 import _is_local_attn_layer
 from megatron.bridge.utils.import_utils import safe_import_from
 
 

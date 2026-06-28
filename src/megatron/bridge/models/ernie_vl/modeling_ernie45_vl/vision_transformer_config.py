@@ -63,7 +63,7 @@ def _quick_gelu(x):
 def get_ernie_vision_config(
     hf_vision_config,
     megatron_config=None,
-) -> ErnieVisionTransformerConfig:
+) -> TransformerConfig:
     """Construct an ErnieVisionTransformerConfig from a HF vision config.
 
     Args:
@@ -81,7 +81,7 @@ def get_ernie_vision_config(
     mlp_ratio = getattr(hf_vision_config, "mlp_ratio", 4)
     depth = getattr(hf_vision_config, "depth", getattr(hf_vision_config, "num_hidden_layers", 32))
 
-    config = ErnieVisionTransformerConfig(
+    config = TransformerConfig(
         num_layers=depth,
         hidden_size=embed_dim,
         num_attention_heads=num_heads,
@@ -149,10 +149,5 @@ def get_ernie_vision_config(
     config.pipeline_model_parallel_layout = None
     config.account_for_embedding_in_pipeline_split = None
     config.account_for_loss_in_pipeline_split = None
-
-    # Vision-specific fields
-    config.patch_size = getattr(hf_vision_config, "patch_size", 14)
-    config.in_channels = getattr(hf_vision_config, "in_channels", 3)
-    config.spatial_merge_size = getattr(hf_vision_config, "spatial_merge_size", 2)
 
     return config

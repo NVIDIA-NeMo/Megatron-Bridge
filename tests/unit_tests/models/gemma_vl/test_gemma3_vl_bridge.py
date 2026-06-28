@@ -17,11 +17,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig, SiglipVisionConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+from megatron.bridge.models.gemma_vl.model_config import Gemma3VLModelBuilder, Gemma3VLModelConfig
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
@@ -113,6 +115,17 @@ class TestGemma3VLBridgeInitialization:
 
         assert hasattr(gemma3_vl_bridge, "mapping_registry")
         assert callable(gemma3_vl_bridge.mapping_registry)
+
+    def test_model_config_bridge_is_serializable(self, gemma3_vl_bridge, mock_hf_pretrained):
+        result = gemma3_vl_bridge.model_config_bridge(mock_hf_pretrained)
+
+        assert isinstance(result, Gemma3VLModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.vision_projector_input_size == 1152
+        assert result.vision_projector_hidden_size == 2560
+        assert result.get_builder_cls() is Gemma3VLModelBuilder
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.vision_config["hidden_size"] == 1152
 
 
 class TestGemma3VLBridgeProviderBridge:

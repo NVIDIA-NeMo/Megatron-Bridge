@@ -20,6 +20,8 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -131,6 +133,20 @@ class TestQwen3MoEBridge:
         assert result.num_attention_heads == mock_qwen3_moe_config.num_attention_heads
         assert result.seq_length == mock_qwen3_moe_config.max_position_embeddings
         assert result.rotary_base == mock_qwen3_moe_config.rope_theta
+
+    def test_model_config_bridge_preserves_qwen3_moe_specialization(self, mock_pretrained_qwen3_moe):
+        result = Qwen3MoEBridge().model_config_bridge(mock_pretrained_qwen3_moe)
+
+        assert isinstance(result, GPTModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.qk_layernorm is True
+        assert result.transformer.moe_grouped_gemm is True
+        assert result.transformer.moe_router_load_balancing_type == "aux_loss"
+        assert result.transformer.moe_aux_loss_coeff == 1e-3
+        assert result.transformer.moe_token_dispatcher_type == "alltoall"
+        assert result.transformer.moe_permute_fusion is True
+        assert "moe_grouped_gemm" not in result.__dict__
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_qwen3_moe, mock_qwen3_moe_config):
         """Test vocabulary size mapping."""

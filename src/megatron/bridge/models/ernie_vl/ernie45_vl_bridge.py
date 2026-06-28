@@ -83,9 +83,11 @@ Note on Expert Parallelism:
     reconstructing HF parameter names during export.
 """
 
+from __future__ import annotations
+
 import logging
 import re
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
 import torch
 
@@ -99,13 +101,17 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
-from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+from megatron.bridge.models.ernie_vl.model_config import Ernie45VLModelConfig
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
 
 # Use string-based registration since the HF model class may not be importable
 # if transformers is an older version or the model isn't registered yet.
@@ -362,7 +368,6 @@ class _ConcatBiasMapping(AutoMapping):
 @MegatronModelBridge.register_bridge(
     source=_ERNIE45_VL_MOE_HF_CLASS_NAME,
     target=Ernie45VLModel,
-    provider=Ernie45VLModelProvider,
     model_type="ernie4_5_vl_moe",
 )
 class Ernie45VLBridge(MegatronModelBridge):
@@ -388,6 +393,64 @@ class Ernie45VLBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-VL-28B-A3B-Instruct")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = Ernie45VLModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map ERNIE text, vision, and multimodal fields into pure config data."""
+        text_config = self._get_text_config(hf_config)
+        kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        moe_intermediate = list(text_config.moe_intermediate_size)
+        rope_params = getattr(text_config, "rope_parameters", None) or {}
+        mrope_section = rope_params.get("mrope_section") if isinstance(rope_params, dict) else None
+        mlp_layer_types = getattr(text_config, "mlp_layer_types", None)
+        if mlp_layer_types is not None:
+            moe_layer_freq = [0 if layer_type == "dense" else 1 for layer_type in mlp_layer_types]
+        else:
+            start_value = getattr(text_config, "moe_layer_start_index", 1)
+            start = start_value[0] if isinstance(start_value, (list, tuple)) else start_value
+            moe_layer_freq = [0] * start + [1] * (text_config.num_hidden_layers - start)
+        vision_config = hf_config.vision_config
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=False,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            rotary_interleaved=True,
+            share_embeddings_and_output_weights=bool(getattr(hf_config, "tie_word_embeddings", True)),
+            position_embedding_type="mrope",
+            num_moe_experts=self._get_num_experts(text_config),
+            moe_ffn_hidden_size=moe_intermediate[0],
+            moe_router_topk=text_config.moe_k,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(text_config, "router_aux_loss_coef", 0.001),
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            gradient_accumulation_fusion=False,
+            moe_shared_expert_intermediate_size=moe_intermediate[0]
+            * getattr(text_config, "moe_num_shared_experts", 2),
+            moe_layer_freq=moe_layer_freq,
+            vision_transformer=get_ernie_vision_config(vision_config),
+            vision_config=vision_config.to_dict(),
+            hf_config=hf_config.to_dict(),
+            patch_size=int(getattr(vision_config, "patch_size", 14)),
+            in_channels=int(getattr(vision_config, "in_channels", 3)),
+            spatial_merge_size=int(getattr(vision_config, "spatial_merge_size", 2)),
+            mrope_section=list(mrope_section or [22, 22, 20]),
+            moe_intermediate_size=tuple(moe_intermediate),
+            image_start_token_id=int(getattr(hf_config, "image_start_token_id", 101304)),
+            image_end_token_id=int(getattr(hf_config, "image_end_token_id", 101305)),
+            image_token_id=int(getattr(hf_config, "image_token_id", getattr(hf_config, "im_patch_id", 100295))),
+            video_start_token_id=int(getattr(hf_config, "video_start_token_id", 101306)),
+            video_end_token_id=int(getattr(hf_config, "video_end_token_id", 101307)),
+            video_token_id=int(getattr(hf_config, "video_token_id", 103367)),
+        )
+        return kwargs
 
     @staticmethod
     def _get_text_config(hf_config):
@@ -435,6 +498,8 @@ class Ernie45VLBridge(MegatronModelBridge):
         Returns:
             Ernie45VLModelProvider configured with the HF model's parameters.
         """
+        from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+
         hf_config = hf_pretrained.config
         text_config = self._get_text_config(hf_config)
 

@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 from megatron.core.activations import squared_relu
+from megatron.core.ssm.mamba_hybrid_layer_allocation import get_hybrid_total_layer_count
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models import ColumnParallelMapping, RowParallelMapping
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -25,18 +29,26 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.nemotron_vl.model_config import NemotronVLModelConfig
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_VL_V2",
     target=NemotronVLModel,
-    provider=NemotronVLModelProvider,
     model_type="nemotron_vl",
 )
 class NemotronVLBridge(MegatronModelBridge):
     """Conversion utilities between HF Nemotron-VL and Megatron-Core format."""
+
+    MODEL_CONFIG_CLASS = NemotronVLModelConfig
+    TRANSFORMER_CONFIG_CLASS = TransformerConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     # Extend CONFIG_MAPPING with Nemotron-VL specific fields
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
@@ -48,7 +60,9 @@ class NemotronVLBridge(MegatronModelBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronVLModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "NemotronVLModelProvider":  # type: ignore[override]
+        from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
 
@@ -74,6 +88,24 @@ class NemotronVLBridge(MegatronModelBridge):
         provider.autocast_dtype = None  # Not set in original code
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert Nemotron VL HF configs to pure hybrid build kwargs."""
+        llm_config = hf_config.llm_config
+        config_kwargs = NemotronHBridge().hf_config_to_model_config_kwargs(llm_config)
+        hybrid_layer_pattern = config_kwargs.get("hybrid_layer_pattern")
+        if hybrid_layer_pattern is not None:
+            config_kwargs["num_layers"] = get_hybrid_total_layer_count(hybrid_layer_pattern)
+        config_kwargs.update(
+            scatter_embedding_sequence_parallel=False,
+            attention_softmax_in_fp32=True,
+            activation_func=squared_relu,
+            autocast_dtype=None,
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(llm_config.vocab_size),
+            image_token_index=getattr(hf_config, "image_token_index", 131072),
+            vision_proj_ffn_hidden_size=getattr(hf_config, "projector_hidden_size", 20480),
+        )
+        return config_kwargs
 
     # ------------------------------------------------------------------
     # Parameter mapping
@@ -182,3 +214,7 @@ class NemotronVLBridge(MegatronModelBridge):
         )
         AutoMapping.register_module_type("RADIOViTModel", "replicated")
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = NemotronVLModelConfig
+    TRANSFORMER_CONFIG_CLASS = TransformerConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True

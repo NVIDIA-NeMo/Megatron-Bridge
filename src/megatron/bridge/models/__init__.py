@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import importlib
+
 # Import model providers for easy access
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
@@ -38,27 +40,18 @@ from megatron.bridge.models.ernie import (
 from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
     Ernie45VLModel,
-    Ernie45VLModelProvider,
 )
 from megatron.bridge.models.exaone import (
     Exaone4Bridge,
 )
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
-    FalconH1ModelProvider,
-)
-from megatron.bridge.models.gemma import (
-    Gemma2ModelProvider,
-    Gemma3ModelProvider,
-    GemmaModelProvider,
 )
 from megatron.bridge.models.gemma_vl import (
     Gemma3VLBridge,
     Gemma3VLModel,
-    Gemma3VLModelProvider,
     Gemma4VLBridge,
     Gemma4VLModel,
-    Gemma4VLModelProvider,
 )
 from megatron.bridge.models.glm import (
     GLM45Bridge,
@@ -69,16 +62,13 @@ from megatron.bridge.models.glm_moe_dsa import (
 )
 from megatron.bridge.models.glm_vl import (
     GLM45VBridge,
-    GLM45VModelProvider,
 )
 from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hybrid import (
     HybridModelBuilder,
     HybridModelConfig,
-    HybridModelProvider,
 )
 from megatron.bridge.models.kimi import (
     KimiK2Bridge,
@@ -86,20 +76,16 @@ from megatron.bridge.models.kimi import (
 from megatron.bridge.models.kimi_vl import (
     KimiK25VLBridge,
     KimiK25VLModel,
-    KimiK25VLModelProvider,
 )
 from megatron.bridge.models.llama import (
     LlamaBridge,
 )
 from megatron.bridge.models.llama_nemotron import (
     LlamaNemotronBridge,
-    LlamaNemotronHeterogeneousProvider,
 )
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
 from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
 from megatron.bridge.models.mimo_v2_flash import (
     MiMoV2FlashBridge,
-    MiMoV2FlashModelProvider,
 )
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
@@ -107,10 +93,6 @@ from megatron.bridge.models.minimax_m2 import (
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
-    Ministral3ModelProvider,
-)
-from megatron.bridge.models.mistral import (
-    MistralModelProvider,
 )
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
@@ -122,48 +104,35 @@ from megatron.bridge.models.nemotron_omni import (
 from megatron.bridge.models.nemotron_vl import (
     NemotronVLBridge,
     NemotronVLModel,
-    NemotronVLModelProvider,
 )
 from megatron.bridge.models.nemotronh import (
     NemotronHBridge,
 )
 from megatron.bridge.models.olmoe import (
     OlMoEBridge,
-    OlMoEModelProvider,
 )
 from megatron.bridge.models.qwen3_asr import (
     Qwen3ASRBridge,
     Qwen3ASRModel,
-    Qwen3ASRModelProvider,
 )
 from megatron.bridge.models.qwen_audio import (
     Qwen2AudioBridge,
     Qwen2AudioModel,
-    Qwen2AudioModelProvider,
 )
 from megatron.bridge.models.qwen_omni import (
     Qwen3OmniBridge,
     Qwen3OmniModel,
-    Qwen3OmniModelProvider,
     Qwen25OmniBridge,
     Qwen25OmniModel,
-    Qwen25OmniModelProvider,
 )
 from megatron.bridge.models.qwen_vl import (
-    Qwen25VLBridge,
-    Qwen25VLModel,
-    Qwen25VLModelProvider,
-    Qwen35VLBridge,
-    Qwen35VLModelProvider,
-    Qwen35VLMoEBridge,
-    Qwen35VLMoEModelProvider,
-)
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
     Qwen3VLBridge,
     Qwen3VLModel,
-    Qwen3VLModelProvider,
     Qwen3VLMoEBridge,
-    Qwen3VLMoEModelProvider,
+    Qwen25VLBridge,
+    Qwen25VLModel,
+    Qwen35VLBridge,
+    Qwen35VLMoEBridge,
 )
 from megatron.bridge.models.sarvam import (
     SarvamMLABridge,
@@ -173,9 +142,48 @@ from megatron.bridge.models.stepfun import (
     Step35Bridge,
     Step37Bridge,
     Step37Model,
-    Step37ModelProvider,
 )
-from megatron.bridge.models.t5_provider import T5ModelProvider
+
+
+_PROVIDER_MODULES = {
+    "Ernie45VLModelProvider": "megatron.bridge.models.ernie_vl.ernie45_vl_provider",
+    "FalconH1ModelProvider": "megatron.bridge.models.falcon_h1.falconh1_provider",
+    "GemmaModelProvider": "megatron.bridge.models.gemma.gemma_provider",
+    "Gemma2ModelProvider": "megatron.bridge.models.gemma.gemma2_provider",
+    "Gemma3ModelProvider": "megatron.bridge.models.gemma.gemma3_provider",
+    "Gemma3VLModelProvider": "megatron.bridge.models.gemma_vl.gemma3_vl_provider",
+    "Gemma4VLModelProvider": "megatron.bridge.models.gemma_vl.gemma4_vl_provider",
+    "GLM45VModelProvider": "megatron.bridge.models.glm_vl.glm_45v_provider",
+    "GPTModelProvider": "megatron.bridge.models.gpt_provider",
+    "HybridModelProvider": "megatron.bridge.models.hybrid.hybrid_provider",
+    "KimiK25VLModelProvider": "megatron.bridge.models.kimi_vl.kimi_k25_vl_provider",
+    "LlamaNemotronHeterogeneousProvider": "megatron.bridge.models.llama_nemotron.llama_nemotron_provider",
+    "MambaModelProvider": "megatron.bridge.models.mamba.mamba_provider",
+    "MiMoV2FlashModelProvider": "megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider",
+    "Ministral3ModelProvider": "megatron.bridge.models.ministral3.ministral3_provider",
+    "MistralModelProvider": "megatron.bridge.models.mistral.mistral_provider",
+    "NemotronVLModelProvider": "megatron.bridge.models.nemotron_vl.nemotron_vl_provider",
+    "OlMoEModelProvider": "megatron.bridge.models.olmoe.olmoe_provider",
+    "Step37ModelProvider": "megatron.bridge.models.stepfun.step37_provider",
+    "T5ModelProvider": "megatron.bridge.models.t5_provider",
+    "Qwen3ASRModelProvider": "megatron.bridge.models.qwen3_asr.qwen3_asr_provider",
+    "Qwen2AudioModelProvider": "megatron.bridge.models.qwen_audio.qwen2_audio_provider",
+    "Qwen25OmniModelProvider": "megatron.bridge.models.qwen_omni.qwen25_omni_provider",
+    "Qwen3OmniModelProvider": "megatron.bridge.models.qwen_omni.qwen3_omni_provider",
+    "Qwen25VLModelProvider": "megatron.bridge.models.qwen_vl.qwen25_vl_provider",
+    "Qwen3VLModelProvider": "megatron.bridge.models.qwen_vl.qwen3_vl_provider",
+    "Qwen3VLMoEModelProvider": "megatron.bridge.models.qwen_vl.qwen3_vl_provider",
+    "Qwen35VLModelProvider": "megatron.bridge.models.qwen_vl.qwen35_vl_provider",
+    "Qwen35VLMoEModelProvider": "megatron.bridge.models.qwen_vl.qwen35_vl_provider",
+}
+
+
+def __getattr__(name: str):
+    """Lazily resolve compatibility provider exports."""
+    module_name = _PROVIDER_MODULES.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    return getattr(importlib.import_module(module_name), name)
 
 
 __all__ = [

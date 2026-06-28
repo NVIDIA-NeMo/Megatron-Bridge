@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear
 from megatron.core.tensor_parallel.mappings import scatter_to_sequence_parallel_region
 from megatron.core.transformer import TransformerConfig
@@ -26,7 +28,6 @@ from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers import AutoModel, Gemma3Model
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import (
     hook_hf_module_setattr_for_tp_grad_sync,
     slice_batch_for_context_parallel,
@@ -36,6 +37,8 @@ from megatron.bridge.utils.import_utils import safe_import_from
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
+
+    from megatron.bridge.models.gemma_vl.model_config import Gemma3VLModelConfig
 
 
 TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
@@ -80,12 +83,16 @@ class Gemma3VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: "Gemma3VLModelConfig",
+        language_model: GPTModel | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
+        self.config = config
+        self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -93,16 +100,30 @@ class Gemma3VLModel(MegatronModule):
         if pre_process:
             # Unwrap SiglipVisionModel so vision_tower params stay flat
             # (vision_tower.embeddings.*), matching HF checkpoint keys.
-            _vc = config.vision_config
+            from transformers import SiglipVisionConfig
+
+            _vc = (
+                SiglipVisionConfig.from_dict(config.vision_config)
+                if isinstance(config.vision_config, dict)
+                else config.vision_config
+            )
             _vc.vision_use_head = False
             _raw_vision = AutoModel.from_config(_vc)
             self.vision_tower = getattr(_raw_vision, "vision_model", _raw_vision)
-            self.multi_modal_projector = Gemma3VLMultimodalProjector(config.vision_projector_config)
+            projector_config = getattr(config, "vision_projector_config", None)
+            if projector_config is None:
+                projector_config = Gemma3VLMultimodalProjectorConfig(
+                    input_size=config.vision_projector_input_size,
+                    hidden_size=config.vision_projector_hidden_size,
+                )
+            self.multi_modal_projector = Gemma3VLMultimodalProjector(projector_config)
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad requires these to be bound with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
@@ -174,7 +195,7 @@ class Gemma3VLModel(MegatronModule):
             position_ids=position_ids,
             attention_mask=attention_mask,
             packed_seq_params=packed_seq_params,
-            pg_collection=self.config._pg_collection,
+            pg_collection=self.pg_collection,
         )
 
         # Apply SP scatter after CP slice, before entering the language model.
@@ -182,7 +203,7 @@ class Gemma3VLModel(MegatronModule):
         # bypassed when decoder_input is provided. Matches Megatron Core's LLaVA pattern
         # (llava_model.py:747-750): CP slice first, then SP scatter → [S/(CP*TP), B, H].
         if self.config.sequence_parallel and inputs_embeds is not None:
-            tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+            tp_group = self.pg_collection.tp if self.pg_collection is not None else None
             inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         outputs = self.language_model.forward(

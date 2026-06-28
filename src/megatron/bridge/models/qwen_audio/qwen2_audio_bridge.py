@@ -25,6 +25,8 @@ Supported models:
 Reference: https://huggingface.co/Qwen/Qwen2-Audio-7B-Instruct
 """
 
+from typing import TYPE_CHECKING, Any
+
 from transformers import Qwen2AudioForConditionalGeneration
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -36,14 +38,17 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.qwen_audio.model_config import Qwen2AudioModelConfig
 from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel
-from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source=Qwen2AudioForConditionalGeneration,
     target=Qwen2AudioModel,
-    provider=Qwen2AudioModelProvider,
     model_type="qwen2_audio",
 )
 class Qwen2AudioBridge(MegatronModelBridge):
@@ -64,7 +69,7 @@ class Qwen2AudioBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen2AudioModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen2AudioModelProvider":
         """
         Create a Qwen2AudioModelProvider from a HuggingFace pretrained model.
 
@@ -74,6 +79,8 @@ class Qwen2AudioBridge(MegatronModelBridge):
         Returns:
             Qwen2AudioModelProvider configured with the HF model's parameters
         """
+        from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
+
         hf_config = hf_pretrained.config
 
         # Qwen2-Audio has separate text_config and audio_config
@@ -180,3 +187,27 @@ class Qwen2AudioBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen2AudioModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Qwen2-Audio HF settings to pure model-config fields."""
+        text = hf_config.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text)
+        kwargs.update(
+            normalization="RMSNorm",
+            position_embedding_type="rope",
+            gated_linear_unit=True,
+            add_qkv_bias=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            scatter_embedding_sequence_parallel=False,
+            gradient_accumulation_fusion=False,
+            hf_config=hf_config.to_dict(),
+            audio_token_id=getattr(hf_config, "audio_token_index", 151646),
+            bos_token_id=getattr(hf_config, "bos_token_id", 151643),
+            eos_token_id=getattr(hf_config, "eos_token_id", 151645),
+            pad_token_id=getattr(hf_config, "pad_token_id", 151643),
+        )
+        return kwargs

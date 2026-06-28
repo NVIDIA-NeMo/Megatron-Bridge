@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from megatron.core.activations import squared_relu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import NemotronForCausalLM
@@ -24,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils import fusions
 
 
 @MegatronModelBridge.register_bridge(
@@ -43,6 +46,8 @@ class NemotronBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-4-340B-Instruct")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
         # Nemotron uses norm_eps instead of rms_norm_eps
@@ -66,6 +71,30 @@ class NemotronBridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.apply_rope_fusion = True
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Nemotron config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Nemotron configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="LayerNorm",
+            activation_func=squared_relu,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            bias_dropout_fusion=False,
+            layernorm_zero_centered_gamma=True,
+            apply_rope_fusion=fusions.can_enable_rope_fusion(),
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Qwen3MoeForCausalLM
@@ -39,6 +41,8 @@ class Qwen3MoEBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-235B-A22B")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:
@@ -68,6 +72,33 @@ class Qwen3MoEBridge(MegatronModelBridge):
         provider.moe_permute_fusion = True
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Qwen3 MoE config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Qwen3 MoE configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            autocast_dtype=torch.bfloat16,
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

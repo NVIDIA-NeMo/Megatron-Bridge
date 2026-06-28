@@ -12,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
+from functools import partial
+from typing import Any, Callable
+
 import torch
+import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -22,9 +29,46 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
+from megatron.bridge.models.sarvam.model_config import get_sarvam_moe_pipeline_layout
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+@dataclass(kw_only=True)
+class SarvamMoEModelConfig(BridgeGPTModelConfig):
+    """Builder-backed Sarvam MoE config with its mixed dense/MoE layer spec."""
+
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: partial(
+            get_gpt_decoder_block_spec,
+            use_transformer_engine=HAVE_TE,
+            normalization="RMSNorm",
+            vp_stage=None,
+        )
+    )
+
+    def finalize(self) -> None:
+        """Apply Sarvam's supported uneven pipeline layouts before validation."""
+        transformer = self.transformer
+        pipeline_size = transformer.pipeline_model_parallel_size or 1
+        has_explicit_flexible_pipeline = (
+            transformer.pipeline_model_parallel_layout is not None
+            or transformer.num_layers_in_first_pipeline_stage is not None
+            or transformer.num_layers_in_last_pipeline_stage is not None
+        )
+        if pipeline_size > 1 and transformer.num_layers % pipeline_size != 0 and not has_explicit_flexible_pipeline:
+            transformer.pipeline_model_parallel_layout = get_sarvam_moe_pipeline_layout(pipeline_size)
+        super().finalize()
 
 
 @MegatronModelBridge.register_bridge(source="SarvamMoEForCausalLM", target=GPTModel)
@@ -36,6 +80,9 @@ class SarvamMoEBridge(MegatronModelBridge):
     and Megatron-Core GPTModel formats. Sarvam MoE models use mixture of experts
     architecture with QKV layernorm.
     """
+
+    MODEL_CONFIG_CLASS = SarvamMoEModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> SarvamMoEModelProvider:
         hf_config = hf_pretrained.config
@@ -50,6 +97,50 @@ class SarvamMoEBridge(MegatronModelBridge):
         config["kv_channels"] = hf_config.head_dim
 
         return SarvamMoEModelProvider(**config)
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Sarvam MoE config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            moe_ffn_hidden_size=hf_config.moe_intermediate_size,
+            num_moe_experts=hf_config.num_experts,
+            moe_router_topk=hf_config.num_experts_per_tok,
+            moe_shared_expert_intermediate_size=hf_config.num_shared_experts * hf_config.moe_intermediate_size,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            num_query_groups=hf_config.num_key_value_heads,
+            kv_channels=hf_config.head_dim,
+            make_vocab_size_divisible_by=128,
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            add_qkv_bias=False,
+            qk_layernorm=True,
+            init_method_std=0.006,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            layernorm_epsilon=1e-6,
+            moe_aux_loss_coeff=0,
+            moe_router_pre_softmax=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_bias_update_rate=1e-3,
+            moe_grouped_gemm=True,
+            moe_permute_fusion=True,
+            moe_router_topk_scaling_factor=2.5,
+            moe_shared_expert_overlap=False,
+            moe_router_dtype="fp32",
+            moe_router_score_function="sigmoid",
+            moe_token_dispatcher_type="alltoall",
+            attention_softmax_in_fp32=True,
+            persist_layer_norm=True,
+            cross_entropy_fusion_impl="te",
+            cp_comm_type="p2p",
+            recompute_granularity="selective",
+            recompute_modules=["layernorm", "shared_experts", "mlp", "moe_act"],
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {

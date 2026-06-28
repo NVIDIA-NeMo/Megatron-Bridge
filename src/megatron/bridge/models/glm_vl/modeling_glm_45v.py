@@ -27,18 +27,21 @@ from typing import TYPE_CHECKING, Optional
 
 import torch
 import transformers
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from packaging.version import Version as PkgVersion
 from torch import Tensor
 from transformers.models.glm4v.modeling_glm4v import Glm4vModel
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 if TYPE_CHECKING:
     from megatron.core.packed_seq_params import PackedSeqParams
+
+    from megatron.bridge.models.glm_vl.model_config import GLM45VModelConfig
 
 
 def is_transformers_min_version(version):
@@ -100,12 +103,16 @@ class GLM45VModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: "GLM45VModelConfig",
+        language_model: GPTModel | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
+        self.config = config
+        self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -121,16 +128,24 @@ class GLM45VModel(MegatronModule):
             )
 
         if pre_process:
+            from transformers.models.glm4v.configuration_glm4v import Glm4vVisionConfig
             from transformers.models.glm4v.modeling_glm4v import Glm4vVisionModel
 
-            self.visual = Glm4vVisionModel._from_config(config.vision_config)
+            vision_config = (
+                Glm4vVisionConfig.from_dict(config.vision_config)
+                if isinstance(config.vision_config, dict)
+                else config.vision_config
+            )
+            self.visual = Glm4vVisionModel._from_config(vision_config)
             # Ensure HF visual tower params are marked for TP grad sync
             hook_hf_module_setattr_for_tp_grad_sync(self.visual)
 
         # Initialize Megatron language model
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad requires these to be bound with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
@@ -218,7 +233,7 @@ class GLM45VModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()
 
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                tp_group = self.pg_collection.tp if self.pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute MRoPE position_ids on ALL pipeline stages

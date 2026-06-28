@@ -130,6 +130,17 @@ class TestCheckpointUtils:
         result = get_hf_model_id_from_checkpoint(str(checkpoint_dir))
         assert result == "meta-llama/Meta-Llama-3-8B"
 
+    def test_get_hf_model_id_from_checkpoint_builder_metadata(self, tmp_path):
+        """Test inferring HF model id from serialized builder config metadata."""
+        checkpoint_dir = tmp_path / "checkpoints"
+        checkpoint_dir.mkdir()
+        run_config_file = checkpoint_dir / CONFIG_FILE
+        run_config_file.write_text(
+            yaml.dump({"model": {"extra_checkpoint_metadata": {"hf_model_id": "builder/model"}}})
+        )
+
+        assert get_hf_model_id_from_checkpoint(str(checkpoint_dir)) == "builder/model"
+
     def test_get_hf_model_id_from_checkpoint_latest_iteration(self, tmp_path):
         """Test inferring HF model id selects latest iteration when multiple exist."""
         checkpoint_dir = tmp_path / "checkpoints"

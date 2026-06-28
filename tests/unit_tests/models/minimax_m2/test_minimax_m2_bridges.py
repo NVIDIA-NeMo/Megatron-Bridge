@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -83,6 +84,16 @@ class TestMiniMaxM2Bridge:
 
     def test_registration(self):
         assert issubclass(MiniMaxM2Bridge, MegatronModelBridge)
+
+    def test_model_config_bridge_is_direct_and_serializable(self, mock_pretrained):
+        result = MiniMaxM2Bridge().model_config_bridge(mock_pretrained)
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.qk_layernorm is True
+        assert result.rotary_percent == mock_pretrained.config.rotary_dim / mock_pretrained.config.head_dim
+        assert "qk_layernorm" not in result.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert callable(restored.transformer_layer_spec)
 
     def test_provider_bridge_maps_core_config(self, mock_pretrained):
         bridge = MiniMaxM2Bridge()

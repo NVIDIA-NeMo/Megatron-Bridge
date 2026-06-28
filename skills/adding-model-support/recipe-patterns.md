@@ -24,12 +24,15 @@ def <model>_<size>_sft_config() -> ConfigContainer:
     cfg = _sft_common()  # or _sft_common_vlm() for VLMs
 
     # Model
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_model_config(load_weights=False)
 
     # Parallelism
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.transformer = dataclasses.replace(
+        cfg.model.transformer,
+        tensor_model_parallel_size=4,
+        pipeline_model_parallel_size=1,
+        sequence_parallel=True,
+    )
 
     # Training
     cfg.training.max_steps = 100
@@ -52,11 +55,14 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     """PEFT config for <Model> <Size>."""
     cfg = _peft_common()  # or _peft_common_vlm() for VLMs
 
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_model_config(load_weights=False)
 
     # PEFT typically uses smaller parallelism
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.transformer = dataclasses.replace(
+        cfg.model.transformer,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
+    )
 
     # PEFT uses higher LR
     cfg.optimizer.lr = 2e-4
@@ -136,13 +142,13 @@ Add entry to `config_map` dict, docstring model list, and `--model` argparse cho
 
 ### Unit test (no GPU)
 
-Monkeypatch `AutoBridge` to return a mock provider. Verify `ConfigContainer` structure:
+Monkeypatch `AutoBridge` to return a mock model config. Verify `ConfigContainer` structure:
 
 ```python
 def test_sft_config(monkeypatch):
     monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", mock_bridge)
     cfg = model_size_sft_config()
-    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.transformer.tensor_model_parallel_size == 4
     assert cfg.training.global_batch_size == 128
 ```
 

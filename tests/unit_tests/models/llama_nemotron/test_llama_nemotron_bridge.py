@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import json
-from unittest.mock import Mock
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -21,7 +22,10 @@ from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama_nemotron.llama_nemotron_bridge import LlamaNemotronBridge
+from megatron.bridge.models.llama_nemotron.llama_nemotron_bridge import (
+    LlamaNemotronBridge,
+    LlamaNemotronModelConfig,
+)
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
     LlamaNemotronHeterogeneousProvider,
 )
@@ -171,6 +175,42 @@ class TestLlamaNemotronBridge:
         # Check data types
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_model_config_bridge_uses_heterogeneous_mcore_config(self, llama_nemotron_super_config_dict):
+        config = SimpleNamespace(**llama_nemotron_super_config_dict)
+        config.head_dim = 128
+        config.to_json_string = lambda: json.dumps(llama_nemotron_super_config_dict)
+
+        result = LlamaNemotronBridge().model_config_bridge(SimpleNamespace(config=config))
+
+        assert type(result) is LlamaNemotronModelConfig
+        assert type(result.transformer).__name__ == "HeterogeneousTransformerConfig"
+        assert result.transformer.heterogeneous_layers_config_encoded_json
+        assert result.transformer.num_query_groups == 8
+        assert result.rope_scaling is True
+        assert "heterogeneous_layers_config_encoded_json" not in result.__dict__
+
+        serialized = result.as_dict()
+        assert "per_block_parameters" not in serialized["transformer"]
+
+        restored = type(result).from_dict(serialized)
+        assert type(restored) is LlamaNemotronModelConfig
+        assert type(restored.transformer) is type(result.transformer)
+        assert restored.transformer.activation_func is result.transformer.activation_func
+        assert restored.transformer_layer_spec is result.transformer_layer_spec
+
+    def test_model_config_bridge_disables_unavailable_rope_fusion(self, llama_nemotron_super_config_dict):
+        config = SimpleNamespace(**llama_nemotron_super_config_dict)
+        config.head_dim = 128
+        config.to_json_string = lambda: json.dumps(llama_nemotron_super_config_dict)
+
+        with patch(
+            "megatron.bridge.models.llama_nemotron.llama_nemotron_bridge.fusions.can_enable_rope_fusion",
+            return_value=False,
+        ):
+            result = LlamaNemotronBridge().model_config_bridge(SimpleNamespace(config=config))
+
+        assert result.transformer.apply_rope_fusion is False
 
     def test_mapping_registry(self):
         """Test that mapping_registry returns proper mappings."""

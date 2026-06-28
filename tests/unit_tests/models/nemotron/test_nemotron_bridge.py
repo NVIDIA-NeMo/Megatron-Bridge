@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.activations import squared_relu
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig
 from transformers import NemotronConfig, NemotronForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -100,6 +103,24 @@ class TestNemotronBridge:
         assert provider.rotary_percent == nemotron_config.partial_rotary_factor
         assert provider.vocab_size == nemotron_config.vocab_size
         assert provider.share_embeddings_and_output_weights == nemotron_config.tie_word_embeddings
+
+    def test_model_config_bridge_preserves_nemotron_specialization(self, mock_pretrained_nemotron):
+        with patch(
+            "megatron.bridge.models.nemotron.nemotron_bridge.fusions.can_enable_rope_fusion",
+            return_value=False,
+        ):
+            result = NemotronBridge().model_config_bridge(mock_pretrained_nemotron)
+
+        assert isinstance(result, GPTModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.normalization == "LayerNorm"
+        assert result.transformer.activation_func is squared_relu
+        assert result.transformer.masked_softmax_fusion is True
+        assert result.transformer.persist_layer_norm is True
+        assert result.transformer.bias_dropout_fusion is False
+        assert result.transformer.layernorm_zero_centered_gamma is True
+        assert result.transformer.apply_rope_fusion is False
+        assert "normalization" not in result.__dict__
 
     def test_mapping_registry(self, mock_pretrained_nemotron):
         """Test that mapping_registry returns proper mappings."""

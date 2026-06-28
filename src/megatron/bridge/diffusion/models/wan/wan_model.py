@@ -93,6 +93,7 @@ class WanModel(VisionModule):
     def __init__(
         self,
         config: TransformerConfig,
+        architecture_config=None,
         pre_process: bool = True,
         post_process: bool = True,
         fp16_lm_cross_entropy: bool = False,
@@ -101,6 +102,7 @@ class WanModel(VisionModule):
         **kwargs,
     ):
         super(WanModel, self).__init__(config=config)
+        self.architecture_config = architecture_config or config
 
         self.config: TransformerConfig = config
 
@@ -115,11 +117,11 @@ class WanModel(VisionModule):
         self.model_type = ModelType.encoder_or_decoder
 
         self.num_heads = self.config.num_attention_heads
-        self.freq_dim = self.config.freq_dim
-        self.in_channels = self.config.in_channels
-        self.out_channels = self.config.out_channels
-        self.patch_spatial = self.config.patch_spatial
-        self.patch_temporal = self.config.patch_temporal
+        self.freq_dim = self.architecture_config.freq_dim
+        self.in_channels = self.architecture_config.in_channels
+        self.out_channels = self.architecture_config.out_channels
+        self.patch_spatial = self.architecture_config.patch_spatial
+        self.patch_temporal = self.architecture_config.patch_temporal
         self.patch_size = (self.patch_temporal, self.patch_spatial, self.patch_spatial)
 
         # these attributes are unused for images/videos, we just set because bridge training requires for LLMs
@@ -135,9 +137,9 @@ class WanModel(VisionModule):
             )
 
         self.text_embedding = nn.Sequential(
-            nn.Linear(self.config.text_dim, self.config.crossattn_emb_size),
+            nn.Linear(self.architecture_config.text_dim, self.architecture_config.crossattn_emb_size),
             nn.GELU(approximate="tanh"),
-            nn.Linear(self.config.crossattn_emb_size, self.config.crossattn_emb_size),
+            nn.Linear(self.architecture_config.crossattn_emb_size, self.architecture_config.crossattn_emb_size),
         )
 
         # As in diffuser's Wan implementation

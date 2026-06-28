@@ -1,0 +1,312 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Serializable model configurations and standalone builders for Qwen VL."""
+
+import importlib
+from copy import copy
+from dataclasses import dataclass, field
+from typing import Any, ClassVar
+
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.pipeline_parallel.utils import (
+    is_pp_first_stage,
+    is_pp_last_stage,
+    is_vp_first_stage,
+    is_vp_last_stage,
+)
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.training.models.gpt import GPTModelBuilder, mtp_block_spec
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
+
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+
+
+def _pipeline_flags(
+    config: BridgeGPTModelConfig, pg_collection: ProcessGroupCollection, pre_process, post_process, vp_stage
+):
+    vp_size = config.transformer.virtual_pipeline_model_parallel_size
+    if pre_process is None:
+        pre_process = is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pg_collection.pp)
+    if post_process is None:
+        post_process = is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pg_collection.pp)
+    return pre_process, post_process
+
+
+def _runtime_transformer(config: BridgeGPTModelConfig):
+    """Create an ephemeral legacy-compatible transformer config for model code."""
+    transformer = copy(config.transformer)
+    for name in config.multimodal_field_names:
+        setattr(transformer, name, getattr(config, name))
+    transformer.vocab_size = config.vocab_size
+    transformer.language_max_sequence_length = config.language_max_sequence_length
+    transformer.fp16_lm_cross_entropy = config.fp16_lm_cross_entropy
+    transformer.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
+    transformer.rotary_percent = config.rotary_percent
+    transformer.rotary_base = config.rotary_base
+    return transformer
+
+
+def _runtime_model_config(config: BridgeGPTModelConfig, transformer):
+    runtime_config = copy(config)
+    runtime_config.transformer = transformer
+    return runtime_config
+
+
+def _vision_config_from_dict(data: dict[str, Any], target: str):
+    module_name, class_name = target.rsplit(".", 1)
+    config_class = getattr(importlib.import_module(module_name), class_name)
+    return config_class(**data)
+
+
+@dataclass(kw_only=True)
+class Qwen25VLModelConfig(BridgeGPTModelConfig):
+    """Pure builder input for Qwen2.5-VL."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.qwen_vl.model_config.Qwen25VLModelBuilder"
+    vision_config: dict[str, Any] = field(default_factory=dict)
+    language_max_sequence_length: int = 2048
+    mrope_section: list[int] = field(default_factory=lambda: [16, 24, 24])
+    bos_token_id: int = 151643
+    eos_token_id: int = 151645
+    vision_start_token_id: int = 151652
+    vision_end_token_id: int = 151653
+    vision_token_id: int = 151654
+    image_token_id: int = 151655
+    video_token_id: int = 151656
+    freeze_language_model: bool = False
+    freeze_vision_model: bool = False
+    freeze_vision_projection: bool = False
+    multimodal_field_names: ClassVar[tuple[str, ...]] = (
+        "mrope_section",
+        "bos_token_id",
+        "eos_token_id",
+        "vision_start_token_id",
+        "vision_end_token_id",
+        "vision_token_id",
+        "image_token_id",
+        "video_token_id",
+    )
+
+
+class Qwen25VLModelBuilder(GPTModelBuilder):
+    """Build Qwen2.5-VL without a model provider."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> Qwen25VLModel:
+        """Build one Qwen2.5-VL pipeline stage.
+
+        Args:
+            pg_collection: Process groups for distributed construction.
+            pre_process: Whether this stage owns input processing.
+            post_process: Whether this stage owns output processing.
+            vp_stage: Virtual pipeline stage index.
+
+        Returns:
+            Constructed Qwen2.5-VL stage.
+        """
+        config = self._model_config
+        pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
+        transformer = _runtime_transformer(config)
+        runtime_config = _runtime_model_config(config, transformer)
+        language_model = GPTModelBuilder(runtime_config).build_model(
+            pg_collection, pre_process, post_process, vp_stage
+        )
+        vision_config = Qwen2_5_VLVisionConfig(**config.vision_config)
+        model = Qwen25VLModel(
+            runtime_config,
+            pre_process,
+            post_process,
+            vp_stage,
+            language_model=language_model,
+            vision_config=vision_config,
+        )
+        if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
+            model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
+        return model
+
+
+@dataclass(kw_only=True)
+class Qwen3VLModelConfig(BridgeGPTModelConfig):
+    """Pure builder input shared by dense and MoE Qwen3-VL."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.qwen_vl.model_config.Qwen3VLModelBuilder"
+    vision_config: dict[str, Any] = field(default_factory=dict)
+    vision_config_target: str = "transformers.models.qwen3_vl.configuration_qwen3_vl.Qwen3VLVisionConfig"
+    language_max_sequence_length: int = 2048
+    image_token_id: int = 151655
+    video_token_id: int = 151656
+    vision_start_token_id: int = 151652
+    vision_end_token_id: int = 151653
+    bos_token_id: int = 151643
+    eos_token_id: int = 151645
+    mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])
+    deepstack_visual_indexes: list[int] = field(default_factory=lambda: [8, 16, 24])
+    use_hf_vision_model: bool = False
+    vision_dp_when_cp: bool = False
+    add_encoder: bool = True
+    add_decoder: bool = True
+    freeze_language_model: bool = False
+    freeze_vision_model: bool = False
+    freeze_vision_projection: bool = False
+    decoder_sparse_step: int = 1
+    mlp_only_layers: list[int] = field(default_factory=list)
+    multimodal_field_names: ClassVar[tuple[str, ...]] = (
+        "image_token_id",
+        "video_token_id",
+        "vision_start_token_id",
+        "vision_end_token_id",
+        "bos_token_id",
+        "eos_token_id",
+        "mrope_section",
+        "deepstack_visual_indexes",
+        "use_hf_vision_model",
+        "vision_dp_when_cp",
+        "decoder_sparse_step",
+        "mlp_only_layers",
+    )
+
+
+class Qwen3VLModelBuilder(GPTModelBuilder):
+    """Build dense or MoE Qwen3-VL without a model provider."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> Qwen3VLModel:
+        """Build one Qwen3-VL pipeline stage.
+
+        Args:
+            pg_collection: Process groups for distributed construction.
+            pre_process: Whether this stage owns input processing.
+            post_process: Whether this stage owns output processing.
+            vp_stage: Virtual pipeline stage index.
+
+        Returns:
+            Constructed Qwen3-VL stage.
+        """
+        config = self._model_config
+        pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
+        transformer = _runtime_transformer(config)
+        vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
+        layer_spec = get_gpt_layer_with_transformer_engine_spec(
+            num_experts=transformer.num_moe_experts,
+            moe_grouped_gemm=True,
+            qk_layernorm=transformer.qk_layernorm,
+            fp8=False,
+        )
+        model = Qwen3VLModel(
+            language_transformer_config=transformer,
+            language_transformer_layer_spec=layer_spec,
+            vision_transformer_config=vision_config,
+            parallel_output=config.parallel_output,
+            pre_process=pre_process,
+            post_process=post_process,
+            add_encoder=config.add_encoder,
+            add_decoder=config.add_decoder,
+            pg_collection=pg_collection,
+            vp_stage=vp_stage,
+        )
+        if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
+            model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
+        return model
+
+
+@dataclass(kw_only=True)
+class Qwen35VLModelConfig(Qwen3VLModelConfig):
+    """Pure builder input shared by dense and MoE Qwen3.5-VL."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.qwen_vl.model_config.Qwen35VLModelBuilder"
+
+
+def _patch_attention(spec) -> None:
+    if hasattr(spec, "layer_specs"):
+        for layer_spec in spec.layer_specs:
+            _patch_attention(layer_spec)
+        return
+    submodules = getattr(spec, "submodules", None)
+    attention = getattr(submodules, "self_attention", None)
+    if attention is not None and hasattr(attention, "submodules") and hasattr(attention.submodules, "linear_qkv"):
+        attention.module = Qwen3VLSelfAttention
+
+
+class Qwen35VLModelBuilder(Qwen3VLModelBuilder):
+    """Build dense or MoE Qwen3.5-VL hybrid models without a provider."""
+
+    def build_model(
+        self,
+        pg_collection: ProcessGroupCollection,
+        pre_process: bool | None = None,
+        post_process: bool | None = None,
+        vp_stage: int | None = None,
+    ) -> Qwen3VLModel:
+        """Build one Qwen3.5-VL pipeline stage.
+
+        Args:
+            pg_collection: Process groups for distributed construction.
+            pre_process: Whether this stage owns input processing.
+            post_process: Whether this stage owns output processing.
+            vp_stage: Virtual pipeline stage index.
+
+        Returns:
+            Constructed Qwen3.5-VL stage.
+        """
+        config = self._model_config
+        pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
+        transformer = _runtime_transformer(config)
+        vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
+        layer_spec = get_transformer_block_with_experimental_attention_variant_spec(transformer, vp_stage=vp_stage)
+        _patch_attention(layer_spec)
+        mtp_spec = mtp_block_spec(config, layer_spec, vp_stage=vp_stage)
+        _patch_attention(mtp_spec)
+        model = Qwen3VLModel(
+            language_transformer_config=transformer,
+            language_transformer_layer_spec=layer_spec,
+            vision_transformer_config=vision_config,
+            parallel_output=config.parallel_output,
+            pre_process=pre_process,
+            post_process=post_process,
+            add_encoder=config.add_encoder,
+            add_decoder=config.add_decoder,
+            pg_collection=pg_collection,
+            mtp_block_spec=mtp_spec,
+            vp_stage=vp_stage,
+        )
+        if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
+            model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
+        return model
+
+
+__all__ = [
+    "Qwen25VLModelBuilder",
+    "Qwen25VLModelConfig",
+    "Qwen35VLModelBuilder",
+    "Qwen35VLModelConfig",
+    "Qwen3VLModelBuilder",
+    "Qwen3VLModelConfig",
+]

@@ -24,6 +24,7 @@ import torch
 import yaml
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.config_utils import apply_run_config_backward_compat
 from megatron.bridge.utils.common_utils import get_rank_safe, get_world_size_safe, print_rank_0
@@ -373,11 +374,7 @@ def get_hf_model_id_from_checkpoint(path: str | os.PathLike[str]) -> str | None:
     if not isinstance(model_section, dict):
         return None
 
-    hf_model_id = model_section.get("hf_model_id")
-    if not hf_model_id:
-        return None
-
-    return str(hf_model_id)
+    return get_hf_model_id_from_model_config(model_section)
 
 
 @lru_cache()

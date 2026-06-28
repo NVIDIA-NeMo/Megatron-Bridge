@@ -34,6 +34,8 @@ References:
 - Qwen3 bridge: QK layernorm mapping pattern
 """
 
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -45,7 +47,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.layer_specs import exaone4_layer_spec
+from megatron.bridge.models.exaone.model_config import Exaone4ModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -84,6 +87,9 @@ class Exaone4Bridge(MegatronModelBridge):
         ... )
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = Exaone4ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace EXAONE 4.0 config to Megatron GPTModelProvider.
@@ -127,6 +133,33 @@ class Exaone4Bridge(MegatronModelBridge):
             )
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert EXAONE 4 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+        )
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rope_scaling, dict) and rope_scaling.get("rope_type") == "llama3":
+            config_kwargs.update(
+                rope_scaling=True,
+                rope_scaling_factor=rope_scaling.get("factor", 16.0),
+                rope_scaling_low_freq_factor=rope_scaling.get("low_freq_factor", 1.0),
+                rope_scaling_high_freq_factor=rope_scaling.get("high_freq_factor", 4.0),
+                rope_scaling_original_max_position_embeddings=rope_scaling.get(
+                    "original_max_position_embeddings", 8192
+                ),
+            )
+        return config_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:

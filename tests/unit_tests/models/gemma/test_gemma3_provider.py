@@ -269,7 +269,7 @@ class TestGemma3CustomComponents:
         """Test Gemma3RotaryEmbedding initialization."""
         # Test that rope_scaling must be False
         with pytest.raises(AssertionError):
-            with patch("megatron.bridge.models.gemma.gemma3_provider.RotaryEmbedding"):
+            with patch("megatron.bridge.models.gemma.modeling_gemma3.RotaryEmbedding"):
                 Gemma3RotaryEmbedding(
                     rope_scaling=True,  # Should cause assertion error
                     kv_channels=256,
@@ -277,7 +277,7 @@ class TestGemma3CustomComponents:
                 )
 
         # Test successful initialization with proper mocking
-        with patch("megatron.bridge.models.gemma.gemma3_provider.RotaryEmbedding") as mock_rotary_embedding:
+        with patch("megatron.bridge.models.gemma.modeling_gemma3.RotaryEmbedding") as mock_rotary_embedding:
             mock_rotary_embedding.return_value = Mock()
 
             Gemma3RotaryEmbedding(

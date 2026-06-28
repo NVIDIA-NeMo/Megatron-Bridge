@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping, Optional, Tuple, Union
+import copy
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -28,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+from megatron.bridge.models.gpt_oss.model_config import GPTOSSModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
@@ -52,6 +54,9 @@ class GPTOSSBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = GPTOSSModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
@@ -100,6 +105,63 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.yarn_mscale_all_dim = None
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert GPT-OSS HF config to builder-backed config with complete YaRN settings."""
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        unscaled_config = copy.copy(hf_config)
+        if hasattr(unscaled_config, "rope_scaling"):
+            unscaled_config.rope_scaling = None
+        config_kwargs = super().hf_config_to_model_config_kwargs(unscaled_config)
+
+        yarn_values = {
+            "factor": 32.0,
+            "original_max_position_embeddings": 4096,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "mscale": None,
+            "mscale_all_dim": None,
+        }
+        if isinstance(rope_scaling, dict):
+            yarn_values.update({name: rope_scaling[name] for name in yarn_values if name in rope_scaling})
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=True,
+            add_qkv_bias=False,
+            share_embeddings_and_output_weights=False,
+            position_embedding_type="yarn",
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_load_balancing_type="none",
+            bias_activation_fusion=True,
+            bias_dropout_fusion=False,
+            hidden_dropout=0.0,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            activation_func=quick_gelu,
+            activation_func_clamp_value=7.0,
+            glu_linear_offset=1.0,
+            softmax_type="learnable",
+            window_size=(hf_config.sliding_window - 1, 0),
+            window_attn_skip_freq=2,
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            yarn_rotary_scaling_factor=yarn_values["factor"],
+            yarn_original_max_position_embeddings=yarn_values["original_max_position_embeddings"],
+            yarn_beta_fast=yarn_values["beta_fast"],
+            yarn_beta_slow=yarn_values["beta_slow"],
+            yarn_mscale=yarn_values["mscale"],
+            yarn_mscale_all_dim=yarn_values["mscale_all_dim"],
+            yarn_correction_range_round_to_int=(
+                rope_scaling.get("truncate", False) if isinstance(rope_scaling, dict) else False
+            ),
+        )
+        return config_kwargs
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

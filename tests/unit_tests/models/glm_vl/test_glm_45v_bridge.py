@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
@@ -25,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
+from megatron.bridge.models.glm_vl.model_config import GLM45VModelBuilder, GLM45VModelConfig
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
@@ -115,12 +118,46 @@ class TestGLM45VBridgeInitialization:
         """Test that bridge has required methods."""
         assert hasattr(glm_45v_bridge, "provider_bridge")
         assert callable(glm_45v_bridge.provider_bridge)
-
         assert hasattr(glm_45v_bridge, "mapping_registry")
         assert callable(glm_45v_bridge.mapping_registry)
-
         assert hasattr(glm_45v_bridge, "get_hf_tokenizer_kwargs")
         assert callable(glm_45v_bridge.get_hf_tokenizer_kwargs)
+
+    def test_model_config_bridge_is_serializable(self):
+        text_config = SimpleNamespace(
+            attention_bias=True,
+            head_dim=32,
+            hidden_size=128,
+            rope_theta=10000.0,
+            partial_rotary_factor=0.5,
+            initializer_range=0.02,
+            intermediate_size=256,
+            max_position_embeddings=128,
+            moe_intermediate_size=64,
+            num_attention_heads=4,
+            n_routed_experts=8,
+            routed_scaling_factor=1.0,
+            num_experts_per_tok=2,
+            num_hidden_layers=3,
+            num_key_value_heads=2,
+            rms_norm_eps=1e-5,
+            use_qk_norm=True,
+            vocab_size=512,
+            first_k_dense_replace=1,
+            torch_dtype="bfloat16",
+        )
+        vision_config = SimpleNamespace(model_type="glm4v", hidden_size=64, spatial_merge_size=2)
+        pretrained = SimpleNamespace(config=SimpleNamespace(text_config=text_config, vision_config=vision_config))
+
+        result = GLM45VBridge().model_config_bridge(pretrained)
+
+        assert isinstance(result, GLM45VModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.moe_layer_freq == [0, 1, 1]
+        assert result.transformer.mrope_section == [8, 12, 12]
+        assert result.get_builder_cls() is GLM45VModelBuilder
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.vision_config["hidden_size"] == 64
 
 
 class TestGLM45VBridgeProviderBridge:

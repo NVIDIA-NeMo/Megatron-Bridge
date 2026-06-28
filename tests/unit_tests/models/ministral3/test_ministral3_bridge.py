@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+from megatron.bridge.models.ministral3.model_config import Ministral3ModelBuilder, Ministral3ModelConfig
 
 
 @pytest.fixture
@@ -95,6 +98,45 @@ class TestMinistral3BridgeInitialization:
 
         assert hasattr(ministral3_bridge, "mapping_registry")
         assert callable(ministral3_bridge.mapping_registry)
+
+    def test_model_config_bridge_is_serializable_and_provider_free(self):
+        text_config = SimpleNamespace(
+            hidden_size=128,
+            intermediate_size=256,
+            num_hidden_layers=2,
+            num_attention_heads=4,
+            num_key_value_heads=2,
+            head_dim=32,
+            vocab_size=512,
+            max_position_embeddings=1024,
+            rms_norm_eps=1e-5,
+            initializer_range=0.02,
+            tie_word_embeddings=False,
+            torch_dtype="bfloat16",
+            rope_parameters={
+                "rope_theta": 1000000,
+                "original_max_position_embeddings": 512,
+                "llama_4_scaling_beta": 0.5,
+            },
+        )
+        hf_config = SimpleNamespace(
+            model_type="mistral3",
+            text_config=text_config,
+            vision_config={"model_type": "pixtral", "hidden_size": 64},
+            image_token_id=10,
+        )
+
+        result = Ministral3Bridge().model_config_bridge(SimpleNamespace(config=hf_config))
+
+        assert isinstance(result, Ministral3ModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.llama_4_scaling_beta == 0.5
+        assert result.yarn_original_max_position_embeddings == 512
+        assert "llama_4_scaling_beta" not in result.transformer.__dict__
+        assert result.get_builder_cls() is Ministral3ModelBuilder
+        restored = type(result).from_dict(result.as_dict())
+        assert isinstance(restored, Ministral3ModelConfig)
+        assert restored.hf_config["text_config"]["hidden_size"] == 128
 
 
 class TestMinistral3BridgeProviderBridge:

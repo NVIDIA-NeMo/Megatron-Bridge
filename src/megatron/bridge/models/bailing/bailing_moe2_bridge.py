@@ -32,10 +32,13 @@ Supported models:
 """
 
 import logging
+from dataclasses import dataclass, field
 from functools import partial
+from typing import Any, Callable
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
@@ -47,6 +50,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -68,6 +72,15 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
+@dataclass(kw_only=True)
+class BailingMoeV2ModelConfig(BridgeGPTModelConfig):
+    """Builder-backed Bailing MoE V2 config with its family layer spec."""
+
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+    )
+
+
 @MegatronModelBridge.register_bridge(source="BailingMoeV2ForCausalLM", target=GPTModel, model_type="bailing_moe_v2")
 class BailingMoeV2Bridge(MegatronModelBridge):
     """
@@ -78,6 +91,9 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("inclusionAI/Ling-mini-2.0")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = BailingMoeV2ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         provider = super().provider_bridge(hf_pretrained)
@@ -108,6 +124,38 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Bailing MoE V2 config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Bailing MoE V2 configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            add_qkv_bias=getattr(hf_config, "use_qkv_bias", False),
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_router_load_balancing_type="none",
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            hidden_dropout=0.0,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []

@@ -18,6 +18,8 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -179,6 +181,24 @@ class TestMegatronOlMoEBridge:
         assert result.num_attention_heads == olmoe_1b_7b_config.num_attention_heads
         assert result.seq_length == olmoe_1b_7b_config.max_position_embeddings
         assert result.rotary_base == olmoe_1b_7b_config.rope_theta
+
+    def test_model_config_bridge_preserves_olmoe_specialization(self, mock_pretrained_olmoe_1b_7b):
+        result = OlMoEBridge().model_config_bridge(mock_pretrained_olmoe_1b_7b)
+
+        assert isinstance(result, GPTModelConfig)
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer_layer_spec is not None
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.qk_layernorm is True
+        assert result.transformer.moe_grouped_gemm is True
+        assert result.transformer.moe_router_score_function == "softmax"
+        assert result.transformer.moe_token_dispatcher_type == "alltoall"
+        assert "normalization" not in result.__dict__
+
+        restored = type(result).from_dict(result.as_dict())
+
+        assert type(restored) is type(result)
+        assert restored.transformer_layer_spec is result.transformer_layer_spec
 
     def test_provider_bridge_basic_custom(self, mock_pretrained_olmoe_custom, olmoe_custom_config):
         """Test basic provider_bridge functionality for custom OLMoE."""

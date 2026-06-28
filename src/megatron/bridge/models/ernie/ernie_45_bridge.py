@@ -20,8 +20,12 @@ Megatron-Core GPTModel with single-pool MoE (64 experts, top-6 routing,
 shared experts, expert bias for aux-free load balancing).
 """
 
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
 import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -31,10 +35,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
+def _ernie45_decoder_block_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> ModuleSpec:
     """Create a decoder block spec that respects ``moe_layer_freq``.
 
     The default ``GPTModelProvider.transformer_layer_spec`` calls
@@ -55,6 +60,13 @@ def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None
         use_transformer_engine=True,
         vp_stage=vp_stage,
     )
+
+
+@dataclass(kw_only=True)
+class Ernie45ModelConfig(BridgeGPTModelConfig):
+    """Builder-backed ERNIE 4.5 config with mixed dense/MoE layer selection."""
+
+    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: _ernie45_decoder_block_spec)
 
 
 # HF class name string; avoids requiring the HF modeling module at import time.
@@ -160,6 +172,9 @@ class Ernie45Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    MODEL_CONFIG_CLASS = Ernie45ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
     @staticmethod
     def _get_num_experts(hf_config) -> int:
         """Extract num_experts as an int.
@@ -253,6 +268,59 @@ class Ernie45Bridge(MegatronModelBridge):
                 provider.moe_layer_freq = [0] + [1] * (num_layers - 1)
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert an ERNIE 4.5 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        num_experts = self._get_num_experts(hf_config)
+        moe_intermediate = getattr(hf_config, "moe_intermediate_size", None)
+        if isinstance(moe_intermediate, (list, tuple)):
+            moe_ffn_hidden_size = moe_intermediate[0]
+        elif moe_intermediate is not None:
+            moe_ffn_hidden_size = moe_intermediate
+        else:
+            moe_ffn_hidden_size = getattr(hf_config, "intermediate_size", 5120)
+
+        mlp_layer_types = getattr(hf_config, "mlp_layer_types", None)
+        if mlp_layer_types is not None:
+            moe_layer_freq = [0 if layer_type == "dense" else 1 for layer_type in mlp_layer_types]
+        else:
+            num_layers = hf_config.num_hidden_layers
+            moe_start = getattr(hf_config, "moe_layer_start_index", None)
+            if moe_start is not None:
+                start = moe_start[0] if isinstance(moe_start, (list, tuple)) else moe_start
+                moe_layer_freq = [0] * start + [1] * (num_layers - start)
+            else:
+                moe_layer_freq = [0] + [1] * (num_layers - 1)
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            rotary_base=500000.0,
+            rotary_interleaved=True,
+            moe_router_load_balancing_type="aux_loss",
+            num_moe_experts=num_experts,
+            moe_router_topk=getattr(hf_config, "moe_k", 6),
+            moe_ffn_hidden_size=moe_ffn_hidden_size,
+            moe_shared_expert_intermediate_size=(
+                moe_ffn_hidden_size * getattr(hf_config, "moe_num_shared_experts", 2)
+            ),
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 0.001),
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            mtp_num_layers=None,
+            moe_layer_freq=moe_layer_freq,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry with parameter mappings for ERNIE 4.5 MoE."""

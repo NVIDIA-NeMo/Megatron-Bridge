@@ -2,7 +2,7 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
 from megatron.core.inference.contexts import BaseInferenceContext
@@ -15,9 +15,8 @@ from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.utils import log_single_rank
-
-from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 
 
 logger = logging.getLogger(__name__)
@@ -46,8 +45,17 @@ def _run_mamba_mixer_with_static_cache_namespace(
 class FalconH1MambaMixer(MambaMixer):
     """Mamba mixer with Falcon H1 projection multipliers."""
 
+    def __init__(
+        self,
+        *args: Any,
+        ssm_multipliers: tuple[float, float, float, float, float] = (1.0, 1.0, 1.0, 1.0, 1.0),
+        **kwargs: Any,
+    ) -> None:
+        self.ssm_multipliers = ssm_multipliers
+        super().__init__(*args, **kwargs)
+
     def _scale_zxbc_dt(self, zxbc_dt: torch.Tensor, *, use_context_parallel_dims: bool) -> torch.Tensor:
-        multipliers = self.config.ssm_multipliers
+        multipliers = self.ssm_multipliers
         if tuple(multipliers) == (1.0, 1.0, 1.0, 1.0, 1.0):
             return zxbc_dt
 
@@ -94,6 +102,10 @@ class FalconH1MambaMixer(MambaMixer):
 class FalconH1SelfAttention(SelfAttention):
     """Self attention with Falcon H1 key projection multiplier."""
 
+    def __init__(self, *args: Any, key_multiplier: float = 1.0, **kwargs: Any) -> None:
+        self.key_multiplier = key_multiplier
+        super().__init__(*args, **kwargs)
+
     def get_query_key_value_tensors(
         self,
         hidden_states: torch.Tensor,
@@ -108,7 +120,7 @@ class FalconH1SelfAttention(SelfAttention):
             split_qkv=split_qkv,
         )
 
-        key_multiplier = self.config.key_multiplier
+        key_multiplier = self.key_multiplier
         if key_multiplier == 1.0:
             return qkv
 
@@ -126,6 +138,15 @@ class FalconH1SelfAttention(SelfAttention):
 class FalconH1MLP(MLP):
     """MLP with Falcon H1 gate and down projection multipliers."""
 
+    def __init__(
+        self,
+        *args: Any,
+        mlp_multipliers: tuple[float, float] = (1.0, 1.0),
+        **kwargs: Any,
+    ) -> None:
+        self.mlp_multipliers = mlp_multipliers
+        super().__init__(*args, **kwargs)
+
     def forward(self, hidden_states: torch.Tensor, per_token_scale: torch.Tensor | None = None):
         if per_token_scale is not None:
             raise ValueError("Falcon H1 MLP does not support per_token_scale")
@@ -141,12 +162,12 @@ class FalconH1MLP(MLP):
             if (clamp_value := self.config.activation_func_clamp_value) is not None:
                 gate = gate.clamp(min=None, max=clamp_value)
                 linear = linear.clamp(min=-clamp_value, max=clamp_value)
-            gate_multiplier, down_multiplier = self.config.mlp_multipliers
+            gate_multiplier, down_multiplier = self.mlp_multipliers
             intermediate_parallel = self.config.activation_func(gate * gate_multiplier) * (
                 linear + self.config.glu_linear_offset
             )
         else:
-            down_multiplier = self.config.mlp_multipliers[1]
+            down_multiplier = self.mlp_multipliers[1]
             intermediate_parallel = self.activation_func(intermediate_parallel)
 
         output, output_bias = self.linear_fc2(intermediate_parallel)
@@ -198,7 +219,8 @@ class FalconH1Layer(MegatronModule):
 
     def __init__(
         self,
-        config: FalconH1Config,
+        config: TransformerConfig,
+        model_config,
         submodules: FalconH1Submodules,
         layer_number: int,
         residual_in_fp32: bool = False,
@@ -229,6 +251,7 @@ class FalconH1Layer(MegatronModule):
     ):
         super().__init__(config)
         self.config = config
+        self.model_config = model_config
         self.layer_number = layer_number
         self.residual_in_fp32 = residual_in_fp32
         self.use_mamba = use_mamba
@@ -280,6 +303,7 @@ class FalconH1Layer(MegatronModule):
                 conv_bias=conv_bias,
                 chunk_size=chunk_size,
                 pg_collection=pg_collection,
+                ssm_multipliers=model_config.ssm_multipliers,
             )
         else:
             self.mamba_mixer = None
@@ -309,6 +333,7 @@ class FalconH1Layer(MegatronModule):
                 config=self.config,
                 layer_number=self.layer_number,
                 attn_mask_type=attn_mask_type,
+                key_multiplier=model_config.key_multiplier,
                 **attention_optional_kwargs,
             )
         else:
@@ -338,7 +363,12 @@ class FalconH1Layer(MegatronModule):
                     )
 
             # Build the MLP module
-            self.mlp = build_module(submodules.mlp, config=self.config, **additional_mlp_kwargs)
+            self.mlp = build_module(
+                submodules.mlp,
+                config=self.config,
+                mlp_multipliers=model_config.mlp_multipliers,
+                **additional_mlp_kwargs,
+            )
 
             # Set layer number if MLP supports it
             if hasattr(self.mlp, "set_layer_number"):
@@ -390,11 +420,11 @@ class FalconH1Layer(MegatronModule):
         if self.use_mamba and self.mamba_mixer is not None:
             mamba_output, mamba_bias = _run_mamba_mixer_with_static_cache_namespace(
                 self.mamba_mixer,
-                hidden_states * self.config.ssm_in_multiplier,
+                hidden_states * self.model_config.ssm_in_multiplier,
                 inference_context,
                 use_attention=self.use_attention and self.self_attention is not None,
             )
-            mamba_output = mamba_output * self.config.ssm_out_multiplier
+            mamba_output = mamba_output * self.model_config.ssm_out_multiplier
             outputs.append(mamba_output)
             if mamba_bias is not None:
                 biases.append(mamba_bias)
@@ -402,7 +432,7 @@ class FalconH1Layer(MegatronModule):
         # Attention Forward: SelfAttention
         if self.use_attention and self.self_attention is not None:
             attn_output, attn_bias = self.self_attention(
-                hidden_states * self.config.attention_in_multiplier,
+                hidden_states * self.model_config.attention_in_multiplier,
                 attention_mask=attention_mask,
                 inference_context=inference_context,
                 rotary_pos_emb=rotary_pos_emb,
@@ -412,7 +442,7 @@ class FalconH1Layer(MegatronModule):
                 packed_seq_params=packed_seq_params,
                 sequence_len_offset=sequence_len_offset,
             )
-            attn_output = attn_output * self.config.attention_out_multiplier
+            attn_output = attn_output * self.model_config.attention_out_multiplier
             outputs.append(attn_output)
             if attn_bias is not None:
                 biases.append(attn_bias)

@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
@@ -64,6 +66,14 @@ class TestMimoBridge:
 
     def test_registration(self):
         assert issubclass(MimoBridge, MegatronModelBridge)
+
+    def test_model_config_bridge_maps_mtp_without_phantom_fields(self, mimo_config):
+        result = MimoBridge().model_config_bridge(SimpleNamespace(config=SimpleNamespace(**mimo_config)))
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.mtp_num_layers == 1
+        assert result.transformer.mtp_loss_scaling_factor == 0.1
+        assert "mtp_num_layers" not in result.__dict__
 
     def test_provider_bridge_maps_mtp_config(self, mock_pretrained_mimo):
         bridge = MimoBridge()

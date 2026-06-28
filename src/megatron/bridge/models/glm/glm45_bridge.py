@@ -12,11 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
 from functools import partial
+from typing import Any, Callable
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from transformers import Glm4MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -28,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -38,6 +42,15 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
+
+
+@dataclass(kw_only=True)
+class GLM45ModelConfig(BridgeGPTModelConfig):
+    """Builder-backed GLM 4.5 config with its mixed dense/MoE layer spec."""
+
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+    )
 
 
 @MegatronModelBridge.register_bridge(source=Glm4MoeForCausalLM, target=GPTModel, model_type="glm4_moe")
@@ -53,6 +66,9 @@ class GLM45Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = GLM45ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
@@ -92,6 +108,45 @@ class GLM45Bridge(MegatronModelBridge):
         )
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face GLM 4.5 config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face GLM 4.5 configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            moe_shared_expert_overlap=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_router_score_function="sigmoid",
+            moe_permute_fusion=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_router_bias_update_rate=0,
+            moe_aux_loss_coeff=0.001,
+            persist_layer_norm=True,
+            bias_activation_fusion=True,
+            bias_dropout_fusion=True,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", None),
+            mtp_loss_scaling_factor=0.3,
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []

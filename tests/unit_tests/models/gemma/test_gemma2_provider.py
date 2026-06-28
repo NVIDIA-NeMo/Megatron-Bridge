@@ -275,10 +275,10 @@ class TestGemma2DotProductAttention:
         v = torch.zeros(seq, batch, heads, head_dim)
         buf = torch.zeros(batch * heads, seq, seq)
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider.get_swa", return_value=swa_tensor) as mock_get_swa,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.get_swa", return_value=swa_tensor) as mock_get_swa,
             patch.object(attn.scale_mask_softmax, "forward", mock_softmax_fwd),
-            patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
-            patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.parallel_state") as mock_ps,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.tensor_parallel") as mock_tp,
         ):
             mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
             mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
@@ -370,10 +370,10 @@ class TestGemma2DotProductAttention:
         v = torch.zeros(seq, batch, heads, head_dim)
         buf = torch.zeros(batch * heads, seq, seq)
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider.get_swa", return_value=swa_mask_val) as mock_get_swa,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.get_swa", return_value=swa_mask_val) as mock_get_swa,
             patch.object(attn.scale_mask_softmax, "forward", side_effect=fake_forward),
-            patch("megatron.bridge.models.gemma.gemma2_provider.parallel_state") as mock_ps,
-            patch("megatron.bridge.models.gemma.gemma2_provider.tensor_parallel") as mock_tp,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.parallel_state") as mock_ps,
+            patch("megatron.bridge.models.gemma.modeling_gemma2.tensor_parallel") as mock_tp,
         ):
             mock_ps.get_global_memory_buffer.return_value.get_tensor.return_value = buf
             mock_tp.get_cuda_rng_tracker.return_value.fork.return_value.__enter__ = lambda s: None
@@ -434,10 +434,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -456,8 +456,8 @@ class TestGemma2FlexDotProductAttention:
         mock_flex = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", False),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", False),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
         ):
             with patch.object(
                 Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
@@ -491,8 +491,8 @@ class TestGemma2FlexDotProductAttention:
         mock_flex = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
         ):
             attn = Gemma2FlexDotProductAttention(
                 config=config, layer_number=1, attn_mask_type=AttnMaskType.causal, attention_type="self"
@@ -517,10 +517,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -541,8 +541,8 @@ class TestGemma2FlexDotProductAttention:
         padding_mask = torch.zeros(2, 1, 4, 4, dtype=torch.bool)
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
         ):
             with patch.object(
                 Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)
@@ -568,10 +568,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -598,9 +598,9 @@ class TestGemma2FlexDotProductAttention:
         (e.g. moving the factory inside __init__) is caught immediately.
         """
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=Mock(),
             ),
         ):
@@ -618,10 +618,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -646,10 +646,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -678,10 +678,10 @@ class TestGemma2FlexDotProductAttention:
         mock_block_mask = Mock()
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
             patch(
-                "megatron.bridge.models.gemma.gemma2_provider._create_flex_block_mask",
+                "megatron.bridge.models.gemma.modeling_gemma2._create_flex_block_mask",
                 return_value=mock_block_mask,
             ),
         ):
@@ -709,8 +709,8 @@ class TestGemma2FlexDotProductAttention:
         padding_mask = torch.zeros(2, 1, 4, 4, dtype=torch.bool)
 
         with (
-            patch("megatron.bridge.models.gemma.gemma2_provider._HAVE_FLEX_ATTN", True),
-            patch("megatron.bridge.models.gemma.gemma2_provider._flex_attn_func", mock_flex),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._HAVE_FLEX_ATTN", True),
+            patch("megatron.bridge.models.gemma.modeling_gemma2._flex_attn_func", mock_flex),
         ):
             with patch.object(
                 Gemma2DotProductAttention, "forward", return_value=torch.zeros(4, 2, 256)

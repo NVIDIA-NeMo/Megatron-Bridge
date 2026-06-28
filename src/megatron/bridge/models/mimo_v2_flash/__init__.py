@@ -13,7 +13,15 @@
 # limitations under the License.
 
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import MiMoV2FlashBridge  # noqa: F401
-from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider  # noqa: F401
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "MiMoV2FlashModelProvider":
+        from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
+
+        return MiMoV2FlashModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

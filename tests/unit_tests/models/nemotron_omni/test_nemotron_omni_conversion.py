@@ -22,6 +22,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.nemotron_omni.model_config import NemotronOmniModelBuilder, NemotronOmniModelConfig
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
@@ -140,6 +141,56 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+
+
+def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
+    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained.config = _mock_omni_hf_config()
+    config = NemotronOmniBridge().model_config_bridge(hf_pretrained)
+    assert isinstance(config, NemotronOmniModelConfig)
+    pg_collection = SimpleNamespace(pp=object())
+    sound_encoder = object()
+    sound_projection = object()
+    built_model = object()
+    captured = {}
+    projector_kwargs = {}
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.nemotron_omni.model_config.BridgeSoundEncoder", lambda sound_config: sound_encoder
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.nemotron_omni.model_config.MultimodalProjector",
+        lambda **kwargs: projector_kwargs.update(kwargs) or sound_projection,
+    )
+
+    def fake_llava_model(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(config=kwargs["language_transformer_config"])
+
+    monkeypatch.setattr("megatron.bridge.models.nemotron_omni.model_config.LLaVAModel", fake_llava_model)
+    monkeypatch.setattr(
+        "megatron.bridge.models.nemotron_omni.model_config.NemotronOmniModel",
+        lambda **kwargs: built_model,
+    )
+
+    result = NemotronOmniModelBuilder(config).build_model(
+        pg_collection,
+        pre_process=True,
+        post_process=True,
+        vp_stage=2,
+    )
+
+    assert result is built_model
+    assert captured["sound_model"] is sound_encoder
+    assert captured["sound_projection"] is sound_projection
+    assert captured["separate_video_embedder"] is True
+    assert captured["temporal_patch_dim"] == 2
+    assert captured["radio_force_eval_mode"] is True
+    assert captured["radio_force_cpe_eval_mode"] is True
+    assert captured["radio_interpolate_only_cpe"] is True
+    assert captured["pg_collection"] is pg_collection
+    assert captured["vp_stage"] == 2
+    assert projector_kwargs["pg_collection"] is pg_collection
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():

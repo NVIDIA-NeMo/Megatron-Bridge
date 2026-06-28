@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
 from functools import partial
-from typing import Dict
+from typing import TYPE_CHECKING, Any, Callable, Dict
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import (
@@ -22,6 +23,8 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -31,17 +34,19 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVGMapping,
 )
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
-from megatron.bridge.models.stepfun.step35_provider import (
+from megatron.bridge.models.stepfun.step35_modeling import (
     Step35DecoderLayer,
-    Step35ModelProvider,
     Step35SharedExpertMLP,
 )
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
 
 # Register the Step3.5 config with transformers AutoConfig.
 # This allows AutoConfig.from_pretrained to resolve "step3p5" without requiring
@@ -145,13 +150,27 @@ def _build_step35_layer_spec(cfg, **kw):
     _MTPDenseLayerSpecsList so that get_gpt_mtp_block_spec_for_backend receives
     a dense ModuleSpec (via layer_specs[-1]) for the MTP transformer sub-layers.
     """
-    block_submodules = get_gpt_decoder_block_spec(cfg, use_transformer_engine=True, normalization="RMSNorm", **kw)
+    transformer_config = getattr(cfg, "transformer", cfg)
+    block_submodules = get_gpt_decoder_block_spec(
+        transformer_config, use_transformer_engine=True, normalization="RMSNorm", **kw
+    )
     # Swap the layer module class on every main-decoder spec. The dense MTP
     # spec below is used for MTP layers (which have their own 1-indexed
     # layer_number namespace) so the routed-expert FFN stays disabled even
     # when the last main decoder layer is MoE.
     for spec in block_submodules.layer_specs:
         spec.module = Step35DecoderLayer
+        spec_params = getattr(spec, "params", None)
+        if spec_params is None:
+            spec_params = {}
+            spec.params = spec_params
+        spec_params.update(
+            layer_types=getattr(cfg, "layer_types", None),
+            rotary_percents=getattr(cfg, "rotary_percents", None),
+            sliding_attention_setting=getattr(cfg, "sliding_attention_setting", None),
+            swiglu_limits=getattr(cfg, "swiglu_limits", None),
+            swiglu_limits_shared=getattr(cfg, "swiglu_limits_shared", None),
+        )
         # Re-bind the shared-expert builder on MoE layers so the shared expert
         # honors ``activation_func_clamp_value_shared_expert``. Dense layers
         # have a plain MLP submodule (no ``shared_experts`` attribute) and are
@@ -163,12 +182,38 @@ def _build_step35_layer_spec(cfg, **kw):
     dense_mtp_spec = get_gpt_layer_with_transformer_engine_spec(
         num_experts=None,
         moe_grouped_gemm=False,
-        qk_layernorm=cfg.qk_layernorm,
+        qk_layernorm=transformer_config.qk_layernorm,
     )
     dense_mtp_spec.module = Step35DecoderLayer
+    dense_params = getattr(dense_mtp_spec, "params", None)
+    if dense_params is None:
+        dense_params = {}
+        dense_mtp_spec.params = dense_params
+    dense_params.update(
+        layer_types=getattr(cfg, "layer_types", None),
+        rotary_percents=getattr(cfg, "rotary_percents", None),
+        sliding_attention_setting=getattr(cfg, "sliding_attention_setting", None),
+        swiglu_limits=getattr(cfg, "swiglu_limits", None),
+        swiglu_limits_shared=getattr(cfg, "swiglu_limits_shared", None),
+    )
     block_submodules.layer_specs = _MTPDenseLayerSpecsList(block_submodules.layer_specs, dense_mtp_spec)
 
     return block_submodules
+
+
+@dataclass(kw_only=True)
+class Step35ModelConfig(BridgeGPTModelConfig):
+    """Builder-backed Step-3.5 config with its hybrid decoder layer spec."""
+
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = _build_step35_layer_spec
+    layer_types: list[str] | None = None
+    attention_other_setting: dict[str, Any] | None = None
+    sliding_attention_setting: dict[str, Any] | None = None
+    rotary_base_per_layer: list[float] | None = None
+    rotary_percents: list[float] | None = None
+    swiglu_limits: list[float | None] | None = None
+    swiglu_limits_shared: list[float | None] | None = None
+    head_wise_attn_gate: bool = False
 
 
 # ``source`` and ``model_type`` keep the legacy ``Step3p5ForCausalLM`` /
@@ -180,7 +225,6 @@ def _build_step35_layer_spec(cfg, **kw):
 @MegatronModelBridge.register_bridge(
     source="Step3p5ForCausalLM",
     target=GPTModel,
-    provider=Step35ModelProvider,
     model_type="step3p5",
 )
 class Step35Bridge(MegatronModelBridge):
@@ -209,7 +253,11 @@ class Step35Bridge(MegatronModelBridge):
         ("layer_types", "layer_types"),
     ]
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
+    MODEL_CONFIG_CLASS = Step35ModelConfig
+    TRANSFORMER_CONFIG_CLASS = TransformerConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Step35ModelProvider":
         """Convert HuggingFace Step3.5 config to GPTModelProvider.
 
         Layered field-extraction strategy (mirrors the qwen3-vl bridge pattern):
@@ -232,9 +280,17 @@ class Step35Bridge(MegatronModelBridge):
            below are documented so the call site doesn't silently fall back
            to wrong values.
         """
-        provider = super().provider_bridge(hf_pretrained)
-
         hf_config = hf_pretrained.config
+        from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
+
+        base_provider = super().provider_bridge(hf_pretrained)
+        provider = Step35ModelProvider(
+            **{
+                name: getattr(base_provider, name)
+                for name, config_field in Step35ModelProvider.__dataclass_fields__.items()
+                if config_field.init and hasattr(base_provider, name)
+            }
+        )
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
         if provider.layer_types is not None and mtp_layer_types:
             provider.layer_types = list(provider.layer_types) + list(mtp_layer_types)
@@ -340,6 +396,111 @@ class Step35Bridge(MegatronModelBridge):
             provider.transformer_layer_spec = _build_step35_layer_spec
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Step-3.5 config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+
+        layer_types = config_kwargs.get("layer_types")
+        mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
+        if layer_types is not None and mtp_layer_types:
+            config_kwargs["layer_types"] = list(layer_types) + list(mtp_layer_types)
+
+        partial_rotary_factors = getattr(hf_config, "partial_rotary_factors", None)
+        if partial_rotary_factors is not None:
+            config_kwargs["rotary_percents"] = list(partial_rotary_factors)
+
+        sliding_attention_setting = {
+            "window_size": [512, 0],
+            "num_attention_heads": 96,
+            "num_query_groups": 8,
+            "kv_channels": 128,
+        }
+        sliding_window = getattr(hf_config, "sliding_window", None)
+        if sliding_window is not None:
+            sliding_attention_setting["window_size"] = [int(sliding_window), 0]
+        attention_other_setting = getattr(hf_config, "attention_other_setting", None) or {}
+        if (
+            isinstance(attention_other_setting, dict)
+            and attention_other_setting.get("attention_type") == "sliding_attention"
+        ):
+            if "num_attention_heads" in attention_other_setting:
+                sliding_attention_setting["num_attention_heads"] = int(attention_other_setting["num_attention_heads"])
+            if "num_attention_groups" in attention_other_setting:
+                sliding_attention_setting["num_query_groups"] = int(attention_other_setting["num_attention_groups"])
+            if "head_dim" in attention_other_setting:
+                sliding_attention_setting["kv_channels"] = int(attention_other_setting["head_dim"])
+        config_kwargs["attention_other_setting"] = attention_other_setting
+        config_kwargs["sliding_attention_setting"] = sliding_attention_setting
+
+        rope_theta = getattr(hf_config, "rope_theta", None)
+        if isinstance(rope_theta, list):
+            config_kwargs["rotary_base"] = float(rope_theta[0])
+            config_kwargs["rotary_base_per_layer"] = [float(value) for value in rope_theta]
+        elif rope_theta is not None:
+            config_kwargs["rotary_base"] = float(rope_theta)
+
+        torch_dtype = getattr(hf_config, "torch_dtype", None)
+        if isinstance(torch_dtype, str):
+            dtype_map = {
+                "bfloat16": torch.bfloat16,
+                "float16": torch.float16,
+                "float32": torch.float32,
+            }
+            if torch_dtype not in dtype_map:
+                raise ValueError(f"Unknown torch dtype: {torch_dtype}")
+            autocast_dtype = dtype_map[torch_dtype]
+        elif isinstance(torch_dtype, torch.dtype):
+            autocast_dtype = torch_dtype
+        elif torch_dtype is None:
+            autocast_dtype = config_kwargs.get("autocast_dtype")
+        else:
+            raise ValueError(f"Unknown torch dtype: {torch_dtype}")
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            layernorm_zero_centered_gamma=bool(getattr(hf_config, "zero_centered", True)),
+            qk_layernorm=bool(getattr(hf_config, "use_qk_norm", False)),
+            moe_router_enable_expert_bias=bool(getattr(hf_config, "use_moe_router_bias", False)),
+            swiglu_limits=getattr(hf_config, "swiglu_limits", None),
+            swiglu_limits_shared=getattr(hf_config, "swiglu_limits_shared", None),
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+        )
+        if autocast_dtype is not None:
+            config_kwargs["autocast_dtype"] = autocast_dtype
+
+        moe_router_activation = getattr(hf_config, "moe_router_activation", None)
+        if moe_router_activation is not None:
+            config_kwargs["moe_router_score_function"] = moe_router_activation
+        moe_router_scaling_factor = getattr(hf_config, "moe_router_scaling_factor", None)
+        if moe_router_scaling_factor is not None:
+            config_kwargs["moe_router_topk_scaling_factor"] = float(moe_router_scaling_factor)
+        if bool(getattr(hf_config, "need_fp32_gate", False)):
+            config_kwargs["moe_router_dtype"] = "fp32"
+
+        moe_layers_enum = getattr(hf_config, "moe_layers_enum", None)
+        if moe_layers_enum is not None:
+            moe_layer_freq = [0] * config_kwargs["num_layers"]
+            if isinstance(moe_layers_enum, str):
+                moe_layers = [int(layer) for layer in moe_layers_enum.split(",") if layer]
+            else:
+                moe_layers = [int(layer) for layer in moe_layers_enum]
+            for layer_index in moe_layers:
+                if 0 <= layer_index < config_kwargs["num_layers"]:
+                    moe_layer_freq[layer_index] = 1
+            config_kwargs["moe_layer_freq"] = moe_layer_freq
+
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Dictionary maps Megatron parameter names -> HF parameter names.

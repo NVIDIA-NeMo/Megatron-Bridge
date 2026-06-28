@@ -16,6 +16,7 @@ import importlib
 from pathlib import Path
 
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
@@ -356,7 +357,7 @@ def num_floating_point_operations(
         )
 
         is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
-        hf_model_id = getattr(cfg.model, "hf_model_id", None)
+        hf_model_id = get_hf_model_id_from_model_config(cfg.model)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
         dataset_cfg = getattr(cfg, "dataset", None)
         packed_specs = (

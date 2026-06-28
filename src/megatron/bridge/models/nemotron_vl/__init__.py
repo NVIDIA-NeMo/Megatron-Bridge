@@ -16,9 +16,15 @@
 
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
-    NemotronVLModelProvider,
-)
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "NemotronVLModelProvider":
+        from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
+
+        return NemotronVLModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

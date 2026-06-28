@@ -16,12 +16,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+from megatron.bridge.models.kimi_vl.model_config import KimiK25VLModelBuilder, KimiK25VLModelConfig
 
 
 @pytest.fixture
@@ -100,6 +102,7 @@ def mock_vision_config():
     config = Mock()
     config.hidden_size = 1152
     config.merge_kernel_size = (2, 2)
+    config.to_dict.return_value = {"hidden_size": 1152, "merge_kernel_size": [2, 2]}
     return config
 
 
@@ -146,6 +149,17 @@ class TestKimiK25VLBridgeInitialization:
         assert callable(kimi_bridge.provider_bridge)
         assert hasattr(kimi_bridge, "mapping_registry")
         assert callable(kimi_bridge.mapping_registry)
+
+    def test_model_config_bridge_is_serializable(self, kimi_bridge, mock_hf_pretrained):
+        result = kimi_bridge.model_config_bridge(mock_hf_pretrained)
+
+        assert isinstance(result, KimiK25VLModelConfig)
+        assert type(result.transformer) is MLATransformerConfig
+        assert result.hf_model_id == "/path/to/kimi_k25_vl"
+        assert result.media_placeholder_token_id == 163605
+        assert result.get_builder_cls() is KimiK25VLModelBuilder
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.vision_config["hidden_size"] == 1152
 
 
 class TestKimiK25VLBridgeProviderBridge:

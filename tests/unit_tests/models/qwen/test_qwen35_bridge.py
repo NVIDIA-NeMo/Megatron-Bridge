@@ -16,10 +16,12 @@
 Unit tests for Qwen3.5 bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -98,6 +100,17 @@ class TestQwen35DenseBridge:
     def test_bridge_registration(self):
         """Test that Qwen35Bridge is properly registered."""
         assert issubclass(Qwen35Bridge, MegatronModelBridge)
+
+    def test_model_config_bridge_is_direct_and_serializable(self, qwen3_5_27b_config_dict):
+        pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_5_27b_config_dict))
+        result = Qwen35Bridge().model_config_bridge(pretrained)
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.experimental_attention_variant == "gated_delta_net"
+        assert result.transformer.linear_attention_freq == 4
+        assert "experimental_attention_variant" not in result.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert callable(restored.transformer_layer_spec)
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test basic provider_bridge functionality."""
@@ -454,6 +467,16 @@ class TestQwen35MoEBridge:
     def test_bridge_registration(self):
         """Test that Qwen3_5MoEBridge is properly registered."""
         assert issubclass(Qwen35MoEBridge, MegatronModelBridge)
+
+    def test_model_config_bridge_preserves_moe_fields(self, qwen3_5_397b_a17b_config_dict):
+        pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_5_397b_a17b_config_dict))
+        result = Qwen35MoEBridge().model_config_bridge(pretrained)
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.num_moe_experts == 512
+        assert result.transformer.moe_router_topk == 10
+        assert result.transformer.moe_shared_expert_intermediate_size == 4096
+        assert "num_moe_experts" not in result.__dict__
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_5_moe, mock_qwen3_5_moe_config):
         """Test basic provider_bridge functionality."""

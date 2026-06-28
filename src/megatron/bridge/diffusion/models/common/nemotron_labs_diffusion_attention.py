@@ -157,6 +157,9 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         softmax_scale: float = None,
         cp_comm_type: str = None,
         pg_collection: ProcessGroupCollection = None,
+        hf_config=None,
+        block_size: int = 16,
+        apply_llama4_style_query_key_layer_scaling: bool = False,
     ):
         super().__init__(config=config)
         self.config = config
@@ -193,14 +196,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         )
 
         # RoPE setup (always required)
-        hf_text_config = getattr(config.hf_config, "text_config", config.hf_config)
+        hf_config = hf_config if hf_config is not None else config.hf_config
+        hf_text_config = getattr(hf_config, "text_config", hf_config)
         hf_text_config.max_position_embeddings = config.seq_length
         self.rope_embedding_module = Ministral3RotaryEmbedding(hf_text_config)
 
         # Llama-4 style query scaling (optional)
         self.beta = None
         self.max_position_embeddings = None
-        if getattr(config, "apply_llama4_style_query_key_layer_scaling", False):
+        if apply_llama4_style_query_key_layer_scaling or getattr(
+            config, "apply_llama4_style_query_key_layer_scaling", False
+        ):
             self.beta = hf_text_config.rope_parameters["llama_4_scaling_beta"]
             self.max_position_embeddings = hf_text_config.rope_parameters["original_max_position_embeddings"]
             if (
@@ -211,7 +217,7 @@ class NemotronLabsDiffusionAttention(MegatronModule):
 
         # Pre-compute the sbd_block_diff block mask
         self.mask = compute_block_mask(
-            block_size=getattr(config, "block_size", 16),
+            block_size=block_size,
             max_seq_length=config.seq_length,
         )
 

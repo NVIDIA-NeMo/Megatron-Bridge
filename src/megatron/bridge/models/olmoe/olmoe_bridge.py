@@ -13,9 +13,13 @@
 # limitations under the License.
 
 import logging
+from dataclasses import dataclass
+from typing import Any, Callable
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
 from transformers import OlmoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -25,12 +29,32 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.olmoe.olmoe_provider import olmoe_layer_spec
+from megatron.bridge.models.olmoe.olmoe_provider import OLMoESelfAttention, olmoe_layer_spec
 
 
 logger = logging.getLogger(__name__)
+
+
+def _olmoe_model_config_layer_spec(config: Any) -> ModuleSpec:
+    """Build the OLMoE layer spec without relying on provider-only fields."""
+    layer_spec = get_gpt_layer_with_transformer_engine_spec(
+        num_experts=config.num_moe_experts,
+        moe_grouped_gemm=config.moe_grouped_gemm,
+        qk_layernorm=config.qk_layernorm,
+        fp8=bool(config.num_moe_experts and config.fp8 is not None),
+    )
+    layer_spec.submodules.self_attention.module = OLMoESelfAttention
+    return layer_spec
+
+
+@dataclass(kw_only=True)
+class OlMoEModelConfig(BridgeGPTModelConfig):
+    """Builder-backed OLMoE config with its custom self-attention layer spec."""
+
+    transformer_layer_spec: Callable[..., ModuleSpec] = _olmoe_model_config_layer_spec
 
 
 @MegatronModelBridge.register_bridge(source=OlmoeForCausalLM, target=GPTModel, model_type="olmoe")
@@ -47,6 +71,9 @@ class OlMoEBridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125")
         >>> provider = bridge.to_megatron_provider()
     """
+
+    MODEL_CONFIG_CLASS = OlMoEModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace OlMoE config to Megatron GPTModelProvider.
@@ -95,6 +122,45 @@ class OlMoEBridge(MegatronModelBridge):
         provider.moe_router_dtype = "fp32"
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face OLMoE config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face OLMoE configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+
+        Raises:
+            ValueError: If the router score function is not softmax.
+        """
+        if hasattr(hf_config, "scoring_func") and hf_config.scoring_func != "softmax":
+            raise ValueError(f"OlMoE only supports scoring_func='softmax', got {hf_config.scoring_func!r}")
+
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            kv_channels=getattr(hf_config, "head_dim", None)
+            or (hf_config.hidden_size // hf_config.num_attention_heads),
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            persist_layer_norm=True,
+            autocast_dtype=torch.bfloat16,
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            moe_aux_loss_coeff=hf_config.router_aux_loss_coef,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_pre_softmax=True,
+            moe_grouped_gemm=True,
+            moe_router_score_function="softmax",
+            moe_permute_fusion=True,
+            moe_router_dtype="fp32",
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []

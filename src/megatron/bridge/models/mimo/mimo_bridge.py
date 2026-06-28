@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Mapping
+from typing import Any, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -45,6 +45,18 @@ class MimoBridge(Qwen2Bridge):
             provider.mtp_loss_scaling_factor = 0.1
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert MiMo HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        mtp_num_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        config_kwargs.update(
+            qk_layernorm=False,
+            add_qkv_bias=True,
+            mtp_num_layers=mtp_num_layers,
+            mtp_loss_scaling_factor=0.1 if mtp_num_layers > 0 else None,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = list(super().mapping_registry().mappings)

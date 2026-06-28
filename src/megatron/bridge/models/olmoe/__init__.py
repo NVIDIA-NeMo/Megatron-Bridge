@@ -13,7 +13,15 @@
 # limitations under the License.
 
 from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
-from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "OlMoEModelProvider":
+        from megatron.bridge.models.olmoe.olmoe_provider import OlMoEModelProvider
+
+        return OlMoEModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

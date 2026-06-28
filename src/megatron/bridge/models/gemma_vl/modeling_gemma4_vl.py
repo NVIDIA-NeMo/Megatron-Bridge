@@ -146,6 +146,7 @@ class Gemma4VLModel(MegatronModule):
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
+        language_model: nn.Module | None = None,
     ) -> None:
         super().__init__(config=config)
 
@@ -174,9 +175,11 @@ class Gemma4VLModel(MegatronModule):
                     self.embed_audio.to(dtype=target_dtype)
                 hook_hf_module_setattr_for_tp_grad_sync(self.audio_tower)
 
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = self.config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight

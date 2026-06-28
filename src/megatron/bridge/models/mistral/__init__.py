@@ -13,9 +13,15 @@
 # limitations under the License.
 
 from megatron.bridge.models.mistral.mistral_bridge import MistralBridge  # noqa: F401
-from megatron.bridge.models.mistral.mistral_provider import (
-    MistralModelProvider,
-)
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "MistralModelProvider":
+        from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
+
+        return MistralModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

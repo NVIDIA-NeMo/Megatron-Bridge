@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 import torch
 from transformers import Glm4vMoeForConditionalGeneration
 
@@ -26,9 +28,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
+from megatron.bridge.models.glm_vl.model_config import GLM45VModelConfig
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
@@ -37,7 +43,12 @@ class GLM45VBridge(MegatronModelBridge):
     Megatron Bridge for GLM 4.5 Vision-Language (VL) Models.
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> GLM45VModelProvider:
+    MODEL_CONFIG_CLASS = GLM45VModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "GLM45VModelProvider":
+        from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
+
         hf_config = hf_pretrained.config
 
         # GLM 4.5 has separate text_config and vision_config
@@ -85,6 +96,55 @@ class GLM45VBridge(MegatronModelBridge):
             video_token_id=getattr(text_config, "video_token_id", 151364),
         )
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert GLM 4.5V HF configs to a pure builder-backed configuration."""
+        text_config = getattr(hf_config, "text_config", hf_config)
+        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        vision_config = hf_config.vision_config
+        vision_config_dict = (
+            vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vars(vision_config))
+        )
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            moe_shared_expert_overlap=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_router_score_function="sigmoid",
+            moe_permute_fusion=True,
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_router_bias_update_rate=0,
+            moe_aux_loss_coeff=0.001,
+            persist_layer_norm=True,
+            bias_activation_fusion=True,
+            bias_dropout_fusion=True,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            mtp_num_layers=0,
+            mtp_loss_scaling_factor=0.3,
+            moe_shared_expert_intermediate_size=text_config.moe_intermediate_size,
+            moe_layer_freq=[0] * text_config.first_k_dense_replace
+            + [1] * (text_config.num_hidden_layers - text_config.first_k_dense_replace),
+            position_embedding_type="mrope",
+            mrope_section=[8, 12, 12],
+            scatter_embedding_sequence_parallel=False,
+            vision_config=vision_config_dict,
+            spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
+            eos_token_id=getattr(text_config, "eos_token_id", 151329),
+            image_start_token_id=getattr(text_config, "image_start_token_id", 151339),
+            image_end_token_id=getattr(text_config, "image_end_token_id", 151340),
+            video_start_token_id=getattr(text_config, "video_start_token_id", 151341),
+            video_end_token_id=getattr(text_config, "video_end_token_id", 151342),
+            image_token_id=getattr(text_config, "image_token_id", 151363),
+            video_token_id=getattr(text_config, "video_token_id", 151364),
+        )
+        return config_kwargs
 
     @classmethod
     def get_hf_tokenizer_kwargs(cls) -> dict:

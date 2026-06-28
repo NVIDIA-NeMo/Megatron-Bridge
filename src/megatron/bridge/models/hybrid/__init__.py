@@ -19,7 +19,15 @@ from megatron.bridge.models.hybrid.hybrid_builder import (
     modelopt_hybrid_stack_spec,
     transformer_engine_hybrid_stack_spec,
 )
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy hybrid provider export."""
+    if name == "HybridModelProvider":
+        from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+        return HybridModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

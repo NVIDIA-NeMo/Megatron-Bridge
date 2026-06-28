@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -34,6 +35,7 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertGatedMLPMapping,
     Step35Bridge,
     Step35DecoderLayer,
+    Step35ModelConfig,
     Step35SharedExpertMLP,
     _build_step35_layer_spec,
     _MTPDenseLayerSpecsList,
@@ -169,10 +171,28 @@ class TestStep35BridgeRegistration:
         These cannot be renamed to ``step35`` / ``Step35ForCausalLM`` without
         breaking ``AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")``.
         """
-        # PROVIDER_CLASS is populated by the @register_bridge decorator
-        from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
+        assert Step35Bridge.SOURCE_NAME == "Step3p5ForCausalLM"
+        assert Step35Bridge.MODEL_TYPE == "step3p5"
+        assert Step35Bridge.PROVIDER_CLASS is None
 
-        assert Step35Bridge.PROVIDER_CLASS is Step35ModelProvider
+    def test_model_config_bridge_preserves_custom_fields_and_layer_spec(self):
+        hf_config = _make_hf_config(num_attention_groups=4, moe_router_activation="sigmoid")
+        result = Step35Bridge().model_config_bridge(_FakeHFPretrained(hf_config))
+
+        assert type(result) is Step35ModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.layer_types == hf_config.layer_types
+        assert result.rotary_percents == hf_config.partial_rotary_factors
+        assert result.sliding_attention_setting["num_attention_heads"] == 96
+        assert result.transformer.moe_layer_freq == [0, 0, 1, 1]
+        assert result.__dict__["layer_types"] == hf_config.layer_types
+
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored.transformer) is TransformerConfig
+        assert restored.layer_types == result.layer_types
+        assert restored.rotary_percents == result.rotary_percents
+        assert restored.transformer.activation_func is result.transformer.activation_func
+        assert restored.transformer_layer_spec is _build_step35_layer_spec
 
 
 # ---------------------------------------------------------------------------

@@ -68,6 +68,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
     get_transformer_block_with_experimental_attention_variant_spec as _get_exp_attn_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import MLATransformerConfig
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -79,6 +80,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.deepseek.deepseek_v4_model_config import DeepSeekV4ModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -343,6 +345,65 @@ class _ReplicatedOptional(ReplicatedMapping):
 )
 class DeepSeekV4Bridge(MegatronModelBridge):
     """Megatron Bridge implementation for DeepSeek-V4 causal language models."""
+
+    # The pinned MCore does not yet expose the DSv4 CSA/mHC/hash layer spec to
+    # ModelBuilder. Preserve the established provider construction path until it does.
+    LEGACY_MODEL_BUILD_ONLY = True
+    MODEL_CONFIG_CLASS = DeepSeekV4ModelConfig
+    TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict[str, object]:
+        """Map DSv4 HF architecture state to exact MLA plus outer family fields."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        rope_params = getattr(hf_config, "rope_scaling", None) or getattr(hf_config, "rope_parameters", None) or {}
+        if "compress" in rope_params:
+            main_rope = rope_params.get("main", {})
+            compress_rope = rope_params["compress"]
+        else:
+            main_rope = rope_params
+            compress_rope = rope_params
+        fused = deepseek_v4_supports_blackwell_fused_kernels()
+        config.update(
+            multi_latent_attention=True,
+            qk_layernorm=True,
+            normalization="RMSNorm",
+            add_bias_linear=False,
+            v_head_dim=int(hf_config.head_dim),
+            qk_pos_emb_head_dim=int(hf_config.qk_rope_head_dim),
+            rotary_percent=1.0,
+            q_lora_rank=int(hf_config.q_lora_rank),
+            o_groups=int(hf_config.o_groups),
+            o_lora_rank=int(hf_config.o_lora_rank),
+            rope_type="yarn",
+            rotary_base=float(main_rope.get("rope_theta", hf_config.rope_theta)),
+            csa_compress_rotary_base=float(
+                compress_rope.get("rope_theta", getattr(hf_config, "compress_rope_theta", hf_config.rope_theta))
+            ),
+            rotary_scaling_factor=float(compress_rope["factor"]),
+            original_max_position_embeddings=int(compress_rope["original_max_position_embeddings"]),
+            beta_fast=float(compress_rope.get("beta_fast", 32)),
+            beta_slow=float(compress_rope.get("beta_slow", 1)),
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            csa_compress_ratios=_dsv4_compress_ratios(hf_config),
+            csa_window_size=int(hf_config.sliding_window),
+            dsa_indexer_n_heads=int(hf_config.index_n_heads),
+            dsa_indexer_head_dim=int(hf_config.index_head_dim),
+            dsa_indexer_topk=int(hf_config.index_topk),
+            apply_dsa_kernel_fusion=fused,
+            enable_hyper_connections=True,
+            use_fused_mhc=fused,
+            num_residual_streams=int(hf_config.hc_mult),
+            mhc_sinkhorn_iterations=int(hf_config.hc_sinkhorn_iters),
+            moe_n_hash_layers=_dsv4_num_hash_layers(hf_config),
+            actual_vocab_size=int(hf_config.vocab_size),
+            activation_func_clamp_value=float(hf_config.swiglu_limit),
+            moe_layer_freq=[1] * int(hf_config.num_hidden_layers),
+            mtp_num_layers=int(getattr(hf_config, "num_nextn_predict_layers", 0)) or None,
+            make_vocab_size_divisible_by=1280,
+            seq_length=4096,
+        )
+        return config
 
     # ------------------------------------------------------------------
     # Provider configuration

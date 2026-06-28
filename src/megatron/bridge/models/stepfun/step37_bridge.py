@@ -34,9 +34,10 @@ The bridge:
 from __future__ import annotations
 
 import logging
-from typing import List
+from typing import TYPE_CHECKING, Any, List
 
 import torch
+from megatron.core.transformer import TransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -50,16 +51,18 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
-from megatron.bridge.models.stepfun.step35_bridge import (
+from megatron.bridge.models.stepfun.step35_mappings import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
-    Step35Bridge,
-    _build_step35_layer_spec,
 )
-from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
+from megatron.bridge.models.stepfun.step35_modeling import build_step35_layer_spec
+from megatron.bridge.models.stepfun.step37_model_config import Step37ModelConfig
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
 
 
 # Register the Step3.7 multimodal config with transformers AutoConfig so that
@@ -93,7 +96,6 @@ def _lm(megatron_param: str) -> str:
 @MegatronModelBridge.register_bridge(
     source="Step3p7ForConditionalGeneration",
     target=Step37Model,
-    provider=Step37ModelProvider,
     model_type="step3p7",
 )
 class Step37Bridge(MegatronModelBridge):
@@ -110,7 +112,84 @@ class Step37Bridge(MegatronModelBridge):
     # The same translation table Step35Bridge uses (so the parent
     # provider_bridge picks up the text-side renames). Step3.7's text config
     # uses the identical HF schema.
-    CONFIG_MAPPING = Step35Bridge.CONFIG_MAPPING
+    CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [
+        ("num_attention_groups", "num_query_groups"),
+        ("moe_num_experts", "num_moe_experts"),
+        ("moe_top_k", "moe_router_topk"),
+        ("share_expert_dim", "moe_shared_expert_intermediate_size"),
+        ("share_expert_dims", "moe_shared_expert_intermediate_size"),
+        ("use_head_wise_attn_gate", "head_wise_attn_gate"),
+        ("attention_output_gate", "attention_output_gate"),
+        ("layer_types", "layer_types"),
+    ]
+    MODEL_CONFIG_CLASS = Step37ModelConfig
+    TRANSFORMER_CONFIG_CLASS = TransformerConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map nested Step3.7 text and vision settings into pure config data."""
+        text_config = hf_config.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            position_embedding_type="rope",
+            layernorm_zero_centered_gamma=bool(getattr(text_config, "zero_centered", True)),
+            qk_layernorm=bool(getattr(text_config, "use_qk_norm", True)),
+            share_embeddings_and_output_weights=bool(getattr(hf_config, "tie_word_embeddings", False)),
+            moe_router_enable_expert_bias=bool(getattr(text_config, "use_moe_router_bias", False)),
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            swiglu_limits=getattr(text_config, "swiglu_limits", None),
+            swiglu_limits_shared=getattr(text_config, "swiglu_limits_shared", None),
+            layer_types=list(getattr(text_config, "layer_types", None) or []),
+            rotary_percents=list(getattr(text_config, "partial_rotary_factors", None) or []),
+            head_wise_attn_gate=bool(getattr(text_config, "use_head_wise_attn_gate", True)),
+            vision_config=hf_config.vision_config.to_dict(),
+            image_token_id=int(getattr(hf_config, "image_token_id", 128001)),
+            understand_projector_stride=int(getattr(hf_config, "understand_projector_stride", 2)),
+            projector_bias=bool(getattr(hf_config, "projector_bias", False)),
+        )
+        attention_other = getattr(text_config, "attention_other_setting", None) or {}
+        sliding = {
+            "window_size": [int(getattr(text_config, "sliding_window", 512)), 0],
+            "num_attention_heads": int(attention_other.get("num_attention_heads", 96)),
+            "num_query_groups": int(attention_other.get("num_attention_groups", 8)),
+            "kv_channels": int(attention_other.get("head_dim", 128)),
+        }
+        kwargs["attention_other_setting"] = attention_other
+        kwargs["sliding_attention_setting"] = sliding
+        rope_theta = getattr(text_config, "rope_theta", None)
+        if isinstance(rope_theta, list):
+            kwargs["rotary_base"] = float(rope_theta[0])
+            kwargs["rotary_base_per_layer"] = [float(value) for value in rope_theta]
+        router_activation = getattr(text_config, "moe_router_activation", None)
+        if router_activation is not None:
+            kwargs["moe_router_score_function"] = router_activation
+        router_scale = getattr(text_config, "moe_router_scaling_factor", None)
+        if router_scale is not None:
+            kwargs["moe_router_topk_scaling_factor"] = float(router_scale)
+        if bool(getattr(text_config, "need_fp32_gate", False)):
+            kwargs["moe_router_dtype"] = "fp32"
+        moe_layers = getattr(text_config, "moe_layers_enum", None)
+        if moe_layers is not None:
+            indices = (
+                [int(value) for value in moe_layers.split(",") if value] if isinstance(moe_layers, str) else moe_layers
+            )
+            frequency = [0] * int(text_config.num_hidden_layers)
+            for index in indices:
+                if 0 <= index < len(frequency):
+                    frequency[index] = 1
+            kwargs["moe_layer_freq"] = frequency
+        return kwargs
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Step37ModelProvider:
         """Convert a HuggingFace Step3.7 config into a :class:`Step37ModelProvider`.
@@ -140,6 +219,8 @@ class Step37Bridge(MegatronModelBridge):
         * Finally attach Step3.7 vision / multimodal fields from the
           top-level ``hf_config``.
         """
+        from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
@@ -278,7 +359,7 @@ class Step37Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            provider.transformer_layer_spec = _build_step35_layer_spec
+            provider.transformer_layer_spec = build_step35_layer_spec
 
         # Per-layer hybrid full/sliding attention schedule.
         layer_types = getattr(text_config, "layer_types", None)

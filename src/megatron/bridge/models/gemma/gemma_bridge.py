@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.enums import AttnBackend
 from transformers import GemmaForCausalLM
@@ -24,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
+from megatron.bridge.models.gemma.model_config import GemmaModelConfig
 from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 
@@ -49,6 +53,9 @@ class GemmaBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    MODEL_CONFIG_CLASS = GemmaModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GemmaModelProvider:
         """Convert HuggingFace config to GemmaModelProvider.
 
@@ -71,6 +78,30 @@ class GemmaBridge(MegatronModelBridge):
         provider.attention_backend = AttnBackend.flash
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Gemma config to model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Gemma configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=self.hf_to_megatron_activation("gelu"),
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=True,
+            layernorm_zero_centered_gamma=True,
+            attention_backend=AttnBackend.flash,
+            autocast_dtype=torch.bfloat16,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.

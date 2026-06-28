@@ -1,6 +1,6 @@
 ---
 name: adding-model-support
-description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples.
+description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, model config, builder, recipe, tests, docs, and examples.
 when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
 ---
 
@@ -89,7 +89,8 @@ Also add or update focused tests when touching export/import quantization paths;
 ```
 src/megatron/bridge/models/<model>/
 ├── __init__.py
-├── <model>_bridge.py      # Config + weight mappings (no provider file needed)
+├── <model>_bridge.py      # HF config + weight mappings
+├── model_config.py        # Only when the stock GPT config/builder is insufficient
 └── modeling_<model>/      # (optional) Custom nn.Module implementations if needed
     └── ...
 ```
@@ -100,7 +101,7 @@ src/megatron/bridge/models/<model>/
 src/megatron/bridge/models/<model>/
 ├── __init__.py
 ├── <model>_bridge.py         # Config + weight mappings
-├── <model>_provider.py       # Only for VLMs that need custom provide()
+├── model_config.py           # Pure build config + standalone builder
 └── modeling_<model>/         # If using Megatron vision encoder
     ├── __init__.py
     └── model.py              # Combines vision + language
@@ -112,7 +113,7 @@ OR with HF vision encoder (Reference: Gemma3-VL):
 src/megatron/bridge/models/<model>/
 ├── __init__.py
 ├── <model>_bridge.py
-├── <model>_provider.py       # Only for VLMs that need custom provide()
+├── model_config.py
 └── modeling_<model>.py       # HF vision + Megatron language wrapper
 ```
 
@@ -127,25 +128,34 @@ directory — keep them namespaced under the `modeling_<model>` prefix.
 ### Implementation order
 
 **LLM:**
-1. **Bridge only** — Register bridge, implement `provider_bridge()` and `mapping_registry()`.
-   The bridge calls `super().provider_bridge()` to get a `GPTModelProvider` from `CONFIG_MAPPING`,
-   then sets model-specific attributes on it. **Do not create a provider file** — the stock
-   provider returned by `super().provider_bridge()` is usually sufficient for LLMs
-   (e.g., `GPTModelProvider`, or another base provider selected via `PROVIDER_CLASS`).
-   **Do not add size-specific provider classes** whose names combine
-   `ModelProvider` with a model-size suffix. Examples of forbidden suffixes
-   include `7B`, `200M`, and `A3B`. Model size and architecture fields should
-   come from the Hugging Face config through `AutoBridge` /
-   `MegatronModelBridge` config mapping. If a recipe needs a fixed
-   architecture, configure the base provider inside the recipe function instead
-   of exporting a provider subclass.
+1. **Bridge** — Register the bridge, implement `hf_config_to_model_config_kwargs()` and
+   `mapping_registry()`. All family settings must be present before config construction.
+2. **Model config** — Use `BridgeGPTModelConfig` when the stock GPT builder is sufficient.
+   Add a family subclass only for additional build-time data or a different builder.
+3. **Builder** — Add a standalone `ModelBuilder` only when construction differs from stock GPT.
 
 **VLM:**
-1. **Bridge** — Register bridge, implement config and weight mappings.
-2. **Provider** (when needed) — Only VLMs that require a custom `provide()` to instantiate a
-   combined vision+language model need a provider subclass. The bridge manually calls
-   `hf_config_to_provider_kwargs(text_config)` and instantiates the custom provider.
-3. **Model class** — Combine vision encoder + language decoder.
+1. **Bridge** — Register the bridge and implement config and weight mappings.
+2. **Model config** — Store language, vision, projector, token-ID, and other build inputs as
+   serializable data. Link it to its builder with a stable `builder: ClassVar[str]` path.
+3. **Builder** — Construct the combined vision-language model and implement distributed build
+   semantics and pre/post-wrap hooks.
+4. **Model class** — Combine the vision encoder and language decoder.
+
+The new path must not instantiate or inherit `ModelProviderMixin`. Existing provider classes may
+remain as deprecated compatibility wrappers, but new bridge/model-config/builder code must not
+import them.
+
+### Configuration and builder invariants
+
+- Embed the exact Megatron-Core config class (`TransformerConfig`, `MLATransformerConfig`, or the
+  applicable upstream config). Do not subclass it to carry family-only fields.
+- Store family-only construction data on the outer model config. The builder or layer-spec factory
+  passes those values explicitly at construction time.
+- Configs are pure serializable data. Builders own model construction and process-group state.
+- Never attach unknown fields with `setattr`; strict field partitioning must reject phantom fields.
+- Callable layer specs must have stable dataclass defaults so serialization can recreate them.
+- Test `type(config.transformer) is ExpectedMCoreConfig`, not only `isinstance(...)`.
 
 For detailed patterns, see:
 - VLM: @skills/adding-model-support/vlm-patterns.md
@@ -156,7 +166,7 @@ For detailed patterns, see:
 For VLMs, `tie_word_embeddings` lives on the **top-level** HF config, NOT on `text_config`. Always read from the parent config:
 
 ```python
-provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", False)
+config_kwargs["share_embeddings_and_output_weights"] = getattr(hf_config, "tie_word_embeddings", False)
 ```
 
 ### Critical: Config field location for VLMs
@@ -174,7 +184,8 @@ the model family directory**. Do not modify shared files in `src/megatron/bridge
 (e.g. `param_mapping.py`, `model_bridge.py`, `quant_mapping.py`) unless the change is genuinely
 reusable across multiple model families.
 
-**Principle:** The bridge and provider files for a model family are your primary extension surface.
+**Principle:** The bridge, model config, builder, and modeling files for a model family are the
+primary extension surface.
 Shared conversion infrastructure provides hooks and base classes — subclass them locally rather
 than adding conditionals to shared code.
 
@@ -221,11 +232,12 @@ class _FullDimQKNormMapping(MegatronParamMapping):
 | Hook | When to use |
 |------|-------------|
 | `mapping_registry()` | Define all weight name mappings (abstract, always overridden) |
-| `provider_bridge()` | Configure the provider with model-specific flags (call `super()` then setattr) |
+| `hf_config_to_model_config_kwargs()` | Add family fields before either dataclass is constructed |
+| `model_config_bridge()` | Override only when a family needs custom partitioning or multiple nested configs |
 | `maybe_modify_loaded_hf_weight()` | Dequantize, rename, or reshape HF weights before conversion |
 | `maybe_modify_converted_hf_weight()` | Synthesize extra HF keys on export (e.g. `inv_freq`) |
 | `megatron_to_hf_config()` | Build HF `config.json` for export |
-| `hf_config_to_provider_kwargs()` | Override CONFIG_MAPPING behavior for specific fields |
+| `_should_map_hf_config_field()` | Override CONFIG_MAPPING behavior for specific fields |
 
 **Accessing HF config in `mapping_registry()`:** The bridge instance has `self.hf_config`
 available during conversion — it is set automatically by the dispatch system before
@@ -242,24 +254,23 @@ def mapping_registry(self) -> MegatronMappingRegistry:
 Do **not** override `build_conversion_tasks()` to stash `self._hf_config` — that pattern is
 deprecated.
 
-#### Strategy 3: Custom provider subclass (VLMs only)
+#### Strategy 3: Custom model config and builder
 
-Most models do **not** need a provider file — the stock provider (e.g., `GPTModelProvider`, or
-another base selected via `PROVIDER_CLASS`) is usually sufficient for LLMs. Only create a provider subclass when a VLM needs custom `provide()` logic to instantiate
-a combined vision+language model:
+Use a custom builder when model construction differs from the stock GPT model. Keep its inputs on a
+pure dataclass and use a stable import string for reconstruction:
 
 ```python
-# src/megatron/bridge/models/<model>/<model>_provider.py
-class MyVLModelProvider(GPTModelProvider):
+# src/megatron/bridge/models/<model>/model_config.py
+@dataclass(kw_only=True)
+class MyVLModelConfig(ModelConfig):
+    builder: ClassVar[str] = "megatron.bridge.models.<model>.model_config.MyVLModelBuilder"
+    transformer: TransformerConfig
     image_token_id: int = 0
 
-    def provide(self, ...):
-        # Custom model construction combining vision encoder + language decoder
-        ...
+class MyVLModelBuilder(ModelBuilder[MyVLModel, MyVLModelConfig]):
+    def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
+        return MyVLModel(config=self._model_config, pg_collection=pg_collection, ...)
 ```
-
-The bridge then references it via `PROVIDER_CLASS = MyVLModelProvider` or instantiates it directly
-in `provider_bridge()`.
 
 #### When shared file changes ARE justified
 
@@ -268,7 +279,7 @@ families**. Examples of justified shared changes:
 
 - `FusedExpertMapping` / `FusedGatedExpertMapping` — used by GLM, DeepSeek, OLMoE, etc.
 - `RMSNorm2ZeroCenteredRMSNormMapping` — used by Gemma, Nemotron, etc.
-- New `CONFIG_MAPPING` entries — when a standard HF config key maps to a standard provider attribute
+- New `CONFIG_MAPPING` entries — when a standard HF config key maps to a standard config field
 
 If you're tempted to add a model-specific `if model_type == "..."` branch in shared code, or
 pattern-matching on specific weight names in shared conversion logic, that's a signal to use a
@@ -321,10 +332,9 @@ Each recipe file defines functions for each model size + training mode:
 For detailed recipe patterns, see @skills/adding-model-support/recipe-patterns.md.
 
 Recipes are the right API surface for model-size presets. Do not create or
-export size-specific provider subclasses for recipes; either call
-`AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)` to
-derive the provider from HF config, or instantiate the base provider class with
-explicit architecture fields inside the recipe function.
+export size-specific config subclasses for recipes. Derive a builder-backed model config with
+`AutoBridge.from_hf_pretrained(...).to_megatron_model_config(load_weights=False)` or construct the
+family model config with explicit architecture fields inside the recipe function.
 
 ### Export checklist
 
@@ -339,8 +349,8 @@ explicit architecture fields inside the recipe function.
 ```text
 tests/unit_tests/models/<model>/
 ├── __init__.py
-├── test_<model>_bridge.py    # Mock HF config → verify provider mapping
-└── test_<model>_provider.py  # (optional) Only if custom provider subclass exists
+├── test_<model>_bridge.py       # Mock HF config → verify model-config mapping
+└── test_<model>_model_config.py # Serialization, exact nested type, builder behavior
 ```
 
 ### Functional tests (GPU)
@@ -349,7 +359,7 @@ tests/unit_tests/models/<model>/
 tests/functional_tests/test_groups/models/<model>/
 ├── __init__.py
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
-└── test_<model>_provider.py    # compare_provider_configs (optional)
+└── test_<model>_builder.py     # construction/parity checks (optional)
 ```
 
 For detailed test patterns, see @skills/adding-model-support/tests-and-examples.md.
@@ -389,11 +399,12 @@ After implementing bridge support, prompt the user to run these commands on the 
 uv run python -c "
 from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained('<org>/<model>')
-provider = bridge.to_megatron_provider()
-provider.tensor_model_parallel_size = 1
-provider.pipeline_model_parallel_size = 1
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config = bridge.to_megatron_model_config(load_weights=True)
+assert type(model_config.transformer) is TransformerConfig
+serialized = model_config.as_dict()
+restored = ModelConfig.from_dict(serialized)
+assert restored.get_builder_cls() is model_config.get_builder_cls()
+model = bridge.to_megatron_model(wrap_with_ddp=False)
 bridge.load_hf_weights(model)
 for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):
     print(name, tuple(tensor.shape))
@@ -449,9 +460,9 @@ User wants to add a model
 │   ├─ Has Megatron vision encoder? ──→ Megatron encoder (Qwen3.5 pattern)
 │   └─ No Megatron encoder ──→ HF encoder (Gemma3 pattern)
 │
-└─ No vision config ──→ LLM path (bridge only, no provider file)
-    ├─ Standard GPT-style? ──→ Bridge with stock mappings
-    └─ Custom layers? ──→ Bridge + local mapping subclasses / hook overrides
+└─ No vision config ──→ LLM path
+    ├─ Standard GPT-style? ──→ Bridge + stock GPT model config/builder
+    └─ Custom construction? ──→ Bridge + family model config/builder
         ├─ Custom weight layout? ──→ Local mapping subclass in family dir
         └─ Custom import/export? ──→ Override bridge hooks (maybe_modify_*)
 ```

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 import torch
 from transformers import Qwen2_5OmniForConditionalGeneration
 
@@ -24,8 +26,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.qwen_omni.model_config import Qwen25OmniModelConfig
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25OmniModel
-from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=Qwen2_5OmniForConditionalGeneration, target=Qwen25OmniModel)
@@ -45,8 +51,10 @@ class Qwen25OmniBridge(MegatronModelBridge):
     - LLM layer norms use mlp.linear_fc1.layer_norm_weight (not pre_mlp_layernorm)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen25OmniModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen25OmniModelProvider":
         """Create a Qwen25OmniModelProvider from a HuggingFace pretrained model."""
+        from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
+
         hf_config = hf_pretrained.config
         thinker_config = hf_config.thinker_config
         talker_config = hf_config.talker_config
@@ -152,3 +160,35 @@ class Qwen25OmniBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen25OmniModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Qwen2.5-Omni HF settings to pure model-config fields."""
+        thinker = hf_config.thinker_config
+        text = thinker.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text)
+        kwargs.update(
+            thinker_config=thinker.to_dict(),
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=True,
+            qk_layernorm=False,
+            hidden_dropout=0.0,
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            share_embeddings_and_output_weights=getattr(text, "tie_word_embeddings", False),
+            image_token_id=getattr(thinker, "image_token_index", 151655),
+            video_token_id=getattr(thinker, "video_token_index", 151656),
+            audio_token_id=getattr(thinker, "audio_token_index", 151646),
+            vision_start_token_id=getattr(thinker, "vision_start_token_id", 151652),
+            audio_start_token_id=getattr(thinker, "audio_start_token_id", 151647),
+            audio_end_token_id=getattr(thinker, "audio_end_token_id", 151648),
+            mrope_section=(getattr(text, "rope_scaling", None) or {}).get("mrope_section", [16, 24, 24]),
+            position_id_per_seconds=getattr(thinker, "position_id_per_seconds", 25),
+            seconds_per_chunk=getattr(thinker, "seconds_per_chunk", 2),
+            language_max_sequence_length=text.max_position_embeddings,
+        )
+        return kwargs

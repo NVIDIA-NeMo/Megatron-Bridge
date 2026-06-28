@@ -13,11 +13,13 @@
 # limitations under the License.
 
 from collections.abc import Mapping
-from typing import Dict, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, Optional
 
 import torch
 import torch.nn as nn
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -28,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.minimax_m2.minimax_m2_provider import minimax_m2_layer_spec
 
 
@@ -35,6 +38,13 @@ __all__ = ["MiniMaxM2Bridge", "_FullDimQKNormMapping", "_dequant_fp8_blockwise"]
 
 
 _dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
+
+
+@dataclass(kw_only=True)
+class MiniMaxM2ModelConfig(BridgeGPTModelConfig):
+    """Builder-backed MiniMax-M2 config with full-dimension QK normalization."""
+
+    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: minimax_m2_layer_spec)
 
 
 class _FullDimQKNormMapping(MegatronParamMapping[torch.Tensor]):
@@ -131,6 +141,9 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    MODEL_CONFIG_CLASS = MiniMaxM2ModelConfig
+    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
+
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
@@ -168,6 +181,32 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         provider.moe_router_enable_expert_bias = True
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert MiniMax-M2 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        rotary_dim = getattr(hf_config, "rotary_dim", None)
+        head_dim = getattr(hf_config, "head_dim", None)
+        rotary_percent = rotary_dim / head_dim if rotary_dim is not None and head_dim is not None else 1.0
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            autocast_dtype=torch.bfloat16,
+            rotary_percent=rotary_percent,
+            qk_layernorm=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=False,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=getattr(hf_config, "router_aux_loss_coef", 1e-3),
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+        )
+        return config_kwargs
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

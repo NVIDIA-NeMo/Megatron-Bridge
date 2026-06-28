@@ -241,6 +241,7 @@ def load_model_config(
         - If the checkpoint is from MegatronLM, returns the argparse.Namespace
           object. Otherwise None.
     """
+    from megatron.bridge.models.common import ModelConfig as BridgeModelConfig
     from megatron.bridge.training.checkpointing import (
         get_checkpoint_run_config_filename,
         read_run_config,
@@ -270,7 +271,7 @@ def load_model_config(
 
     if mbridge_ckpt:
         if "_builder_" in run_config["model"]:
-            model_cfg = ModelConfig.from_dict(run_config["model"])
+            model_cfg = BridgeModelConfig.from_dict(run_config["model"])
         else:
             model_cfg = instantiate(run_config["model"])
     else:

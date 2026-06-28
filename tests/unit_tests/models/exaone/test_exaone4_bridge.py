@@ -13,14 +13,17 @@
 # limitations under the License.
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import torch
 import torch.nn.functional as F
+from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.exaone.exaone4_bridge import Exaone4Bridge
 from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.model_config import Exaone4ModelBuilder
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -65,6 +68,37 @@ class TestExaone4Bridge:
 
     def test_bridge_registration(self):
         assert issubclass(Exaone4Bridge, MegatronModelBridge)
+
+    def test_model_config_bridge_preserves_complete_llama3_scaling(self):
+        config = make_exaone4_config()
+        result = Exaone4Bridge().model_config_bridge(make_pretrained(config))
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.rope_scaling is True
+        assert result.rope_scaling_factor == 16.0
+        assert result.rope_scaling_low_freq_factor == 1.0
+        assert result.rope_scaling_high_freq_factor == 4.0
+        assert result.rope_scaling_original_max_position_embeddings == 8192
+        assert "rope_scaling_low_freq_factor" not in result.transformer.__dict__
+        restored = type(result).from_dict(result.as_dict())
+        assert restored.rope_scaling_original_max_position_embeddings == 8192
+        exported = Exaone4Bridge.megatron_to_hf_config(restored)
+        assert exported["rope_scaling"] == config.rope_scaling
+
+        rotary = SimpleNamespace(
+            inv_freq=torch.ones(32),
+            _apply_scaling=Mock(return_value=torch.full((32,), 2.0)),
+        )
+        model = SimpleNamespace(rotary_pos_emb=rotary)
+        with patch.object(GPTModelBuilder, "build_model", return_value=model):
+            Exaone4ModelBuilder(result).build_model(Mock())
+        rotary._apply_scaling.assert_called_once()
+        assert rotary._apply_scaling.call_args.kwargs == {
+            "factor": 16.0,
+            "low_freq_factor": 1.0,
+            "high_freq_factor": 4.0,
+            "original_max_position_embeddings": 8192,
+        }
 
     def test_provider_bridge_basic_mapping(self):
         config = make_exaone4_config()

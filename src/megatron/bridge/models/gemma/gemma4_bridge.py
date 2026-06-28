@@ -33,6 +33,7 @@ from typing import Any, Mapping
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -51,6 +52,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.gemma.model_config import Gemma4DenseModelConfig, Gemma4ModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -112,6 +114,68 @@ class Gemma4Bridge(MegatronModelBridge):
     """
 
     _CONDITIONAL_MOE_FIELDS = frozenset({"num_moe_experts", "moe_router_topk", "moe_ffn_hidden_size"})
+    TRANSFORMER_CONFIG_CLASS = TransformerConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Gemma4 text state to exact MCore and outer family fields."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        rope_params = getattr(hf_config, "rope_parameters", {}) or {}
+        sliding_rope = rope_params.get("sliding_attention", {})
+        full_rope = rope_params.get("full_attention", {})
+        layer_types = getattr(hf_config, "layer_types", None)
+        is_dense = not getattr(hf_config, "enable_moe_block", False)
+        config.update(
+            position_embedding_type="rope",
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            qk_layernorm=True,
+            softmax_scale=1.0,
+            kv_channels=int(getattr(hf_config, "head_dim", 256)),
+            window_size=getattr(hf_config, "sliding_window", 1024),
+        )
+        if is_dense:
+            config.update(
+                global_kv_channels=int(getattr(hf_config, "global_head_dim", 512)),
+                num_global_query_groups=int(
+                    getattr(hf_config, "num_global_key_value_heads", hf_config.num_key_value_heads)
+                ),
+                sliding_window_rope_base=float(sliding_rope.get("rope_theta", 10_000.0)),
+                full_attention_rope_base=float(full_rope.get("rope_theta", 1_000_000.0)),
+                full_attention_rope_partial_factor=float(full_rope.get("partial_rotary_factor", 0.25)),
+                num_kv_shared_layers=int(getattr(hf_config, "num_kv_shared_layers", 0)),
+                per_layer_embed_vocab_size=int(getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size)),
+                per_layer_embed_dim=int(getattr(hf_config, "hidden_size_per_layer_input", 256)),
+                window_attn_skip_freq=(
+                    [item == "sliding_attention" for item in layer_types] if layer_types is not None else 6
+                ),
+            )
+        else:
+            config.update(
+                rotary_base_local=float(rope_local_base_freq_from_hf(hf_config)),
+                rotary_base=float(rope_theta_from_hf(hf_config)),
+                interleaved_attn_pattern=_infer_attn_pattern(layer_types) if layer_types else (5, 1),
+                global_head_dim=int(getattr(hf_config, "global_head_dim", 512)),
+                num_global_key_value_heads=int(getattr(hf_config, "num_global_key_value_heads", 2)),
+                global_rotary_percent=float(full_rope.get("partial_rotary_factor", 0.25)),
+                attention_k_eq_v=bool(getattr(hf_config, "attention_k_eq_v", False)),
+                final_logit_softcapping=float(getattr(hf_config, "final_logit_softcapping", 30.0)),
+                num_moe_experts=int(getattr(hf_config, "num_experts", 128)),
+                moe_router_topk=int(getattr(hf_config, "top_k_experts", 8)),
+                moe_ffn_hidden_size=int(getattr(hf_config, "moe_intermediate_size", 704)),
+                moe_shared_expert_intermediate_size=int(getattr(hf_config, "intermediate_size", 2112)),
+            )
+        return config
+
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM):
+        """Construct the dense or MoE Gemma4 pure model config."""
+        hf_config = hf_pretrained.config
+        model_class = (
+            Gemma4DenseModelConfig if not getattr(hf_config, "enable_moe_block", False) else Gemma4ModelConfig
+        )
+        kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(kwargs, model_class, TransformerConfig)
+        return model_class(transformer=TransformerConfig(**transformer_kwargs), **model_kwargs)
 
     def _should_map_hf_config_field(self, hf_config: Any, hf_name: str, megatron_name: str, value: Any) -> bool:
         if megatron_name in self._CONDITIONAL_MOE_FIELDS:
