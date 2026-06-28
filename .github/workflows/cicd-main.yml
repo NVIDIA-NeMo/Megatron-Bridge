@@ -1049,7 +1049,9 @@ jobs:
           UNEXPECTED_SKIPS=0
           check_tier_skips() {
             local tier="$1" expect="$2"
-            [ "$expect" != "true" ] && return
+            if [ "$expect" != "true" ]; then
+              return
+            fi
             local n
             n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
               '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
