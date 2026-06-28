@@ -592,7 +592,7 @@ def _wrap_iter(loader_iter, model_dtype=torch.bfloat16):
         yield batch
 
 
-def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
+def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
     """Build data iterators compatible with setup_megatron_mimo's build_data_iterators_fn.
 
     Signature: (cfg, megatron_mimo_infra, *, train_state=None) -> (train_iter, valid_iter)
@@ -617,6 +617,7 @@ def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
         train_samples=max(train_samples, 10),  # min 10 samples
         valid_samples=valid_samples,
         test_samples=test_samples,
+        grids=megatron_mimo_infra.module_to_grid_map,
     )
 
     model_dtype = torch.bfloat16 if getattr(cfg.model, "bf16", True) else torch.float32

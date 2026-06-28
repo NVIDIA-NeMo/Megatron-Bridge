@@ -200,6 +200,7 @@ def build_train_valid_test_data_loaders(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    mimo_grids: Optional[dict] = None,
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -210,6 +211,8 @@ def build_train_valid_test_data_loaders(
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        mimo_grids: Runtime process grids from ``MegatronMIMOInfra`` when
+            ``cfg.model`` is a pure ``MegatronMIMOModelConfig``.
 
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
@@ -217,8 +220,9 @@ def build_train_valid_test_data_loaders(
     # Check for MegatronMIMO path
     from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 
-    if isinstance(cfg.model, MegatronMIMOProvider):
+    if isinstance(cfg.model, (MegatronMIMOModelConfig, MegatronMIMOProvider)):
         if not isinstance(cfg.dataset, MegatronMIMODatasetProvider):
             raise ValueError(
                 "MegatronMIMO models require cfg.dataset to be a MegatronMIMODatasetProvider. "
@@ -234,6 +238,7 @@ def build_train_valid_test_data_loaders(
             train_samples=train_samples,
             valid_samples=valid_samples,
             test_samples=test_samples,
+            grids=mimo_grids,
         )
 
         # Sync train_state flags across all ranks.
@@ -385,6 +390,7 @@ def build_train_valid_test_data_iterators(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    mimo_grids: Optional[dict] = None,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -406,6 +412,7 @@ def build_train_valid_test_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
         dp_group=dp_group,
+        mimo_grids=mimo_grids,
     )
 
     # Build iterators.
@@ -454,6 +461,7 @@ def setup_data_iterators(
     model_length: int,
     train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    mimo_grids: Optional[dict] = None,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -481,6 +489,7 @@ def setup_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=dp_group,
+        mimo_grids=mimo_grids,
     )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

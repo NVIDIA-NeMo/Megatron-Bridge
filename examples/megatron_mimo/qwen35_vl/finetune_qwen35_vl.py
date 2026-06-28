@@ -792,16 +792,15 @@ def _wrap_iter_logging(
 
 
 def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace):
-    def _build_data_iterators(cfg, _megatron_mimo_infra, *, train_state=None):
+    def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
         if train_state is None:
             train_state = TrainState()
 
-        if cfg.model._grids is None:
-            raise ValueError("MegatronMIMOProvider._grids is None. Model must be built before data iterators.")
+        grids = megatron_mimo_infra.module_to_grid_map
 
         sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
             cfg.model.megatron_mimo_parallelism_config,
-            cfg.model._grids,
+            grids,
         )
         if not needs_data:
             return None, None

@@ -28,6 +28,7 @@ from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
+from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
     build_hypercomm_grids,
     is_pp_first_stage,
@@ -41,28 +42,6 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
-
-
-@dataclass
-class MegatronMIMOInfra:
-    """MegatronMIMO infrastructure metadata (separate from model).
-
-    This dataclass contains the parallelism infrastructure that MegatronMIMO builds,
-    separated from the model itself to maintain the standard provide() contract.
-
-    Attributes:
-        module_to_grid_map: Mapping of module names to their HyperCommGrids.
-        topology: DAG of module data flow (module_name -> list of downstream modules).
-        pg_collections: Mapping of module names to ProcessGroupCollections.
-            None for modules this rank doesn't participate in.
-        participating_modules: List of module names this rank participates in.
-    """
-
-    module_to_grid_map: Dict[str, "HyperCommGrid"]
-    topology: Dict[str, List[str]]
-    pg_collections: Dict[str, Optional[ProcessGroupCollection]]
-    participating_modules: List[str]
-    module_output_ndim: Dict[str, int] = field(default_factory=dict)
 
 
 @dataclass

@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
-    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
+    from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
 
 
 logger = logging.getLogger(__name__)
