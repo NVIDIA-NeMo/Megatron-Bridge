@@ -13,8 +13,51 @@
 # limitations under the License.
 
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
 
-from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_params,
+    repack_mcore_thd_position_ids,
+    unpack_mcore_thd_tensor_for_position_ids,
+)
+
+
+def test_unpack_and_repack_mcore_thd_position_rows():
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 2, 5], dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 4, 8], dtype=torch.int32),
+    )
+    packed_tokens = torch.tensor([[10, 11, 0, 0, 20, 21, 22, 0]])
+
+    rows, attention_mask, padded_starts, lengths = unpack_mcore_thd_tensor_for_position_ids(
+        packed_tokens, packed_seq_params
+    )
+
+    assert rows.tolist() == [[10, 11, 0], [20, 21, 22]]
+    assert attention_mask.tolist() == [[True, True, False], [True, True, True]]
+    assert padded_starts == [0, 4]
+    assert lengths == [2, 3]
+
+    row_position_ids = torch.tensor(
+        [
+            [[0, 1, 0], [0, 1, 2]],
+            [[0, 1, 0], [10, 11, 12]],
+            [[0, 1, 0], [20, 21, 22]],
+        ]
+    )
+    packed_position_ids = repack_mcore_thd_position_ids(
+        row_position_ids,
+        padded_starts=padded_starts,
+        lengths=lengths,
+        total_length=packed_tokens.size(1),
+    )
+
+    assert packed_position_ids.tolist() == [
+        [[0, 1, 0, 0, 0, 1, 2, 0]],
+        [[0, 1, 0, 0, 10, 11, 12, 0]],
+        [[0, 1, 0, 0, 20, 21, 22, 0]],
+    ]
 
 
 class TestGetPackedSeqParams:

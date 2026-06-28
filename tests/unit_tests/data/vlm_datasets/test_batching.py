@@ -147,7 +147,7 @@ def test_prepare_sequence_batch_rejects_left_padded_direct_packing():
         )
 
 
-def test_prepare_sequence_batch_packs_without_padded_metadata_when_lengths_are_aligned():
+def test_prepare_sequence_batch_omits_padded_metadata_when_alignment_is_not_requested():
     batch = {
         "input_ids": torch.tensor(
             [
@@ -194,3 +194,52 @@ def test_prepare_sequence_batch_packs_without_padded_metadata_when_lengths_are_a
     assert "cu_seqlens_unpadded" not in batch
     assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded_argmin" not in batch
+
+
+def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 4, 0, 0, 0, 0], [5, 6, 7, 8, 9, 10, 11, 12]]),
+        "position_ids": torch.arange(8).unsqueeze(0).expand(2, -1).clone(),
+        "attention_mask": torch.tensor([[1, 1, 1, 1, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1]]),
+    }
+
+    prepare_padded_or_packed_sequence_batch(
+        batch,
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["cu_seqlens_q"].tolist() == [0, 4, 12]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+
+
+def test_prepare_sequence_batch_rejects_overlength_packed_row():
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3, 4, 5]]),
+        "position_ids": torch.arange(5).unsqueeze(0),
+        "attention_mask": torch.ones((1, 5), dtype=torch.long),
+    }
+
+    with pytest.raises(ValueError, match="exceeds configured sequence_length 4"):
+        prepare_padded_or_packed_sequence_batch(
+            batch,
+            sequence_length=4,
+            enable_in_batch_packing=True,
+        )
+
+
+def test_prepare_sequence_batch_rejects_empty_packed_row():
+    batch = {
+        "input_ids": torch.tensor([[0, 0], [1, 2]]),
+        "position_ids": torch.arange(2).unsqueeze(0).expand(2, -1).clone(),
+        "attention_mask": torch.tensor([[0, 0], [1, 1]], dtype=torch.long),
+    }
+
+    with pytest.raises(ValueError, match="empty sequence row"):
+        prepare_padded_or_packed_sequence_batch(
+            batch,
+            sequence_length=4,
+            enable_in_batch_packing=True,
+        )

@@ -243,6 +243,30 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     assert encoded["visual_inputs"].pixel_values.shape == (1, 5, 3)
 
 
+def test_batch_emits_padded_metadata_for_aligned_cp_multiple():
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor(input_ids=[1, 2]),
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+    samples = [
+        NemotronOmniTaskSample(
+            __key__=key,
+            __subflavors__={},
+            input_ids=torch.tensor(tokens),
+            labels=torch.tensor([*tokens[1:], IGNORE_INDEX]),
+            loss_mask=torch.tensor([1.0, 1.0, 1.0, 0.0]),
+        )
+        for key, tokens in (("a", [1, 2, 3, 4]), ("b", [5, 6, 7, 8]))
+    ]
+
+    batch = encoder.batch(samples)
+
+    assert batch.cu_seqlens_q.tolist() == [0, 4, 8]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
+    assert batch.cu_seqlens_kv_padded.tolist() == [0, 4, 8]
+
+
 def test_batch_nonpacked_applies_collate_sequence_padding():
     processor = _Processor(input_ids=[1, 2])
     samples = [

@@ -552,7 +552,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
 
             cu_seqlens_q_t = torch.tensor(cu_seqlens, dtype=torch.int32)
             cu_seqlens_kv_t = cu_seqlens_q_t
-            if cu_seqlens_padded != cu_seqlens:
+            if self.in_batch_packing_pad_to_multiple_of > 1:
                 cu_seqlens_q_padded_t = torch.tensor(cu_seqlens_padded, dtype=torch.int32)
                 cu_seqlens_kv_padded_t = cu_seqlens_q_padded_t
             max_seqlen_q_t = torch.tensor(max(padded_lengths), dtype=torch.int32)

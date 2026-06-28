@@ -31,6 +31,7 @@ class _TextChatTokenizer:
 
     def __init__(self):
         self.conversations = []
+        self.padding_values = []
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         self.conversations.append(conversation)
@@ -52,6 +53,8 @@ class _TextChatTokenizer:
         **kwargs,
     ):
         texts = text if isinstance(text, list) else [text]
+        if isinstance(text, list):
+            self.padding_values.append(padding)
         tokenized = [[11, 12, 21, 22] if item == "bye" else [11, 21, 22] for item in texts]
         if truncation and max_length is not None:
             tokenized = [ids[:max_length] for ids in tokenized]
@@ -238,6 +241,7 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     batch = text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=True)
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 11, 12, 21, 22]]
+    assert tokenizer.padding_values == [False, False]
     assert tokenizer.padding_side == "left"
     assert batch["input_ids"].data_ptr() == batch["tokens"].data_ptr()
     assert batch["labels"].tolist() == [[21, 22, -100, -100, 21, 22, -100]]

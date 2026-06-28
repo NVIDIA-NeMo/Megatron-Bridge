@@ -21,7 +21,11 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.sequence_batching import (
+    build_mcore_thd_sequence_batch_from_rows,
+    prepare_padded_or_packed_sequence_batch,
+    use_processor_right_padding,
+)
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS, THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
@@ -56,11 +60,71 @@ def gemma3_vl_collate_fn(
         tokenizer.pad_token = tokenizer.eos_token
     can_pad = tokenizer is not None and tokenizer.pad_token is not None
 
-    tokenizer_for_padding = getattr(processor, "tokenizer", processor)
-    saved_padding_side = getattr(tokenizer_for_padding, "padding_side", None)
-    if tokenizer_for_padding is not None:
-        tokenizer_for_padding.padding_side = "right"
-    try:
+    if enable_in_batch_packing:
+        sequence_rows = []
+        visual_values: dict[str, list[torch.Tensor]] = {key: [] for key in visual_keys}
+        with use_processor_right_padding(processor):
+            for example in examples:
+                template_kwargs: dict[str, Any] = {
+                    "tokenize": True,
+                    "padding": False,
+                    "truncation": True,
+                    "return_tensors": "pt",
+                    "return_dict": True,
+                }
+                if min_pixels is not None:
+                    template_kwargs["min_pixels"] = min_pixels
+                if max_pixels is not None:
+                    template_kwargs["max_pixels"] = max_pixels
+                sample_batch = processor.apply_chat_template([example["conversation"]], **template_kwargs)
+                input_ids = sample_batch["input_ids"][0]
+                attention_mask = sample_batch.get("attention_mask")
+                attention_mask = attention_mask[0] if attention_mask is not None else torch.ones_like(input_ids)
+                position_ids = sample_batch.get("position_ids")
+                position_ids = (
+                    position_ids[0]
+                    if position_ids is not None
+                    else torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
+                )
+                loss_mask = build_assistant_loss_mask(
+                    example,
+                    input_ids,
+                    processor,
+                    skipped_tokens,
+                    boundary_config=boundary_config,
+                ).to(device=input_ids.device, dtype=torch.float32)
+                labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
+                if skipped_tokens.numel() > 0:
+                    labels = labels.masked_fill(
+                        torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
+                    )
+                shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
+                sequence_rows.append(
+                    {
+                        "input_ids": input_ids,
+                        "attention_mask": attention_mask,
+                        "position_ids": position_ids,
+                        "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+                        "loss_mask": shifted_loss_mask,
+                    }
+                )
+                for key in visual_keys:
+                    value = sample_batch.get(key)
+                    if isinstance(value, torch.Tensor):
+                        visual_values[key].append(value.to(torch.bfloat16) if key == "pixel_values" else value)
+
+        packed_batch = build_mcore_thd_sequence_batch_from_rows(
+            sequence_rows,
+            sequence_length=sequence_length,
+            pad_token_id=int(getattr(tokenizer, "pad_token_id", 0) or 0),
+            ignore_index=IGNORE_INDEX,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        )
+        visual_kwargs = {key: torch.cat(values, dim=0) for key, values in visual_values.items() if values}
+        packed_batch["visual_inputs"] = GenericVisualInputs(**visual_kwargs) if visual_kwargs else None
+        return packed_batch
+
+    with use_processor_right_padding(processor):
         template_kwargs: dict[str, Any] = {
             "tokenize": True,
             "padding": can_pad,
@@ -73,9 +137,6 @@ def gemma3_vl_collate_fn(
         if max_pixels is not None:
             template_kwargs["max_pixels"] = max_pixels
         batch = processor.apply_chat_template([example["conversation"] for example in examples], **template_kwargs)
-    finally:
-        if tokenizer_for_padding is not None and saved_padding_side is not None:
-            tokenizer_for_padding.padding_side = saved_padding_side
 
     if "position_ids" not in batch:
         batch_size, seq_len = batch["input_ids"].shape

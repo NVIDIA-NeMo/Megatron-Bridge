@@ -43,8 +43,16 @@ def qwen2_audio_collate_fn(
     - Backward search for assistant text spans (matching HF Trainer convention)
     - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
     - Loss mask derived directly from active label positions
+
+    Qwen2-Audio keeps packing in ``audio_lm_step`` because audio features must
+    remain batch-aligned until model input preparation.
     """
-    del visual_keys, min_pixels, max_pixels, enable_in_batch_packing
+    del visual_keys, min_pixels, max_pixels
+    if enable_in_batch_packing:
+        warnings.warn(
+            "Qwen2-Audio defers in-batch packing to audio_lm_step; collate returns right-padded rows.",
+            stacklevel=2,
+        )
 
     texts = []
     audio_inputs = []

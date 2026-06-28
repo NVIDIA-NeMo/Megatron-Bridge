@@ -18,7 +18,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch, use_processor_right_padding
 from megatron.bridge.data.vlm_processing import assistant_mask_boundary_config_from_markers, build_assistant_loss_mask
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -48,12 +48,13 @@ def nemotron_omni_collate_fn(
     Audio is converted to mel spectrograms and added to the batch as
     ``sound_clips`` / ``sound_length`` tensors consumed by LLaVAModel.forward().
 
-    When ``enable_in_batch_packing=True``, samples in the microbatch are concatenated
-    along the sequence dim into a single ``[1, sum(L_i)]`` batch, and
-    current MCore packed-sequence metadata fields are emitted so TE's THD
-    attention kernels handle per-sample masking without an attention mask.
+    HF-style Nemotron Omni collation does not support in-batch packing. Use the
+    Energon task encoder for direct packed collation.
     """
     del visual_keys, min_pixels, max_pixels
+
+    if enable_in_batch_packing:
+        raise ValueError("Nemotron Omni HF collation does not support in-batch packing; use the Energon task encoder.")
 
     from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
         compute_mel_features,
@@ -101,7 +102,13 @@ def nemotron_omni_collate_fn(
             frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
         prompt = processor.apply_chat_template([ex["conversation"] for ex in examples], tokenize=False)
-        batch = processor(text=prompt, videos=frames, videos_kwargs={"video_metadata": metadata}, return_tensors="pt")
+        with use_processor_right_padding(processor):
+            batch = processor(
+                text=prompt,
+                videos=frames,
+                videos_kwargs={"video_metadata": metadata},
+                return_tensors="pt",
+            )
     else:
         # Convert structured {"type": "image"} content to explicit <image> text
         all_images = []
@@ -147,16 +154,17 @@ def nemotron_omni_collate_fn(
                 # separately and re-combine: right-pad input_ids across examples,
                 # keep pixel_values as a flat list of per-image ``[3, H_i, W_i]``
                 # tensors (patchified below with per-image (py, px)).
-                per_ex_batches = [
-                    processor(
-                        text=[prompt],
-                        images=imgs if imgs else None,
-                        padding=False,
-                        truncation=True,
-                        return_tensors="pt",
-                    )
-                    for prompt, imgs in zip(prompts, images_per_ex)
-                ]
+                with use_processor_right_padding(processor):
+                    per_ex_batches = [
+                        processor(
+                            text=[prompt],
+                            images=imgs if imgs else None,
+                            padding=False,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
+                        for prompt, imgs in zip(prompts, images_per_ex)
+                    ]
                 pad_id = processor.tokenizer.pad_token_id
                 if pad_id is None:
                     pad_id = processor.tokenizer.eos_token_id or 0
@@ -181,22 +189,24 @@ def nemotron_omni_collate_fn(
                 # Static-tile path: single-tile per image to match RADIO seq_length.
                 orig_tiles = processor.image_processor.max_num_tiles
                 processor.image_processor.max_num_tiles = 1
-                batch = processor(
-                    text=prompts,
-                    images=all_images,
+                with use_processor_right_padding(processor):
+                    batch = processor(
+                        text=prompts,
+                        images=all_images,
+                        padding=processor.tokenizer.pad_token is not None,
+                        truncation=True,
+                        return_tensors="pt",
+                    )
+                processor.image_processor.max_num_tiles = orig_tiles
+        else:
+            is_dynamic_res_processor = False
+            with use_processor_right_padding(processor):
+                batch = processor.tokenizer(
+                    prompts,
                     padding=processor.tokenizer.pad_token is not None,
                     truncation=True,
                     return_tensors="pt",
                 )
-                processor.image_processor.max_num_tiles = orig_tiles
-        else:
-            is_dynamic_res_processor = False
-            batch = processor.tokenizer(
-                prompts,
-                padding=processor.tokenizer.pad_token is not None,
-                truncation=True,
-                return_tensors="pt",
-            )
 
     # --- Audio path ---
     # Support both audio_path (file path) and audio (raw waveform tuple from CV17-style datasets)

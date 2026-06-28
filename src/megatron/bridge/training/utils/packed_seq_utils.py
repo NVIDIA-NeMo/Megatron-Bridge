@@ -21,6 +21,91 @@ from megatron.core.packed_seq_params import PackedSeqParams
 PackedMetadataValue = torch.Tensor | int | None
 
 
+def unpack_mcore_thd_tensor_for_position_ids(
+    tensor: torch.Tensor,
+    packed_seq_params: PackedSeqParams,
+) -> tuple[torch.Tensor, torch.Tensor, list[int], list[int]]:
+    """Reconstruct logical rows from a single-row MCore THD tensor.
+
+    This is intended for model-specific position-ID builders that require a
+    conventional batch dimension. Attention still consumes the original THD
+    tensor and metadata.
+
+    Args:
+        tensor: Packed tensor with shape ``[1, total_padded_tokens]``.
+        packed_seq_params: Current MCore THD sequence metadata.
+
+    Returns:
+        Padded logical rows, their boolean attention mask, padded row starts,
+        and unpadded row lengths.
+
+    Raises:
+        ValueError: If the tensor or packed metadata is inconsistent.
+    """
+    if tensor.dim() != 2 or tensor.size(0) != 1:
+        raise ValueError("MCore THD position preparation expects a tensor with shape [1, total_tokens].")
+    cu_seqlens = packed_seq_params.cu_seqlens_q
+    if not isinstance(cu_seqlens, torch.Tensor) or cu_seqlens.dim() != 1 or cu_seqlens.numel() < 2:
+        raise ValueError("MCore THD position preparation requires 1D cu_seqlens_q metadata.")
+    cu_seqlens_padded = packed_seq_params.cu_seqlens_q_padded
+    if cu_seqlens_padded is None:
+        cu_seqlens_padded = cu_seqlens
+    if not isinstance(cu_seqlens_padded, torch.Tensor) or cu_seqlens_padded.shape != cu_seqlens.shape:
+        raise ValueError("cu_seqlens_q_padded must match cu_seqlens_q when provided.")
+
+    lengths = (cu_seqlens[1:] - cu_seqlens[:-1]).tolist()
+    padded_starts = cu_seqlens_padded[:-1].tolist()
+    if not lengths or any(length <= 0 for length in lengths):
+        raise ValueError("MCore THD position preparation requires non-empty packed rows.")
+    if any(start < 0 or start + length > tensor.size(1) for start, length in zip(padded_starts, lengths)):
+        raise ValueError("Packed sequence metadata exceeds the THD tensor length.")
+
+    max_length = max(lengths)
+    rows = torch.zeros((len(lengths), max_length), dtype=tensor.dtype, device=tensor.device)
+    attention_mask = torch.zeros((len(lengths), max_length), dtype=torch.bool, device=tensor.device)
+    for row_idx, (start, length) in enumerate(zip(padded_starts, lengths)):
+        rows[row_idx, :length] = tensor[0, start : start + length]
+        attention_mask[row_idx, :length] = True
+    return rows, attention_mask, padded_starts, lengths
+
+
+def repack_mcore_thd_position_ids(
+    position_ids: torch.Tensor,
+    *,
+    padded_starts: list[int],
+    lengths: list[int],
+    total_length: int,
+) -> torch.Tensor:
+    """Scatter logical-row MRoPE positions back into a single THD row.
+
+    Args:
+        position_ids: Position tensor with shape ``[axes, rows, max_length]``.
+        padded_starts: Start offset of each row in the padded THD tensor.
+        lengths: Unpadded length of each logical row.
+        total_length: Padded THD tensor length.
+
+    Returns:
+        Position tensor with shape ``[axes, 1, total_length]``. Alignment gaps
+        remain zero because they are excluded by packed metadata and loss masks.
+
+    Raises:
+        ValueError: If row metadata and position IDs are inconsistent.
+    """
+    if position_ids.dim() != 3 or position_ids.size(1) != len(lengths):
+        raise ValueError("Logical-row position IDs must have shape [axes, rows, max_length].")
+    if len(padded_starts) != len(lengths):
+        raise ValueError("Packed row starts and lengths must contain the same number of entries.")
+
+    packed_position_ids = torch.zeros(
+        (position_ids.size(0), 1, total_length),
+        dtype=position_ids.dtype,
+        device=position_ids.device,
+    )
+    for row_idx, (start, length) in enumerate(zip(padded_starts, lengths)):
+        packed_position_ids[:, 0, start : start + length] = position_ids[:, row_idx, :length]
+    return packed_position_ids
+
+
 def _squeeze_metadata(value: PackedMetadataValue) -> PackedMetadataValue:
     if value is None:
         return None

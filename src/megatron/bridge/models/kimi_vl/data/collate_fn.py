@@ -20,7 +20,10 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.sequence_batching import (
+    build_mcore_thd_sequence_batch_from_rows,
+    prepare_padded_or_packed_sequence_batch,
+)
 from megatron.bridge.data.vlm_processing import (
     AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
@@ -269,6 +272,36 @@ def kimi_k25_vl_collate_fn(
                 "loss_mask": loss_mask,
             }
         )
+
+    if enable_in_batch_packing:
+        sequence_rows = []
+        for sample in all_expanded:
+            input_ids = sample["input_ids"]
+            loss_mask = sample["loss_mask"].to(device=input_ids.device, dtype=torch.float32)
+            shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
+            labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
+            sequence_rows.append(
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": sample["attention_mask"],
+                    "position_ids": torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long),
+                    "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+                    "loss_mask": shifted_loss_mask,
+                }
+            )
+
+        result = build_mcore_thd_sequence_batch_from_rows(
+            sequence_rows,
+            sequence_length=max_length if max_length is not None else sequence_length,
+            pad_token_id=pad_token_id,
+            ignore_index=IGNORE_INDEX,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        )
+        result["visual_inputs"] = GenericVisualInputs(
+            pixel_values=torch.cat(all_pixel_values, dim=0) if all_pixel_values else None,
+            image_grid_thw=torch.cat(all_grid_thws, dim=0) if all_grid_thws else None,
+        )
+        return result
 
     # Determine target length for padding
     expanded_lens = [b["input_ids"].shape[0] for b in all_expanded]

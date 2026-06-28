@@ -24,7 +24,10 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _convert_to_openai_messages
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.sequence_batching import (
+    build_mcore_thd_sequence_batch_from_rows,
+    use_processor_right_padding,
+)
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
@@ -96,21 +99,19 @@ def _tokenize_texts(
     max_length: int | None,
     pad_to_max_length: bool,
     pad_to_multiple_of: int,
+    enable_padding: bool = True,
 ) -> dict[str, Any]:
     tokenizer_kwargs: dict[str, Any] = {
-        "padding": "max_length" if pad_to_max_length and max_length is not None else True,
+        "padding": "max_length" if enable_padding and pad_to_max_length and max_length is not None else enable_padding,
         "return_tensors": "pt",
     }
     if max_length is not None:
         tokenizer_kwargs["max_length"] = max_length
         tokenizer_kwargs["truncation"] = True
-    if not pad_to_max_length and pad_to_multiple_of > 1:
+    if enable_padding and not pad_to_max_length and pad_to_multiple_of > 1:
         tokenizer_kwargs["pad_to_multiple_of"] = pad_to_multiple_of
 
-    saved_padding_side = getattr(tokenizer, "padding_side", None)
-    if saved_padding_side is not None:
-        tokenizer.padding_side = "right"
-    try:
+    with use_processor_right_padding(tokenizer):
         seen: set[int] = set()
         for tokenizer_or_processor in (tokenizer, processor):
             if id(tokenizer_or_processor) in seen:
@@ -122,9 +123,6 @@ def _tokenize_texts(
                 continue
             if "input_ids" in tokenized:
                 return dict(tokenized)
-    finally:
-        if saved_padding_side is not None:
-            tokenizer.padding_side = saved_padding_side
 
     raise ValueError("Text chat collate could not tokenize rendered chat text.")
 
@@ -211,6 +209,66 @@ def text_chat_collate_fn(
     conversations = [_normalize_text_conversation(example) for example in examples]
     rendered_texts = [_render_chat(conversation, processor, tokenizer) for conversation in conversations]
     boundary_config = infer_assistant_mask_boundary_config(processor)
+    skipped_tokens = extract_skipped_token_ids(processor)
+    if enable_in_batch_packing:
+        sequence_rows = []
+        token_counts = []
+        for conversation, rendered_text in zip(conversations, rendered_texts):
+            row_batch = _tensorize_batch(
+                _tokenize_texts(
+                    [rendered_text],
+                    processor,
+                    tokenizer,
+                    max_length=max_length,
+                    pad_to_max_length=False,
+                    pad_to_multiple_of=1,
+                    enable_padding=False,
+                )
+            )
+            row_batch["input_ids"] = _as_2d_long_tensor(row_batch["input_ids"])
+            _ensure_attention_mask(row_batch, tokenizer)
+            input_ids = row_batch["input_ids"][0]
+            attention_mask = row_batch["attention_mask"][0]
+            assistant_loss_mask = build_assistant_loss_mask(
+                conversation,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+                warn_on_all_masked=warn_on_all_masked,
+            )
+            labels, shifted_loss_mask = build_shifted_labels_and_loss_mask(
+                input_ids,
+                assistant_loss_mask,
+                skipped_tokens,
+                ignore_index=ignore_index,
+            )
+            sequence_rows.append(
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": attention_mask,
+                    "position_ids": torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long),
+                    "labels": labels,
+                    "loss_mask": shifted_loss_mask,
+                }
+            )
+            token_counts.append(int(attention_mask.sum().item()))
+
+        pad_token_id = getattr(tokenizer, "pad_token_id", None)
+        if pad_token_id is None:
+            pad_token_id = 0
+        batch = build_mcore_thd_sequence_batch_from_rows(
+            sequence_rows,
+            sequence_length=max_length,
+            pad_token_id=int(pad_token_id),
+            ignore_index=ignore_index,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        )
+        batch["tokens"] = batch["input_ids"]
+        batch["metadata"] = [_metadata_from_example(example) for example in examples]
+        batch["token_count"] = token_counts
+        return batch
+
     batch = _tensorize_batch(
         _tokenize_texts(
             rendered_texts,
@@ -224,7 +282,6 @@ def text_chat_collate_fn(
     batch["input_ids"] = _as_2d_long_tensor(batch["input_ids"])
     _ensure_attention_mask(batch, tokenizer)
 
-    skipped_tokens = extract_skipped_token_ids(processor)
     loss_masks = [
         build_assistant_loss_mask(
             conversation,
@@ -250,16 +307,4 @@ def text_chat_collate_fn(
     batch["loss_mask"] = shifted_loss_mask
     batch["metadata"] = [_metadata_from_example(example) for example in examples]
     batch["token_count"] = [int(count) for count in batch["attention_mask"].sum(dim=1).tolist()]
-    if enable_in_batch_packing:
-        pad_token_id = getattr(tokenizer, "pad_token_id", None)
-        if pad_token_id is None:
-            pad_token_id = 0
-        prepare_padded_or_packed_sequence_batch(
-            batch,
-            sequence_length=None,
-            enable_in_batch_packing=True,
-            pad_token_id=int(pad_token_id),
-            ignore_index=ignore_index,
-            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-        )
     return batch
