@@ -844,11 +844,16 @@ class TensorInspectConfig:
     feature_dirs: list[str] | None = None
     """Directories containing feature implementations (searched recursively)."""
 
+    allow_custom_feature_dirs: bool = False
+    """Allow user-provided feature implementation directories."""
+
     log_dir: str | None = None
     """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
 
     init_training_step: int = 0
     """Initial training step for the inspector (used when resuming)."""
+
+    _feature_dirs_from_default: bool = field(default=False, init=False, repr=False)
 
     def finalize(self) -> None:
         """Populate sensible defaults when inspection is enabled.
@@ -866,6 +871,7 @@ class TensorInspectConfig:
                 te_features_dir = Path(te_features_mod.__file__).parent
                 if te_features_dir.exists():
                     self.feature_dirs = [str(te_features_dir)]
+                    self._feature_dirs_from_default = True
             except Exception:
                 pass
 
@@ -1196,6 +1202,13 @@ class ConfigContainer(Container):
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+
+        if hasattr(self.dataset, "pad_to_max_length"):
+            requires_fixed_seq_len = (
+                getattr(self.model, "pipeline_model_parallel_size", 1) > 1
+                or getattr(self.model, "expert_model_parallel_size", 1) > 1
+            )
+            self.dataset.pad_to_max_length = requires_fixed_seq_len
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.

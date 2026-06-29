@@ -46,6 +46,17 @@ class TestHybridModelProvider:
         assert provider.position_embedding_type == "none"
         assert provider.vocab_size is None
 
+    def test_modelopt_spec_remaps_te_layernorm_keys(self):
+        mock_spec = Mock(spec=ModuleSpec)
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.get_hybrid_stack_modelopt_spec",
+            return_value=mock_spec,
+        ) as mock_fn:
+            result = hybrid_provider.modelopt_hybrid_stack_spec()
+
+        mock_fn.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
+        assert result is mock_spec
+
     def test_rejects_mamba_stack_spec_argument(self):
         module_spec = ModuleSpec(module=object)
 

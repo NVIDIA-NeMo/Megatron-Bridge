@@ -24,7 +24,7 @@ import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _convert_to_openai_messages
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_packing import pack_padded_sequences_in_batch
+from megatron.bridge.data.sequence_packing import _pack_padded_sequence
 from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
@@ -156,11 +156,13 @@ def text_chat_collate_fn(
     processor: Any,
     *,
     max_length: int | None = None,
+    sequence_length: int | None = None,
     pad_to_max_length: bool = False,
     warn_on_all_masked: bool = True,
     ignore_index: int = IGNORE_INDEX,
-    pack_sequences: bool = False,
-    pack_sequences_pad_to_multiple_of: int = 1,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """Collate text-only HF chat examples using the shared assistant-mask path.
 
@@ -170,20 +172,27 @@ def text_chat_collate_fn(
         processor: A HF tokenizer or processor. It must expose
             ``apply_chat_template`` directly or through ``processor.tokenizer``.
         max_length: Optional tokenizer truncation length.
+        sequence_length: Optional tokenizer truncation length used by
+            conversation-dataset providers.
         pad_to_max_length: If set with ``max_length``, pad every row to
             ``max_length`` instead of the longest row in the batch.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         ignore_index: Label ignore value for masked targets.
-        pack_sequences: If True, flatten the padded microbatch and emit
+        enable_in_batch_packing: If True, flatten the padded microbatch and emit
             packed-sequence metadata for GPT-style training steps.
-        pack_sequences_pad_to_multiple_of: Optional per-sequence length multiple
-            used when ``pack_sequences`` inserts padding for CP/SP constraints.
+        in_batch_packing_pad_to_multiple_of: Optional per-sequence length multiple
+            used when ``enable_in_batch_packing`` inserts padding for CP/SP constraints.
+        **kwargs: Additional common collate kwargs accepted for parity with
+            VLM collate functions and ignored by the text-only path.
 
     Returns:
         Batch dictionary with VLM-style ``input_ids`` and GPT-style ``tokens``
         aliases, shifted ``labels`` and ``loss_mask``, ``position_ids``, and
         optional tokenizer fields such as ``attention_mask``.
     """
+    del kwargs
+
+    max_length = max_length if max_length is not None else sequence_length
     tokenizer = get_processor_tokenizer(processor)
     conversations = [_normalize_text_conversation(example) for example in examples]
     rendered_texts = [_render_chat(conversation, processor, tokenizer) for conversation in conversations]
@@ -224,14 +233,16 @@ def text_chat_collate_fn(
     batch["loss_mask"] = shifted_loss_mask
     batch["metadata"] = [_metadata_from_example(example) for example in examples]
     batch["token_count"] = [int(count) for count in batch["attention_mask"].sum(dim=1).tolist()]
-    if pack_sequences:
+    if enable_in_batch_packing:
+        # Transitional path: tokenizer output is already padded here. Future
+        # text collates should construct packed layout directly.
         pad_token_id = getattr(tokenizer, "pad_token_id", None)
         if pad_token_id is None:
             pad_token_id = 0
-        pack_padded_sequences_in_batch(
+        _pack_padded_sequence(
             batch,
             pad_token_id=int(pad_token_id),
             ignore_index=ignore_index,
-            pad_to_multiple_of=pack_sequences_pad_to_multiple_of,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
     return batch

@@ -57,6 +57,48 @@ def _write_tmp_jsonl(rows):
     return path
 
 
+def test_preloaded_provider_defaults_trust_remote_code_false(monkeypatch):
+    """Test that provider-owned HF loading fails closed by default."""
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["path"] = path
+            seen["trust_remote_code"] = trust_remote_code
+            return Gemma3Processor()
+
+    monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
+
+    provider = pre.PreloadedVLMConversationProvider(seq_length=16, hf_processor_path="Qwen/attacker_processor")
+    provider.build_datasets(DatasetBuildContext(train_samples=0, valid_samples=0, test_samples=0))
+
+    assert seen == {"path": "Qwen/attacker_processor", "trust_remote_code": False}
+
+
+def test_preloaded_provider_explicit_trust_remote_code_true(monkeypatch):
+    """Test that explicit provider trust enables HF remote code loading."""
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["path"] = path
+            seen["trust_remote_code"] = trust_remote_code
+            return Gemma3Processor()
+
+    monkeypatch.setattr(pre, "AutoProcessor", _AutoProcessor)
+
+    provider = pre.PreloadedVLMConversationProvider(
+        seq_length=16,
+        hf_processor_path="Qwen/trusted_processor",
+        trust_remote_code=True,
+    )
+    provider.build_datasets(DatasetBuildContext(train_samples=0, valid_samples=0, test_samples=0))
+
+    assert seen == {"path": "Qwen/trusted_processor", "trust_remote_code": True}
+
+
 def test_split_text_by_placeholders_basic():
     parts = pre._split_text_by_placeholders("a<image>b<video>c", ["img.png"], ["vid.mp4"])  # noqa: SLF001
     types = [p["type"] for p in parts]
@@ -108,3 +150,41 @@ def test_load_and_build_provider(monkeypatch):
     train_ds, valid_ds, test_ds = provider.build_datasets(ctx)
     assert train_ds is not None and len(train_ds) == 2
     assert valid_ds is None and test_ds is None
+
+
+def test_preloaded_provider_forwards_deferred_packing_flag(monkeypatch):
+    rows = [{"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "ok"}]}]
+    path = _write_tmp_jsonl(rows)
+
+    import transformers
+
+    captured_kwargs = []
+
+    class CapturingConversationDataset:
+        def __init__(self, **kwargs):
+            captured_kwargs.append(kwargs)
+            self._length = kwargs["target_length"]
+
+        def __len__(self):
+            return self._length
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+    monkeypatch.setattr(pre, "ConversationDataset", CapturingConversationDataset)
+
+    provider = pre.PreloadedVLMConversationProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        train_data_path=path,
+        enable_in_batch_packing=True,
+        defer_in_batch_packing_to_step=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
+
+    train_ds, valid_ds, test_ds = provider.build_datasets(
+        DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    )
+
+    assert train_ds is not None and valid_ds is None and test_ds is None
+    assert captured_kwargs[0]["enable_in_batch_packing"] is True
+    assert captured_kwargs[0]["defer_in_batch_packing_to_step"] is True
+    assert captured_kwargs[0]["in_batch_packing_pad_to_multiple_of"] == 8

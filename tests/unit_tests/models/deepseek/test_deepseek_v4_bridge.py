@@ -312,6 +312,13 @@ class TestDeepSeekV4QuantizedExport:
         assert torch.equal(restored_mxfp4.float(), mxfp4_weight.float())
 
 
+def test_sequential_expert_mappings_present(bridge_with_mtp):
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning)."""
+    params = _by_megatron(bridge_with_mtp.mapping_registry())
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
+
+
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
 
