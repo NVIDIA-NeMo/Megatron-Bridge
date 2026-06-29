@@ -707,6 +707,16 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.experts.linear_fc2.weight*",
                 "layers.*.ffn.experts.*.w2.weight",
             ),
+            # Sequential (non-grouped) experts <-> per-expert HF (e.g. ModelOpt pruning).
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                gate="layers.*.ffn.experts.*.w1.weight",
+                up="layers.*.ffn.experts.*.w3.weight",
+            ),
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                "layers.*.ffn.experts.*.w2.weight",
+            ),
             # Shared expert MLP
             GatedMLPMapping(
                 megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",

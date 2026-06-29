@@ -34,6 +34,9 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
 _VISUAL_PAYLOAD_FIELDS = frozenset(("pixel_values", "pixel_values_videos"))
+_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS, "total_tokens")
 
 
 def _unwrap_forward_module(model: Any) -> Any:
@@ -154,14 +157,9 @@ def get_batch_from_iterator(
     # Middle PP ranks still need visual metadata for MRoPE, but not image/video payload tensors.
     required_device_keys.add("visual_inputs")
 
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        if "cu_seqlens_unpadded" in batch:
-            required_device_keys.add("cu_seqlens_unpadded")
-        required_host_keys.add("cu_seqlens_argmin")
-        if "cu_seqlens_unpadded_argmin" in batch:
-            required_host_keys.add("cu_seqlens_unpadded_argmin")
-        required_host_keys.add("max_seqlen")
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
     can_use_mrope_metadata_only = (
         use_qwen_mrope_metadata and _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
@@ -206,9 +204,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         use_mtp: Whether Multi-Token Prediction layers are enabled
 
     Returns:
-        tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded,
-        cu_seqlens_unpadded_argmin, and visual_inputs.
+        tuple of tensors containing tokens, labels, loss_mask, attention_mask,
+        position_ids, packed sequence metadata, and visual_inputs.
     """
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
@@ -231,11 +228,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         batch.get("loss_mask"),  # Full packed loss_mask, will be CP-sliced by model
         batch.get("attention_mask"),
         batch.get("position_ids"),
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
-        batch.get("cu_seqlens_unpadded"),
-        batch.get("cu_seqlens_unpadded_argmin"),
+        {key: batch[key] for key in _PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+        if batch.get("cu_seqlens_q") is not None
+        else None,
         visual_inputs,
     )
 
@@ -269,11 +264,7 @@ def forward_step(
             loss_mask,
             attention_mask,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_argmin,
-            max_seqlen,
-            cu_seqlens_unpadded,
-            cu_seqlens_unpadded_argmin,
+            packed_seq_params,
             visual_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
@@ -332,17 +323,7 @@ def forward_step(
         forward_args.update(_filter_visual_kwargs_for_model(model, visual_kwargs))
 
     # Add packed sequence support
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-        }
-        if max_seqlen is not None:
-            packed_seq_params["max_seqlen"] = max_seqlen
-        if cu_seqlens_unpadded is not None:
-            packed_seq_params["cu_seqlens_unpadded"] = cu_seqlens_unpadded
-        if cu_seqlens_unpadded_argmin is not None:
-            packed_seq_params["cu_seqlens_unpadded_argmin"] = cu_seqlens_unpadded_argmin
+    if packed_seq_params is not None:
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.

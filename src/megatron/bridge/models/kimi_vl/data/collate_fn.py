@@ -20,14 +20,41 @@ from typing import Any
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
+from megatron.bridge.data.sequence_batching import (
+    build_mcore_thd_sequence_batch_from_rows,
+    prepare_padded_or_packed_sequence_batch,
+)
 from megatron.bridge.data.vlm_processing import (
+    AssistantMaskBoundaryConfig,
+    assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
-    infer_assistant_mask_boundary_config,
+    get_processor_tokenizer,
+    tokenize_text_without_special_tokens,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+KIMI_ASSISTANT_START = "<|im_assistant|>assistant<|im_middle|>"
+KIMI_ASSISTANT_END = "<|im_end|>"
+KIMI_THINK_OPEN = "<think>"
+KIMI_THINK_CLOSE = "</think>"
+
+
+def _kimi_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig:
+    """Build Kimi assistant loss boundaries and trim only empty thinking blocks."""
+    tokenizer = get_processor_tokenizer(processor)
+    think_open_tokens = tokenize_text_without_special_tokens(tokenizer, KIMI_THINK_OPEN)
+    think_close_tokens = tokenize_text_without_special_tokens(tokenizer, KIMI_THINK_CLOSE)
+    empty_think_tokens = [*think_open_tokens, *think_close_tokens]
+    trim_leading_token_sequences = (empty_think_tokens,) if think_open_tokens and think_close_tokens else ()
+
+    return assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=KIMI_ASSISTANT_START,
+        assistant_end=KIMI_ASSISTANT_END,
+        trim_leading_token_sequences=trim_leading_token_sequences,
+    )
 
 
 def _expand_image_tokens_and_aligned_mask(
@@ -161,8 +188,11 @@ def kimi_k25_vl_collate_fn(
     """
     del visual_keys, min_pixels, max_pixels
 
-    skipped_tokens = extract_skipped_token_ids(processor)
-    boundary_config = infer_assistant_mask_boundary_config(processor)
+    # Kimi SFT supervision is defined by the assistant-span loss mask. Do not
+    # globally drop special tokens such as <|im_end|>, which the assistant must
+    # learn to emit.
+    skipped_tokens = torch.empty(0, dtype=torch.long)
+    boundary_config = _kimi_assistant_mask_boundary_config(processor)
 
     # Get media token ID
     media_token_id = getattr(processor, "media_placeholder_token_id", None)
@@ -196,19 +226,20 @@ def kimi_k25_vl_collate_fn(
                     if isinstance(item, dict) and item.get("type") == "image":
                         medias.append({"type": "image", "image": item.get("image")})
 
+        template_kwargs = chat_template_kwargs_from_example(example)
+        template_kwargs.setdefault("preserve_thinking", True)
         text = processor.apply_chat_template(
             conversation,
             add_generation_prompt=False,
             tokenize=False,
-            **chat_template_kwargs_from_example(example),
+            **template_kwargs,
         )
 
         processor_kwargs = {
             "text": text,
+            "medias": medias,
             "return_tensors": "pt",
         }
-        if medias:
-            processor_kwargs["medias"] = medias
 
         sample_batch = processor(**processor_kwargs)
 
@@ -242,6 +273,36 @@ def kimi_k25_vl_collate_fn(
             }
         )
 
+    if enable_in_batch_packing:
+        sequence_rows = []
+        for sample in all_expanded:
+            input_ids = sample["input_ids"]
+            loss_mask = sample["loss_mask"].to(device=input_ids.device, dtype=torch.float32)
+            shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
+            labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
+            sequence_rows.append(
+                {
+                    "input_ids": input_ids,
+                    "attention_mask": sample["attention_mask"],
+                    "position_ids": torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long),
+                    "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+                    "loss_mask": shifted_loss_mask,
+                }
+            )
+
+        result = build_mcore_thd_sequence_batch_from_rows(
+            sequence_rows,
+            sequence_length=max_length if max_length is not None else sequence_length,
+            pad_token_id=pad_token_id,
+            ignore_index=IGNORE_INDEX,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        )
+        result["visual_inputs"] = GenericVisualInputs(
+            pixel_values=torch.cat(all_pixel_values, dim=0) if all_pixel_values else None,
+            image_grid_thw=torch.cat(all_grid_thws, dim=0) if all_grid_thws else None,
+        )
+        return result
+
     # Determine target length for padding
     expanded_lens = [b["input_ids"].shape[0] for b in all_expanded]
     batch_max = max(expanded_lens)
@@ -251,7 +312,13 @@ def kimi_k25_vl_collate_fn(
     else:
         target_len = batch_max
 
-    # Pad/truncate to target_len
+    if batch_max > target_len:
+        raise ValueError(
+            f"Kimi VL collate refuses to truncate: max length {batch_max} > target {target_len}. "
+            "Filter oversized records before collation."
+        )
+
+    # Pad to target_len
     padded_input_ids = []
     padded_attention_mask = []
     padded_loss_mask = []
@@ -272,11 +339,6 @@ def kimi_k25_vl_collate_fn(
                 [attention_mask, torch.zeros(pad_len, dtype=attention_mask.dtype, device=attention_mask.device)]
             )
             loss_mask = torch.cat([loss_mask, torch.zeros(pad_len, dtype=loss_mask.dtype, device=loss_mask.device)])
-        elif seq_len > target_len:
-            # Truncate
-            input_ids = input_ids[:target_len]
-            attention_mask = attention_mask[:target_len]
-            loss_mask = loss_mask[:target_len]
 
         padded_input_ids.append(input_ids)
         padded_attention_mask.append(attention_mask)
@@ -320,7 +382,7 @@ def kimi_k25_vl_collate_fn(
     for key in ("pixel_values", "pixel_values_videos", "grid_thws", "video_grid_thw"):
         result.pop(key, None)
     result["visual_inputs"] = visual_inputs
-    pad_or_pack_sequence(
+    prepare_padded_or_packed_sequence_batch(
         result,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

@@ -26,7 +26,7 @@ def test_get_batch_from_iterator_rejects_collate_time_packing_metadata():
         "input_ids": torch.tensor([[1, 2, 3]]),
         "position_ids": torch.tensor([[0, 1, 2]]),
         "visual_inputs": None,
-        "cu_seqlens": torch.tensor([[0, 3]], dtype=torch.int32),
+        "cu_seqlens_q": torch.tensor([0, 3], dtype=torch.int32),
     }
 
     with pytest.raises(ValueError, match="does not support collate-time in-batch packing"):
@@ -35,3 +35,24 @@ def test_get_batch_from_iterator_rejects_collate_time_packing_metadata():
             is_first_pp_stage=True,
             is_last_pp_stage=True,
         )
+
+
+def test_get_batch_from_iterator_allows_deferred_none_packing_metadata(monkeypatch):
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 3]]),
+        "position_ids": torch.tensor([[0, 1, 2]]),
+        "labels": torch.tensor([[2, 3, -100]]),
+        "loss_mask": torch.tensor([[1.0, 1.0, 0.0]]),
+        "visual_inputs": None,
+        "cu_seqlens_q": None,
+        "cu_seqlens": None,
+    }
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
+
+    result = get_batch_from_iterator(
+        iter([batch]),
+        is_first_pp_stage=True,
+        is_last_pp_stage=True,
+    )
+
+    assert torch.equal(result["input_ids"], batch["input_ids"])

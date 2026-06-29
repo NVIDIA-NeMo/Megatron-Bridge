@@ -57,7 +57,7 @@ def get_batch_from_iterator(
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
-    if "cu_seqlens" in batch:
+    if batch.get("cu_seqlens_q") is not None or batch.get("cu_seqlens") is not None:
         raise ValueError(
             "qwen3_vl_step does not support collate-time in-batch packing. "
             "Use an unpacked collate batch with this step so it can build Qwen3-VL packed sequence metadata itself."
@@ -71,11 +71,6 @@ def get_batch_from_iterator(
 
     # Instead of raw tensors, expect a single 'visual_inputs' object in batch
     required_device_keys.add("visual_inputs")
-
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        required_host_keys.add("cu_seqlens_argmin")
-        required_host_keys.add("max_seqlen")
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
@@ -172,7 +167,7 @@ def _pad_and_pack_qwen3_vl_step(
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``pad_or_pack_sequence``.
+    prefer collate-time packing via ``prepare_padded_or_packed_sequence_batch``.
     """
 
     batch_size, cur_len = tokens.shape

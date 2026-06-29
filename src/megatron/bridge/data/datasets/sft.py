@@ -1039,7 +1039,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                 max_seqlen, _ = seqlens.max(dim=1, keepdim=True)
 
             cu_seqlens_batch = {
-                "attention_mask": torch.LongTensor([1] * len(input_ids)),  # no attention mask is needed for packed seq
+                "attention_mask": None,  # no attention mask is needed for packed seq
                 "cu_seqlens": torch.IntTensor(cu_seqlens),  # cu_seqlens_q must be in dtype torch.int32
                 "cu_seqlens_argmin": cu_seqlens_argmin,  # only required for perf
                 "max_seqlen": max_seqlen,  # only required for perf
@@ -1240,9 +1240,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
                 if x_tensor.sum().item() == 0:
                     logger.warning(
                         "Due to truncation to max_seq_length, no assistant tokens are found in sample. "
-                        "Setting loss_mask to all ones."
+                        "Keeping loss_mask empty to avoid supervising non-assistant tokens."
                     )
-                    loss_mask[i] = [1] * self.max_seq_length
 
             contexts = [x[: self.max_seq_length] for x in contexts]
             answers = [x[: self.max_seq_length] for x in answers]

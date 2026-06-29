@@ -590,9 +590,10 @@ def test_get_batch_consumes_collated_packed_metadata(monkeypatch):
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
-        "cu_seqlens": torch.tensor([[0, 3, 8]], dtype=torch.int32),
-        "cu_seqlens_argmin": torch.tensor([[3]], dtype=torch.int32),
-        "max_seqlen": torch.tensor([[5]], dtype=torch.int32),
+        "cu_seqlens_q": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_kv": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "max_seqlen_q": torch.tensor(5, dtype=torch.int32),
+        "max_seqlen_kv": torch.tensor(5, dtype=torch.int32),
         "visual_inputs": vi,
     }
 
@@ -604,11 +605,7 @@ def test_get_batch_consumes_collated_packed_metadata(monkeypatch):
         out_loss_mask,
         out_attention_mask,
         out_position_ids,
-        cu_seqlens,
-        cu_seqlens_argmin,
-        max_seqlen,
-        cu_seqlens_unpadded,
-        cu_seqlens_unpadded_argmin,
+        packed_seq_params,
         visual_inputs,
     ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection())
 
@@ -616,18 +613,19 @@ def test_get_batch_consumes_collated_packed_metadata(monkeypatch):
     assert out_labels.shape == (1, 8)
     assert out_loss_mask.shape == (1, 8)
     assert out_position_ids.shape == (1, 8)
-    assert cu_seqlens.tolist() == [[0, 3, 8]]
-    assert cu_seqlens_argmin.item() == 3
-    assert max_seqlen.item() == 5
-    assert cu_seqlens_unpadded is None
-    assert cu_seqlens_unpadded_argmin is None
+    assert packed_seq_params["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert packed_seq_params["max_seqlen_q"].item() == 5
+    assert packed_seq_params["max_seqlen_kv"].item() == 5
+    assert "cu_seqlens_argmin" not in packed_seq_params
+    assert "cu_seqlens_unpadded" not in packed_seq_params
     assert out_attention_mask is None
     assert torch.equal(out_tokens.cpu(), tokens)
     assert visual_inputs is not None
 
 
-def test_get_batch_consumes_collated_unpadded_cu_seqlens(monkeypatch):
-    """Test get_batch forwards collate-provided padded and unpadded cu_seqlens."""
+def test_get_batch_consumes_current_padded_cu_seqlens(monkeypatch):
+    """Test get_batch forwards collate-provided current padded cu-seqlens fields."""
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
@@ -658,11 +656,12 @@ def test_get_batch_consumes_collated_unpadded_cu_seqlens(monkeypatch):
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
-        "cu_seqlens": torch.tensor([[0, 4, 12]], dtype=torch.int32),
-        "cu_seqlens_unpadded": torch.tensor([[0, 3, 8]], dtype=torch.int32),
-        "cu_seqlens_argmin": torch.tensor([[3]], dtype=torch.int32),
-        "cu_seqlens_unpadded_argmin": torch.tensor([[3]], dtype=torch.int32),
-        "max_seqlen": torch.tensor([[8]], dtype=torch.int32),
+        "cu_seqlens_q": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_kv": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_q_padded": torch.tensor([0, 4, 12], dtype=torch.int32),
+        "cu_seqlens_kv_padded": torch.tensor([0, 4, 12], dtype=torch.int32),
+        "max_seqlen_q": torch.tensor(8, dtype=torch.int32),
+        "max_seqlen_kv": torch.tensor(8, dtype=torch.int32),
         "visual_inputs": None,
     }
 
@@ -674,11 +673,7 @@ def test_get_batch_consumes_collated_unpadded_cu_seqlens(monkeypatch):
         out_loss_mask,
         _,
         out_position_ids,
-        cu_seqlens,
-        cu_seqlens_argmin,
-        max_seqlen,
-        cu_seqlens_unpadded,
-        cu_seqlens_unpadded_argmin,
+        packed_seq_params,
         _,
     ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2))
 
@@ -686,11 +681,12 @@ def test_get_batch_consumes_collated_unpadded_cu_seqlens(monkeypatch):
     assert out_labels.shape[1] == 12
     assert out_loss_mask.shape[1] == 12
     assert out_position_ids.shape[1] == 12
-    assert cu_seqlens.tolist() == [[0, 4, 12]]
-    assert cu_seqlens_unpadded.tolist() == [[0, 3, 8]]
-    assert cu_seqlens_argmin.item() == 3
-    assert cu_seqlens_unpadded_argmin.item() == 3
-    assert max_seqlen.item() == 8
+    assert packed_seq_params["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
+    assert packed_seq_params["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert packed_seq_params["max_seqlen_q"].item() == 8
+    assert packed_seq_params["max_seqlen_kv"].item() == 8
 
 
 def test_forward_step_schedule_plan(monkeypatch):

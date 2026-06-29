@@ -1490,7 +1490,7 @@ class MegatronModelBridge(
         model_config: TransformerConfig,
     ) -> bool:
         """Shared embedding setting."""
-        return getattr(model_config, "share_embeddings_and_output_weights")
+        return getattr(model_config, "share_embeddings_and_output_weights", False)
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
