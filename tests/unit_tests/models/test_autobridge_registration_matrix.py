@@ -19,11 +19,14 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 
 pytestmark = pytest.mark.unit
+
+REGISTRATION_CHECK_SCRIPT = Path(__file__).with_name("autobridge_registration_check.py")
 
 
 EXPECTED_REGISTRATIONS = {
@@ -119,53 +122,12 @@ STRING_REGISTRATIONS = {
 }
 
 
-REGISTRATION_CHECK = """
-import json
-import sys
-
-from transformers import PretrainedConfig
-
-from megatron.bridge import AutoBridge
-from megatron.bridge.models.conversion import model_bridge
-
-
-expected = json.loads(sys.argv[1])
-string_registrations = set(json.loads(sys.argv[2]))
-supported = AutoBridge.list_supported_models()
-assert supported == sorted(expected), f"registration manifest mismatch: {supported!r}"
-
-key_kinds = {
-    key if isinstance(key, str) else key.__name__: isinstance(key, str)
-    for key in model_bridge.get_model_bridge._exact_types
-}
-expected_key_kinds = {architecture: architecture in string_registrations for architecture in expected}
-assert key_kinds == expected_key_kinds, f"registration key-kind mismatch: {key_kinds!r}"
-
-for architecture, expected_bridge_class in expected.items():
-    config_kwargs = {"architectures": [architecture]}
-    if architecture in string_registrations:
-        config_kwargs["auto_map"] = {"AutoModelForCausalLM": f"modeling_test.{architecture}"}
-    config = PretrainedConfig(**config_kwargs)
-    assert AutoBridge.supports(config), f"AutoBridge rejected {architecture}"
-
-    bridge = AutoBridge.from_hf_config(config)
-    selected_bridge = bridge._model_bridge
-    actual_bridge_class = f"{type(selected_bridge).__module__}.{type(selected_bridge).__name__}"
-
-    assert actual_bridge_class == expected_bridge_class, (
-        f"{architecture} selected {actual_bridge_class}, expected {expected_bridge_class}"
-    )
-    assert selected_bridge.hf_config is config
-"""
-
-
 def test_public_autobridge_import_registers_every_supported_model() -> None:
     """The public package import must install every expected bridge registration."""
     result = subprocess.run(
         [
             sys.executable,
-            "-c",
-            REGISTRATION_CHECK,
+            str(REGISTRATION_CHECK_SCRIPT),
             json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
             json.dumps(sorted(STRING_REGISTRATIONS)),
         ],
