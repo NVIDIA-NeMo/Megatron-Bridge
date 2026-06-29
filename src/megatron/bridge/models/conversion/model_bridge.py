@@ -393,7 +393,7 @@ class MegatronModelBridge(
             bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
             model_config = bridge.get_model_config()
             model_config.finalize()
-            models = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+            models = bridge.get_megatron_model(model_config, load_weights=False, wrap_with_ddp=False)
 
     Note:
         This class uses generic type parameters to ensure type safety:

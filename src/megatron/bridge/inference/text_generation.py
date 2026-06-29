@@ -268,12 +268,13 @@ def load_bridge_model(
             torch_dtype=dtype,
             trust_remote_code=safe_trust_remote_code,
         )
-        model_config = bridge.get_model_config(load_weights=True)
+        model_config = bridge.get_model_config()
         _apply_model_config_parallelism(model_config, cache_mla_latents=cache_mla_latents, **parallelism)
         model_config.finalize()
         pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
         model_list = bridge.get_megatron_model(
             model_config,
+            load_weights=True,
             pg_collection=pg_collection,
             wrap_with_ddp=False,
             data_parallel_random_init=False,

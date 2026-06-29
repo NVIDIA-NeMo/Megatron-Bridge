@@ -43,7 +43,6 @@ class _FakeAutoBridge:
     def __init__(self, provider):
         self.provider = provider
         self.hf_paths = []
-        self.load_weights = []
         self.conversion_modes = []
 
     def from_hf_pretrained(self, hf_path):
@@ -51,8 +50,7 @@ class _FakeAutoBridge:
         self.conversion_modes.append(os.environ.get("GEMMA4_CONVERSION_MODE"))
         return self
 
-    def get_model_config(self, load_weights=False):
-        self.load_weights.append(load_weights)
+    def get_model_config(self):
         return self.provider
 
 
@@ -158,7 +156,6 @@ class TestGemma4RecipeAutoBridge:
 
         assert isinstance(cfg.model, Gemma4DenseProvider)
         assert fake_autobridge.hf_paths == [recipe_module._GEMMA4_E4B_HF_PATH]
-        assert fake_autobridge.load_weights == [False]
         assert fake_autobridge.conversion_modes == ["text"]
         assert os.environ["GEMMA4_CONVERSION_MODE"] == "vl"
 

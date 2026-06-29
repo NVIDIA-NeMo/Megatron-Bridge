@@ -121,7 +121,7 @@ def nemotron_nano_v2_vl_12b_sft_config(
 
     # Model configuration
     hf_path = hf_model_path
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -267,7 +267,7 @@ def nemotron_nano_v2_vl_12b_peft_config(
 
     # Model configuration
     hf_path = hf_model_path
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT

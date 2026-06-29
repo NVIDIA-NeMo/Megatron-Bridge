@@ -234,8 +234,7 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
     )
 
     class FakeBridge:
-        def get_model_config(self, load_weights):
-            calls["load_weights"] = load_weights
+        def get_model_config(self):
             return model_config
 
         def _get_or_initialize_pg_collection(self, transformer, *, seed):
@@ -268,11 +267,11 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
     )
 
     assert result is model
-    assert calls["load_weights"] is True
     assert calls["finalized"] is True
     assert calls["pg"] == (model_config.transformer, 17)
     assert calls["builder_config"] is model_config
     assert calls["build_kwargs"] == {
+        "load_weights": True,
         "pg_collection": "pg",
         "wrap_with_ddp": False,
         "data_parallel_random_init": False,

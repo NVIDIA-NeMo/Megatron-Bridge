@@ -36,7 +36,7 @@ class _FakeAutoBridge:
     def from_hf_pretrained(hf_path: str):
         return _FakeAutoBridge()
 
-    def get_model_config(self, load_weights: bool = False):
+    def get_model_config(self):
         return _FakeModelCfg()
 
 

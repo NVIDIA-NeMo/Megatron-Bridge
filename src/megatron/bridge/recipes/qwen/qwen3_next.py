@@ -33,7 +33,7 @@ def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"
@@ -156,7 +156,7 @@ def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
     cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-Next-80B-A3B-Instruct"

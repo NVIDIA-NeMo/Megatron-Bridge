@@ -29,7 +29,7 @@ def deepseek_v2_lite_pretrain_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2-Lite").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2-Lite").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

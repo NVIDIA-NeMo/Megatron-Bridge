@@ -15,7 +15,7 @@ See the repository `README.md` for installation, supported models, and project h
 
 ## Loading a 🤗 Hugging Face Model into Megatron
 
-The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge for conversion. Use `AutoBridge.get_model_config(load_weights=True)` to create a builder-backed configuration, apply any overrides, call `finalize()`, and pass it to `AutoBridge.get_megatron_model()`.
+The easiest way to load a 🤗 Hugging Face model is using `AutoBridge.from_hf_pretrained()`, which automatically detects the model architecture and selects the appropriate bridge for conversion. Use `AutoBridge.get_model_config()` to create a builder-backed configuration, apply any overrides, call `finalize()`, and pass it to `AutoBridge.get_megatron_model()`.
 
 ### Accessing Gated 🤗 Hugging Face Models
 
@@ -189,15 +189,15 @@ Always configure parallelism and other settings on the model config before final
 
 ```python
 # ✅ Correct: Configure the builder-backed model config first
-model_config = bridge.get_model_config(load_weights=True)
+model_config = bridge.get_model_config()
 model_config.tensor_model_parallel_size = 8
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
 
 # ❌ Avoid: Creating model before configuring parallelism
-model_config = bridge.get_model_config(load_weights=True)
+model_config = bridge.get_model_config()
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
 ```
 
 ### 3. Leverage the Parameter Streaming API
@@ -300,8 +300,8 @@ AutoBridge.supports(config: Any) -> bool
 
 # Provider/model construction
 AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
-AutoBridge.get_model_config(load_weights: bool = False, hf_path: str | Path | None = None) -> ModelConfig
-AutoBridge.get_megatron_model(model_config: ModelConfig, **kwargs) -> list[MegatronModule]
+AutoBridge.get_model_config() -> ModelConfig
+AutoBridge.get_megatron_model(model_config: ModelConfig, *, load_weights: bool, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
 AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]  # Compatibility alias
 
 # HF → Megatron weights
@@ -321,7 +321,7 @@ AutoBridge.import_ckpt(hf_model_id: str | Path, megatron_path: str | Path, **kwa
 AutoBridge.export_ckpt(megatron_path: str | Path, hf_path: str | Path, show_progress: bool = True) -> None  # Megatron → HF
 
 # Config extraction
-AutoBridge.get_model_config(load_weights: bool = False, hf_path: str | Path | None = None) -> ModelConfig
+AutoBridge.get_model_config() -> ModelConfig
 
 # Introspection / planning
 AutoBridge.get_conversion_tasks(megatron_model: MegatronModule | list[MegatronModule], hf_path: str | Path | None = None) -> list[WeightConversionTask]

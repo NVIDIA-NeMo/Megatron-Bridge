@@ -72,7 +72,7 @@ class _FakeAutoBridge:
         cls.last_kwargs = kwargs
         return cls()
 
-    def get_model_config(self, load_weights: bool = False):
+    def get_model_config(self):
         """Return a fake model config."""
         return _FakeModelCfg()
 

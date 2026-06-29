@@ -57,7 +57,7 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def get_model_config(self, load_weights=False):
+                def get_model_config(self):
                     from megatron.core.transformer import TransformerConfig
 
                     from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -106,7 +106,7 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def get_model_config(self, load_weights=False):
+                def get_model_config(self):
                     from megatron.core.transformer import TransformerConfig
 
                     from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -164,7 +164,7 @@ class TestDataSamplers:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def get_model_config(self, load_weights=False):
+                def get_model_config(self):
                     from megatron.core.transformer import TransformerConfig
 
                     from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -593,7 +593,7 @@ class TestBatchDataloaderIntegration:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def get_model_config(self, load_weights=False):
+                def get_model_config(self):
                     from megatron.core.transformer import TransformerConfig
 
                     from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -636,7 +636,7 @@ class TestBatchDataloaderIntegration:
         with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
-                def get_model_config(self, load_weights=False):
+                def get_model_config(self):
                     from megatron.core.transformer import TransformerConfig
 
                     from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig

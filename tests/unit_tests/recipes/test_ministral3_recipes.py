@@ -71,7 +71,7 @@ class _FakeAutoBridge:
         """Mock from_hf_pretrained method."""
         return _FakeAutoBridge()
 
-    def get_model_config(self, load_weights: bool = False):
+    def get_model_config(self):
         """Return a fake model config."""
         return _FakeModelCfg()
 

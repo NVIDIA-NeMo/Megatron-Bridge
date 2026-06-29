@@ -399,13 +399,13 @@ After implementing bridge support, prompt the user to run these commands on the 
 uv run python -c "
 from megatron.bridge import AutoBridge
 bridge = AutoBridge.from_hf_pretrained('<org>/<model>')
-model_config = bridge.get_model_config(load_weights=True)
+model_config = bridge.get_model_config()
 assert type(model_config.transformer) is TransformerConfig
 serialized = model_config.as_dict()
 restored = ModelConfig.from_dict(serialized)
 assert restored.get_builder_cls() is model_config.get_builder_cls()
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
 for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):
     print(name, tuple(tensor.shape))
     if i > 10: break

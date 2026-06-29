@@ -230,7 +230,7 @@ def llama3_8b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -311,7 +311,7 @@ def llama3_8b_16k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -392,7 +392,7 @@ def llama3_8b_64k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -473,7 +473,7 @@ def llama3_8b_128k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -574,7 +574,7 @@ def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> Conf
 
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -663,7 +663,7 @@ def llama3_70b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -766,7 +766,7 @@ def llama3_70b_16k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -855,7 +855,7 @@ def llama3_70b_64k_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -949,7 +949,7 @@ def llama31_8b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-8B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1032,7 +1032,7 @@ def llama31_70b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-70B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
@@ -1121,7 +1121,7 @@ def llama31_405b_pretrain_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3.1-405B").get_model_config()
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None

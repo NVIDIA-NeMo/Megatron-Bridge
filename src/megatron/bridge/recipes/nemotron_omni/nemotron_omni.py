@@ -115,7 +115,7 @@ def _nemotron_omni_base_config(
 ) -> ConfigContainer:
     """Shared model/training config for all Nemotron Omni recipes."""
     cfg = _sft_common_vlm()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).get_model_config()
     cfg.model.seq_length = 4096
     # Dynamic-resolution is the native behavior for the Nemotron-3 Omni
     # Reasoning HF processor (variable per-image H×W within [min, max] patches).

@@ -11,7 +11,7 @@ from megatron.bridge import AutoBridge
 
 # Load Llama from HuggingFace Hub and convert to Megatron
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-model_config = bridge.get_model_config(load_weights=True)
+model_config = bridge.get_model_config()
 
 # The outer config is serializable and owns an exact MCore TransformerConfig.
 payload = model_config.as_dict()
@@ -19,7 +19,7 @@ payload = model_config.as_dict()
 model_config.tensor_model_parallel_size = 8
 model_config.pipeline_model_parallel_size = 2
 model_config.finalize()
-model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
 ```
 
 ### Converting Megatron Models back to 🤗Hugging Face

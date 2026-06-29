@@ -243,9 +243,9 @@ uv run python examples/conversion/list_supported_architectures.py
 💡 Usage:
    To use any of these models, you can load them with:
    >>> bridge = AutoBridge.from_hf_pretrained('model_name')
-   >>> config = bridge.get_model_config(load_weights=True)
+   >>> config = bridge.get_model_config()
    >>> config.finalize()
-   >>> model = bridge.get_megatron_model(config, wrap_with_ddp=False)
+   >>> model = bridge.get_megatron_model(config, load_weights=True, wrap_with_ddp=False)
 
 🔍 Model Bridge Details:
    Each model has specific implementation details and configurations.
