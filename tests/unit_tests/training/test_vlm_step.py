@@ -458,7 +458,7 @@ def test_forward_step_sets_hybrid_total_tokens_from_available_sequence_tensor(mo
             "megatron.bridge.training.vlm_step.is_pp_last_stage", lambda _: is_last_stage, raising=True
         )
         state = _make_forward_step_state()
-        state.cfg.model.seq_length = 32
+        inner_model.config.seq_length = 32
         state.cfg.dataset.enable_in_batch_packing = True
 
         output, _ = forward_step(state, _Iterator(batch), model)
