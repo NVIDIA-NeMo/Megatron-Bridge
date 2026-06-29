@@ -23,6 +23,6 @@ export CUDA_VISIBLE_DEVICES="0,1"
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mbridge
 coverage combine -q
 
-pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mcore
+uv run python -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_qwen3_4b_ckpt_mcore
 
-pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_remove_artifacts
+uv run python -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/ckpts/qwen3_4b/test_qwen3_4b_ckpt.py::TestQwen3Ckpt::test_remove_artifacts

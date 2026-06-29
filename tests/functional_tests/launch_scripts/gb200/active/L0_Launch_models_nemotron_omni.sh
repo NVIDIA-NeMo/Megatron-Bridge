@@ -1,4 +1,5 @@
 # CI_TIMEOUT=50
+# GPU_COUNT=x2
 #!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
