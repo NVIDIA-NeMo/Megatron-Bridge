@@ -29,6 +29,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FUNCTIONAL_ROOT = REPO_ROOT / "tests" / "functional_tests"
 LAUNCH_ROOT = FUNCTIONAL_ROOT / "launch_scripts"
+TEST_GROUP_ROOT = FUNCTIONAL_ROOT / "test_groups"
 EXPECTED_HARDWARE = {"gb200", "h100"}
 EXPECTED_STATUSES = {"active", "flaky"}
 LAUNCH_NAME_RE = re.compile(r"^L[0-2]_[A-Za-z0-9_]+\.sh$")
@@ -47,10 +48,6 @@ DIRECT_PYTEST_FORMS = (
 SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 STALE_FUNCTIONAL_MODEL_PATHS = ("tests/functional_tests/models/", "tests.functional_tests.models")
 MAX_GPUS = 2
-
-# Coverage completeness is intentionally not enforced here. Launchers can select
-# directories or construct paths dynamically, so ownership of unreferenced test
-# files requires a separate audit rather than a filename-only unit-test policy.
 
 
 def _launch_scripts() -> list[Path]:
@@ -71,11 +68,25 @@ def _format_items(items: list[str]) -> str:
 
 def _referenced_test_group_paths(script: Path) -> list[Path]:
     referenced_paths = []
-    for match in TEST_GROUP_REF_RE.findall(script.read_text(encoding="utf-8")):
-        normalized = match.removeprefix("tests/functional_tests/")
-        normalized = normalized.split("::", maxsplit=1)[0]
-        referenced_paths.append(FUNCTIONAL_ROOT / normalized)
+    for _, logical_line in _logical_shell_lines(script.read_text(encoding="utf-8")):
+        comment_index = _unquoted_comment_index(logical_line)
+        shell_code = logical_line if comment_index is None else logical_line[:comment_index]
+        for match in TEST_GROUP_REF_RE.findall(shell_code):
+            normalized = match.removeprefix("tests/functional_tests/")
+            normalized = normalized.split("::", maxsplit=1)[0]
+            referenced_paths.append(FUNCTIONAL_ROOT / normalized)
     return referenced_paths
+
+
+def _referenced_test_group_files() -> set[Path]:
+    referenced_files = set()
+    for script in _launch_scripts():
+        for referenced_path in _referenced_test_group_paths(script):
+            if referenced_path.is_dir():
+                referenced_files.update(referenced_path.rglob("test_*.py"))
+            elif referenced_path.is_file() and referenced_path.match("test_*.py"):
+                referenced_files.add(referenced_path)
+    return referenced_files
 
 
 def _strip_shell_prefixes(tokens: list[str]) -> list[str]:
@@ -159,6 +170,10 @@ def _logical_shell_lines(contents: str) -> list[tuple[int, str]]:
 
 
 def _has_unquoted_comment(line: str) -> bool:
+    return _unquoted_comment_index(line) is not None
+
+
+def _unquoted_comment_index(line: str) -> int | None:
     in_single_quote = False
     in_double_quote = False
     escaped = False
@@ -181,8 +196,8 @@ def _has_unquoted_comment(line: str) -> bool:
             and not in_double_quote
             and (index == 0 or line[index - 1].isspace() or line[index - 1] in ";&|()")
         ):
-            return True
-    return False
+            return index
+    return None
 
 
 def _shell_command_segments(command: str) -> list[list[str]]:
@@ -347,6 +362,26 @@ def test_launch_scripts_reference_existing_test_group_paths() -> None:
                 missing.append(f"{_repo_relative(script)} -> {_repo_relative(referenced_path)}")
 
     assert not missing, "Launch scripts reference missing test_groups paths:\n" + _format_items(missing)
+
+
+def test_test_group_reference_parser_ignores_shell_comments(tmp_path: Path) -> None:
+    script = tmp_path / "launcher.sh"
+    script.write_text(
+        "# tests/functional_tests/test_groups/models/commented.py\n"
+        "uv run python -m pytest tests/functional_tests/test_groups/models/active.py "
+        "# test_groups/models/trailing_comment.py\n",
+        encoding="utf-8",
+    )
+
+    assert _referenced_test_group_paths(script) == [FUNCTIONAL_ROOT / "test_groups/models/active.py"]
+
+
+def test_all_test_group_files_have_a_launcher() -> None:
+    """Every functional test group must be reachable from at least one launcher."""
+    test_group_files = set(TEST_GROUP_ROOT.rglob("test_*.py"))
+    unreferenced_files = sorted(test_group_files - _referenced_test_group_files())
+
+    assert not unreferenced_files, "Functional test groups without a launcher:\n" + _format_paths(unreferenced_files)
 
 
 def test_direct_pytest_commands_use_approved_module_form() -> None:
