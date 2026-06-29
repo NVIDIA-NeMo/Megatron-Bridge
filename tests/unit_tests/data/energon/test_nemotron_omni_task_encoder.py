@@ -175,7 +175,12 @@ def test_encode_sample_uses_mock_video_frames_for_temporal_metadata(monkeypatch)
 
 def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     processor = _Processor(input_ids=[1, 2])
-    encoder = NemotronOmniTaskEncoder(processor=processor, num_mel_bins=4, enable_in_batch_packing=True)
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        num_mel_bins=4,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
     s1 = NemotronOmniTaskSample(
         __key__="a",
         __subflavors__={},
@@ -204,14 +209,17 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     batch = encoder.batch([s1, s2])
 
     assert isinstance(batch, NemotronOmniTaskBatch)
-    assert batch.input_ids.tolist() == [[1, 2, 3, 4, 5]]
+    assert batch.input_ids.tolist() == [[1, 2, 0, 0, 3, 4, 5, 0]]
     assert batch.attention_mask is None
-    assert batch.position_ids.tolist() == [[0, 1, 0, 1, 2]]
-    assert batch.cu_seqlens.tolist() == [0, 2, 5]
-    assert batch.cu_seqlens_unpadded.tolist() == [0, 2, 5]
-    assert batch.cu_seqlens_argmin.item() == 3
-    assert batch.cu_seqlens_unpadded_argmin.item() == 3
-    assert batch.max_seqlen.item() == 3
+    assert batch.labels.tolist() == [[2, IGNORE_INDEX, IGNORE_INDEX, IGNORE_INDEX, 4, 5, IGNORE_INDEX, IGNORE_INDEX]]
+    assert batch.loss_mask.tolist() == [[1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]]
+    assert batch.position_ids.tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
+    assert batch.cu_seqlens_q.tolist() == [0, 2, 5]
+    assert batch.cu_seqlens_kv.tolist() == [0, 2, 5]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
+    assert batch.cu_seqlens_kv_padded.tolist() == [0, 4, 8]
+    assert batch.max_seqlen_q.item() == 4
+    assert batch.max_seqlen_kv.item() == 4
     assert batch.visual_tensors["pixel_values"].shape == (1, 5, 3)
     assert batch.sound_clips.shape == (2, 2, 4)
     assert batch.sound_length.tolist() == [2, 1]
@@ -222,13 +230,41 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     encoded = encoder.encode_batch(batch)
     assert encoded["tokens"] is batch.input_ids
     assert encoded["sound_clips"] is batch.sound_clips
-    assert encoded["cu_seqlens"] is batch.cu_seqlens
-    assert encoded["cu_seqlens_unpadded"] is batch.cu_seqlens_unpadded
-    assert encoded["cu_seqlens_argmin"] is batch.cu_seqlens_argmin
-    assert encoded["cu_seqlens_unpadded_argmin"] is batch.cu_seqlens_unpadded_argmin
-    assert encoded["max_seqlen"] is batch.max_seqlen
+    assert encoded["cu_seqlens_q"] is batch.cu_seqlens_q
+    assert encoded["cu_seqlens_kv"] is batch.cu_seqlens_kv
+    assert encoded["cu_seqlens_q_padded"] is batch.cu_seqlens_q_padded
+    assert encoded["cu_seqlens_kv_padded"] is batch.cu_seqlens_kv_padded
+    assert encoded["max_seqlen_q"] is batch.max_seqlen_q
+    assert encoded["max_seqlen_kv"] is batch.max_seqlen_kv
+    assert "cu_seqlens" not in encoded
+    assert "cu_seqlens_unpadded" not in encoded
+    assert "cu_seqlens_argmin" not in encoded
     assert isinstance(encoded["visual_inputs"], GenericVisualInputs)
     assert encoded["visual_inputs"].pixel_values.shape == (1, 5, 3)
+
+
+def test_batch_emits_padded_metadata_for_aligned_cp_multiple():
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor(input_ids=[1, 2]),
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+    samples = [
+        NemotronOmniTaskSample(
+            __key__=key,
+            __subflavors__={},
+            input_ids=torch.tensor(tokens),
+            labels=torch.tensor([*tokens[1:], IGNORE_INDEX]),
+            loss_mask=torch.tensor([1.0, 1.0, 1.0, 0.0]),
+        )
+        for key, tokens in (("a", [1, 2, 3, 4]), ("b", [5, 6, 7, 8]))
+    ]
+
+    batch = encoder.batch(samples)
+
+    assert batch.cu_seqlens_q.tolist() == [0, 4, 8]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
+    assert batch.cu_seqlens_kv_padded.tolist() == [0, 4, 8]
 
 
 def test_batch_nonpacked_applies_collate_sequence_padding():

@@ -49,6 +49,15 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+_CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
+_LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
+_LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
+_LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
+_PackedMetadataValue = torch.Tensor | int | None
+
+
 def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
     """Trim padded THD cu_seqlens without introducing a CUDA sync."""
     if cu_seqlens_argmin is not None:
@@ -65,6 +74,37 @@ def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: 
     if padding_indices.numel() == 0:
         return cu_seqlens
     return cu_seqlens[: int(padding_indices[0].item())]
+
+
+def _has_packed_sequence_metadata(batch: dict[str, torch.Tensor]) -> bool:
+    """Return whether a dataloader batch contains packed-sequence metadata."""
+    return batch.get("cu_seqlens_q") is not None or batch.get("cu_seqlens") is not None
+
+
+def _packed_metadata_for_forward(batch: dict[str, torch.Tensor]) -> dict[str, _PackedMetadataValue] | None:
+    """Extract packed-sequence metadata accepted by ``get_packed_seq_params``."""
+    if batch.get("cu_seqlens_q") is not None:
+        return {key: batch[key] for key in _CURRENT_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+    if batch.get("cu_seqlens") is not None:
+        return {key: batch[key] for key in _LEGACY_PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+    return None
+
+
+def _cu_seqlens_for_cp_partition(batch: dict[str, torch.Tensor]) -> torch.Tensor:
+    """Return the cu-seqlens tensor TE should use to partition packed THD tokens."""
+    if batch.get("cu_seqlens_q") is not None:
+        cu_seqlens = batch.get("cu_seqlens_q_padded")
+        if cu_seqlens is None:
+            cu_seqlens = batch["cu_seqlens_q"]
+        if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
+            raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
+        return cu_seqlens.squeeze()
+
+    cu_seqlens = batch["cu_seqlens"]
+    if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
+        raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
+    cu_seqlens = cu_seqlens.squeeze()
+    return _trim_padded_cu_seqlens_for_cp(cu_seqlens, batch.get("cu_seqlens_argmin"))
 
 
 def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
@@ -161,15 +201,7 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         raise e
 
     cp_rank = parallel_state.get_context_parallel_rank()
-    cu_seqlens = batch["cu_seqlens"]
-    if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
-        raise ValueError("Packed THD batches expect micro-batch size 1 for context-parallel slicing (THD layout)")
-    cu_seqlens = cu_seqlens.squeeze()
-    cu_seqlens = _trim_padded_cu_seqlens_for_cp(cu_seqlens, batch.get("cu_seqlens_argmin"))
-
-    cu_seqlens_unpadded = batch.get("cu_seqlens_unpadded")
-    if cu_seqlens_unpadded is not None:
-        batch["cu_seqlens_unpadded"] = cu_seqlens_unpadded.squeeze()
+    cu_seqlens = _cu_seqlens_for_cp_partition(batch)
 
     skip_keys = {
         "cu_seqlens",
@@ -177,6 +209,12 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         "cu_seqlens_argmin",
         "cu_seqlens_unpadded_argmin",
         "max_seqlen",
+        "cu_seqlens_q",
+        "cu_seqlens_kv",
+        "cu_seqlens_q_padded",
+        "cu_seqlens_kv_padded",
+        "max_seqlen_q",
+        "max_seqlen_kv",
         "token_count",
     }
 
@@ -219,14 +257,12 @@ def get_batch_from_iterator(
     elif not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        if "cu_seqlens_unpadded" in batch:
-            required_device_keys.add("cu_seqlens_unpadded")
-        required_host_keys.add("cu_seqlens_argmin")
-        required_host_keys.add("max_seqlen")
-        if "cu_seqlens_unpadded_argmin" in batch:
-            required_host_keys.add("cu_seqlens_unpadded_argmin")
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _CURRENT_PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _CURRENT_PACKED_SEQ_HOST_KEYS if key in batch)
+    elif "cu_seqlens" in batch:
+        required_device_keys.update(key for key in _LEGACY_PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _LEGACY_PACKED_SEQ_HOST_KEYS if key in batch)
 
     if not include_full_batch_fields:
         if is_first_pp_stage or include_mtp_inputs:
@@ -259,11 +295,7 @@ def get_batch(
     torch.Tensor,
     torch.Tensor,
     torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor | None,
-    torch.Tensor | None,
+    dict[str, _PackedMetadataValue] | None,
 ]:
     """Generate a batch.
 
@@ -274,9 +306,8 @@ def get_batch(
         vp_stage: Virtual pipeline stage for the current model chunk.
 
     Returns:
-        tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded, and
-        cu_seqlens_unpadded_argmin
+        tuple of tensors containing tokens, labels, loss_mask, attention_mask,
+        position_ids, and optional packed-sequence metadata.
     """
     # Determine pipeline stage role via process group collection
     model_cfg = getattr(cfg, "model", None)
@@ -293,7 +324,7 @@ def get_batch(
         cfg, pg_collection=pg_collection, is_last=is_last, vp_stage=vp_stage
     )
     if is_middle and not include_full_batch_fields and not include_mtp_inputs:
-        return None, None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -307,7 +338,7 @@ def get_batch(
     )
 
     cp_size = pg_collection.cp.size()
-    has_packed = batch.get("cu_seqlens") is not None
+    has_packed = _has_packed_sequence_metadata(batch)
     if has_packed and cp_size > 1:
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
@@ -322,11 +353,7 @@ def get_batch(
             "attention_mask"
         ),  # Attention_mask is optional for pre-training as a casual mask is generated automatically.
         batch["position_ids"],
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
-        batch.get("cu_seqlens_unpadded"),
-        batch.get("cu_seqlens_unpadded_argmin"),
+        _packed_metadata_for_forward(batch),
     )
 
 
@@ -359,11 +386,7 @@ def _forward_step_common(
             loss_mask,
             attention_mask,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_argmin,
-            max_seqlen,
-            cu_seqlens_unpadded,
-            cu_seqlens_unpadded_argmin,
+            packed_seq_metadata,
         ) = get_batch(
             data_iterator,
             state.cfg,
@@ -381,25 +404,18 @@ def _forward_step_common(
     }
 
     # Add packed sequence support
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-            "max_seqlen": max_seqlen,
-            "cu_seqlens_unpadded": cu_seqlens_unpadded,
-            "cu_seqlens_unpadded_argmin": cu_seqlens_unpadded_argmin,
-        }
+    if packed_seq_metadata is not None:
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
             if tokens is not None:
-                packed_seq_params["total_tokens"] = tokens.size(1)
+                packed_seq_metadata["total_tokens"] = tokens.size(1)
             elif labels is not None:
-                packed_seq_params["total_tokens"] = labels.size(1)
+                packed_seq_metadata["total_tokens"] = labels.size(1)
             else:
-                packed_seq_params["total_tokens"] = getattr(config, "seq_length", None)
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+                packed_seq_metadata["total_tokens"] = getattr(config, "seq_length", None)
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_metadata)
 
     with straggler_timer:
         if return_schedule_plan:

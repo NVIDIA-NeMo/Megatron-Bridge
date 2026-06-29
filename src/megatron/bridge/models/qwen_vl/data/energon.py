@@ -133,11 +133,12 @@ class QwenVLTaskBatch(Batch):
     loss_mask: torch.Tensor
     visual_inputs: GenericVisualInputs | None
     attention_mask: torch.Tensor | None = None
-    cu_seqlens: torch.Tensor | None = None
-    cu_seqlens_unpadded: torch.Tensor | None = None
-    cu_seqlens_argmin: torch.Tensor | None = None
-    cu_seqlens_unpadded_argmin: torch.Tensor | None = None
-    max_seqlen: torch.Tensor | None = None
+    cu_seqlens_q: torch.Tensor | None = None
+    cu_seqlens_kv: torch.Tensor | None = None
+    cu_seqlens_q_padded: torch.Tensor | None = None
+    cu_seqlens_kv_padded: torch.Tensor | None = None
+    max_seqlen_q: torch.Tensor | None = None
+    max_seqlen_kv: torch.Tensor | None = None
 
 
 def convert_to_qwenvl_content(user_input: str, image_pattern: str = "<image>", video_pattern: str = "<video>"):
@@ -367,11 +368,12 @@ class QwenVLTaskEncoder(DefaultTaskEncoder[ChatMLSample, QwenVLTaskSample, QwenV
             labels=collated["labels"],
             loss_mask=collated["loss_mask"],
             visual_inputs=collated.get("visual_inputs"),
-            cu_seqlens=collated.get("cu_seqlens"),
-            cu_seqlens_unpadded=collated.get("cu_seqlens_unpadded"),
-            cu_seqlens_argmin=collated.get("cu_seqlens_argmin"),
-            cu_seqlens_unpadded_argmin=collated.get("cu_seqlens_unpadded_argmin"),
-            max_seqlen=collated.get("max_seqlen"),
+            cu_seqlens_q=collated.get("cu_seqlens_q"),
+            cu_seqlens_kv=collated.get("cu_seqlens_kv"),
+            cu_seqlens_q_padded=collated.get("cu_seqlens_q_padded"),
+            cu_seqlens_kv_padded=collated.get("cu_seqlens_kv_padded"),
+            max_seqlen_q=collated.get("max_seqlen_q"),
+            max_seqlen_kv=collated.get("max_seqlen_kv"),
         )
 
     def encode_batch(self, batch: QwenVLTaskBatch) -> dict:
