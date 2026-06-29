@@ -1068,6 +1068,8 @@ class ParallelLinearAdapter(nn.Module):
             return False, "the adapter is row-parallel"
         if self.disable_sequence_parallel_comm:
             return False, "sequence-parallel communication is disabled"
+        if _process_group_size(self.tp_group, self.config.tensor_model_parallel_size or 1) <= 1:
+            return False, "tensor parallel size is one"
         if self.is_expert:
             return False, "expert adapters use a separate path"
         if self.use_a2a:

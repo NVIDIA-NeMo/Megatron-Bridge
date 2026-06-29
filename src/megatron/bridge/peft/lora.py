@@ -85,8 +85,9 @@ class LoRA(PEFT, ModuleMatcher):
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
         sequence_parallel_recompute (bool): Retain only the sequence-local LoRA-A input for
             column-parallel adapters. MCore asynchronously re-gathers it in backward and overlaps
-            the collective with dgrad computation. This reduces activation memory at the cost of
-            one extra sequence gather. It has no effect without TP>1 and SP, and falls back for
+            the collective with dgrad computation. The LoRA path gathers the local shard in forward
+            and re-gathers it in backward; when the baseline already gathers before LoRA, only the
+            backward gather is additional. It has no effect without TP>1 and SP, and falls back for
             unsupported adapters or overlapping recompute.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".

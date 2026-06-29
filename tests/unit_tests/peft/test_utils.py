@@ -719,6 +719,45 @@ class TestParallelLinearAdapter:
         mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
         assert mock_linear_in.sequence_parallel is False
 
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_recompute_tp1_fallback(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """TP=1 should keep the existing path instead of re-enabling MCore SP."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_in.side_effect = lambda x: (x[..., :4], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_gather.side_effect = lambda x, group: x
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_recompute=True,
+            pg_collection=make_mock_pg_collection(tp_size=1),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (3, 2)
+        mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
+        assert mock_linear_in.sequence_parallel is False
+
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
     def test_parallel_linear_adapter_sequence_parallel_recompute_eligibility_gates(
@@ -740,6 +779,7 @@ class TestParallelLinearAdapter:
             model_parallel_config=mock_config,
             disable_sequence_parallel_comm=False,
             sequence_parallel_recompute=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
         )
         x = torch.randn(3, 8, requires_grad=True)
 

@@ -322,10 +322,11 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
    > 3. LoRA training with tensor and sequence parallelism can retain the sequence-local LoRA-A input for
    > column-parallel `linear_qkv` and `linear_fc1` adapters. Set `LoRA(sequence_parallel_recompute=True)` to
-   > use MCore's sequence-parallel linear path, which asynchronously re-gathers the input in backward and
-   > overlaps it with dgrad computation. The option falls back to the existing path for row-parallel
-   > or expert adapters, CPU activation offload, CUDA graphs, full-layer recompute, and `linear_fc1` covered by
-   > selective MLP recompute.
+   > use MCore's sequence-parallel linear path. It gathers the local shard for LoRA-A in forward, then
+   > asynchronously re-gathers it in backward and overlaps that collective with dgrad computation. When the
+   > baseline already gathers before LoRA, only the backward gather is additional. The option falls back to the
+   > existing path for row-parallel or expert adapters, CPU activation offload, CUDA graphs, full-layer recompute,
+   > and `linear_fc1` covered by selective MLP recompute.
 
 2. Activation offloading to host memory
 
