@@ -237,10 +237,16 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
           SKIPPING_IS_ALLOWED: ${{ needs.pre-flight.outputs.docs_only == 'true' || needs.pre-flight.outputs.is_deployment_workflow == 'true' }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length') || echo 0
+          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
+          # any failure (e.g. "failed to determine base repo" when git context is
+          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
+          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
+          # repository, and `set -e -o pipefail` makes any failure here abort the job.
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length')
 
           if [ "${FAILED_JOBS:-0}" -eq 0 ] || [ "$SKIPPING_IS_ALLOWED" == "true" ]; then
               echo "✅ All previous jobs completed successfully"

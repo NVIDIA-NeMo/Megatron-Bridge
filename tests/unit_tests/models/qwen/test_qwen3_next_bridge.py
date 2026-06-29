@@ -474,3 +474,14 @@ class TestQwen3NextBridge:
             if "experts" in mapping.hf_param and "down_proj" in mapping.hf_param
         ]
         assert len(expert_down_params) > 0
+
+        # Sequential (non-grouped) expert mappings must be present for moe_grouped_gemm=False
+        # (e.g. ModelOpt pruning), for both the decoder and the MTP layers.
+        seq_params = [
+            getattr(m, "megatron_param", "")
+            for m in registry.mappings
+            if "experts.local_experts." in getattr(m, "megatron_param", "")
+        ]
+        assert any("decoder.layers" in p and p.endswith("linear_fc1.weight") for p in seq_params)
+        assert any("decoder.layers" in p and p.endswith("linear_fc2.weight") for p in seq_params)
+        assert any("mtp.layers" in p for p in seq_params)

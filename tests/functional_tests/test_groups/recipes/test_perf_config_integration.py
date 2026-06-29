@@ -73,7 +73,7 @@ class TestPerfConfigIntegration:
         # Verify the precision was applied
         assert cfg.mixed_precision == precision_config
 
-    def test_deepseek_v3_perf_config_instantiation(self):
+    def test_deepseek_v3_config_instantiation(self):
         """Test that DeepSeek-V3 perf configs can be instantiated correctly."""
         from configs.deepseek.deepseek_llm_pretrain import deepseek_v3_pretrain_config_h100
 
