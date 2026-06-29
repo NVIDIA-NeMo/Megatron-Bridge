@@ -1051,12 +1051,12 @@ jobs:
             local tier="$1" expect="$2"
             [ "$expect" != "true" ] && return
             local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
+            n=$(gh run view $GITHUB_RUN_ID --json jobs \
+              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
             if [ "${n:-0}" -gt 0 ]; then
               echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-                '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
+              gh run view $GITHUB_RUN_ID --json jobs \
+                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
               UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
             fi
           }
