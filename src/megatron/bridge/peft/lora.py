@@ -83,6 +83,11 @@ class LoRA(PEFT, ModuleMatcher):
         dropout (float): Dropout rate for the low-rank projection. Defaults to 0.0.
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
+        sequence_parallel_recompute (bool): Retain only the sequence-local LoRA-A input for
+            column-parallel adapters. MCore asynchronously re-gathers it in backward and overlaps
+            the collective with dgrad computation. This reduces activation memory at the cost of
+            one extra sequence gather. It has no effect without TP>1 and SP, and falls back for
+            unsupported adapters or overlapping recompute.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
@@ -108,6 +113,7 @@ class LoRA(PEFT, ModuleMatcher):
     alpha: int = 32
     dropout: float = 0.0
     dropout_position: Literal["pre", "post"] = "pre"
+    sequence_parallel_recompute: bool = False
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
@@ -161,7 +167,11 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
+            attrs = get_adapter_attributes_from_linear(
+                module,
+                is_expert=is_expert,
+                sequence_parallel_recompute=self.sequence_parallel_recompute and not is_expert,
+            )
 
             dim = get_effective_lora_dim(
                 module, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
@@ -218,6 +228,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     is_expert=is_expert,
                     a2a_experimental=self.a2a_experimental,
+                    sequence_parallel_recompute=self.sequence_parallel_recompute,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 )

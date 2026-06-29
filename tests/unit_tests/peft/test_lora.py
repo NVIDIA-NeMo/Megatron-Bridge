@@ -213,6 +213,7 @@ class TestLoRA:
         assert lora.alpha == 32
         assert lora.dropout == 0.0
         assert lora.dropout_position == "pre"
+        assert lora.sequence_parallel_recompute is False
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
         assert lora.share_expert_adapters is True
@@ -224,6 +225,7 @@ class TestLoRA:
             alpha=16,
             dropout=0.1,
             dropout_position="post",
+            sequence_parallel_recompute=True,
             lora_A_init_method="uniform",
             share_expert_adapters=False,
         )
@@ -232,6 +234,7 @@ class TestLoRA:
         assert custom_lora.alpha == 16
         assert custom_lora.dropout == 0.1
         assert custom_lora.dropout_position == "post"
+        assert custom_lora.sequence_parallel_recompute is True
         assert custom_lora.lora_A_init_method == "uniform"
         assert custom_lora.share_expert_adapters is False
 
@@ -591,7 +594,12 @@ class TestModelOptLinear:
     def test_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
         parallel_adapter = nn.Identity()
-        lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+        lora = LoRA(
+            target_modules=["linear_proj"],
+            dim=2,
+            alpha=4,
+            sequence_parallel_recompute=True,
+        )
 
         with (
             patch.object(lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
@@ -607,6 +615,7 @@ class TestModelOptLinear:
         mock_adapter.assert_called_once()
         assert mock_adapter.call_args.args[:3] == (5, 7, 2)
         assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+        assert mock_adapter.call_args.kwargs["sequence_parallel_recompute"] is True
 
     def test_canonical_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
