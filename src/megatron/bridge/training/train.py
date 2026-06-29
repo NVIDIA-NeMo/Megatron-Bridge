@@ -319,6 +319,13 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    # FLOPS accounting: per-step stats are buffered (sync-free) and drained at log /
+    # checkpoint boundaries by flush_flops_buffer, so the hot path performs no per-step
+    # device→host sync or DP collective. DP context is stashed on state so saves can flush.
+    global_state._flops_buffer = []
+    global_state._flops_since_last_log = 0.0
+    global_state._flops_dp_group = pg_collection.dp
+    global_state._flops_dp_size = dp_size
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
@@ -546,53 +553,18 @@ def train(
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
-        # Read accumulated FLOPS metadata from forward_step micro-batches.
-        # These are per-DP-rank totals; scale by dp_size for global estimate.
-        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
-        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
-        # the FLOPS formula already accounts for ALL layers in the full model.
-        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
-        local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
-        local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
-        num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
-        # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
-        # (not the default), which breaks the numeric comparisons below.
-        if not isinstance(local_seqlen_sum, int):
-            local_seqlen_sum = 0
-        if not isinstance(local_seqlen_sq_sum, int):
-            local_seqlen_sq_sum = 0
-        if not isinstance(num_vision_patches, int):
-            num_vision_patches = 0
-
-        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
-        # once per virtual stage, but FLOPS formula already covers all stages.
-        vp_size = config.model.virtual_pipeline_model_parallel_size
-        if isinstance(vp_size, int) and vp_size > 1:
-            local_seqlen_sum = local_seqlen_sum // vp_size
-            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-            num_vision_patches = num_vision_patches // vp_size
-
-        if local_seqlen_sum > 0:
-            seqlen_sum = local_seqlen_sum * dp_size
-            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
-        else:
-            # Fallback for step functions that don't set accumulators
-            seqlen_sum = None
-            seqlen_squared_sum = None
-
-        # Vision patches: local accumulation * dp_size for global
-        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
-
-        num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
-            config,
+        # Buffer this step's per-microbatch FLOPS stats (sync-free: no .item(), no
+        # collective). The DP reduction and the FLOPS formula are deferred to log /
+        # checkpoint boundaries (flush_flops_buffer), keeping the hot path free of the
+        # per-step device→host sync that stalls CUDA run-ahead. Deferral is exact: each
+        # buffered step is reduced and evaluated as its own row, so ViT / SSM /
+        # sliding-window (per-step-average) terms are unchanged.
+        flop_utils.buffer_flops_metadata(
+            global_state,
             batch_size=batch_size,
-            seqlen_sum=seqlen_sum,
-            seqlen_squared_sum=seqlen_squared_sum,
-            num_vision_patches=num_vision_patches,
+            vp_size=config.model.virtual_pipeline_model_parallel_size,
         )
-        global_state.train_state.floating_point_operations_so_far += num_floating_point_operations_in_batch
         num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
-        num_floating_point_operations_since_last_log_event += num_floating_point_operations_in_batch
 
         # Logging.
         if not config.logger.skip_train_metrics_log:
@@ -632,7 +604,10 @@ def train(
                 model,
                 log_max_attention_logit,
                 loaded_iteration=start_iteration,
-                seq_length=seqlen_sum // batch_size if seqlen_sum else None,
+                # training_log recomputes seqlen/FLOPS from the (log-step) accumulators
+                # itself; pass None so it uses that path (the per-step seqlen_sum is no
+                # longer materialized on the hot path).
+                seq_length=None,
             )
 
         if (
@@ -690,13 +665,20 @@ def train(
         # Miscellaneous post-training-step functions (e.g., FT heartbeats, GC).
         # Some of these only happen at specific iterations.
         maybe_synchronize_training_step(config.train.train_sync_interval, global_state.train_state.step)
+        # Drain the FLOPS buffer at log boundaries so the cumulative + since-last-log
+        # counters (used for straggler throughput reporting) are current. One reduce +
+        # one host sync per log interval — not per step.
+        if config.logger.log_interval and global_state.train_state.step % config.logger.log_interval == 0:
+            flop_utils.flush_flops_buffer(global_state, config, data_parallel_size=dp_size, dp_group=pg_collection.dp)
+            num_floating_point_operations_so_far = global_state.train_state.floating_point_operations_so_far
         num_floating_point_operations_since_last_log_event = maybe_report_stragglers(
             config.logger.log_interval,
             bool(getattr(config.straggler, "log_straggler", False)),
             straggler_timer,
             global_state.train_state.step,
-            num_floating_point_operations_since_last_log_event,
+            global_state._flops_since_last_log,
         )
+        global_state._flops_since_last_log = num_floating_point_operations_since_last_log_event
         maybe_check_weight_hash_across_dp_replicas(
             model,
             config.train.check_weight_hash_across_dp_replicas_interval,
@@ -752,6 +734,10 @@ def train(
                 train_data_iterator=train_data_iterator,
                 callback_manager=callback_manager,
             )
+
+    # Drain any FLOPS buffered after the last flush so the final cumulative is complete
+    # (idempotent; the final save above already flushes when it runs).
+    flop_utils.flush_flops_buffer(global_state, config, data_parallel_size=dp_size, dp_group=pg_collection.dp)
 
     _delete_cuda_graphs(cuda_graph_helper)
 
@@ -1278,6 +1264,18 @@ def save_checkpoint_and_time(
     """
     timers = state.timers
     energy_monitor = state.energy_monitor
+
+    # Drain any buffered per-step FLOPS so the cumulative saved in the checkpoint is
+    # current. flush is idempotent (empty buffer → no-op) and runs only on saves, so it
+    # keeps the per-step hot path sync-free while guaranteeing correctness at save time.
+    flushed = flop_utils.flush_flops_buffer(
+        state,
+        state.cfg,
+        data_parallel_size=getattr(state, "_flops_dp_size", 1),
+        dp_group=getattr(state, "_flops_dp_group", None),
+    )
+    if flushed:
+        num_floating_point_operations_so_far = state.train_state.floating_point_operations_so_far
 
     # Stop timer to get accurate train interval time and exclude checkpointing duration
     timers("interval-time").stop()

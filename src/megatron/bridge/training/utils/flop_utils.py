@@ -15,6 +15,8 @@
 import importlib
 from pathlib import Path
 
+import torch
+
 from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
@@ -22,6 +24,290 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+def _accumulator_to_int(value) -> int:
+    """Coerce a FLOPs accumulator (``int`` or scalar ``Tensor``) to ``int``."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return 0
+        return int(value.detach().cpu().item())
+    return 0
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
+
+    Reads the three accumulators populated by the forward step
+    (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
+    over real sub-sequences, ``_flops_vision_patches``), corrects for VPP
+    over-counting, and reduces them to global totals across the data-parallel
+    group.
+
+    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` and
+    vision-patch counts differ across DP ranks, so a single SUM all-reduce over
+    ``dp_group`` is used to get the exact global sum. When no process group is
+    available (single process, ``dp_group is None``, or ``torch.distributed`` not
+    initialized) the values are extrapolated as ``local * data_parallel_size`` —
+    exact only when every DP rank sees an identical sequence-length distribution.
+
+    Args:
+        state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
+        data_parallel_size: Size of the data-parallel group (used for the
+            extrapolation fallback).
+        vp_size: Virtual pipeline size; accumulators are divided by it to undo
+            the per-virtual-stage over-counting. ``None``/``<= 1`` is a no-op.
+        dp_group: Data-parallel process group to SUM-reduce over. Must be the
+            pure DP group (excluding CP) matching ``data_parallel_size`` — CP
+            ranks share the same ``cu_seqlens`` and would double-count.
+
+    Returns:
+        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
+        are ``None`` when no accumulation happened, signalling the caller to fall
+        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
+        vision tokens were seen.
+    """
+    local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
+    local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
+    local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+
+    # VPP correction: forward_step_func runs once per virtual stage per microbatch,
+    # so each accumulator over-counts by vp_size; the FLOPS formula already covers
+    # all layers. Done per-rank (before the reduce) to recover each rank's true local.
+    if isinstance(vp_size, int) and vp_size > 1:
+        local_seqlen_sum //= vp_size
+        local_seqlen_sq_sum //= vp_size
+        local_vision_patches //= vp_size
+
+    use_all_reduce = (
+        dp_group is not None
+        and data_parallel_size > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    )
+    if use_all_reduce:
+        device = torch.cuda.current_device() if torch.cuda.is_available() else None
+        stats = torch.tensor(
+            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
+            dtype=torch.long,
+            device=device,
+        )
+        torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+    else:
+        # No process group: extrapolate from the local rank (approximation).
+        seqlen_sum = local_seqlen_sum * data_parallel_size
+        seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
+        num_vision_patches = local_vision_patches * data_parallel_size
+
+    if seqlen_sum <= 0:
+        return None, None, max(num_vision_patches, 0)
+    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
+
+
+def buffer_flops_metadata(state, *, batch_size: int, vp_size: int | None = None) -> None:
+    """Append this step's per-rank FLOPS stats to ``state._flops_buffer`` (sync-free).
+
+    Hot-path replacement for a per-step ``resolve_global_flops_seqlen_stats`` call. The
+    on-device ``_flops_seqlen_sq_sum`` / ``_flops_vision_patches`` accumulators are
+    captured **by reference** (no ``.item()``, no all-reduce), to be reduced and turned
+    into FLOPS in bulk by :func:`flush_flops_buffer` at log/checkpoint boundaries. This
+    keeps the training loop free of the per-step device→host sync that otherwise stalls
+    CUDA run-ahead. The accumulators are reset each step *after* this call, but the
+    buffered references stay valid (reset rebinds the attribute to a fresh ``0``).
+
+    VPP over-counting is corrected here (per-rank, before buffering), identically to
+    ``resolve_global_flops_seqlen_stats``.
+    """
+    seqlen_sum = getattr(state, "_flops_seqlen_sum", 0)
+    seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0)
+    vision_patches = getattr(state, "_flops_vision_patches", 0)
+    if isinstance(vp_size, int) and vp_size > 1:
+        seqlen_sum = seqlen_sum // vp_size
+        seqlen_sq_sum = seqlen_sq_sum // vp_size
+        vision_patches = vision_patches // vp_size
+    if getattr(state, "_flops_buffer", None) is None:
+        state._flops_buffer = []
+    state._flops_buffer.append((seqlen_sum, seqlen_sq_sum, vision_patches, batch_size))
+
+
+def flush_flops_buffer(state, config, *, data_parallel_size: int, dp_group=None) -> float:
+    """Reduce all buffered per-step stats over DP, compute per-step FLOPS, fold into
+    ``state.train_state.floating_point_operations_so_far``; return the interval delta.
+
+    Performs exactly **one** all-reduce and **one** host sync regardless of how many
+    steps were buffered. Each buffered step is reduced as its own row and evaluated
+    through :func:`num_floating_point_operations` individually, so the nonlinear ViT /
+    SSM / sliding-window terms (which depend on per-step averages) stay exact — this is
+    *not* an interval-averaged approximation. ``SUM`` all-reduce is linear, so reducing
+    per row equals reducing per step. Idempotent (empty buffer → ``0.0``). The delta is
+    also added to ``state._flops_since_last_log`` for straggler reporting.
+    """
+    buf = getattr(state, "_flops_buffer", None)
+    if not buf:
+        return 0.0
+    device = torch.cuda.current_device() if torch.cuda.is_available() else None
+    rows = torch.zeros((len(buf), 3), dtype=torch.long, device=device)
+    for i, (seqlen_sum, seqlen_sq_sum, vision_patches, _batch_size) in enumerate(buf):
+        rows[i, 0] = seqlen_sum
+        rows[i, 1] = seqlen_sq_sum
+        rows[i, 2] = vision_patches
+    use_all_reduce = (
+        dp_group is not None
+        and data_parallel_size > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    )
+    if use_all_reduce:
+        torch.distributed.all_reduce(rows, op=torch.distributed.ReduceOp.SUM, group=dp_group)
+    else:
+        rows = rows * data_parallel_size
+    reduced = rows.tolist()  # single host sync per flush
+
+    delta = 0.0
+    for (g_seqlen_sum, g_seqlen_sq_sum, g_vision), (_s, _q, _v, batch_size) in zip(reduced, buf):
+        if g_seqlen_sum > 0:
+            delta += num_floating_point_operations(
+                config,
+                batch_size=batch_size,
+                seqlen_sum=g_seqlen_sum,
+                seqlen_squared_sum=g_seqlen_sq_sum,
+                num_vision_patches=max(g_vision, 0),
+            )
+        else:
+            delta += num_floating_point_operations(config, batch_size=batch_size)
+
+    state.train_state.floating_point_operations_so_far += delta
+    state._flops_since_last_log = getattr(state, "_flops_since_last_log", 0.0) + delta
+    state._flops_buffer = []
+    return delta
+
+
+def _add_flops_accumulator(state, name: str, delta) -> None:
+    """Add an int or scalar tensor to a state accumulator."""
+    current = getattr(state, name, 0)
+    if not isinstance(current, (int, torch.Tensor)):
+        current = 0
+    setattr(state, name, current + delta)
+
+
+def _scalar_sum_for_accumulator(value: torch.Tensor) -> int | torch.Tensor:
+    """Return a scalar sum without forcing a CUDA host sync inside forward_step."""
+    total = value.sum()
+    if total.device.type == "cuda":
+        return total
+    return int(total.item())
+
+
+def _real_subseq_lengths(
+    cu_seqlens: torch.Tensor | None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    """Extract real (non-pad) sub-sequence lengths from cu_seqlens metadata.
+
+    Prefers ``cu_seqlens_unpadded`` (true sub-sequence boundaries when
+    ``pad_seq_to_mult > 1``) over the padded ``cu_seqlens``. Truncates by the
+    corresponding ``*_argmin`` when provided. Returns ``None`` when no
+    cu_seqlens info is available.
+    """
+    if cu_seqlens_unpadded is not None:
+        cu = cu_seqlens_unpadded.squeeze()
+        argmin = cu_seqlens_unpadded_argmin
+    elif cu_seqlens is not None:
+        cu = cu_seqlens.squeeze()
+        argmin = cu_seqlens_argmin
+    else:
+        return None
+
+    if argmin is not None:
+        cu = cu[: int(argmin.item())]
+
+    if cu.numel() < 2:
+        return cu.new_empty(0, dtype=torch.long)
+
+    sub_seq_lens = (cu[1:] - cu[:-1]).long()
+    return sub_seq_lens[sub_seq_lens > 0]
+
+
+def accumulate_flops_metadata(
+    state,
+    tokens: torch.Tensor | None,
+    *,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    num_vision_patches: int | torch.Tensor | None = None,
+    cp_size: int = 1,
+) -> None:
+    """Accumulate per-microbatch FLOPS metadata onto ``state``.
+
+    Writes three accumulators consumed by ``train.py`` at end of step:
+
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1] * cp_size`` (padded total
+      tokens this microbatch contributes). Drives the linear MLP/proj/logit terms.
+    - ``_flops_seqlen_sq_sum``: Σᵢ sᵢ² over real sub-sequence lengths derived
+      from ``cu_seqlens`` when available (THD-correct attention work), else
+      ``mbs * (seq_len * cp_size)²`` (BSHD fallback, matches legacy behavior).
+    - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+
+    ``cp_size`` is the number of context-parallel ranks ``tokens`` has been
+    sharded across along the sequence dim (so the full per-microbatch length is
+    ``tokens.shape[1] * cp_size``). Pass the CP degree from steps that CP-shard
+    the batch (e.g. ``gpt_step``); pass ``1`` (default) from steps that don't
+    (e.g. ``vlm_step``, where ``tokens`` is the full sequence). The attention
+    term needs no such correction — it derives from ``cu_seqlens``, which
+    describes the full packed sequence and is not CP-sharded.
+
+    ``num_vision_patches`` is the precomputed number of vision patches in this
+    microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
+    caller — which knows its own encoder's layout — computes the count and passes
+    a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
+    be an ``int`` or a scalar ``Tensor`` (a device tensor avoids a host sync here).
+
+    The BSHD fallback applies when cu_seqlens is not provided (e.g. dense
+    pretraining or non-packed SFT) and reproduces the existing single-pack-as-
+    one-sequence computation.
+
+    For THD packed training (offline packed LLM SFT or VLM in-batch packing),
+    treating the whole pack as one length-``seq_len`` sequence over-counts
+    attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
+    not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
+    """
+    if tokens is None:
+        return
+
+    mbs = tokens.shape[0]
+    # tokens may be CP-sharded along the sequence dim; recover the full per-
+    # microbatch length so the token-derived terms count the whole sequence
+    # (FLOPS are reported for the global batch, then divided by world size, which
+    # already includes CP). cp_size == 1 for steps that don't CP-shard tokens.
+    seq_len = tokens.shape[1] * cp_size
+    _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * seq_len)
+
+    # The attention term derives from cu_seqlens, which describes the full packed
+    # sequence and is NOT CP-sharded, so it takes no cp_size correction.
+    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
+    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+        sq_delta = _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2)
+    else:
+        sq_delta = mbs * seq_len**2
+    _add_flops_accumulator(state, "_flops_seqlen_sq_sum", sq_delta)
+
+    if num_vision_patches is not None:
+        _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
 
 
 def vit_flops(
@@ -206,17 +492,19 @@ def num_floating_point_operations(
         num_heads,
         gqa_groups=8,
         kv_channels=None,
+        core_attn_seq_factor=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
+        core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
         return (
             4
             * batch_size
             * seq_len
             * hidden_size
             * p
-            * (hidden_size + (hidden_size * (g / num_heads)) + (seq_len / 2))
+            * (hidden_size + (hidden_size * (g / num_heads)) + (core_seq / 2))
         )
 
     def mamba_layer_flops(
@@ -296,6 +584,7 @@ def num_floating_point_operations(
         gdn_conv_kernel_dim=4,
         vocab_size=256000,
         mtp_num_layers=0,
+        core_attn_seq_factor=None,
     ):
         """Calculate total FLOPs for the hybrid model."""
         flops_fwd = (
@@ -307,6 +596,7 @@ def num_floating_point_operations(
                 num_attn_heads,
                 gqa_groups,
                 kv_channels,
+                core_attn_seq_factor,
             )
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
@@ -848,6 +1138,7 @@ def num_floating_point_operations(
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
+            core_attn_seq_factor=core_attn_seq_factor,
         )
         return llm_flops + _compute_vit_flops()
     else:

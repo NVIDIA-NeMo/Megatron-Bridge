@@ -19,8 +19,16 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops
+from megatron.bridge.training.utils.flop_utils import (
+    accumulate_flops_metadata,
+    buffer_flops_metadata,
+    flush_flops_buffer,
+    num_floating_point_operations,
+    resolve_global_flops_seqlen_stats,
+    vit_flops,
+)
 
 
 @dataclass
@@ -420,6 +428,49 @@ class TestHybridLayerCounting:
             f"Non-SwiGLU: expected {expected_no_swiglu:.2e} but got {flops_no_swiglu:.2e}"
         )
         assert flops_swiglu == expected_swiglu, f"SwiGLU: expected {expected_swiglu:.2e} but got {flops_swiglu:.2e}"
+
+    def test_hybrid_attention_term_scales_with_seqlen_squared_sum(self):
+        """Hybrid attention core FLOPs must use Σ L², not only average sequence length."""
+        batch_size = 4
+        seq_len = 1024
+        hidden_size = 1024
+        num_heads = 8
+        kv_channels = 128
+        cfg = MockConfigContainer(
+            model=MockModelConfig(
+                is_hybrid_model=True,
+                hybrid_layer_pattern="*",
+                num_layers=1,
+                hidden_size=hidden_size,
+                seq_length=seq_len,
+                ffn_hidden_size=4096,
+                num_attention_heads=num_heads,
+                num_query_groups=num_heads,
+                kv_channels=kv_channels,
+                vocab_size=32000,
+                gated_linear_unit=False,
+            )
+        )
+        seqlen_sum = batch_size * seq_len
+        sq_base = batch_size * seq_len**2
+        sq_bumped = sq_base + 1_000_000
+
+        flops_base = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_base,
+        )
+        flops_bumped = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_bumped,
+        )
+
+        query_projection_size = kv_channels * num_heads
+        expected_delta = 3 * 2 * query_projection_size * (sq_bumped - sq_base)
+        assert flops_bumped - flops_base == expected_delta
 
 
 @pytest.mark.unit
@@ -1949,3 +2000,335 @@ class TestProviderOverride:
         assert num_floating_point_operations(cfg, batch_size=4) == sentinel * 4
         # Override must have been invoked twice with the right batch_size args.
         assert captured == [1, 4], f"Override call log mismatch: {captured}"
+
+
+class _State:
+    """Minimal stand-in for GlobalState — just an attribute bag."""
+
+
+class TestAccumulateFlopsMetadata:
+    """Unit tests for ``accumulate_flops_metadata``."""
+
+    def test_bshd_no_cu_seqlens_uses_pack_length_squared(self):
+        # Without cu_seqlens, the accumulator falls back to BSHD math —
+        # mbs * seq_len² — matching the pre-existing behavior on dense
+        # pretraining / non-packed paths.
+        state = _State()
+        tokens = torch.zeros(2, 512)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 2 * 512
+        assert state._flops_seqlen_sq_sum == 2 * 512**2
+
+    def test_mock_state_accumulators_start_at_zero(self):
+        state = MagicMock()
+        tokens = torch.zeros(1, 8)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 8
+        assert state._flops_seqlen_sq_sum == 64
+
+    def test_thd_cu_seqlens_uses_sum_of_squares(self):
+        # cu_seqlens = [0, 256, 512, 4096] → sub-seq lengths [256, 256, 3584].
+        # THD attention work = 256² + 256² + 3584² = 12,975,488; the BSHD
+        # approximation (1 × 4096²) would be 16,777,216 — much larger.
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens = torch.tensor([0, 256, 512, 4096])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sum == 1 * 4096
+        assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+
+    def test_thd_padded_cu_seqlens_with_argmin(self):
+        # Offline packed SFT pads cu_seqlens for CUDA graphs; the real
+        # entries end at cu_seqlens_argmin. Pad entries past argmin must be
+        # ignored (here they would otherwise contribute zero-length, but we
+        # exercise the truncation explicitly).
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        cu_seqlens = torch.tensor([0, 1024, 4096, 8192, 8192, 8192, 8192])
+        argmin = torch.tensor(4)  # real entries [0, 1024, 4096, 8192]
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cu_seqlens_argmin=argmin)
+        assert state._flops_seqlen_sq_sum == 1024**2 + 3072**2 + 4096**2
+
+    def test_thd_unpadded_takes_precedence_over_padded(self):
+        # When both cu_seqlens_unpadded and cu_seqlens are present, the
+        # unpadded variant describes the actual sub-sequence boundaries used
+        # by the attention kernel (cu_seqlens_q in PackedSeqParams) and must
+        # be the source of Σᵢ sᵢ².
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens_padded = torch.tensor([0, 4096, 4096, 4096])  # 1 pad-aligned sub-seq
+        cu_seqlens_unpadded = torch.tensor([0, 1000, 3500, 4096])  # 3 real sub-seqs
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=cu_seqlens_padded,
+            cu_seqlens_unpadded=cu_seqlens_unpadded,
+        )
+        assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
+
+    def test_accumulates_additively_across_microbatches(self):
+        # Each call adds to existing accumulators (microbatch loop semantics).
+        state = _State()
+        tokens = torch.zeros(1, 128)
+        cu_a = torch.tensor([0, 32, 128])
+        cu_b = torch.tensor([0, 64, 128])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_a)
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_b)
+        assert state._flops_seqlen_sum == 2 * 128
+        assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
+
+    def test_tokens_none_is_noop(self):
+        state = _State()
+        accumulate_flops_metadata(state, None)
+        assert not hasattr(state, "_flops_seqlen_sum")
+        assert not hasattr(state, "_flops_seqlen_sq_sum")
+
+    def test_num_vision_patches_int(self):
+        # Vision-patch count is precomputed by the (model-specific) caller and
+        # passed as a model-agnostic scalar.
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens, num_vision_patches=32 + 8)
+        assert state._flops_vision_patches == 40
+
+    def test_num_vision_patches_tensor_accumulates_across_microbatches(self):
+        # A scalar device tensor (no host sync) accumulates correctly.
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(32))
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(8))
+        assert int(state._flops_vision_patches) == 40
+
+    def test_num_vision_patches_none_is_noop(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens)
+        assert not hasattr(state, "_flops_vision_patches")
+
+    def test_cp_size_recovers_full_tokens_for_linear_term(self):
+        # Under CP, tokens are sharded along the sequence dim (tokens.shape[1] =
+        # full/cp). cp_size recovers the full per-microbatch token count for the
+        # linear (seqlen_sum) term. The THD attention term comes from cu_seqlens
+        # (not CP-sharded), so it is unaffected by cp_size.
+        state = _State()
+        tokens = torch.zeros(1, 512)  # this rank's shard
+        cu_seqlens = torch.tensor([0, 256, 1024])  # full (un-sharded) boundaries
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cp_size=4)
+        assert state._flops_seqlen_sum == 1 * 512 * 4  # full tokens recovered
+        assert state._flops_seqlen_sq_sum == 256**2 + 768**2  # from cu_seqlens, no cp factor
+
+    def test_cp_size_bshd_scales_sum_linearly_and_sq_quadratically(self):
+        # BSHD fallback (no cu_seqlens): both terms derive from the sharded
+        # tokens.shape[1], so recovering the full length scales seqlen_sum by cp
+        # and seqlen_sq by cp² (full_seq = shard * cp, full_seq² = shard² * cp²).
+        state = _State()
+        tokens = torch.zeros(2, 256)  # shard
+        accumulate_flops_metadata(state, tokens, cp_size=4)
+        assert state._flops_seqlen_sum == 2 * 256 * 4
+        assert state._flops_seqlen_sq_sum == 2 * (256 * 4) ** 2
+
+    def test_cp_size_one_is_identity(self):
+        # cp_size defaults to 1 (steps that don't CP-shard tokens) and must not
+        # change the legacy result.
+        state = _State()
+        tokens = torch.zeros(2, 512)
+        accumulate_flops_metadata(state, tokens, cp_size=1)
+        assert state._flops_seqlen_sum == 2 * 512
+        assert state._flops_seqlen_sq_sum == 2 * 512**2
+
+    def test_empty_cu_seqlens_falls_back_to_bshd(self):
+        # Degenerate cu_seqlens (only one element after argmin truncation)
+        # yields no sub-seqs, so the helper must fall back to BSHD rather
+        # than report 0 attention work.
+        state = _State()
+        tokens = torch.zeros(1, 256)
+        cu_seqlens = torch.tensor([0])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 1 * 256**2
+
+    def test_thd_substantially_smaller_than_bshd_for_short_samples(self):
+        # Regression check on the headline claim: a pack containing many
+        # short samples has dramatically less attention work than the BSHD
+        # approximation would suggest.
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        # 32 sub-seqs of length 256 → pack length 8192.
+        cu_seqlens = torch.tensor([i * 256 for i in range(33)])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        thd_sq = state._flops_seqlen_sq_sum
+        bshd_sq = 1 * 8192**2
+        # 32 * 256² = 2,097,152 vs 8192² = 67,108,864 → 32× smaller.
+        assert thd_sq == 32 * 256**2
+        assert bshd_sq // thd_sq == 32
+
+
+@pytest.mark.unit
+class TestResolveGlobalFlopsSeqlenStats:
+    """Unit tests for ``resolve_global_flops_seqlen_stats`` (non-distributed paths).
+
+    ``torch.distributed`` is not initialized in unit tests, so the helper takes the
+    extrapolation fallback (``local * data_parallel_size``). The exact all-reduce
+    path is covered by functional/distributed tests.
+    """
+
+    def test_extrapolates_local_by_dp_size(self):
+        state = _State()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 250_000
+        state._flops_vision_patches = 64
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 4
+        assert seqlen_sq_sum == 250_000 * 4
+        assert vision == 64 * 4
+
+    def test_dp_size_one_returns_local(self):
+        state = _State()
+        state._flops_seqlen_sum = 512
+        state._flops_seqlen_sq_sum = 4096
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=1, dp_group=None
+        )
+        assert (seqlen_sum, seqlen_sq_sum, vision) == (512, 4096, 0)
+
+    def test_vpp_correction_divides_before_extrapolation(self):
+        # Accumulators over-count by vp_size; helper divides them back per-rank.
+        state = _State()
+        state._flops_seqlen_sum = 1000 * 4  # accumulated once per virtual stage (vp=4)
+        state._flops_seqlen_sq_sum = 250_000 * 4
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=2, vp_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 2
+        assert seqlen_sq_sum == 250_000 * 2
+
+    def test_no_accumulation_returns_none(self):
+        # Step functions that don't set accumulators → caller falls back to fixed-length.
+        state = _State()
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=8, dp_group=None
+        )
+        assert seqlen_sum is None
+        assert seqlen_sq_sum is None
+        assert vision == 0
+
+    def test_coerces_scalar_tensor_accumulators(self):
+        # forward_step may leave accumulators as scalar tensors (deferred host sync).
+        state = _State()
+        state._flops_seqlen_sum = torch.tensor(800)
+        state._flops_seqlen_sq_sum = torch.tensor(160_000)
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(state, data_parallel_size=2, dp_group=None)
+        assert seqlen_sum == 1600
+        assert seqlen_sq_sum == 320_000
+
+    def test_dp_group_ignored_when_distributed_not_initialized(self):
+        # A non-None dp_group must not trigger a collective when torch.distributed
+        # is not initialized; the helper falls back to extrapolation.
+        assert not torch.distributed.is_initialized()
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+        assert seqlen_sum == 40
+        assert seqlen_sq_sum == 400
+
+
+@pytest.mark.unit
+class TestFlushFlopsBuffer:
+    """``buffer_flops_metadata`` + ``flush_flops_buffer`` must equal the per-step path."""
+
+    def _cfg(self):
+        return MockConfigContainer(
+            model=MockModelConfig(
+                is_hybrid_model=True,
+                hybrid_layer_pattern="*",
+                num_layers=2,
+                hidden_size=1024,
+                seq_length=1024,
+                ffn_hidden_size=4096,
+                num_attention_heads=8,
+                num_query_groups=8,
+                kv_channels=128,
+                vocab_size=32000,
+                gated_linear_unit=False,
+            )
+        )
+
+    def _state(self):
+        state = _State()
+        state.train_state = SimpleNamespace(floating_point_operations_so_far=0.0)
+        return state
+
+    def test_flush_equals_sum_of_per_step(self):
+        # Buffer several steps with *different* per-step stats, then flush. The folded
+        # cumulative must equal summing num_floating_point_operations per step (this is
+        # the property that keeps nonlinear ViT/SSM/SWA terms exact under deferral).
+        cfg = self._cfg()
+        steps = [
+            dict(seqlen_sum=1024, seqlen_sq=1024**2, vision=0, batch_size=1),
+            dict(seqlen_sum=4096, seqlen_sq=2 * 2048**2, vision=0, batch_size=4),
+            dict(seqlen_sum=2048, seqlen_sq=512**2 + 1536**2, vision=0, batch_size=2),
+        ]
+        state = self._state()
+        for s in steps:
+            state._flops_seqlen_sum = s["seqlen_sum"]
+            state._flops_seqlen_sq_sum = s["seqlen_sq"]
+            state._flops_vision_patches = s["vision"]
+            buffer_flops_metadata(state, batch_size=s["batch_size"])
+
+        # dp_group=None → extrapolation path with data_parallel_size=1 (identity).
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=1, dp_group=None)
+
+        expected = sum(
+            num_floating_point_operations(
+                cfg,
+                batch_size=s["batch_size"],
+                seqlen_sum=s["seqlen_sum"],
+                seqlen_squared_sum=s["seqlen_sq"],
+                num_vision_patches=s["vision"],
+            )
+            for s in steps
+        )
+        assert delta == expected
+        assert state.train_state.floating_point_operations_so_far == expected
+        assert state._flops_buffer == []
+        assert state._flops_since_last_log == expected
+
+    def test_flush_extrapolates_by_dp_size(self):
+        # Without a process group, each row scales by data_parallel_size — matching the
+        # resolve_global_flops_seqlen_stats fallback.
+        cfg = self._cfg()
+        state = self._state()
+        state._flops_seqlen_sum = 1024
+        state._flops_seqlen_sq_sum = 1024**2
+        state._flops_vision_patches = 0
+        buffer_flops_metadata(state, batch_size=1)
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=8, dp_group=None)
+        expected = num_floating_point_operations(
+            cfg, batch_size=1, seqlen_sum=1024 * 8, seqlen_squared_sum=(1024**2) * 8, num_vision_patches=0
+        )
+        assert delta == expected
+
+    def test_flush_empty_buffer_is_noop(self):
+        cfg = self._cfg()
+        state = self._state()
+        assert flush_flops_buffer(state, cfg, data_parallel_size=4, dp_group=None) == 0.0
+        assert state.train_state.floating_point_operations_so_far == 0.0
+
+    def test_buffer_accepts_tensor_accumulators_without_sync(self):
+        # The sq/vision accumulators are device tensors on GPU; buffering must not
+        # require .item(). Here (CPU) they're scalar tensors — flush coerces at the end.
+        cfg = self._cfg()
+        state = self._state()
+        state._flops_seqlen_sum = 1024
+        state._flops_seqlen_sq_sum = torch.tensor(1024**2)
+        state._flops_vision_patches = torch.tensor(0)
+        buffer_flops_metadata(state, batch_size=1)
+        delta = flush_flops_buffer(state, cfg, data_parallel_size=1, dp_group=None)
+        expected = num_floating_point_operations(
+            cfg, batch_size=1, seqlen_sum=1024, seqlen_squared_sum=1024**2, num_vision_patches=0
+        )
+        assert delta == expected
