@@ -14,49 +14,206 @@
 """VR200 performance recipes for Llama 3."""
 
 from megatron.bridge.perf_recipes.llama.common import (
+    CommOverlapConfig,
     ConfigContainer,
-)
-from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
-    llama3_8b_pretrain_8gpu_gb200_bf16_config,
-    llama3_8b_pretrain_8gpu_gb200_fp8cs_config,
-    llama3_8b_pretrain_8gpu_gb200_fp8mx_config,
-    llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
-    llama3_70b_pretrain_64gpu_gb200_bf16_config,
-    llama3_70b_pretrain_64gpu_gb200_fp8mx_config,
-    llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
+    _llama_benchmark_common,
+    _perf_precision,
+    llama3_8b_pretrain_config,
+    llama3_70b_pretrain_config,
+    userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192,
+    userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192,
 )
 
 
 def llama3_8b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, BF16 (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_bf16_config()
+    """Llama3 8B pretrain: 8× VR200, BF16, CUDA graph local."""
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_8b_pretrain_8gpu_vr200_fp8cs_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, FP8-CS (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_fp8cs_config()
+    """Llama3 8B pretrain: 8× VR200, FP8 current-scaling, CUDA graph local."""
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_8b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, FP8-MX (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_fp8mx_config()
+    """Llama3 8B pretrain: 8× VR200, MXFP8, CUDA graph local."""
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_8b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, NVFP4 (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_nvfp4_config()
+    """Llama3 8B pretrain: 8× VR200, NVFP4, CUDA graph local."""
+    cfg = llama3_8b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_70b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, BF16 (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_bf16_config()
+    """Llama3 70B pretrain: 64× VR200, BF16, FSDP + NCCL UB, GBS=256."""
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 2
+
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.fsdp_double_buffer = True
+    cfg.ddp.suggested_communication_unit_size = 800000000
+    cfg.model.init_model_with_meta_device = True
+    cfg.model.gradient_accumulation_fusion = False
+    cfg.checkpoint.load = None
+    cfg.ddp.nccl_ub = True
+    cfg.ddp.fsdp_manual_registration = True
+
+    cfg.model.cpu_offloading = True
+    cfg.model.cpu_offloading_weights = False
+    cfg.model.cpu_offloading_num_layers = 30
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_bf16_b200_h8192_tp2_mbs1_seqlen8192
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_70b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, FP8-MX (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_fp8mx_config()
+    """Llama3 70B pretrain: 64× VR200, MXFP8, PP=4, GBS=256."""
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 1
+
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    _llama_benchmark_common(cfg)
+    return cfg
 
 
 def llama3_70b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, NVFP4 (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
+    """Llama3 70B pretrain: 64× VR200, NVFP4, PP=4, GBS=256."""
+    cfg = llama3_70b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("nvfp4")
+    cfg.tokenizer.vocab_size = 128256
+    cfg.model.should_pad_vocab = True
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 256
+    cfg.train.micro_batch_size = 1
+
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = ["full_iteration"]
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = False
+
+    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.comm_overlap.tp_comm_overlap_cfg = userbuffers_fp8_b200_h8192_tp2_mbs1_seqlen8192
+
+    _llama_benchmark_common(cfg)
+    return cfg
