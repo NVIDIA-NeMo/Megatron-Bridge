@@ -12,109 +12,167 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Contract tests for AutoBridge model registration."""
+"""Contract tests for public AutoBridge model registration."""
 
 from __future__ import annotations
 
-import importlib
-from dataclasses import dataclass
+import json
+import subprocess
+import sys
 
 import pytest
-from transformers import PretrainedConfig
-
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 
 
 pytestmark = pytest.mark.unit
 
 
-@dataclass(frozen=True)
-class RegistrationCase:
-    """Expected AutoBridge registration for one model family."""
-
-    id: str
-    module: str
-    architecture: str
-    bridge_class: str
-    needs_auto_map: bool = False
-
-
-REGISTRATION_CASES = (
-    RegistrationCase(
-        id="llama",
-        module="megatron.bridge.models.llama.llama_bridge",
-        architecture="LlamaForCausalLM",
-        bridge_class="LlamaBridge",
+EXPECTED_REGISTRATIONS = {
+    "BailingMoeV2ForCausalLM": "megatron.bridge.models.bailing.bailing_moe2_bridge.BailingMoeV2Bridge",
+    "DeciLMForCausalLM": "megatron.bridge.models.llama_nemotron.llama_nemotron_bridge.LlamaNemotronBridge",
+    "DeepseekV2ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v2_bridge.DeepSeekV2Bridge",
+    "DeepseekV3ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v3_bridge.DeepSeekV3Bridge",
+    "DeepseekV4ForCausalLM": "megatron.bridge.models.deepseek.deepseek_v4_bridge.DeepSeekV4Bridge",
+    "Ernie4_5_MoeForCausalLM": "megatron.bridge.models.ernie.ernie_45_bridge.Ernie45Bridge",
+    "Ernie4_5_VLMoeForConditionalGeneration": ("megatron.bridge.models.ernie_vl.ernie45_vl_bridge.Ernie45VLBridge"),
+    "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4_bridge.Exaone4Bridge",
+    "FalconH1ForCausalLM": "megatron.bridge.models.falcon_h1.falconh1_bridge.FalconH1Bridge",
+    "Gemma2ForCausalLM": "megatron.bridge.models.gemma.gemma2_bridge.Gemma2Bridge",
+    "Gemma3ForCausalLM": "megatron.bridge.models.gemma.gemma3_bridge.Gemma3ModelBridge",
+    "Gemma3ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma3_vl_bridge.Gemma3VLBridge",
+    "Gemma4ForCausalLM": "megatron.bridge.models.gemma.gemma4_bridge.Gemma4Bridge",
+    "Gemma4ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma4_vl_bridge.Gemma4VLBridge",
+    "GemmaForCausalLM": "megatron.bridge.models.gemma.gemma_bridge.GemmaBridge",
+    "Glm4MoeForCausalLM": "megatron.bridge.models.glm.glm45_bridge.GLM45Bridge",
+    "Glm4MoeLiteForCausalLM": "megatron.bridge.models.glm.glm47_flash_bridge.GLM47FlashBridge",
+    "Glm4vMoeForConditionalGeneration": "megatron.bridge.models.glm_vl.glm_45v_bridge.GLM45VBridge",
+    "GlmMoeDsaForCausalLM": "megatron.bridge.models.glm_moe_dsa.glm5_bridge.GLM5Bridge",
+    "GptOssForCausalLM": "megatron.bridge.models.gpt_oss.gpt_oss_bridge.GPTOSSBridge",
+    "KimiK25ForConditionalGeneration": "megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge.KimiK25VLBridge",
+    "KimiK2ForCausalLM": "megatron.bridge.models.kimi.kimi_bridge.KimiK2Bridge",
+    "LlamaForCausalLM": "megatron.bridge.models.llama.llama_bridge.LlamaBridge",
+    "MiMoForCausalLM": "megatron.bridge.models.mimo.mimo_bridge.MimoBridge",
+    "MiMoV2FlashForCausalLM": ("megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge.MiMoV2FlashBridge"),
+    "MiniMaxM2ForCausalLM": "megatron.bridge.models.minimax_m2.minimax_m2_bridge.MiniMaxM2Bridge",
+    "Mistral3ForConditionalGeneration": ("megatron.bridge.models.ministral3.ministral3_bridge.Ministral3Bridge"),
+    "MistralForCausalLM": "megatron.bridge.models.mistral.mistral_bridge.MistralBridge",
+    "NemotronForCausalLM": "megatron.bridge.models.nemotron.nemotron_bridge.NemotronBridge",
+    "NemotronHForCausalLM": "megatron.bridge.models.nemotronh.nemotron_h_bridge.NemotronHBridge",
+    "NemotronH_Nano_Omni_Reasoning_V3": (
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
     ),
-    RegistrationCase(
-        id="qwen3_vl",
-        module="megatron.bridge.models.qwen_vl.qwen3_vl_bridge",
-        architecture="Qwen3VLForConditionalGeneration",
-        bridge_class="Qwen3VLBridge",
+    "NemotronH_Nano_VL_V2": "megatron.bridge.models.nemotron_vl.nemotron_vl_bridge.NemotronVLBridge",
+    "NemotronLabsDiffusionModel": (
+        "megatron.bridge.diffusion.conversion.nemotron_labs_diffusion."
+        "nemotron_labs_diffusion_bridge.NemotronLabsDiffusionBridge"
     ),
-    RegistrationCase(
-        id="qwen3_omni",
-        module="megatron.bridge.models.qwen_omni.qwen3_omni_bridge",
-        architecture="Qwen3OmniMoeForConditionalGeneration",
-        bridge_class="Qwen3OmniBridge",
-    ),
-    RegistrationCase(
-        id="exaone4",
-        module="megatron.bridge.models.exaone.exaone4_bridge",
-        architecture="Exaone4ForCausalLM",
-        bridge_class="Exaone4Bridge",
-        needs_auto_map=True,
-    ),
-    RegistrationCase(
-        id="glm45",
-        module="megatron.bridge.models.glm.glm45_bridge",
-        architecture="Glm4MoeForCausalLM",
-        bridge_class="GLM45Bridge",
-    ),
-    RegistrationCase(
-        id="sarvam_moe",
-        module="megatron.bridge.models.sarvam.sarvam_moe_bridge",
-        architecture="SarvamMoEForCausalLM",
-        bridge_class="SarvamMoEBridge",
-        needs_auto_map=True,
-    ),
-    RegistrationCase(
-        id="mimo_v2_flash",
-        module="megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge",
-        architecture="MiMoV2FlashForCausalLM",
-        bridge_class="MiMoV2FlashBridge",
-        needs_auto_map=True,
-    ),
-    RegistrationCase(
-        id="step35",
-        module="megatron.bridge.models.stepfun.step35_bridge",
-        architecture="Step3p5ForCausalLM",
-        bridge_class="Step35Bridge",
-        needs_auto_map=True,
-    ),
-)
+    "OlmoeForCausalLM": "megatron.bridge.models.olmoe.olmoe_bridge.OlMoEBridge",
+    "Qwen2AudioForConditionalGeneration": ("megatron.bridge.models.qwen_audio.qwen2_audio_bridge.Qwen2AudioBridge"),
+    "Qwen2ForCausalLM": "megatron.bridge.models.qwen.qwen2_bridge.Qwen2Bridge",
+    "Qwen2_5OmniForConditionalGeneration": ("megatron.bridge.models.qwen_omni.qwen25_omni_bridge.Qwen25OmniBridge"),
+    "Qwen2_5_VLForConditionalGeneration": ("megatron.bridge.models.qwen_vl.qwen25_vl_bridge.Qwen25VLBridge"),
+    "Qwen3ASRForConditionalGeneration": "megatron.bridge.models.qwen3_asr.qwen3_asr_bridge.Qwen3ASRBridge",
+    "Qwen3ForCausalLM": "megatron.bridge.models.qwen.qwen3_bridge.Qwen3Bridge",
+    "Qwen3MoeForCausalLM": "megatron.bridge.models.qwen.qwen3_moe_bridge.Qwen3MoEBridge",
+    "Qwen3NextForCausalLM": "megatron.bridge.models.qwen.qwen3_next_bridge.Qwen3NextBridge",
+    "Qwen3OmniMoeForConditionalGeneration": ("megatron.bridge.models.qwen_omni.qwen3_omni_bridge.Qwen3OmniBridge"),
+    "Qwen3VLForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.Qwen3VLBridge",
+    "Qwen3VLMoeForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen3_vl_bridge.Qwen3VLMoEBridge",
+    "Qwen3_5ForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35Bridge",
+    "Qwen3_5ForConditionalGeneration": "megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLBridge",
+    "Qwen3_5MoeForCausalLM": "megatron.bridge.models.qwen.qwen35_bridge.Qwen35MoEBridge",
+    "Qwen3_5MoeForConditionalGeneration": ("megatron.bridge.models.qwen_vl.qwen35_vl_bridge.Qwen35VLMoEBridge"),
+    "SarvamMLAForCausalLM": "megatron.bridge.models.sarvam.sarvam_mla_bridge.SarvamMLABridge",
+    "SarvamMoEForCausalLM": "megatron.bridge.models.sarvam.sarvam_moe_bridge.SarvamMoEBridge",
+    "Step3p5ForCausalLM": "megatron.bridge.models.stepfun.step35_bridge.Step35Bridge",
+    "Step3p7ForConditionalGeneration": "megatron.bridge.models.stepfun.step37_bridge.Step37Bridge",
+}
+
+STRING_REGISTRATIONS = {
+    "BailingMoeV2ForCausalLM",
+    "DeciLMForCausalLM",
+    "DeepseekV2ForCausalLM",
+    "DeepseekV3ForCausalLM",
+    "DeepseekV4ForCausalLM",
+    "Ernie4_5_MoeForCausalLM",
+    "Ernie4_5_VLMoeForConditionalGeneration",
+    "Exaone4ForCausalLM",
+    "FalconH1ForCausalLM",
+    "Gemma4ForCausalLM",
+    "Gemma4ForConditionalGeneration",
+    "Glm4MoeLiteForCausalLM",
+    "KimiK25ForConditionalGeneration",
+    "KimiK2ForCausalLM",
+    "MiMoForCausalLM",
+    "MiMoV2FlashForCausalLM",
+    "MiniMaxM2ForCausalLM",
+    "NemotronHForCausalLM",
+    "NemotronH_Nano_Omni_Reasoning_V3",
+    "NemotronH_Nano_VL_V2",
+    "NemotronLabsDiffusionModel",
+    "Qwen3ASRForConditionalGeneration",
+    "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5MoeForConditionalGeneration",
+    "SarvamMLAForCausalLM",
+    "SarvamMoEForCausalLM",
+    "Step3p5ForCausalLM",
+    "Step3p7ForConditionalGeneration",
+}
 
 
-def _minimal_config(case: RegistrationCase) -> PretrainedConfig:
-    kwargs = {"architectures": [case.architecture]}
-    if case.needs_auto_map:
-        kwargs["auto_map"] = {"AutoModelForCausalLM": f"modeling_{case.id}.{case.architecture}"}
-    return PretrainedConfig(**kwargs)
+REGISTRATION_CHECK = """
+import json
+import sys
+
+from transformers import PretrainedConfig
+
+from megatron.bridge import AutoBridge
+from megatron.bridge.models.conversion import model_bridge
 
 
-@pytest.mark.parametrize("case", REGISTRATION_CASES, ids=lambda case: case.id)
-def test_autobridge_selects_registered_bridge_for_minimal_hf_config(case: RegistrationCase) -> None:
-    module = importlib.import_module(case.module)
-    expected_bridge_class = getattr(module, case.bridge_class)
-    config = _minimal_config(case)
+expected = json.loads(sys.argv[1])
+string_registrations = set(json.loads(sys.argv[2]))
+supported = AutoBridge.list_supported_models()
+assert supported == sorted(expected), f"registration manifest mismatch: {supported!r}"
 
-    assert issubclass(expected_bridge_class, MegatronModelBridge)
-    assert AutoBridge.supports(config)
-    assert case.architecture in AutoBridge.list_supported_models()
+key_kinds = {
+    key if isinstance(key, str) else key.__name__: isinstance(key, str)
+    for key in model_bridge.get_model_bridge._exact_types
+}
+expected_key_kinds = {architecture: architecture in string_registrations for architecture in expected}
+assert key_kinds == expected_key_kinds, f"registration key-kind mismatch: {key_kinds!r}"
+
+for architecture, expected_bridge_class in expected.items():
+    config_kwargs = {"architectures": [architecture]}
+    if architecture in string_registrations:
+        config_kwargs["auto_map"] = {"AutoModelForCausalLM": f"modeling_test.{architecture}"}
+    config = PretrainedConfig(**config_kwargs)
+    assert AutoBridge.supports(config), f"AutoBridge rejected {architecture}"
 
     bridge = AutoBridge.from_hf_config(config)
     selected_bridge = bridge._model_bridge
+    actual_bridge_class = f"{type(selected_bridge).__module__}.{type(selected_bridge).__name__}"
 
-    assert type(selected_bridge) is expected_bridge_class
+    assert actual_bridge_class == expected_bridge_class, (
+        f"{architecture} selected {actual_bridge_class}, expected {expected_bridge_class}"
+    )
     assert selected_bridge.hf_config is config
+"""
+
+
+def test_public_autobridge_import_registers_every_supported_model() -> None:
+    """The public package import must install every expected bridge registration."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            REGISTRATION_CHECK,
+            json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
+            json.dumps(sorted(STRING_REGISTRATIONS)),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr or result.stdout

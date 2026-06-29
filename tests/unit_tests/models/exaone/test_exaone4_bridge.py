@@ -18,7 +18,6 @@ from unittest.mock import Mock
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.exaone.exaone4_bridge import Exaone4Bridge
 from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -62,9 +61,6 @@ def make_pretrained(config):
 
 class TestExaone4Bridge:
     """Test cases for EXAONE 4.0 bridge config and mappings."""
-
-    def test_bridge_registration(self):
-        assert issubclass(Exaone4Bridge, MegatronModelBridge)
 
     def test_provider_bridge_basic_mapping(self):
         config = make_exaone4_config()
