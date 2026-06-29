@@ -67,7 +67,7 @@ def step37_sft_flickr8k_config(
     Uses the Flickr8k packed pipeline:
 
     - ``cfg.dataset`` is :class:`Step37Flickr8kSFTDataProvider` (sync
-      packing, no async wrapper, no ``HFDatasetConversationProvider``).
+      packing, no async wrapper, no ``HFConversationDatasetProvider``).
     - ``--step_func step37_flickr8k_step`` consumes the packed dict and
       passes ``list[ImageForInsert]`` straight to ``Step37Model.forward``.
     - ``micro_batch_size`` is pinned at ``1`` — each pack already aggregates
@@ -95,7 +95,7 @@ def step37_sft_flickr8k_config(
     # Start from the generic SFT baseline (gives us cfg.train / cfg.optimizer
     # / cfg.scheduler / cfg.ddp / cfg.checkpoint / cfg.logger placeholders),
     # then override every VLM/Step3.7-specific field. We don't use
-    # ``_sft_common_vlm`` because it forces ``HFDatasetConversationProvider``
+    # ``_sft_common_vlm`` because it forces ``HFConversationDatasetProvider``
     # which is exactly the layer we're replacing.
     cfg = _sft_common()
 

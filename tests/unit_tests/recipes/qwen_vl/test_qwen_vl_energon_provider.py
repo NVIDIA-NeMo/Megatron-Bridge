@@ -38,6 +38,10 @@ class _FakeTaskEncoder:
         self.max_num_images = -1
         self.max_num_frames = -1
         self.max_visual_tokens = -1
+        self.pad_to_max_length = None
+        self.pad_to_multiple_of = -1
+        self.enable_in_batch_packing = None
+        self.in_batch_packing_pad_to_multiple_of = -1
 
 
 def _make_provider(task_encoder, **overrides):
@@ -71,12 +75,17 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
         max_num_images=4,
         max_num_frames=16,
         max_visual_tokens=999,
+        enable_in_batch_packing=True,
+        pad_to_max_length=True,
+        pad_to_multiple_of=64,
+        in_batch_packing_pad_to_multiple_of=8,
     )
 
     # Stub the parent so build_datasets returns immediately after the sync block.
     captured = {}
 
     def fake_super_build(self, context):
+        self._sync_task_encoder_sequence_batching()
         captured["called_with"] = context
         return "stubbed"
 
@@ -93,11 +102,18 @@ def test_build_datasets_syncs_all_fields_to_task_encoder(monkeypatch, fake_conte
 
     # Every overridable field is now reflected on the encoder.
     assert encoder.seq_len == 2048
+    assert encoder.seq_length == 2048
     assert encoder.min_pixels == 12345
     assert encoder.max_pixels == 67890
     assert encoder.max_num_images == 4
     assert encoder.max_num_frames == 16
     assert encoder.max_visual_tokens == 999
+    assert encoder.pad_to_max_length is True
+    assert encoder.pad_to_multiple_of == 64
+    assert provider.enable_in_batch_packing is True
+    assert provider.defer_in_batch_packing_to_step is True
+    assert encoder.enable_in_batch_packing is False
+    assert encoder.in_batch_packing_pad_to_multiple_of == 8
 
 
 def test_build_datasets_no_op_when_task_encoder_is_none(monkeypatch, fake_context):

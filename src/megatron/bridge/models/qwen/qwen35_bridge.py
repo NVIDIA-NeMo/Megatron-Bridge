@@ -242,6 +242,18 @@ class Qwen35MoEBridge(MegatronModelBridge):
                     megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
                 ),
+                # Sequential (non-grouped) experts <-> per-expert unfused HF weights. Needed when
+                # moe_grouped_gemm is disabled (e.g. ModelOpt pruning) and for checkpoints that store
+                # experts unfused (gate_proj/up_proj/down_proj per expert).
+                GatedMLPMapping(
+                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                    gate=f"{hf_prefix}layers.*.mlp.experts.*.gate_proj.weight",
+                    up=f"{hf_prefix}layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                    hf_param=f"{hf_prefix}layers.*.mlp.experts.*.down_proj.weight",
+                ),
                 # =============================================================
                 # Language Model: Shared Expert MLPs
                 # =============================================================

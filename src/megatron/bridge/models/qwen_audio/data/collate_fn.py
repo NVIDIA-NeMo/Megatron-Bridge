@@ -19,22 +19,51 @@ import warnings
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.vlm_processing import gather_assistant_text_segments
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.vlm_processing import chat_template_kwargs_from_example, gather_assistant_text_segments
 from megatron.bridge.training.utils.visual_inputs import Qwen2AudioInputs
 
 
-def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]:
+def qwen2_audio_collate_fn(
+    examples: list,
+    processor,
+    *,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
+) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2-Audio model.
 
     Uses HF-compatible label construction:
     - Backward search for assistant text spans (matching HF Trainer convention)
     - No skipped_tokens masking on labels (model learns to predict EOS/im_end)
     - Loss mask derived directly from active label positions
+
+    Qwen2-Audio keeps packing in ``audio_lm_step`` because audio features must
+    remain batch-aligned until model input preparation.
     """
+    del visual_keys, min_pixels, max_pixels
+    if enable_in_batch_packing:
+        warnings.warn(
+            "Qwen2-Audio defers in-batch packing to audio_lm_step; collate returns right-padded rows.",
+            stacklevel=2,
+        )
+
     texts = []
     audio_inputs = []
     for example in examples:
-        texts.append(processor.apply_chat_template(example["conversation"], tokenize=False))
+        texts.append(
+            processor.apply_chat_template(
+                example["conversation"],
+                tokenize=False,
+                **chat_template_kwargs_from_example(example),
+            )
+        )
         audio = example.get("audio")
         if audio is not None:
             if isinstance(audio, tuple):
@@ -120,4 +149,14 @@ def qwen2_audio_collate_fn(examples: list, processor) -> dict[str, torch.Tensor]
     for key in ("input_features", "feature_attention_mask"):
         batch.pop(key, None)
 
+    prepare_padded_or_packed_sequence_batch(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=False,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        pad_token_id=int(pad_token_id or 0),
+        ignore_index=IGNORE_INDEX,
+    )
     return batch

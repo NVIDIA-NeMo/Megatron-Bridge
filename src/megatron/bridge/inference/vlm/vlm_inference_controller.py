@@ -20,23 +20,25 @@ from megatron.core.inference.text_generation_controllers.text_generation_control
     TextGenerationController,
 )
 
+from megatron.bridge.inference._tokenizer import HFTokenizerAdapter
 
-class TokenizerWrapper:
-    """Wrapper around tokenizer to provide a unified interface for inference."""
+
+class TokenizerWrapper(HFTokenizerAdapter):
+    """Wrapper around tokenizer to provide a unified interface for inference.
+
+    Thin specialization of :class:`HFTokenizerAdapter` preserving the historical VLM behavior:
+    no pad-token defaulting, ``vocab_size`` left as ``None``, and detokenization that always
+    keeps special tokens.
+    """
 
     # pylint: disable=C0115,C0116
     def __init__(self, tokenizer):
-        self.eod = tokenizer.eos_token_id
-        self.vocab_size = None
-        self._tokenizer = tokenizer
-
-    def detokenize(self, tokens):
-        # pylint: disable=C0115,C0116
-        return self._tokenizer.decode(tokens, skip_special_tokens=False)
-
-    def tokenize(self, prompt):
-        # pylint: disable=C0115,C0116
-        return self._tokenizer.encode(prompt, add_special_tokens=False)
+        super().__init__(
+            tokenizer,
+            set_pad_token=False,
+            expose_vocab_size=False,
+            force_skip_special_tokens=False,
+        )
 
 
 class VLMTextGenerationController(TextGenerationController):

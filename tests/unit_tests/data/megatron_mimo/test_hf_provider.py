@@ -102,6 +102,26 @@ def test_get_collate_fn_returns_partial():
     assert collate_fn.keywords["modality_names"] == ["vision"]
 
 
+def test_load_tokenizer_defaults_trust_remote_code_false(monkeypatch):
+    """Test that MIMO tokenizer loading disables remote code by default."""
+    seen = {}
+
+    class _AutoTokenizer:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["tokenizer"] = (path, trust_remote_code)
+            return DummyTokenizer()
+
+    monkeypatch.setattr("megatron.bridge.data.megatron_mimo.hf_provider.AutoTokenizer", _AutoTokenizer)
+
+    provider = _make_provider()
+    provider.hf_tokenizer_path = "Qwen/attacker_tokenizer"
+
+    provider._load_tokenizer()  # noqa: SLF001
+
+    assert seen["tokenizer"] == ("Qwen/attacker_tokenizer", False)
+
+
 def test_load_processors_falls_back_to_feature_extractor(monkeypatch):
     calls = Calls()
     feature_extractor_calls = 0

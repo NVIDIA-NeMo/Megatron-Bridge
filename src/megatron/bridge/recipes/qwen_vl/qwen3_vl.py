@@ -280,6 +280,7 @@ class QwenVLEnergonProvider(EnergonProvider):
     max_num_images: int | None = 10
     max_num_frames: int | None = 60
     max_visual_tokens: int | None = 16384
+    defer_in_batch_packing_to_step: bool = True
 
     def build_datasets(self, context: DatasetBuildContext):
         if self.task_encoder is not None:
@@ -419,6 +420,7 @@ def qwen3_vl_8b_sft_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -555,6 +557,7 @@ def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -691,6 +694,7 @@ def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -835,6 +839,7 @@ def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -980,6 +985,7 @@ def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCont
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False
@@ -1125,6 +1131,7 @@ def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCo
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.defer_in_batch_packing_to_step = True
 
     # DDP settings
     cfg.ddp.overlap_grad_reduce = False

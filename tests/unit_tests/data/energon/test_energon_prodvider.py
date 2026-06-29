@@ -24,7 +24,6 @@ class _FakeTaskEncoder:
     def __init__(self):
         # Sentinels that differ from the provider values so we can confirm assignment.
         self.seq_length = -1
-        self.pack_sequences = None
 
 
 def _mock_datamodule(mock_datamodule_cls):
@@ -124,16 +123,6 @@ class TestEnergonProvider:
         provider.build_datasets(MagicMock(spec=DatasetBuildContext))
 
         assert encoder.seq_length == 8192
-
-    @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
-    def test_build_datasets_syncs_pack_sequences_when_enabled(self, mock_datamodule_cls):
-        _mock_datamodule(mock_datamodule_cls)
-        encoder = _FakeTaskEncoder()
-        provider = _make_provider(encoder, pack_sequences_in_batch=True)
-
-        provider.build_datasets(MagicMock(spec=DatasetBuildContext))
-
-        assert encoder.pack_sequences is True
 
     @patch("megatron.bridge.data.energon.energon_provider.EnergonMultiModalDataModule")
     def test_build_datasets_no_op_when_task_encoder_is_none(self, mock_datamodule_cls):

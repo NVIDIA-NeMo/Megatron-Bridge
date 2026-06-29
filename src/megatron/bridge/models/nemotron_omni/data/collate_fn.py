@@ -17,9 +17,20 @@
 import torch
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch, use_processor_right_padding
+from megatron.bridge.data.vlm_processing import (
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+    shared_chat_template_kwargs_from_examples,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
+CHATML_ASSISTANT_END = "<|im_end|>\n"
+CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
 
 
 def nemotron_omni_collate_fn(
@@ -27,7 +38,14 @@ def nemotron_omni_collate_fn(
     processor,
     start_of_response_token=None,
     *,
-    pack_sequences: bool = False,
+    visual_keys: object = None,
+    min_pixels: int | None = None,
+    max_pixels: int | None = None,
+    enable_in_batch_packing: bool = False,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Nemotron Omni model (vision + audio + language).
 
@@ -36,12 +54,14 @@ def nemotron_omni_collate_fn(
     Audio is converted to mel spectrograms and added to the batch as
     ``sound_clips`` / ``sound_length`` tensors consumed by LLaVAModel.forward().
 
-    When ``pack_sequences=True``, samples in the microbatch are concatenated
-    along the sequence dim into a single ``[1, sum(L_i)]`` batch, and
-    ``cu_seqlens`` / ``cu_seqlens_unpadded`` / ``cu_seqlens_argmin`` /
-    ``max_seqlen`` are emitted so TE's THD attention kernels handle per-sample
-    masking without an attention mask. Requires ``mbs > 1`` to be meaningful.
+    HF-style Nemotron Omni collation does not support in-batch packing. Use the
+    Energon task encoder for direct packed collation.
     """
+    del visual_keys, min_pixels, max_pixels
+
+    if enable_in_batch_packing:
+        raise ValueError("Nemotron Omni HF collation does not support in-batch packing; use the Energon task encoder.")
+
     from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
         compute_mel_features,
         load_audio,
@@ -55,6 +75,13 @@ def nemotron_omni_collate_fn(
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
 
     skipped_tokens = extract_skipped_token_ids(processor)
+    boundary_config = assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=CHATML_ASSISTANT_START,
+        assistant_end=CHATML_ASSISTANT_END,
+        assistant_end_fallbacks=("<|im_end|>",),
+        role_start_markers=CHATML_OTHER_ROLE_STARTS,
+    )
     first_content = examples[0]["conversation"][0]["content"]
     is_video = isinstance(first_content, list) and first_content[0].get("type") == "video"
 
@@ -82,8 +109,18 @@ def nemotron_omni_collate_fn(
             )
             frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
-        prompt = processor.apply_chat_template([ex["conversation"] for ex in examples], tokenize=False)
-        batch = processor(text=prompt, videos=frames, videos_kwargs={"video_metadata": metadata}, return_tensors="pt")
+        prompt = processor.apply_chat_template(
+            [ex["conversation"] for ex in examples],
+            tokenize=False,
+            **shared_chat_template_kwargs_from_examples(examples),
+        )
+        with use_processor_right_padding(processor):
+            batch = processor(
+                text=prompt,
+                videos=frames,
+                videos_kwargs={"video_metadata": metadata},
+                return_tensors="pt",
+            )
     else:
         # Convert structured {"type": "image"} content to explicit <image> text
         all_images = []
@@ -93,26 +130,32 @@ def nemotron_omni_collate_fn(
             images_for_example = []
             text_conv = []
             for turn in example["conversation"]:
-                if isinstance(turn["content"], list):
+                turn_copy = dict(turn)
+                content = turn_copy.get("content")
+                if isinstance(content, list):
                     text_parts = []
-                    for item in turn["content"]:
+                    for item in content:
                         if item["type"] == "image":
                             text_parts.append("<image>")
                             images_for_example.append(item["image"])
                         elif item["type"] == "text":
                             text_parts.append(item["text"])
-                    text_conv.append({"role": turn["role"], "content": "\n".join(text_parts)})
-                elif isinstance(turn["content"], str):
-                    text_conv.append(turn)
-                else:
-                    text_conv.append({"role": turn["role"], "content": str(turn["content"])})
+                    turn_copy["content"] = "\n".join(text_parts)
+                elif content is not None and not isinstance(content, str):
+                    turn_copy["content"] = str(content)
+                text_conv.append(turn_copy)
             all_images.extend(images_for_example)
             images_per_ex.append(images_for_example)
             text_conversations.append(text_conv)
 
         prompts = [
-            processor.tokenizer.apply_chat_template(conv, tokenize=False, add_generation_prompt=False)
-            for conv in text_conversations
+            processor.tokenizer.apply_chat_template(
+                conv,
+                tokenize=False,
+                add_generation_prompt=False,
+                **chat_template_kwargs_from_example(example),
+            )
+            for example, conv in zip(examples, text_conversations, strict=True)
         ]
         # Normalize audio tokens: replace model-agnostic <|audio_1|> with Nemotron Omni's <so_embedding>
         audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
@@ -129,16 +172,17 @@ def nemotron_omni_collate_fn(
                 # separately and re-combine: right-pad input_ids across examples,
                 # keep pixel_values as a flat list of per-image ``[3, H_i, W_i]``
                 # tensors (patchified below with per-image (py, px)).
-                per_ex_batches = [
-                    processor(
-                        text=[prompt],
-                        images=imgs if imgs else None,
-                        padding=False,
-                        truncation=True,
-                        return_tensors="pt",
-                    )
-                    for prompt, imgs in zip(prompts, images_per_ex)
-                ]
+                with use_processor_right_padding(processor):
+                    per_ex_batches = [
+                        processor(
+                            text=[prompt],
+                            images=imgs if imgs else None,
+                            padding=False,
+                            truncation=True,
+                            return_tensors="pt",
+                        )
+                        for prompt, imgs in zip(prompts, images_per_ex)
+                    ]
                 pad_id = processor.tokenizer.pad_token_id
                 if pad_id is None:
                     pad_id = processor.tokenizer.eos_token_id or 0
@@ -163,22 +207,24 @@ def nemotron_omni_collate_fn(
                 # Static-tile path: single-tile per image to match RADIO seq_length.
                 orig_tiles = processor.image_processor.max_num_tiles
                 processor.image_processor.max_num_tiles = 1
-                batch = processor(
-                    text=prompts,
-                    images=all_images,
+                with use_processor_right_padding(processor):
+                    batch = processor(
+                        text=prompts,
+                        images=all_images,
+                        padding=processor.tokenizer.pad_token is not None,
+                        truncation=True,
+                        return_tensors="pt",
+                    )
+                processor.image_processor.max_num_tiles = orig_tiles
+        else:
+            is_dynamic_res_processor = False
+            with use_processor_right_padding(processor):
+                batch = processor.tokenizer(
+                    prompts,
                     padding=processor.tokenizer.pad_token is not None,
                     truncation=True,
                     return_tensors="pt",
                 )
-                processor.image_processor.max_num_tiles = orig_tiles
-        else:
-            is_dynamic_res_processor = False
-            batch = processor.tokenizer(
-                prompts,
-                padding=processor.tokenizer.pad_token is not None,
-                truncation=True,
-                return_tensors="pt",
-            )
 
     # --- Audio path ---
     # Support both audio_path (file path) and audio (raw waveform tuple from CV17-style datasets)
@@ -266,7 +312,13 @@ def nemotron_omni_collate_fn(
     # --- Loss mask (same pattern as nemotron_vl) ---
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(example, input_ids, processor, skipped_tokens).to(dtype=torch.int)
+            build_assistant_loss_mask(
+                example,
+                input_ids,
+                processor,
+                skipped_tokens,
+                boundary_config=boundary_config,
+            ).to(dtype=torch.int)
             for example, input_ids in zip(examples, batch["input_ids"])
         ]
     )
@@ -374,43 +426,14 @@ def nemotron_omni_collate_fn(
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
 
-    if pack_sequences and batch["input_ids"].shape[0] > 1:
-        # Pack [B, S_padded] → [1, sum(L_i)] using actual per-sample lengths.
-        # Derive per-sample length from input_ids non-pad positions.
-        pad_id = getattr(processor.tokenizer, "pad_token_id", None)
-        if pad_id is None:
-            pad_id = getattr(processor.tokenizer, "eos_token_id", 0) or 0
-        input_ids_b = batch["input_ids"]
-        labels_b = batch["labels"]
-        loss_mask_b = batch["loss_mask"]
-        pos_b = batch["position_ids"]
-        B = input_ids_b.shape[0]
-        lengths = [int((input_ids_b[i] != pad_id).sum().item()) for i in range(B)]
-        ids_flat = torch.cat([input_ids_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        labels_flat = torch.cat([labels_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        loss_mask_flat = torch.cat([loss_mask_b[i, : lengths[i]] for i in range(B)], dim=0).unsqueeze(0)
-        pos_flat = torch.cat(
-            [torch.arange(L, dtype=pos_b.dtype, device=pos_b.device) for L in lengths], dim=0
-        ).unsqueeze(0)
-
-        cu = [0]
-        for L in lengths:
-            cu.append(cu[-1] + L)
-        cu_t = torch.tensor(cu, dtype=torch.int32)
-        # argmin = len(cu): downstream `cu_seqlens_padded[: argmin]` becomes a no-op.
-        argmin_t = torch.tensor(len(cu), dtype=torch.int32)
-        max_t = torch.tensor(max(lengths), dtype=torch.int32)
-
-        batch["input_ids"] = ids_flat
-        batch["labels"] = labels_flat
-        batch["loss_mask"] = loss_mask_flat
-        batch["position_ids"] = pos_flat
-        batch["cu_seqlens"] = cu_t
-        batch["cu_seqlens_unpadded"] = cu_t.clone()
-        batch["cu_seqlens_argmin"] = argmin_t
-        batch["cu_seqlens_unpadded_argmin"] = argmin_t.clone()
-        batch["max_seqlen"] = max_t
-        # TE derives the causal + per-sample mask from cu_seqlens; drop attention_mask.
-        batch["attention_mask"] = None
+    prepare_padded_or_packed_sequence_batch(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
 
     return batch

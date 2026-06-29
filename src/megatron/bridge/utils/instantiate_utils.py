@@ -64,12 +64,50 @@ _ALLOWED_PRIVATE_TARGETS: set[str] = {
 }
 
 _DISALLOWED_TARGETS: set[str] = {
+    "megatron.bridge.models.conversion.auto_bridge.AutoBridge.from_hf_pretrained",
+    "megatron.bridge.models.hf_pretrained.safe_config_loader.safe_load_config_with_retry",
+    "megatron.bridge.utils.import_utils.safe_import",
+    "megatron.bridge.utils.import_utils.safe_import_from",
     "megatron.bridge.utils.instantiate_utils.register_allowed_target_prefix",
+    "numpy.ctypeslib.load_library",
+    "numpy.load",
+    "torch.classes.load_library",
+    "torch.ctypes.CDLL",
+    "torch.ctypes.OleDLL",
+    "torch.ctypes.PyDLL",
+    "torch.ctypes.WinDLL",
+    "torch.ctypes.cdll.LoadLibrary",
+    "torch.ctypes.oledll.LoadLibrary",
+    "torch.ctypes.pydll.LoadLibrary",
+    "torch.ctypes.windll.LoadLibrary",
+    "torch.hub.load",
+    "torch.load",
+    "torch.ops.load_library",
+    "torch.utils.cpp_extension.load",
+    "torch.utils.cpp_extension.load_inline",
+    "transformers.AutoConfig.from_pretrained",
+    "transformers.AutoModel.from_pretrained",
+    "transformers.AutoModelForCausalLM.from_pretrained",
+    "transformers.AutoProcessor.from_pretrained",
+    "transformers.AutoTokenizer.from_pretrained",
+    "transformers.models.auto.configuration_auto.AutoConfig.from_pretrained",
+    "transformers.models.auto.modeling_auto.AutoModel.from_pretrained",
+    "transformers.models.auto.modeling_auto.AutoModelForCausalLM.from_pretrained",
+    "transformers.models.auto.processing_auto.AutoProcessor.from_pretrained",
+    "transformers.models.auto.tokenization_auto.AutoTokenizer.from_pretrained",
+    "transformers.utils.import_utils.direct_transformers_import",
     *{f"megatron.bridge.utils.instantiate_utils.target_allowlist.{method}" for method in _TARGET_ALLOWLIST_MUTATORS},
     *{
         f"megatron.training.config.instantiate_utils.target_allowlist.{method}"
         for method in _TARGET_ALLOWLIST_MUTATORS
     },
+}
+
+_DISALLOWED_CALLABLE_FIELD_NAMES: set[str] = {
+    "collate_impl",
+    "hf_filter_lambda",
+    "preprocess_fn",
+    "process_example_fn",
 }
 
 
@@ -105,11 +143,17 @@ def register_allowed_target_prefix(prefix: str) -> None:
     target_allowlist.add_prefix(_as_module_prefix(prefix))
 
 
-def _validate_target_prefix(*, target: str, full_key: str) -> None:
+def _validate_target_prefix(*, target: str, full_key: str | int) -> None:
     """Validate that a _target_ string is permitted by Bridge hardening rules."""
+    field_name = full_key.rsplit(".", 1)[-1] if isinstance(full_key, str) else ""
+    if field_name in _DISALLOWED_CALLABLE_FIELD_NAMES:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed for callable config field '{full_key}'. "
+            "Use a registered symbolic option or pass a Python callable from trusted application code."
+        )
     if target in _DISALLOWED_TARGETS:
         raise InstantiationException(
-            f"Instantiation of '{target}' is not allowed because it can modify target validation state."
+            f"Instantiation of '{target}' is not allowed because it can bypass target validation."
             + (f"\nfull_key: {full_key}" if full_key else "")
         )
     private_segments = [segment for segment in target.split(".") if segment.startswith("_")]
@@ -130,7 +174,7 @@ def _validate_target_prefix(*, target: str, full_key: str) -> None:
 
 def _resolve_target(
     target: str | type | Callable[..., Any],
-    full_key: str,
+    full_key: str | int,
     check_callable: bool = True,
 ) -> type | Callable[..., Any] | object:
     """Resolve target string, type, or callable after Bridge validation."""

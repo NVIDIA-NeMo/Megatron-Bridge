@@ -415,8 +415,9 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Enabled with:
 
-   > 1. `FinetuningDatasetConfig.packed_sequence_specs.packed_sequence_size=<max sequence length>`
-   > 2. `TrainingConfig.micro_batch_size=1`
+   > 1. `FinetuningDatasetConfig.enable_offline_packing=True`
+   > 2. `FinetuningDatasetConfig.offline_packing_specs.packed_sequence_size=<max sequence length>`
+   > 3. `TrainingConfig.micro_batch_size=1`
 
 4. Performance benefits also include:
 
@@ -745,7 +746,8 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `PYTORCH_CUDA_ALLOC_CONF`
 - `TrainingConfig.micro_batch_size`
-- `FinetuningDatasetConfig.packed_sequence_specs.packed_sequence_size`
+- `FinetuningDatasetConfig.enable_offline_packing`
+- `FinetuningDatasetConfig.offline_packing_specs.packed_sequence_size`
 - `TransformerConfig.apply_rope_fusion`
 - `TransformerConfig.bias_activation_fusion`
 - `TransformerConfig.bias_dropout_fusion`
