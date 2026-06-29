@@ -214,7 +214,37 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
     global_batch_size=4096,
 )
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_PERF72_E72 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2,
+    num_gpus=72,
+    global_batch_size=1152,
+    micro_batch_size=1,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=36,
+    expert_tensor_parallel_size=1,
+    pp_layout="Et*4|(t*4|)*6t*3mL",
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_PERF72_E144 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_PERF72_E72,
+)
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2 = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_V2
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_PERF72_E72 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2,
+    num_gpus=72,
+    global_batch_size=1152,
+    micro_batch_size=2,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=2,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=36,
+    expert_tensor_parallel_size=1,
+    pp_layout="Et*4|(t*4|)*6t*3mL",
+)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_PERF72_E144 = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_PERF72_E72,
+)
 
 
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_V2 = replace(
@@ -394,7 +424,11 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_PERF72_E144",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V2",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_PERF72_E72",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_PERF72_E144",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V2",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_PERF72_E72",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_PERF72_E144",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_BF16_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V2",
