@@ -498,6 +498,7 @@ def main(
         )
         or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
         or (model_family_name == "kimi" and task == "pretrain" and gpu == "b300")
+        or (model_family_name == "gpt_oss" and task == "pretrain" and gpu == "b300")
     ):
         enable_pct_binding = False
 
