@@ -23,11 +23,11 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3 import (
-    deepseek_v3_pretrain_256gpu_gb200_bf16_config,
-    deepseek_v3_pretrain_256gpu_gb200_fp8cs_config,
-    deepseek_v3_pretrain_256gpu_gb200_fp8mx_config,
-    deepseek_v3_pretrain_256gpu_gb200_nvfp4_config,
+from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
+    deepseek_v3_pretrain_256gpu_gb300_bf16_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8cs_config,
+    deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
+    deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
 )
 
 
@@ -148,22 +148,20 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB200)."""
-    return deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+    """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
+    return deepseek_v3_pretrain_256gpu_gb300_bf16_config()
 
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, FP8-CS (alias of GB200)."""
-    return deepseek_v3_pretrain_256gpu_gb200_fp8cs_config()
+    """DeepSeek V3 pretrain: 256× VR200, FP8-CS (alias of GB300)."""
+    return deepseek_v3_pretrain_256gpu_gb300_fp8cs_config()
 
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB200)."""
-    cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
-    cfg.model.fp8_output_proj = False
-    return cfg
+    """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
+    return deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
 
 
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB200)."""
-    return deepseek_v3_pretrain_256gpu_gb200_nvfp4_config()
+    """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB300)."""
+    return deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()
