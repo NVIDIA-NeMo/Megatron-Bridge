@@ -231,9 +231,8 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
     labels = torch.tensor([[2, 3, -100]])
     loss_mask = torch.tensor([[1.0, 1.0, 0.0]])
     position_ids = torch.tensor([[0, 1, 2]])
-    cu_seqlens = torch.tensor([0, 1, 3], dtype=torch.int32)
-    cu_seqlens_argmin = torch.tensor(3, dtype=torch.int32)
-    max_seqlen = torch.tensor(2, dtype=torch.int32)
+    cu_seqlens_q = torch.tensor([0, 1, 3], dtype=torch.int32)
+    max_seqlen_q = torch.tensor(2, dtype=torch.int32)
     pixel_values = torch.ones(1, 4, 8)
 
     batch = NemotronOmniTaskBatch(
@@ -244,19 +243,22 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
         attention_mask=None,
         position_ids=position_ids,
         visual_tensors={"pixel_values": pixel_values},
-        cu_seqlens=cu_seqlens,
-        cu_seqlens_unpadded=cu_seqlens.clone(),
-        cu_seqlens_argmin=cu_seqlens_argmin,
-        max_seqlen=max_seqlen,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_kv=cu_seqlens_q,
+        max_seqlen_q=max_seqlen_q,
+        max_seqlen_kv=max_seqlen_q,
     )
 
     raw = NemotronOmniTaskEncoder.__new__(NemotronOmniTaskEncoder).encode_batch(batch)
 
     assert raw["tokens"] is tokens
-    assert raw["cu_seqlens"] is cu_seqlens
-    assert torch.equal(raw["cu_seqlens_unpadded"], cu_seqlens)
-    assert raw["cu_seqlens_argmin"] is cu_seqlens_argmin
-    assert raw["max_seqlen"] is max_seqlen
+    assert raw["cu_seqlens_q"] is cu_seqlens_q
+    assert raw["cu_seqlens_kv"] is cu_seqlens_q
+    assert raw["max_seqlen_q"] is max_seqlen_q
+    assert raw["max_seqlen_kv"] is max_seqlen_q
+    assert "cu_seqlens" not in raw
+    assert "cu_seqlens_unpadded" not in raw
+    assert "cu_seqlens_argmin" not in raw
     assert torch.equal(raw["visual_inputs"].pixel_values, pixel_values)
 
 

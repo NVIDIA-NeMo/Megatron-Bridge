@@ -1240,9 +1240,8 @@ class GPTSFTChatDataset(GPTSFTDataset):
                 if x_tensor.sum().item() == 0:
                     logger.warning(
                         "Due to truncation to max_seq_length, no assistant tokens are found in sample. "
-                        "Setting loss_mask to all ones."
+                        "Keeping loss_mask empty to avoid supervising non-assistant tokens."
                     )
-                    loss_mask[i] = [1] * self.max_seq_length
 
             contexts = [x[: self.max_seq_length] for x in contexts]
             answers = [x[: self.max_seq_length] for x in answers]
