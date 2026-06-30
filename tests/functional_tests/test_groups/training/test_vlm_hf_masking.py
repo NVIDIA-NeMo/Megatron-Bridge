@@ -139,6 +139,7 @@ class TestVLMHFMasking:
             if ok and pos != len(label_ids):
                 terminal_candidates = (
                     tokenizer("<|im_end|>", add_special_tokens=False)["input_ids"],
+                    tokenizer("<|im_end|>\n", add_special_tokens=False)["input_ids"],
                     tokenizer("\n<|im_end|>", add_special_tokens=False)["input_ids"],
                 )
                 ok = any(label_ids[pos:] == candidate for candidate in terminal_candidates)

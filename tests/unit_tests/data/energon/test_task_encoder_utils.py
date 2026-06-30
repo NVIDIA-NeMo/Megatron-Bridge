@@ -24,6 +24,7 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     _tensor_to_pil,
     _videos_to_pil,
     cook_chatml_sample,
+    extract_chatml_tools,
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
@@ -215,6 +216,30 @@ class TestCookChatmlSample(unittest.TestCase):
         )
         result = cook_chatml_sample(conv)
         self.assertEqual(result[0]["content"], "Look at <image> please")
+
+    def test_preserves_tool_messages_and_extracts_top_level_tools(self):
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
+        tool_calls = [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": '{"query":"weather"}'},
+            }
+        ]
+        payload = {
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                {"role": "tool", "content": "sunny", "tool_call_id": "call-1"},
+                {"role": "assistant", "content": "It is sunny."},
+            ],
+            "tools": tools,
+        }
+
+        result = cook_chatml_sample(json.dumps(payload))
+
+        self.assertEqual(result, payload["messages"])
+        self.assertEqual(extract_chatml_tools(payload), tools)
 
 
 if __name__ == "__main__":

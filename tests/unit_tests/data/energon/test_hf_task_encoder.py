@@ -167,6 +167,35 @@ class TestHFTaskEncoderEncodeSample(unittest.TestCase):
         self.assertIn("image", user_content[1])
         processor.assert_not_called()
 
+    def test_preserves_tools_and_tool_calls_from_wrapped_chatml(self):
+        processor = _make_processor()
+        seen_examples = []
+        encoder = HFTaskEncoder(
+            processor=processor,
+            seq_length=128,
+            collate_fn=_make_collate_fn(seen_examples=seen_examples),
+        )
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
+        tool_calls = [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]
+        sample = _make_chatml_sample(
+            conversation=json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Weather?"},
+                        {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                    ],
+                    "tools": tools,
+                }
+            )
+        )
+
+        encoded = encoder.encode_sample(sample)
+        encoder.batch([encoded])
+
+        self.assertEqual(encoded.example["tools"], tools)
+        self.assertEqual(encoded.example["conversation"][1]["tool_calls"], tool_calls)
+        self.assertEqual(seen_examples, [encoded.example])
+
 
 class TestHFTaskEncoderBatch(unittest.TestCase):
     def setUp(self):

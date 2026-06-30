@@ -16,17 +16,17 @@
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
 )
-from megatron.bridge.perf_recipes.kimi.gb200.kimi_k2 import (
-    kimi_k2_pretrain_256gpu_gb200_bf16_config,
-    kimi_k2_pretrain_256gpu_gb200_fp8mx_config,
+from megatron.bridge.perf_recipes.kimi.gb300.kimi_k2 import (
+    kimi_k2_pretrain_256gpu_gb300_bf16_config,
+    kimi_k2_pretrain_256gpu_gb300_fp8mx_config,
 )
 
 
 def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB200)."""
-    return kimi_k2_pretrain_256gpu_gb200_bf16_config()
+    """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB300)."""
+    return kimi_k2_pretrain_256gpu_gb300_bf16_config()
 
 
 def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB200)."""
-    return kimi_k2_pretrain_256gpu_gb200_fp8mx_config()
+    """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB300)."""
+    return kimi_k2_pretrain_256gpu_gb300_fp8mx_config()

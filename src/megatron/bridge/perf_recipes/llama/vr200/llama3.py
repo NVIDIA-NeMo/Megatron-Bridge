@@ -16,47 +16,47 @@
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
 )
-from megatron.bridge.perf_recipes.llama.gb200.llama3 import (
-    llama3_8b_pretrain_8gpu_gb200_bf16_config,
-    llama3_8b_pretrain_8gpu_gb200_fp8cs_config,
-    llama3_8b_pretrain_8gpu_gb200_fp8mx_config,
-    llama3_8b_pretrain_8gpu_gb200_nvfp4_config,
-    llama3_70b_pretrain_64gpu_gb200_bf16_config,
-    llama3_70b_pretrain_64gpu_gb200_fp8mx_config,
-    llama3_70b_pretrain_64gpu_gb200_nvfp4_config,
+from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
+    llama3_8b_pretrain_8gpu_gb300_bf16_config,
+    llama3_8b_pretrain_8gpu_gb300_fp8cs_config,
+    llama3_8b_pretrain_8gpu_gb300_fp8mx_config,
+    llama3_8b_pretrain_8gpu_gb300_nvfp4_config,
+    llama3_70b_pretrain_64gpu_gb300_bf16_config,
+    llama3_70b_pretrain_64gpu_gb300_fp8mx_config,
+    llama3_70b_pretrain_64gpu_gb300_nvfp4_config,
 )
 
 
 def llama3_8b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, BF16 (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_bf16_config()
+    """LLaMA 3 8B pretrain: 8× VR200, BF16 (alias of GB300)."""
+    return llama3_8b_pretrain_8gpu_gb300_bf16_config()
 
 
 def llama3_8b_pretrain_8gpu_vr200_fp8cs_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, FP8-CS (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_fp8cs_config()
+    """LLaMA 3 8B pretrain: 8× VR200, FP8-CS (alias of GB300)."""
+    return llama3_8b_pretrain_8gpu_gb300_fp8cs_config()
 
 
 def llama3_8b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, FP8-MX (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_fp8mx_config()
+    """LLaMA 3 8B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
+    return llama3_8b_pretrain_8gpu_gb300_fp8mx_config()
 
 
 def llama3_8b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """LLaMA 3 8B pretrain: 8× VR200, NVFP4 (alias of GB200)."""
-    return llama3_8b_pretrain_8gpu_gb200_nvfp4_config()
+    """LLaMA 3 8B pretrain: 8× VR200, NVFP4 (alias of GB300)."""
+    return llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
 
 
 def llama3_70b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, BF16 (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_bf16_config()
+    """LLaMA 3 70B pretrain: 64× VR200, BF16 (alias of GB300)."""
+    return llama3_70b_pretrain_64gpu_gb300_bf16_config()
 
 
 def llama3_70b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, FP8-MX (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_fp8mx_config()
+    """LLaMA 3 70B pretrain: 64× VR200, FP8-MX (alias of GB300)."""
+    return llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
 
 
 def llama3_70b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
-    """LLaMA 3 70B pretrain: 64× VR200, NVFP4 (alias of GB200)."""
-    return llama3_70b_pretrain_64gpu_gb200_nvfp4_config()
+    """LLaMA 3 70B pretrain: 64× VR200, NVFP4 (alias of GB300)."""
+    return llama3_70b_pretrain_64gpu_gb300_nvfp4_config()
