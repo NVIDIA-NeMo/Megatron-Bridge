@@ -236,7 +236,12 @@ def forward_step(
             if grid is not None and grid.numel() > 0:
                 patches = grid.prod(dim=-1).sum()
                 num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
-    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, num_vision_patches=num_vision_patches)
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=packed_seq_params.get("cu_seqlens_q") if packed_seq_params is not None else None,
+        num_vision_patches=num_vision_patches,
+    )
 
     forward_args = {
         "input_ids": tokens,
