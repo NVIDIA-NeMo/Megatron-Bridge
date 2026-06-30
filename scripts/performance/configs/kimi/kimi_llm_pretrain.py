@@ -22,6 +22,7 @@ from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import kimi_k2_pretrain_config as pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
+from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
 
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,29 @@ def set_kimi_k2_common_configs(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_router_force_load_balancing = True
     cfg.model.qk_clip = False  # disable qk_clip for now, enable after MCORE fix drop in
+
+
+def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    """Apply defaults required by full-iteration CUDA graph capture with dropless MoE."""
+    cfg.model.offload_modules = []
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.model.moe_hybridep_num_sms_preprocessing = 32
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+
+def _apply_full_iter_cg_configs(cfg: ConfigContainer) -> None:
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
 
 
 def kimi_k2_pretrain_config_gb300(
@@ -89,6 +113,7 @@ def kimi_k2_pretrain_config_gb300(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
     cfg.rng.te_rng_tracker = True
@@ -131,6 +156,7 @@ def kimi_k2_pretrain_config_gb200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -171,6 +197,7 @@ def kimi_k2_pretrain_config_vr200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -197,6 +224,9 @@ def kimi_k2_pretrain_config_b300(
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
@@ -212,6 +242,7 @@ def kimi_k2_pretrain_config_b300(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -253,6 +284,7 @@ def kimi_k2_pretrain_config_b200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -294,6 +326,7 @@ def kimi_k2_pretrain_config_h100(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
+    _apply_full_iter_cg_configs(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
