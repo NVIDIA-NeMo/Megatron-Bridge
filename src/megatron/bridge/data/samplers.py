@@ -25,6 +25,8 @@ def build_pretraining_data_loader(
     data_parallel_size: int = 1,
     drop_last: Optional[bool] = True,
     global_batch_size: Optional[int] = None,
+    shuffle: bool = False,
+    seed: int = 0,
 ) -> Optional[DataLoader]:
     """Build a dataloader for pretraining.
 
@@ -49,6 +51,9 @@ def build_pretraining_data_loader(
         drop_last: Whether to drop last incomplete batch.
         global_batch_size: Total batch size across all data parallel ranks.
                           Required for 'batch' dataloader_type.
+        shuffle: Whether to reshuffle the sample order every epoch. Only honored by the
+                 'batch' dataloader_type (fine-tuning); ignored by other samplers.
+        seed: Base random seed for the per-epoch shuffle of the 'batch' sampler.
 
     Returns:
         A PyTorch DataLoader instance, or the dataset itself if dataloader_type is
@@ -97,6 +102,8 @@ def build_pretraining_data_loader(
             data_parallel_size=data_parallel_size,
             drop_last=drop_last,
             pad_samples_to_global_batch_size=not drop_last,
+            shuffle=shuffle,
+            seed=seed,
         )
     elif dataloader_type == "external":
         # External dataloaders are passed through. User is expected to provide a
@@ -198,6 +205,13 @@ class MegatronPretrainingBatchSampler:
     are padded to the same length, which is critical for fine-tuning with variable
     sequence lengths.
 
+    The sampler is epoch-aware: it advances ``consumed_samples`` as it yields so that
+    when it is re-iterated (e.g. wrapped in ``cyclic_iter`` for multi-epoch
+    fine-tuning), each new epoch starts from the beginning of the dataset instead of
+    permanently re-applying the resume offset. When ``shuffle`` is enabled the per-epoch
+    order is a deterministic, ``seed``- and epoch-derived permutation, so resuming from a
+    checkpoint reproduces the same order as an uninterrupted run.
+
     Args:
         total_samples: Total number of samples in the dataset.
         consumed_samples: Number of samples already consumed (for resuming).
@@ -207,6 +221,9 @@ class MegatronPretrainingBatchSampler:
         data_parallel_size: Total number of GPUs in the data parallel group.
         drop_last: If True, drops the last incomplete batch.
         pad_samples_to_global_batch_size: If True, pads incomplete batches with -1 indices.
+        shuffle: If True, reshuffle the sample order every epoch using a deterministic,
+            seed- and epoch-derived permutation. Defaults to False (sequential order).
+        seed: Base random seed for the per-epoch shuffle. Only used when ``shuffle`` is True.
     """
 
     def __init__(
@@ -219,6 +236,8 @@ class MegatronPretrainingBatchSampler:
         data_parallel_size: int,
         drop_last: bool = True,
         pad_samples_to_global_batch_size: bool = False,
+        shuffle: bool = False,
+        seed: int = 0,
     ) -> None:
         self.total_samples = total_samples
         self.consumed_samples = consumed_samples
@@ -227,6 +246,8 @@ class MegatronPretrainingBatchSampler:
         self.data_parallel_size = data_parallel_size
         self.drop_last = drop_last
         self.pad_samples_to_global_batch_size = pad_samples_to_global_batch_size
+        self.shuffle = shuffle
+        self.seed = seed
         self.micro_batch_times_data_parallel_size = self.micro_batch_size * data_parallel_size
 
         assert self.total_samples > 0, "no sample to consume: {}".format(self.total_samples)
@@ -276,10 +297,41 @@ class MegatronPretrainingBatchSampler:
         1. Compute max_length across the entire global batch
         2. Pad all samples to the same length
         3. Then split into microbatches with consistent sequence length
+
+        The sampler is epoch-aware. It derives the current epoch and the within-epoch
+        offset from ``consumed_samples`` and advances ``consumed_samples`` as it yields.
+        When wrapped in ``cyclic_iter`` for multi-epoch fine-tuning, each re-iteration
+        therefore starts a fresh epoch (offset 0) rather than repeatedly re-applying the
+        resume offset, which previously caused the head of every post-resume epoch to be
+        skipped and the tail to be replayed.
         """
+        # Largest multiple of the global batch size that fits in one epoch. Used for
+        # epoch / offset accounting so that cyclic re-iteration wraps cleanly instead of
+        # getting stuck re-serving the same partial window after a mid-epoch resume.
+        active_total_samples = (self.total_samples // self._global_batch_size) * self._global_batch_size
+        if active_total_samples == 0:
+            # Dataset smaller than a single global batch (only reachable with
+            # drop_last=False); fall back to the full dataset for accounting.
+            active_total_samples = self.total_samples
+
+        epoch = self.consumed_samples // active_total_samples
+        current_epoch_samples = self.consumed_samples % active_total_samples
+
+        if self.shuffle:
+            # Deterministic, seed- and epoch-derived permutation so a resumed run
+            # reproduces the same per-epoch order as an uninterrupted run.
+            g = torch.Generator()
+            g.manual_seed(self.seed + epoch)
+            idx_order = torch.randperm(self.total_samples, generator=g).tolist()
+        else:
+            idx_order = list(range(self.total_samples))
+
+        # Skip samples already consumed within the current epoch (mid-epoch resume).
+        idx_order = idx_order[current_epoch_samples:]
+
         batch = []
         # Last batch will be dropped if drop_last is True
-        for idx in range(self.consumed_samples % self.total_samples, self.total_samples):
+        for idx in idx_order:
             batch.append(idx)
             if len(batch) == self._global_batch_size:
                 # Distribute indices in interleaved fashion across ranks
@@ -292,6 +344,10 @@ class MegatronPretrainingBatchSampler:
                     )
                 ]
                 assert len(all_indices) == self._global_batch_size_on_this_data_parallel_rank
+
+                # Advance so the next re-iteration starts a fresh epoch (offset 0) rather
+                # than re-applying the resume offset and replaying the tail.
+                self.consumed_samples += self._global_batch_size
 
                 # Yield ALL indices at once (not split into microbatches)
                 # The training loop will handle splitting after collation

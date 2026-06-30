@@ -265,6 +265,11 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=dp_rank,
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
+        # Reshuffle the fine-tuning ('batch') training order every epoch so multi-epoch
+        # runs do not repeat the same order each pass. Seeded for resume reproducibility.
+        # Ignored by the 'single'/'cyclic'/'external' samplers.
+        shuffle=cfg.dataset.dataloader_type == "batch",
+        seed=getattr(cfg.dataset, "seed", cfg.rng.seed),
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
