@@ -146,24 +146,35 @@ def test_model_config_bridge_rejects_legacy_only_bridge() -> None:
         _LegacyOnlyBridge().model_config_bridge(_hf_pretrained())
 
 
-def test_model_config_lookup_prefers_builder_config_and_supports_legacy_models(monkeypatch) -> None:
+def test_shared_embedding_lookup_reads_built_model_state(monkeypatch) -> None:
     bridge = _TestBridge()
-    builder_config = SimpleNamespace(share_embeddings_and_output_weights=True)
-    builder_model = SimpleNamespace(_bridge_model_config=builder_config, config=SimpleNamespace())
-    wrapped_model = SimpleNamespace(_bridge_model_config=builder_config)
-    legacy_model = SimpleNamespace(
-        config=SimpleNamespace(share_embeddings_and_output_weights=False),
-    )
+    tied_model = SimpleNamespace(share_embeddings_and_output_weights=True)
+    wrapped_model = SimpleNamespace()
+    untied_model = SimpleNamespace(share_embeddings_and_output_weights=False)
 
-    assert bridge._get_model_config_from_model(builder_model) is builder_config
+    assert bridge._model_shares_embeddings_and_output_weights(tied_model) is True
     monkeypatch.setattr(
         "megatron.bridge.models.conversion.model_bridge.unwrap_model",
-        lambda model: legacy_model if model is wrapped_model else model,
+        lambda model: untied_model if model is wrapped_model else model,
     )
-    assert bridge._get_model_config_from_model(wrapped_model) is builder_config
-    assert bridge._get_model_config_from_model(legacy_model) is legacy_model.config
-    assert bridge._share_embeddings_and_output_weights(builder_config) is True
-    assert bridge._share_embeddings_and_output_weights(legacy_model.config) is False
+    assert bridge._model_shares_embeddings_and_output_weights(wrapped_model) is False
+
+
+def test_shared_embedding_lookup_reads_nested_runtime_model() -> None:
+    bridge = _TestBridge()
+    inner_model = torch.nn.Module()
+    inner_model.share_embeddings_and_output_weights = True
+    wrapper = torch.nn.Module()
+    wrapper.add_module("thinker", inner_model)
+
+    assert bridge._model_shares_embeddings_and_output_weights(wrapper) is True
+
+
+def test_shared_embedding_lookup_reads_runtime_config() -> None:
+    bridge = _TestBridge()
+    model = SimpleNamespace(config=SimpleNamespace(share_embeddings_and_output_weights=False))
+
+    assert bridge._model_shares_embeddings_and_output_weights(model) is False
 
 
 def test_silu_activation_round_trips_through_model_config_dict() -> None:

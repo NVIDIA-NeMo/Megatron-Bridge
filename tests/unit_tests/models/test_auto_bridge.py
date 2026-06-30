@@ -33,7 +33,6 @@ from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
     AutoBridge,
-    _attach_bridge_model_config,
     _config_disables_mtp,
     _drop_readonly_config_properties,
     _model_omits_mtp,
@@ -49,23 +48,6 @@ from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 @dataclass(kw_only=True)
 class _MultimodalTestConfig(GPTModelConfig):
     vision_transformer: TransformerConfig
-
-
-def test_attach_bridge_model_config_reaches_wrapped_and_unwrapped_models() -> None:
-    """Conversion can recover the outer config after distributed wrapping."""
-    model_config = Mock()
-    wrapped_model = SimpleNamespace()
-    unwrapped_model = SimpleNamespace()
-
-    with patch(
-        "megatron.bridge.models.conversion.auto_bridge.unwrap_model",
-        return_value=unwrapped_model,
-    ):
-        result = _attach_bridge_model_config([wrapped_model], model_config=model_config)
-
-    assert result == [wrapped_model]
-    assert wrapped_model._bridge_model_config is model_config
-    assert unwrapped_model._bridge_model_config is model_config
 
 
 def create_mock_pretrained_causal_lm():
@@ -629,7 +611,6 @@ class TestAutoBridge:
         assert result.transformer.perform_initialization is True
         assert result.vision_transformer.perform_initialization is True
         assert result.pre_wrap_hooks == [original_hook]
-        assert models[0]._bridge_model_config is result
         mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_hf_model, models)
         original_hook.assert_called_once_with(models)
 
@@ -829,7 +810,6 @@ class TestAutoBridge:
             )
 
         assert result is models
-        assert models[0]._bridge_model_config is model_config
         mock_to_config.assert_called_once_with()
         assert model_config.transformer.fp16 is True
         assert model_config.transformer.bf16 is False
@@ -1660,6 +1640,7 @@ class TestAutoBridge:
             hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
             low_memory_save=True,
+            model_config=mock_model_config,
         )
 
     @patch("megatron.bridge.models.conversion.auto_bridge._replace_embedded_transformer_configs")
@@ -1698,6 +1679,7 @@ class TestAutoBridge:
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
             low_memory_save=True,
+            model_config=mock_model_config,
         )
 
     def test_export_ckpt_basic(self):
@@ -1768,12 +1750,18 @@ class TestAutoBridge:
         mock_hf_model.config = mock_config
 
         mock_megatron_model = [Mock()]
+        model_config = Mock(spec=GPTModelConfig)
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge._register_model_config(mock_megatron_model, model_config)
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
-            bridge.save_megatron_model(mock_megatron_model, "./checkpoint_path", low_memory_save=True)
+            bridge.save_megatron_model(
+                mock_megatron_model,
+                "./checkpoint_path",
+                low_memory_save=True,
+            )
 
             mock_save_megatron_model.assert_called_once_with(
                 mock_megatron_model,
@@ -1781,6 +1769,7 @@ class TestAutoBridge:
                 hf_tokenizer_path=None,
                 low_memory_save=True,
                 hf_tokenizer_kwargs=None,
+                model_config=model_config,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -1791,6 +1780,7 @@ class TestAutoBridge:
         mock_hf_model.config = mock_config
 
         mock_megatron_model = [Mock()]
+        model_config = Mock(spec=GPTModelConfig)
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
@@ -1801,6 +1791,7 @@ class TestAutoBridge:
                 "./checkpoint_path",
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
                 low_memory_save=True,
+                model_config=model_config,
             )
 
             mock_save_megatron_model.assert_called_once_with(
@@ -1809,7 +1800,49 @@ class TestAutoBridge:
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
                 low_memory_save=True,
                 hf_tokenizer_kwargs=None,
+                model_config=model_config,
             )
+
+    def test_save_megatron_model_uses_runtime_legacy_provider(self):
+        """Legacy provider models retain their exact build config at runtime."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        model = Mock()
+        provider = Mock(spec=GPTModelProvider)
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.get_mcore_model_config",
+                return_value=provider,
+            ),
+            patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save,
+        ):
+            bridge.save_megatron_model([model], "./checkpoint_path")
+
+        mock_save.assert_called_once_with(
+            [model],
+            "./checkpoint_path",
+            hf_tokenizer_path=None,
+            low_memory_save=False,
+            hf_tokenizer_kwargs=None,
+            model_config=provider,
+        )
+
+    def test_save_megatron_model_requires_config_for_builder_model(self):
+        """Builder models cannot safely regenerate a config after construction."""
+        bridge = AutoBridge.__new__(AutoBridge)
+        model = Mock()
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.get_mcore_model_config",
+                return_value=Mock(spec=TransformerConfig),
+            ),
+            patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save,
+        ):
+            with pytest.raises(ValueError, match="model_config is required for builder-backed models"):
+                bridge.save_megatron_model([model], "./checkpoint_path")
+
+        mock_save.assert_not_called()
 
     def test_save_megatron_model_import_error(self):
         """Test save_megatron_model import error handling."""
@@ -1826,7 +1859,7 @@ class TestAutoBridge:
 
         with patch("builtins.__import__", side_effect=mock_import):
             with pytest.raises(ImportError, match="megatron.bridge.training is not available"):
-                bridge.save_megatron_model([Mock()], "./path")
+                bridge.save_megatron_model([Mock()], "./path", model_config=Mock(spec=GPTModelConfig))
 
     def test_load_megatron_model_basic(self):
         """Test load_megatron_model method."""
@@ -1845,7 +1878,8 @@ class TestAutoBridge:
             with patch.object(Path, "iterdir") as mock_iterdir:
                 # Setup mocks
                 mock_model = Mock()
-                mock_load_megatron_model.return_value = mock_model
+                mock_model_config = Mock(spec=GPTModelConfig)
+                mock_load_megatron_model.return_value = (mock_model, mock_model_config)
 
                 # Mock iterdir to return empty list (no iter_ folders)
                 mock_iterdir.return_value = []
@@ -1853,6 +1887,7 @@ class TestAutoBridge:
                 result = bridge.load_megatron_model("./checkpoint_path")
 
                 assert result == [mock_model]
+                assert bridge._model_configs[mock_model] is mock_model_config
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
 
@@ -1880,7 +1915,8 @@ class TestAutoBridge:
             with patch.object(Path, "iterdir") as mock_iterdir:
                 # Setup mocks
                 mock_model = Mock()
-                mock_load_megatron_model.return_value = mock_model
+                mock_model_config = Mock(spec=GPTModelConfig)
+                mock_load_megatron_model.return_value = (mock_model, mock_model_config)
 
                 # Mock iterdir to return the iter folders
                 mock_iterdir.return_value = [mock_iter_folder_1, mock_iter_folder_2]
@@ -1888,6 +1924,7 @@ class TestAutoBridge:
                 result = bridge.load_megatron_model("./checkpoint_path")
 
                 assert result == [mock_model]
+                assert bridge._model_configs[mock_model] is mock_model_config
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
                 # Should use the latest iteration (iter_0000020)
@@ -1918,7 +1955,8 @@ class TestAutoBridge:
                     with patch.object(Path, "iterdir") as mock_iterdir:
                         # Setup mocks
                         mock_model = Mock()
-                        mock_load_megatron_model.return_value = mock_model
+                        mock_model_config = Mock(spec=GPTModelConfig)
+                        mock_load_megatron_model.return_value = (mock_model, mock_model_config)
 
                         # Mock iterdir to return empty list (no iter_ folders)
                         mock_iterdir.return_value = []
@@ -1932,6 +1970,7 @@ class TestAutoBridge:
 
                         # Verify the result
                         assert result == [mock_model]
+                        assert bridge._model_configs[mock_model] is mock_model_config
 
                         # Verify that load_megatron_model was called with mp_overrides
                         mock_load_megatron_model.assert_called_once()
@@ -1960,7 +1999,7 @@ class TestAutoBridge:
                 from pathlib import Path
 
                 with patch.object(Path, "iterdir") as mock_iterdir:
-                    mock_load_megatron_model.return_value = Mock()
+                    mock_load_megatron_model.return_value = (Mock(), Mock(spec=GPTModelConfig))
                     mock_iterdir.return_value = []
 
                     bridge.load_megatron_model("./checkpoint_path")

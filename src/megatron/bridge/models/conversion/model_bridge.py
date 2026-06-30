@@ -1485,8 +1485,7 @@ class MegatronModelBridge(
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
-        build_config = self._get_model_config_from_model(unwrapped_model)
-        embeddings_are_tied = self._share_embeddings_and_output_weights(build_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
@@ -1682,36 +1681,39 @@ class MegatronModelBridge(
         return base
 
     @staticmethod
-    def _get_model_config_from_model(
+    def _model_shares_embeddings_and_output_weights(
         model: MegatronModule | list[MegatronModule],
-    ) -> ModelConfig | ModelProviderTarget:
-        """Return the builder config, falling back to a legacy provider config."""
+    ) -> bool:
+        """Return whether a built model shares its input and output embeddings.
+
+        The value belongs to the runtime model rather than the outer builder
+        config. Composite models may expose it on an inner language module, while
+        diffusion providers may retain it on the runtime ``config`` object.
+        """
         if isinstance(model, list):
             if not model:
-                raise ValueError("Cannot extract a model config from an empty model list.")
+                raise ValueError("Cannot inspect shared embeddings on an empty model list.")
             model = model[0]
-        bridge_model_config = getattr(model, "_bridge_model_config", None)
-        if bridge_model_config is not None:
-            return bridge_model_config
         model = unwrap_model(model)
         if isinstance(model, list):
             if not model:
-                raise ValueError("Cannot extract a model config from an empty unwrapped model list.")
+                raise ValueError("Cannot inspect shared embeddings on an empty unwrapped model list.")
             model = model[0]
-        bridge_model_config = getattr(model, "_bridge_model_config", None)
-        if bridge_model_config is not None:
-            return bridge_model_config
-        public_model_config = getattr(model, "model_config", None)
-        if isinstance(public_model_config, (ModelConfig, ModelProviderMixin)):
-            return public_model_config
-        return model.config
+        runtime_candidates = [model, getattr(model, "config", None)]
+        if hasattr(model, "modules"):
+            for module in model.modules():
+                if module is model:
+                    continue
+                runtime_candidates.extend((module, getattr(module, "config", None)))
 
-    @staticmethod
-    def _share_embeddings_and_output_weights(model_config: object) -> bool:
-        """Return the shared-embedding setting from a model build config."""
-        if not hasattr(model_config, "share_embeddings_and_output_weights"):
-            raise AttributeError(f"{type(model_config).__name__} has no share_embeddings_and_output_weights setting.")
-        return bool(getattr(model_config, "share_embeddings_and_output_weights"))
+        for candidate in runtime_candidates:
+            value = getattr(candidate, "share_embeddings_and_output_weights", None)
+            if isinstance(value, bool):
+                return value
+
+        raise AttributeError(
+            f"{type(model).__name__} and its runtime submodules have no share_embeddings_and_output_weights attribute."
+        )
 
     @staticmethod
     def _unwrap_name(name: str) -> str:
@@ -1744,12 +1746,11 @@ class MegatronModelBridge(
             megatron_model: Megatron model instance or list of model instances.
         """
         unwrapped_model = unwrap_model(megatron_model)[0]
-        build_config = self._get_model_config_from_model(unwrapped_model)
         # hack for vlm to work properly
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
-        share_embeddings = self._share_embeddings_and_output_weights(build_config)
+        share_embeddings = self._model_shares_embeddings_and_output_weights(unwrapped_model)
 
         # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
         pp_group = _get_pp_group(megatron_model)
@@ -1826,8 +1827,7 @@ class MegatronModelBridge(
         _install_pg_collection_on_mappings(mapping_registry, megatron_model)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        build_config = self._get_model_config_from_model(unwrapped_model)
-        embeddings_are_tied = self._share_embeddings_and_output_weights(build_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
@@ -2017,8 +2017,7 @@ class MegatronModelBridge(
         mapping_registry = self.mapping_registry()
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
-        build_config = self._get_model_config_from_model(unwrapped_model)
-        embeddings_are_tied = self._share_embeddings_and_output_weights(build_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
         _install_pg_collection_on_mappings(mapping_registry, megatron_model)
         pp_rank = _get_pp_rank(megatron_model)
         pp_group = _get_pp_group(megatron_model)

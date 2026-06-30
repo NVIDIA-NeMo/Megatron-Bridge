@@ -144,7 +144,7 @@ def import_hf_to_megatron_fsdp(
         torch_dtype=dtype,
     )
 
-    _, _, megatron_model = _build_fsdp_distributed_model(bridge, tp=tp, cp=cp, ep=ep, dtype=dtype)
+    model_provider, _, megatron_model = _build_fsdp_distributed_model(bridge, tp=tp, cp=cp, ep=ep, dtype=dtype)
 
     bridge.load_hf_weights(megatron_model)
 
@@ -161,6 +161,7 @@ def import_hf_to_megatron_fsdp(
         megatron_path,
         ckpt_format=ckpt_format,
         low_memory_save=effective_low_memory_save,
+        model_config=model_provider,
     )
     print_rank_0(f"Import complete: {megatron_path}")
 

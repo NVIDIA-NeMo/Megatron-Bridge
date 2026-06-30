@@ -161,8 +161,8 @@ class MockModule(torch.nn.Module):
         self.config = config
 
 
-def test_quantized_export_reads_tied_embeddings_from_builder_config() -> None:
-    """Quantized export uses the explicit outer model config after API migration."""
+def test_quantized_export_reads_tied_embeddings_from_model() -> None:
+    """Quantized export reads tied-embedding state from the built model."""
     tensor = torch.ones(2, 2)
     mapping = Mock()
     mapping.megatron_to_hf_quant.return_value = {"model.embed_tokens.weight": tensor}
@@ -172,14 +172,12 @@ def test_quantized_export_reads_tied_embeddings_from_builder_config() -> None:
         megatron_module=Mock(),
         global_param_name="embedding.word_embeddings.weight",
     )
-    model_config = SimpleNamespace(share_embeddings_and_output_weights=True)
-    model = SimpleNamespace(_bridge_model_config=model_config, config=SimpleNamespace())
+    model = SimpleNamespace(share_embeddings_and_output_weights=True, config=SimpleNamespace())
     hf_pretrained = SimpleNamespace(
         state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: {"lm_head.weight"}))
     )
     bridge = SimpleNamespace(
-        _get_model_config_from_model=lambda candidate: candidate._bridge_model_config,
-        _share_embeddings_and_output_weights=lambda config: config.share_embeddings_and_output_weights,
+        _model_shares_embeddings_and_output_weights=lambda candidate: candidate.share_embeddings_and_output_weights,
         _with_progress_tracking=lambda tasks, *_args, **_kwargs: tasks,
         maybe_modify_converted_hf_weight=lambda _task, weights, _state: weights,
     )

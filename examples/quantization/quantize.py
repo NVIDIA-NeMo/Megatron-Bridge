@@ -211,7 +211,7 @@ def main(
 
     if is_rank_0:
         console.print(f"Saving quantized Megatron checkpoint in {save_path}...")
-    bridge.save_megatron_model(megatron_model, save_path)
+    bridge.save_megatron_model(megatron_model, save_path, model_config=model_provider)
 
     torch.distributed.barrier()
 

@@ -157,6 +157,7 @@ def import_hf_to_megatron(
         megatron_path,
         hf_tokenizer_path=hf_model,
         hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+        model_config=model_provider,
     )
     print_rank_0(f"Import complete: {megatron_path}")
 

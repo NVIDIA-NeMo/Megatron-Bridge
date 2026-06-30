@@ -58,8 +58,7 @@ class MegatronQuantizationBridge:
 
         megatron_to_hf_tasks = conversion_tasks
         unwrapped_model = unwrap_model(megatron_model)[0]
-        build_config = self._get_model_config_from_model(unwrapped_model)
-        embeddings_are_tied = self._share_embeddings_and_output_weights(build_config)
+        embeddings_are_tied = self._model_shares_embeddings_and_output_weights(unwrapped_model)
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 

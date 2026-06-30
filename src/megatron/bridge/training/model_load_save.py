@@ -26,7 +26,6 @@ from megatron.core import parallel_state
 from megatron.core.optimizer import OptimizerConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
-from megatron.core.utils import get_model_config, unwrap_model
 from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
@@ -325,16 +324,6 @@ def build_and_load_model(
         if hasattr(model_cfg, "restore_modelopt_state"):
             model_cfg.restore_modelopt_state = True
 
-    def _attach_bridge_model_config(models, model_cfg) -> None:
-        """Attach the outer config to model chunks and their unwrapped modules."""
-        model_chunks = models if isinstance(models, list) else [models]
-        for model_chunk in model_chunks:
-            model_chunk._bridge_model_config = model_cfg
-            unwrapped_model = unwrap_model(model_chunk)
-            unwrapped_chunks = unwrapped_model if isinstance(unwrapped_model, list) else [unwrapped_model]
-            for unwrapped_chunk in unwrapped_chunks:
-                unwrapped_chunk._bridge_model_config = model_cfg
-
     def _call_model_provider(model_cfg):
         """Handles provider call for both MBridge and MLM providers."""
         if isinstance(model_cfg, ModelProviderMixin):
@@ -344,7 +333,6 @@ def build_and_load_model(
                 wrap_with_ddp=False,
                 use_cpu_initialization=use_cpu_init,
             )
-            _attach_bridge_model_config(models, model_cfg)
             return models
         elif isinstance(model_cfg, ModelConfig):
             if hasattr(model_cfg, "finalize"):
@@ -361,7 +349,6 @@ def build_and_load_model(
             models = builder.build_distributed_models(
                 ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
             )
-            _attach_bridge_model_config(models, model_cfg)
             return models
         else:
             assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
@@ -431,7 +418,8 @@ def load_megatron_model(
     use_cpu_init: bool = False,
     skip_temp_dist_context: Optional[bool] = None,
     mp_overrides: Optional[ModelParallelKwargs] = None,
-) -> Union[Any, dict[str, torch.Tensor]]:
+    return_model_config: bool = False,
+) -> Union[Any, dict[str, torch.Tensor], tuple[Any, ModelConfig | ModelProviderMixin]]:
     """Load a Megatron model from a distributed checkpoint.
 
     Wrapper around load_model_config() and build_and_load_model() for convenience.
@@ -449,11 +437,16 @@ def load_megatron_model(
                                Default: None.
         mp_overrides: Optional model-parallel overrides to apply to the loaded config.
                       Only provided fields are overridden.
+        return_model_config: If True, return the model together with the exact effective
+            config used to build it. Cannot be combined with ``return_state_dict=True``.
 
     Returns:
         The model instance with loaded weights if return_state_dict is False,
         otherwise returns a dictionary containing the full, unsharded model state_dict.
     """
+    if return_model_config and return_state_dict:
+        raise ValueError("return_model_config cannot be combined with return_state_dict=True.")
+
     model_cfg, mlm_args = load_model_config(checkpoint_path)
     # If in single GPU environment, reset additional parallel settings
     model_cfg.tensor_model_parallel_size = 1
@@ -489,9 +482,12 @@ def load_megatron_model(
         if tp * ep == 1:
             model_cfg.moe_token_dispatcher_type = "allgather"
 
-    return build_and_load_model(
+    model = build_and_load_model(
         checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
     )
+    if return_model_config:
+        return model, model_cfg
+    return model
 
 
 def save_megatron_model(
@@ -501,6 +497,8 @@ def save_megatron_model(
     hf_tokenizer_path: Optional[Union[str, Path]] = None,
     low_memory_save: bool = False,
     hf_tokenizer_kwargs: Optional[dict] = None,
+    *,
+    model_config: ModelConfig | ModelProviderMixin,
 ) -> None:
     """Save a Megatron model in native Megatron checkpoint format without optimizer state.
 
@@ -527,23 +525,29 @@ def save_megatron_model(
             Default is False, preserving the model for further use.
         hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
             Common options include trust_remote_code=True for models with custom tokenizers.
+        model_config: Exact outer configuration used to build ``model``. This
+            configuration is serialized into the checkpoint.
 
     Example:
         >>> # Save model checkpoint
-        >>> save_megatron_model(megatron_model, "./megatron_checkpoint")
+        >>> save_megatron_model(
+        ...     megatron_model, "./megatron_checkpoint", model_config=model_config
+        ... )
 
         >>> # Save model checkpoint with tokenizer metadata
         >>> save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
-        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+        ...     model_config=model_config,
         ... )
 
         >>> # Save model checkpoint with low-memory mode (destroys model after save)
         >>> save_megatron_model(
         ...     megatron_model,
         ...     "./megatron_checkpoint",
-        ...     low_memory_save=True
+        ...     low_memory_save=True,
+        ...     model_config=model_config,
         ... )
 
     Note:
@@ -563,18 +567,9 @@ def save_megatron_model(
             hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
         )
 
-    # Builder-backed models keep their serializable outer config separately
-    # from ``MegatronModule.config``, which remains the exact MCore
-    # TransformerConfig consumed by model layers.
-    model_config = getattr(model[0], "_bridge_model_config", None)
-    if not isinstance(model_config, ModelConfig):
-        model_config = get_model_config(model[0])
-
     if not isinstance(model_config, (ModelConfig, ModelProviderMixin)):
         raise TypeError(
-            f"Expected model config to be a ModelConfig or ModelProviderMixin, "
-            f"but got {type(model_config).__name__}. "
-            "Builder-created models must retain their outer ModelConfig for checkpoint serialization."
+            f"Expected model config to be a ModelConfig or ModelProviderMixin, but got {type(model_config).__name__}."
         )
 
     # Create global state for checkpointing

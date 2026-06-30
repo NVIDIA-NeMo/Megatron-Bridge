@@ -28,9 +28,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import setup_data_iterators
-from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -409,8 +409,6 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
-        for model_chunk in models:
-            model_chunk._bridge_model_config = model_config
         return models
     else:
         return model_config.provide_distributed_model(

@@ -313,7 +313,7 @@ AutoBridge.save_hf_pretrained(model: list[MegatronModule], path: str | Path, sho
 AutoBridge.save_hf_weights(model: list[MegatronModule], path: str | Path, show_progress: bool = True) -> None
 
 # Megatron native checkpoints
-AutoBridge.save_megatron_model(model: list[MegatronModule], path: str | Path) -> None
+AutoBridge.save_megatron_model(model: list[MegatronModule], path: str | Path, *, model_config: ModelConfig | ModelProviderMixin | None = None) -> None
 AutoBridge.load_megatron_model(path: str | Path, **kwargs) -> list[MegatronModule]
 
 # One-call workflows

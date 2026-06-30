@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import weakref
 from collections.abc import Callable
 from contextlib import nullcontext
 from functools import cached_property, partial
@@ -35,7 +36,7 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.utils import unwrap_model
+from megatron.core.utils import get_model_config as get_mcore_model_config
 from megatron.training.models.base import ModelConfig
 from modelopt.torch.quantization.utils import is_quantized
 from safetensors.torch import save_file
@@ -83,15 +84,6 @@ def _replace_embedded_transformer_configs(model_config: ModelConfig, **overrides
     if not replaced_primary:
         model_config.transformer = dataclasses.replace(model_config.transformer, **overrides)
     return model_config.transformer
-
-
-def _attach_bridge_model_config(models: list[MegatronModule], *, model_config: ModelConfig) -> list[MegatronModule]:
-    """Expose the outer build config before subsequent pre-wrap hooks run."""
-    for model in models:
-        model._bridge_model_config = model_config
-        unwrapped_model = unwrap_model(model)
-        unwrapped_model._bridge_model_config = model_config
-    return models
 
 
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
@@ -292,6 +284,9 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
         self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+        self._model_configs: weakref.WeakKeyDictionary[MegatronModule, ModelConfig | ModelProviderMixin] = (
+            weakref.WeakKeyDictionary()
+        )
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
@@ -1212,6 +1207,8 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_tokenizer_path: Optional[str | Path] = None,
         low_memory_save: bool = False,
         hf_tokenizer_kwargs: Optional[dict] = None,
+        *,
+        model_config: ModelConfig | ModelProviderMixin | None = None,
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -1235,23 +1232,31 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
                 Common options include trust_remote_code=True for models with custom tokenizers,
                 or use_fast=True for models that require the fast tokenizer.
-
+            model_config: Exact outer configuration used to build ``model``. Models returned
+                by this bridge's build/load methods retain this association in the bridge and
+                can omit it. Callers that build a model externally must pass it explicitly.
+                Legacy provider-built models can also omit it because the provider remains
+                available through the runtime model config.
         Example:
             >>> # Save model checkpoint after conversion
-            >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
+            >>> bridge.save_megatron_model(
+            ...     megatron_model, "./megatron_checkpoint", model_config=model_config
+            ... )
 
             >>> # Save model checkpoint with tokenizer metadata
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+            ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
+            ...     model_config=model_config,
             ... )
 
             >>> # Low-memory save (destroys model after save)
             >>> bridge.save_megatron_model(
             ...     megatron_model,
             ...     "./megatron_checkpoint",
-            ...     low_memory_save=True
+            ...     low_memory_save=True,
+            ...     model_config=model_config,
             ... )
 
         Note:
@@ -1264,12 +1269,31 @@ class AutoBridge(Generic[MegatronModelT]):
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
+        if model_config is None:
+            model_configs = getattr(self, "_model_configs", None)
+            if model_configs is not None:
+                try:
+                    model_config = model_configs.get(model[0])
+                except TypeError:
+                    pass
+
+        if model_config is None:
+            runtime_config = get_mcore_model_config(model[0])
+            if isinstance(runtime_config, ModelProviderMixin):
+                model_config = runtime_config
+            else:
+                raise ValueError(
+                    "model_config is required for builder-backed models not built or loaded by this AutoBridge "
+                    "because their runtime TransformerConfig does not retain the outer build configuration. "
+                    "Pass the exact config used to build the model."
+                )
         save_megatron_model(
             model,
             path,
             hf_tokenizer_path=hf_tokenizer_path,
             low_memory_save=low_memory_save,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+            model_config=model_config,
         )
 
     def load_megatron_model(
@@ -1335,13 +1359,16 @@ class AutoBridge(Generic[MegatronModelT]):
 
         skip_temp_dist_context = dist.is_initialized()
         # Load the state dict
-        model = load_megatron_model(
+        model, model_config = load_megatron_model(
             str(checkpoint_path),
             use_cpu_init=(skip_temp_dist_context and dist.get_backend() == "gloo"),
             skip_temp_dist_context=skip_temp_dist_context,
             mp_overrides=mp_overrides,
+            return_model_config=True,
         )
-        return model if isinstance(model, list) else [model]
+        models = model if isinstance(model, list) else [model]
+        self._register_model_config(models, model_config)
+        return models
 
     @classmethod
     def import_ckpt(
@@ -1408,6 +1435,7 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_path=hf_model_id,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
             low_memory_save=True,
+            model_config=model_config,
         )
 
     def export_ckpt(
@@ -1702,7 +1730,6 @@ class AutoBridge(Generic[MegatronModelT]):
                     model_config.extra_checkpoint_metadata = metadata
 
                 original_pre_wrap_hooks[:] = [
-                    partial(_attach_bridge_model_config, model_config=model_config),
                     partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained),
                     *original_pre_wrap_hook_values,
                 ]
@@ -1726,7 +1753,26 @@ class AutoBridge(Generic[MegatronModelT]):
                 model_config.extra_checkpoint_metadata = original_metadata
             original_pre_wrap_hooks[:] = original_pre_wrap_hook_values
             model_config.pre_wrap_hooks = original_pre_wrap_hooks
-        return _attach_bridge_model_config(models, model_config=model_config)
+        self._register_model_config(models, model_config)
+        return models
+
+    def _register_model_config(
+        self,
+        models: list[MegatronModule],
+        model_config: ModelConfig | ModelProviderMixin,
+    ) -> None:
+        """Associate model chunks with the exact serializable config used to build them."""
+        model_configs = getattr(self, "_model_configs", None)
+        if model_configs is None:
+            model_configs = weakref.WeakKeyDictionary()
+            self._model_configs = model_configs
+        for model in models:
+            try:
+                model_configs[model] = model_config
+            except TypeError:
+                # Real Megatron modules support weak references. Keep lightweight
+                # non-module test doubles from changing the build contract.
+                continue
 
     def to_megatron_model(
         self,

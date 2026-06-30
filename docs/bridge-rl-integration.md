@@ -59,7 +59,7 @@ provider.finalize()
 
 # Create distributed model and save as Megatron checkpoint
 megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
-bridge.save_megatron_model(megatron_model, "/path/to/megatron_ckpt")
+bridge.save_megatron_model(megatron_model, "/path/to/megatron_ckpt", model_config=provider)
 ```
 
 You can also check and try out our multi-GPU conversion example script: [examples/conversion/hf_megatron_roundtrip_multi_gpu.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_megatron_roundtrip_multi_gpu.py)

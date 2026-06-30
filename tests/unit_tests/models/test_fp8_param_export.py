@@ -61,7 +61,7 @@ def _patch_export_task_context(monkeypatch, bridge, global_name: str, **kwargs):
     pp_rank = kwargs.get("pp_rank", 0)
     pp_size = kwargs.get("pp_size", 1)
     monkeypatch.setattr(bridge, "mapping_registry", kwargs["registry_factory"])
-    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda *_a, **_k: False)
+    monkeypatch.setattr(bridge, "_model_shares_embeddings_and_output_weights", lambda *_a, **_k: False)
     monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda *_a, **_k: [global_name])
     monkeypatch.setattr(bridge, "_detect_fp8_params", kwargs.get("detect_fp8", lambda *_a, **_k: {global_name: True}))
     monkeypatch.setattr(
