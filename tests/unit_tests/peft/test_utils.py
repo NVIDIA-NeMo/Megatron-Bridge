@@ -351,7 +351,7 @@ class TestGetAdapterAttributes:
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
     def test_get_adapter_attributes_te_sequence_parallel_input_regather(self):
-        """Test that input re-gather makes TE return the local LayerNorm shard."""
+        """Test that input re-gather uses the local TE LayerNorm shard, including with UB overlap."""
 
         class FakeTELayerNormColumnParallelLinear(nn.Module):
             def __init__(self):
@@ -391,6 +391,16 @@ class TestGetAdapterAttributes:
             assert regather.return_layernorm_output
             assert not regather.return_layernorm_output_gathered
             assert not regather_attrs.disable_sequence_parallel_comm
+
+            overlap_regather = FakeTELayerNormColumnParallelLinear()
+            overlap_regather.ub_overlap_ag = True
+            overlap_regather.config.tp_comm_overlap = True
+            overlap_regather_attrs = get_adapter_attributes_from_linear(
+                overlap_regather, sequence_parallel_input_regather=True
+            )
+            assert overlap_regather.return_layernorm_output
+            assert not overlap_regather.return_layernorm_output_gathered
+            assert not overlap_regather_attrs.disable_sequence_parallel_comm
 
     def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
