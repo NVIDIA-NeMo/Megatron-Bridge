@@ -310,8 +310,7 @@ def _megatron_local_name_to_global(
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
-        num_experts = config.num_moe_experts
-        num_experts_per_rank = num_experts // ep_group.size()
+        num_experts_per_rank = layer_module.mlp.num_local_experts   # per-layer, heterogeneous-safe
 
         def _update_grouped_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
