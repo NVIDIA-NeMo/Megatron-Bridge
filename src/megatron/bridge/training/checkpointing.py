@@ -53,7 +53,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_pg_size, unwrap_model
+from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -1632,12 +1632,14 @@ def maybe_save_dataloader_state(
     # train_dataloader_dprank{dp}.pt file.
     pg_collection = pg_collection or get_pg_collection(model)
     is_first_rank = (
-        (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0) and (pg_collection.cp.rank() == 0)
+        (get_pg_rank(pg_collection.pp) == 0)
+        and (get_pg_rank(pg_collection.tp) == 0)
+        and (get_pg_rank(pg_collection.cp) == 0)
     )
     if not is_first_rank:
         return
 
-    dp_rank = pg_collection.dp.rank()
+    dp_rank = get_pg_rank(pg_collection.dp)
     print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
@@ -1647,7 +1649,7 @@ def maybe_save_dataloader_state(
 
     torch.distributed.barrier(group=pg_collection.dp)
 
-    if pg_collection.dp.rank() == 0:
+    if get_pg_rank(pg_collection.dp) == 0:
         ensure_directory_exists(data_state_save_path)
 
     torch.distributed.barrier(group=pg_collection.dp)
@@ -1709,7 +1711,7 @@ def maybe_load_dataloader_state(
         print_rank_0(f"no dataloader state under {dataloader_load_path}; dataloader starts from the beginning")
         return
 
-    dp_rank = pg_collection.dp.rank()
+    dp_rank = get_pg_rank(pg_collection.dp)
     iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
     data_state_load_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
     if not os.path.isfile(data_state_load_path):

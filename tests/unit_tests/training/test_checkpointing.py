@@ -4094,11 +4094,28 @@ class TestLayerWiseOptimizerCheckpointing:
 class TestMaybeLoadDataloaderState:
     """Tests for restoring Energon dataloader stream-position state on resume."""
 
+    @pytest.fixture(autouse=True)
+    def _dist_initialized(self):
+        """megatron.core.utils.get_pg_rank returns 0 for every group unless torch.distributed is
+        initialized. Stub is_initialized=True so the real get_pg_rank resolves each mock group's rank
+        (while still mapping a None group to 0), and stub get_rank=0 so print_rank_0 -> safe_get_rank
+        does not hit the uninitialized default process group."""
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+        ):
+            yield
+
     @staticmethod
-    def _pg(cp=0, pp=0, tp=0, dp=0):
-        """Mock ProcessGroupCollection with configurable cp/pp/tp/dp ranks."""
+    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0):
+        """Mock a ProcessGroupCollection with the given per-dimension ranks. Only cp may be None —
+        modeling a collection configured without context parallelism (tp/pp/dp are always
+        populated); the real get_pg_rank then reads the absent cp group as rank 0."""
         pg = Mock()
-        pg.cp.rank.return_value = cp
+        if cp is None:
+            pg.cp = None
+        else:
+            pg.cp.rank.return_value = cp
         pg.pp.rank.return_value = pp
         pg.tp.rank.return_value = tp
         pg.dp.rank.return_value = dp
@@ -4176,11 +4193,28 @@ class TestMaybeLoadDataloaderState:
 class TestMaybeSaveDataloaderState:
     """Tests for gating which rank writes the Energon dataloader stream-position state."""
 
+    @pytest.fixture(autouse=True)
+    def _dist_initialized(self):
+        """megatron.core.utils.get_pg_rank returns 0 for every group unless torch.distributed is
+        initialized. Stub is_initialized=True so the real get_pg_rank resolves each mock group's rank
+        (while still mapping a None group to 0), and stub get_rank=0 so print_rank_0 -> safe_get_rank
+        does not hit the uninitialized default process group."""
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+        ):
+            yield
+
     @staticmethod
-    def _pg(cp=0, pp=0, tp=0, dp=0):
-        """Mock ProcessGroupCollection with configurable cp/pp/tp/dp ranks."""
+    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0):
+        """Mock a ProcessGroupCollection with the given per-dimension ranks. Only cp may be None —
+        modeling a collection configured without context parallelism (tp/pp/dp are always
+        populated); the real get_pg_rank then reads the absent cp group as rank 0."""
         pg = Mock()
-        pg.cp.rank.return_value = cp
+        if cp is None:
+            pg.cp = None
+        else:
+            pg.cp.rank.return_value = cp
         pg.pp.rank.return_value = pp
         pg.tp.rank.return_value = tp
         pg.dp.rank.return_value = dp
@@ -4226,4 +4260,19 @@ class TestMaybeSaveDataloaderState:
         train_iterator.iterable.save_state.assert_called_once_with()
         saved_dict, saved_path = mock_save.call_args[0]
         assert saved_dict == {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}
+        assert saved_path.endswith("train_dataloader_dprank002.pt")
+
+    @patch("megatron.bridge.training.checkpointing.torch.save")
+    def test_writes_when_cp_group_is_none(self, mock_save, tmp_path):
+        """A run without context parallelism leaves cp=None. get_pg_rank reads a
+        None group as rank 0, so the (pp0, tp0, cp0) leader still writes instead of raising on
+        None.rank()."""
+        train_iterator = self._iterator()
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(
+                Mock(), train_iterator, 10, str(tmp_path), pg_collection=self._pg(cp=None, dp=2)
+            )
+
+        train_iterator.iterable.save_state.assert_called_once_with()
+        _, saved_path = mock_save.call_args[0]
         assert saved_path.endswith("train_dataloader_dprank002.pt")
