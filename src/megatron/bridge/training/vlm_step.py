@@ -236,7 +236,12 @@ def forward_step(
             if grid is not None and grid.numel() > 0:
                 patches = grid.prod(dim=-1).sum()
                 num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
-    accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, num_vision_patches=num_vision_patches)
+    # cu_seqlens comes from the packed-sequence metadata dict returned by get_batch
+    # (None for non-packed batches). The packed layout exposes cu_seqlens_q_padded /
+    # cu_seqlens_q; use the padded boundaries for the Σᵢ sᵢ² attention term.
+    flops_seq_params = packed_seq_params or {}
+    flops_cu_seqlens = flops_seq_params.get("cu_seqlens_q_padded") or flops_seq_params.get("cu_seqlens_q")
+    accumulate_flops_metadata(state, tokens, cu_seqlens=flops_cu_seqlens, num_vision_patches=num_vision_patches)
 
     forward_args = {
         "input_ids": tokens,
