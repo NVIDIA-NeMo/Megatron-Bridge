@@ -556,8 +556,10 @@ class Qwen3VLModel(MegatronModule):
                 Not used by Qwen3VL.
 
         Returns:
-            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
-                [b, s, vocab_size].
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor] | dict[str, torch.Tensor]: Language-model loss of shape
+                [b, s] when labels are provided, otherwise logits of shape [b, s, vocab_size]. Packed CP/SP paths
+                that transform the supervision mask return ``(output, loss_mask)``. Non-last distributed-training
+                stages return ``{"language_module": output}``.
         """
         del inference_context, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
