@@ -291,6 +291,7 @@ QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS_V2 = replace(
 QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_MX_V2 = replace(
     QWEN3_235B_A22B_PRETRAIN_CONFIG_B200_FP8_CS_V2,
     virtual_pipeline_model_parallel_size=3,
+    moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=True,
     cuda_graph_impl="full_iteration",
     cuda_graph_scope=[],
