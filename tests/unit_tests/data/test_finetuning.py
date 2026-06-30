@@ -16,7 +16,7 @@
 
 import torch
 
-from megatron.bridge.data.finetuning import prepare_finetuning_batch
+from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
 
 def test_prepare_finetuning_batch_none_iterator():
