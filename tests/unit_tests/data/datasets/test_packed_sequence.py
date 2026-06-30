@@ -12,9 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import _materialize_dataset_items, _pre_pad_data_point
+from megatron.bridge.data.datasets.packed_sequence import (
+    _init_shared_dataset_worker,
+    _materialize_dataset_items,
+    _pre_pad_data_point,
+    tokenize_dataset,
+)
 
 
 PAD_ID = 0
@@ -64,13 +73,90 @@ def test_pre_pad_data_point_non_chat_lists_still_work():
     assert "loss_mask" not in data
 
 
-def test_pre_pad_data_point_truncates_overlong():
-    """Sequences longer than max_seq_length are truncated."""
+def test_pre_pad_data_point_truncates_overlong_to_target_plus_one():
+    """Overlong sequences retain a CP-divisible runtime length after truncation."""
     data = {"input_ids": list(range(20)), "loss_mask": [1] * 20}
     _pre_pad_data_point(data, max_seq_length=16, max_length_to_pad=8, pad_id=PAD_ID)
 
-    assert len(data["input_ids"]) == 16
-    assert len(data["loss_mask"]) == 16
+    assert len(data["input_ids"]) == 9
+    assert len(data["loss_mask"]) == len(data["input_ids"])
+    assert (len(data["input_ids"]) - 1) % 8 == 0
+    assert data["input_ids"][-1] == PAD_ID
+
+
+def test_pre_pad_data_point_near_pack_size_trims_to_target_plus_one():
+    """Near-pack-size sequences retain a CP-divisible runtime length without overflowing."""
+    data = {"input_ids": list(range(12)), "loss_mask": [1] * 12}
+    _pre_pad_data_point(data, max_seq_length=16, max_length_to_pad=8, pad_id=PAD_ID)
+
+    assert len(data["input_ids"]) == 9
+    assert len(data["loss_mask"]) == len(data["input_ids"])
+    assert (len(data["input_ids"]) - 1) % 8 == 0
+    assert data["input_ids"][-1] == PAD_ID
+
+
+def test_tokenize_dataset_caps_padding_target_below_pack_size(monkeypatch):
+    """CP padding should keep boundary and overlong samples within the divisible target."""
+
+    class TinyDataset:
+        tokenizer = SimpleNamespace(eod=PAD_ID)
+        pad_seq_length_to_mult = 8
+        max_seq_length = 20
+
+        def __init__(self):
+            self.items = [{"input_ids": list(range(length))} for length in (16, 17, 20, 21)]
+
+        def __len__(self):
+            return len(self.items)
+
+        def __getitem__(self, index):
+            return self.items[index]
+
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.create_sft_dataset", lambda **kwargs: TinyDataset()
+    )
+
+    dataset = tokenize_dataset(
+        Path("unused.jsonl"),
+        tokenizer=object(),
+        max_seq_length=20,
+        seed=123,
+        pad_seq_to_mult=8,
+        num_tokenizer_workers=1,
+    )
+
+    assert [len(item["input_ids"]) for item in dataset] == [17, 17, 17, 17]
+    assert all((len(item["input_ids"]) - 1) % 8 == 0 for item in dataset)
+    assert all(len(item["input_ids"]) <= 20 for item in dataset)
+
+
+def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monkeypatch):
+    """Padding must not silently reduce every sample to a zero-token runtime segment."""
+
+    class TinyDataset:
+        tokenizer = SimpleNamespace(eod=PAD_ID)
+        pad_seq_length_to_mult = 8
+        max_seq_length = 8
+
+        def __len__(self):
+            return 1
+
+        def __getitem__(self, index):
+            raise AssertionError("invalid padding should fail before materializing samples")
+
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.create_sft_dataset", lambda **kwargs: TinyDataset()
+    )
+
+    with pytest.raises(ValueError, match="must be greater than the effective padding multiple"):
+        tokenize_dataset(
+            Path("unused.jsonl"),
+            tokenizer=object(),
+            max_seq_length=8,
+            seed=123,
+            pad_seq_to_mult=8,
+            num_tokenizer_workers=1,
+        )
 
 
 def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(monkeypatch):
@@ -90,3 +176,54 @@ def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(mon
 
     assert _materialize_dataset_items(TinyDataset(), -1).tolist() == [10, 11, 12]
     assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]
+
+
+@pytest.mark.parametrize("pool_fails", [False, True])
+def test_materialize_dataset_items_configures_and_restores_worker_resources(monkeypatch, pool_fails):
+    """The multiprocessing path should use file-backed tensor sharing only while its pool runs."""
+
+    class TinyDataset:
+        def __len__(self):
+            return 2
+
+        def __getitem__(self, index):
+            return index + 20
+
+    pool_calls = []
+
+    class FakePool:
+        def __init__(self, num_workers, *, initializer, initargs):
+            pool_calls.append((num_workers, initializer, initargs))
+            initializer(*initargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def imap(self, function, indexes):
+            if pool_fails:
+                raise RuntimeError("worker failure")
+            return map(function, indexes)
+
+    sharing_strategy_calls = []
+    nofile_limit_calls = []
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.Pool", FakePool)
+    monkeypatch.setattr(torch.multiprocessing, "get_sharing_strategy", lambda: "file_descriptor")
+    monkeypatch.setattr(torch.multiprocessing, "set_sharing_strategy", sharing_strategy_calls.append)
+    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.resource.getrlimit", lambda _: (256, 4096))
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.resource.setrlimit",
+        lambda _, limits: nofile_limit_calls.append(limits),
+    )
+
+    dataset = TinyDataset()
+    if pool_fails:
+        with pytest.raises(RuntimeError, match="worker failure"):
+            _materialize_dataset_items(dataset, 2)
+    else:
+        assert _materialize_dataset_items(dataset, 2).tolist() == [20, 21]
+    assert sharing_strategy_calls == ["file_system", "file_descriptor"]
+    assert nofile_limit_calls == [(4096, 4096), (256, 4096)]
+    assert pool_calls == [(2, _init_shared_dataset_worker, (dataset,))]

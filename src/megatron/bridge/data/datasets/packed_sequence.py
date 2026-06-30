@@ -13,12 +13,14 @@
 # limitations under the License.
 import json
 import logging
+import resource
 import warnings
 from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
 
 import numpy as np
+import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
@@ -48,8 +50,31 @@ def _init_shared_dataset_worker(dataset):
 def _materialize_dataset_items(dataset, num_workers):
     if num_workers <= 1:
         return np.array([dataset[i] for i in tqdm(range(len(dataset)))])
-    with Pool(num_workers, initializer=_init_shared_dataset_worker, initargs=(dataset,)) as pool:
-        return np.array(list(tqdm(pool.imap(_get_shared_dataset_item, range(len(dataset))), total=len(dataset))))
+
+    # File-backed tensor sharing avoids one descriptor per returned tensor; the pool still needs descriptors.
+    previous_sharing_strategy = torch.multiprocessing.get_sharing_strategy()
+    torch.multiprocessing.set_sharing_strategy("file_system")
+
+    previous_nofile_limit = None
+    try:
+        soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft_limit != hard_limit:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (hard_limit, hard_limit))
+            previous_nofile_limit = (soft_limit, hard_limit)
+    except (ValueError, OSError) as error:
+        logger.warning("Unable to raise the file-descriptor limit for tokenizer workers: %s", error)
+
+    try:
+        with Pool(num_workers, initializer=_init_shared_dataset_worker, initargs=(dataset,)) as pool:
+            items = tqdm(pool.imap(_get_shared_dataset_item, range(len(dataset))), total=len(dataset))
+            return np.array(list(items))
+    finally:
+        if previous_nofile_limit is not None:
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, previous_nofile_limit)
+            except (ValueError, OSError) as error:
+                logger.warning("Unable to restore the file-descriptor limit after tokenization: %s", error)
+        torch.multiprocessing.set_sharing_strategy(previous_sharing_strategy)
 
 
 def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int, pad_id: int) -> None:
@@ -77,16 +102,19 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int,
         val = data[key]
         # _chat_preprocess returns torch tensors / numpy arrays; normalize to a plain list.
         val = val.tolist() if hasattr(val, "tolist") else list(val)
-        if len(val) <= max_length_to_pad:
+        sequence_length = len(val)
+        if sequence_length <= max_length_to_pad:
             # input_ids are truncated by 1 for labels; add 1 extra pad token
-            val = val + [pad_value] * (max_length_to_pad - len(val) + 1)
-        elif len(val) > max_seq_length:
-            logger.info(
-                "Sequence length %d is larger than max_seq_length %d; truncating for packing.",
-                len(val),
-                max_seq_length,
-            )
-            val = val[:max_seq_length]
+            val = val + [pad_value] * (max_length_to_pad - sequence_length + 1)
+        else:
+            if sequence_length > max_seq_length:
+                logger.info(
+                    "Sequence length %d exceeds max_seq_length %d; truncating for packing.",
+                    sequence_length,
+                    max_seq_length,
+                )
+            # Keep the runtime segment length (stored length minus one) at the divisible pad target.
+            val = val[:max_length_to_pad] + [pad_value]
         data[key] = val
     return
 
@@ -113,6 +141,8 @@ def tokenize_dataset(
             Can include 'chat', 'use_hf_tokenizer_chat_template', 'tool_schemas', etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
+        num_tokenizer_workers: Number of worker processes used to materialize tokenized samples.
+            Values less than or equal to 1 run serially.
 
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
@@ -153,15 +183,26 @@ def tokenize_dataset(
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
     max_seq_length = dataset.max_seq_length
+
+    max_pad_cap = None
+    if pad_seq_to_mult > 1:
+        # Stored samples need one extra token for next-token labels, so cap the divisible runtime length below the pack.
+        max_pad_cap = ((max_seq_length - 1) // pad_seq_length_to_mult) * pad_seq_length_to_mult
+        if max_pad_cap == 0:
+            raise ValueError(
+                f"max_seq_length ({max_seq_length}) must be greater than the effective padding multiple "
+                f"({pad_seq_length_to_mult})."
+            )
+
     dataset = _materialize_dataset_items(dataset, num_tokenizer_workers)
 
-    if pad_seq_to_mult > 1:
+    if max_pad_cap is not None:
 
         def ceil_to_nearest(n, m):
             return (n + m - 1) // m * m
 
         for data in dataset:
-            max_length_to_pad = min(max_seq_length, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
+            max_length_to_pad = min(max_pad_cap, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
             _pre_pad_data_point(data, max_seq_length, max_length_to_pad, pad_id)
 
     return dataset
@@ -197,6 +238,8 @@ def prepare_packed_sequence_data(
             Enables packing with chat templates, tool schemas, etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
+        num_tokenizer_workers: Number of worker processes used to materialize tokenized samples.
+            Values less than or equal to 1 run serially.
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
