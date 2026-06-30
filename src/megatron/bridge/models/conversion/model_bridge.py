@@ -810,6 +810,11 @@ class MegatronModelBridge(
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
 
+        .. deprecated::
+            Provider-based model construction is retained only for compatibility.
+            Implement and call :meth:`model_config_bridge` with a standalone
+            ``ModelBuilder`` for new integrations.
+
         Default implementation that:
         1. Converts HF config to provider kwargs using CONFIG_MAPPING
         2. Creates and returns a GPTModelProvider

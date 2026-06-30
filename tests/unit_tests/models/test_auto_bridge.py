@@ -428,7 +428,8 @@ class TestAutoBridge:
         with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
             # Create bridge and convert
             bridge = AutoBridge(mock_hf_model)
-            result = bridge.to_megatron_provider(load_weights=False)
+            with pytest.warns(DeprecationWarning, match=r"to_megatron_provider\(\)"):
+                result = bridge.to_megatron_provider(load_weights=False)
 
             # Assertions
             assert result == mock_provider
@@ -754,7 +755,8 @@ class TestAutoBridge:
         model_config = Mock()
 
         with patch.object(bridge, "get_model_config", return_value=model_config) as mock_get_config:
-            result = bridge.to_megatron_model_config()
+            with pytest.warns(DeprecationWarning, match=r"to_megatron_model_config\(\)"):
+                result = bridge.to_megatron_model_config()
 
         assert result is model_config
         mock_get_config.assert_called_once_with()
@@ -797,17 +799,18 @@ class TestAutoBridge:
         with (
             patch.object(bridge, "get_model_config", return_value=model_config) as mock_to_config,
         ):
-            result = bridge.to_megatron_model(
-                load_weights=True,
-                pg_collection=pg_collection,
-                wrap_with_ddp=False,
-                fp16=True,
-                bf16=False,
-                use_cpu_initialization=True,
-                init_model_with_meta_device=True,
-                pre_wrap_hook=pre_wrap_hook,
-                post_wrap_hook=post_wrap_hook,
-            )
+            with pytest.warns(DeprecationWarning, match=r"to_megatron_model\(\)"):
+                result = bridge.to_megatron_model(
+                    load_weights=True,
+                    pg_collection=pg_collection,
+                    wrap_with_ddp=False,
+                    fp16=True,
+                    bf16=False,
+                    use_cpu_initialization=True,
+                    init_model_with_meta_device=True,
+                    pre_wrap_hook=pre_wrap_hook,
+                    post_wrap_hook=post_wrap_hook,
+                )
 
         assert result is models
         mock_to_config.assert_called_once_with()

@@ -17,6 +17,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import warnings
 import weakref
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -1787,6 +1788,12 @@ class AutoBridge(Generic[MegatronModelT]):
         New code should call :meth:`get_model_config`, finalize the returned
         configuration explicitly, and pass it to :meth:`get_megatron_model`.
         """
+        warnings.warn(
+            "AutoBridge.to_megatron_model() is deprecated and will be removed in a future release. "
+            "Use get_model_config(), finalize the config, and pass it to get_megatron_model() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         model_config = self.get_model_config()
         builder_kwargs = dict(kwargs)
         transformer_overrides: dict[str, Any] = {}
@@ -1912,6 +1919,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
     def to_megatron_model_config(self) -> ModelConfig:
         """Legacy config-only alias for :meth:`get_model_config`."""
+        warnings.warn(
+            "AutoBridge.to_megatron_model_config() is deprecated and will be removed in a future release. "
+            "Use get_model_config() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self.get_model_config()
 
     def to_megatron_provider(self, load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider:
@@ -1953,6 +1966,13 @@ class AutoBridge(Generic[MegatronModelT]):
             GPTModelProvider: The provider class for creating models
             load_weights: Method to load weights into existing models
         """
+        warnings.warn(
+            "AutoBridge.to_megatron_provider() and provider-based model construction are deprecated and will be "
+            "removed in a future release. Use get_model_config(), finalize the config, and pass it to "
+            "get_megatron_model() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         provider_input = self._provider_bridge_input
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(provider_input)
 
