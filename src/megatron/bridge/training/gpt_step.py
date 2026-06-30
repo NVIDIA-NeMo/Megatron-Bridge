@@ -408,6 +408,21 @@ def _forward_step_common(
     # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
     # change), instead of running the not-yet-CP-safe cu_seqlens path.
     cp_use_thd = pg_collection.cp.size() == 1
+    cu_seqlens = None
+    cu_seqlens_argmin = None
+    cu_seqlens_unpadded = None
+    cu_seqlens_unpadded_argmin = None
+    if packed_seq_metadata is not None:
+        if packed_seq_metadata.get("cu_seqlens_q") is not None:
+            cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
+            cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
+            cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
+            cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
+        else:
+            cu_seqlens = packed_seq_metadata.get("cu_seqlens")
+            cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
+            cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
+            cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
     accumulate_flops_metadata(
         state,
         tokens,
