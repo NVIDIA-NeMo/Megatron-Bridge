@@ -67,8 +67,30 @@ def _example():
     return {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]}
 
 
-def _packable_collate(examples, processor, *, pack_sequences=False):
-    return {"pack_sequences": pack_sequences}
+def _packable_collate(
+    examples,
+    processor,
+    *,
+    sequence_length=None,
+    pad_to_max_length=False,
+    pad_to_multiple_of=128,
+    enable_in_batch_packing=False,
+    in_batch_packing_pad_to_multiple_of=1,
+):
+    del (
+        examples,
+        processor,
+        sequence_length,
+        pad_to_max_length,
+        pad_to_multiple_of,
+        in_batch_packing_pad_to_multiple_of,
+    )
+    return {"enable_in_batch_packing": enable_in_batch_packing}
+
+
+def _legacy_collate(examples, processor):
+    del processor
+    return {"num_examples": len(examples)}
 
 
 def test_conversation_dataset_basic():
@@ -125,6 +147,34 @@ def test_conversation_dataset_binds_text_chat_collate_for_messages():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0]]
 
 
+def test_conversation_dataset_preserves_legacy_custom_collate_contract():
+    from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+
+    ds = ConversationDataset(
+        base_examples=[_example()],
+        target_length=1,
+        processor=Gemma3Processor(),
+        collate_impl=_legacy_collate,
+        sequence_length=16,
+        pad_to_max_length=True,
+    )
+
+    assert ds.collate_fn([ds[0]]) == {"num_examples": 1}
+
+
+def test_conversation_dataset_rejects_legacy_custom_collate_when_packing_requested():
+    from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+
+    with pytest.raises(ValueError, match="does not accept enable_in_batch_packing=True"):
+        ConversationDataset(
+            base_examples=[_example()],
+            target_length=1,
+            processor=Gemma3Processor(),
+            collate_impl=_legacy_collate,
+            enable_in_batch_packing=True,
+        )
+
+
 def test_conversation_dataset_rejects_unknown_processor_without_collate_impl():
     from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 
@@ -166,6 +216,31 @@ def test_hf_provider_builds_splits_and_binds_collate(monkeypatch):
     # Ensure collate_fn is bound and callable
     batch = train_ds.collate_fn([_example()])
     assert isinstance(batch, dict)
+
+
+def test_hf_provider_defaults_trust_remote_code_false(monkeypatch):
+    """Test that HF conversation provider disables remote code by default."""
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, trust_remote_code=None):
+            seen["processor"] = (path, trust_remote_code)
+            return Gemma3Processor()
+
+    monkeypatch.setattr(dp_mod, "AutoProcessor", _AutoProcessor)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path="Qwen/attacker_processor",
+        maker_name="rdr",
+    )
+
+    provider._load_processor_or_tokenizer()  # noqa: SLF001
+
+    assert seen["processor"] == ("Qwen/attacker_processor", False)
 
 
 def test_hf_provider_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, caplog):
@@ -432,10 +507,67 @@ def test_hf_provider_enables_in_batch_packing_for_text_chat_collate(monkeypatch)
     batch = train_ds.collate_fn([train_ds[0]])
     assert batch["tokens"].tolist() == [[6, 7, 8]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 3]]
-    assert batch["cu_seqlens_argmin"].item() == 2
-    assert batch["max_seqlen"].tolist() == [[3]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
+    assert batch["max_seqlen_q"].item() == 3
+    assert batch["max_seqlen_kv"].item() == 3
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded" not in batch
+
+
+def test_hf_provider_auto_selects_text_chat_collate_for_messages(monkeypatch):
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    class TextTokenizer:
+        pad_token_id = 0
+        pad_token = "<pad>"
+        added_tokens_decoder = {}
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+            if tokenize:
+                return {"input_ids": [6, 7, 8], "assistant_masks": [0, 1, 1]}
+            return "rendered"
+
+        def __call__(self, text, padding=True, truncation=False, return_tensors="pt", **kwargs):
+            return {
+                "input_ids": torch.tensor([[6, 7, 8]], dtype=torch.long),
+                "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+            }
+
+    class WrappedTokenizer:
+        _tokenizer = TextTokenizer()
+
+    def _fake_get_maker(maker_name):
+        assert maker_name == "squad"
+        return lambda **kwargs: [
+            {
+                "messages": [
+                    {"role": "user", "content": "ping"},
+                    {"role": "assistant", "content": "pong"},
+                ]
+            }
+        ]
+
+    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path=None,
+        maker_name="squad",
+        enable_in_batch_packing=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0, tokenizer=WrappedTokenizer())
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    batch = train_ds.collate_fn([train_ds[0]])
+    assert batch["tokens"].tolist() == [[6, 7, 8]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
 
 
 def test_hf_provider_forwards_in_batch_packing_padding_multiple(monkeypatch):
@@ -490,8 +622,12 @@ def test_hf_provider_forwards_in_batch_packing_padding_multiple(monkeypatch):
     assert train_ds is not None
     batch = train_ds.collate_fn([train_ds[0]])
     assert batch["tokens"].tolist() == [[6, 7, 8, 0]]
-    assert batch["cu_seqlens"].tolist() == [[0, 4]]
-    assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4]
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_unpadded" not in batch
 
 
 def test_hf_provider_keeps_runtime_packing_out_of_conversation_dataset(monkeypatch):
@@ -543,4 +679,32 @@ def test_hf_provider_forwards_packing_to_supported_collate(monkeypatch):
     train_ds, _, _ = provider.build_datasets(ctx)
 
     assert train_ds is not None
-    assert train_ds.collate_fn([_example()])["pack_sequences"] is True
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is True
+
+
+def test_hf_provider_can_defer_in_batch_packing_to_training_step(monkeypatch):
+    import transformers
+
+    from megatron.bridge.data.hf_datasets import provider as dp_mod
+
+    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
+
+    def _fake_get_maker(self):
+        return lambda **kwargs: [_example(), _example()]
+
+    monkeypatch.setattr(dp_mod.HFConversationDatasetProvider, "_get_maker", _fake_get_maker)
+
+    provider = dp_mod.HFConversationDatasetProvider(
+        seq_length=16,
+        hf_processor_path="dummy/model",
+        maker_name="rdr",
+        collate_impl=_packable_collate,
+        enable_in_batch_packing=True,
+        defer_in_batch_packing_to_step=True,
+    )
+
+    ctx = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0)
+    train_ds, _, _ = provider.build_datasets(ctx)
+
+    assert train_ds is not None
+    assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is False

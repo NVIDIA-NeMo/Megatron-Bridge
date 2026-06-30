@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers for collate-time in-batch sequence packing."""
+"""Internal helpers for collate-time in-batch sequence packing."""
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _ceil_to_multiple(value: int, multiple: int) -> int:
     return ((value + multiple - 1) // multiple) * multiple
 
 
-def pack_padded_sequences_in_batch(
+def _pack_padded_sequence(
     batch: MutableMapping[str, Any],
     *,
     pad_token_id: int = 0,
@@ -59,7 +59,12 @@ def pack_padded_sequences_in_batch(
     position_ids_key: str = "position_ids",
     attention_mask_key: str = "attention_mask",
 ) -> None:
-    """Flatten a padded microbatch and attach packed-sequence metadata.
+    """Convert a padded microbatch to packed sequence layout in place.
+
+    This is a transitional pad-then-pack helper for callers that already rely
+    on tokenizer/processor padding. New collators should prefer constructing
+    the packed layout directly instead of padding first and stripping padding
+    here.
 
     The helper mutates ``batch`` in place. It converts text-like tensors from
     ``[B, S]`` to ``[1, sum(L_i)]`` and emits metadata consumed by
@@ -166,3 +171,51 @@ def pack_padded_sequences_in_batch(
     if cu_seqlens_unpadded != cu_seqlens:
         batch["cu_seqlens_unpadded"] = torch.tensor([cu_seqlens_unpadded], dtype=torch.int32, device=device)
         batch["cu_seqlens_unpadded_argmin"] = torch.tensor([[len(cu_seqlens_unpadded)]], dtype=torch.int32)
+
+
+def _pack_padded_sequence_as_legacy_tuple(
+    tokens: torch.Tensor,
+    labels: torch.Tensor | None,
+    loss_mask: torch.Tensor | None,
+    attention_mask: torch.Tensor | None,
+    position_ids: torch.Tensor,
+    pad_token_id: int = 0,
+    pad_to_multiple_of: int = 1,
+    padding_mask: torch.Tensor | None = None,
+) -> tuple[
+    torch.Tensor,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor,
+    torch.Tensor,
+    torch.Tensor,
+]:
+    """Convert padded sequence tensors and return the legacy tuple form.
+
+    Internal compatibility wrapper for older step-time callers. It preserves
+    the legacy tuple return contract while reusing the transitional
+    pad-then-pack helper above.
+    """
+    batch: dict[str, Any] = {
+        "input_ids": tokens,
+        "labels": labels,
+        "loss_mask": loss_mask,
+        "attention_mask": padding_mask,
+        "position_ids": position_ids,
+    }
+    _pack_padded_sequence(
+        batch,
+        pad_token_id=pad_token_id,
+        pad_to_multiple_of=pad_to_multiple_of,
+    )
+
+    return (
+        batch["input_ids"],
+        batch.get("labels"),
+        batch.get("loss_mask"),
+        batch.get("attention_mask"),
+        batch["position_ids"],
+        batch["cu_seqlens"].squeeze(),
+        batch["max_seqlen"].squeeze().to(device=tokens.device),
+    )

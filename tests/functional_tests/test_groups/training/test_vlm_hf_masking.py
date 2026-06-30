@@ -32,10 +32,31 @@ class TestVLMHFMasking:
 
         hf_processor = os.environ.get("HF_VLM_PROCESSOR", "Qwen/Qwen2.5-VL-3B-Instruct")
 
-        provider = HFConversationDatasetProvider(
+        def make_short_conversations(**kwargs):
+            del kwargs
+            return [
+                {
+                    "conversation": [
+                        {"role": "user", "content": [{"type": "text", "text": "Answer with the word red."}]},
+                        {"role": "assistant", "content": [{"type": "text", "text": "red"}]},
+                    ]
+                },
+                {
+                    "conversation": [
+                        {"role": "user", "content": [{"type": "text", "text": "Answer with the word blue."}]},
+                        {"role": "assistant", "content": [{"type": "text", "text": "blue"}]},
+                    ]
+                },
+            ]
+
+        class _ShortConversationProvider(HFConversationDatasetProvider):
+            def _get_maker(self):
+                return make_short_conversations
+
+        provider = _ShortConversationProvider(
             seq_length=256,
             hf_processor_path=hf_processor,
-            maker_name="rdr",  # small and public HF dataset
+            maker_name="rdr",
             num_workers=0,
             dataloader_type="single",
             data_sharding=True,
@@ -43,7 +64,7 @@ class TestVLMHFMasking:
             persistent_workers=False,
         )
 
-        context = DatasetBuildContext(train_samples=16, valid_samples=0, test_samples=0, tokenizer=None)
+        context = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0, tokenizer=None)
         train_ds, _, _ = provider.build_datasets(context)
         assert train_ds is not None
 
@@ -70,12 +91,8 @@ class TestVLMHFMasking:
 
         # Where loss_mask == 1, labels should not be -100
         has_unmasked = torch.any(loss_mask, dim=1)
-        if torch.any(has_unmasked):
-            assert torch.all(labels[loss_mask] != -100)
-
-        # At least one unmasked token in batch
-        per_sample_unmasked = torch.sum(loss_mask, dim=1)
-        assert torch.any(per_sample_unmasked > 0)
+        assert torch.all(has_unmasked)
+        assert torch.all(labels[loss_mask] != -100)
 
         # Token-level 1:1 match of assistant replies with unmasked labels
         processor = getattr(train_ds, "_processor", None)
@@ -98,8 +115,10 @@ class TestVLMHFMasking:
                     out.append(parts)
             return out
 
+        unmasked_rows = torch.nonzero(has_unmasked, as_tuple=False).flatten().tolist()
+        assert unmasked_rows
         examples_batch = getattr(train_ds, "_last_batch_examples")
-        for i in range(labels.size(0)):
+        for i in unmasked_rows:
             label_ids = [int(t) for t in labels[i].tolist() if int(t) != -100]
             pos = 0
             turns = gather_assistant_texts(examples_batch[i])
@@ -118,5 +137,10 @@ class TestVLMHFMasking:
                     ok = False
                     break
             if ok and pos != len(label_ids):
-                ok = False
+                terminal_candidates = (
+                    tokenizer("<|im_end|>", add_special_tokens=False)["input_ids"],
+                    tokenizer("<|im_end|>\n", add_special_tokens=False)["input_ids"],
+                    tokenizer("\n<|im_end|>", add_special_tokens=False)["input_ids"],
+                )
+                ok = any(label_ids[pos:] == candidate for candidate in terminal_candidates)
             assert ok

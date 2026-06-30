@@ -96,8 +96,8 @@ def main() -> None:
 
     # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
     # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
-    # Use 1 worker to avoid /dev/shm OOM: num_workers==1 runs single-threaded
-    # with no multiprocessing shared memory (see packed_sequence._retrieve_tokenized).
+    # Use 1 worker so serial materialization avoids multiprocessing shared memory
+    # (see packed_sequence._materialize_dataset_items).
     offline_packing_specs.num_tokenizer_workers = 1
 
     print(f"Recipe:   {args.recipe}")

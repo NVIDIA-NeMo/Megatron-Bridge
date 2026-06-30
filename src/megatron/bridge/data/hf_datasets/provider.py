@@ -14,7 +14,6 @@
 
 """Provider that builds conversation datasets from HuggingFace datasets."""
 
-import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
@@ -26,12 +25,18 @@ from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDa
 from megatron.bridge.data.hf_datasets.makers import (
     get_hf_dataset_maker,
 )
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.data.vlm_processing import get_processor_tokenizer
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_text_chat_example(example: dict[str, Any]) -> bool:
+    """Return whether an HF conversation row is text-only chat data."""
+    return "messages" in example or "conversations" in example
 
 
 @dataclass(kw_only=True)
@@ -78,7 +83,7 @@ class HFConversationDatasetProvider(DatasetProvider):
     do_test: bool = True
 
     # Optional collate override. If None, inferred from processor type.
-    collate_impl: Optional[Callable[[list, Any], Dict[str, torch.Tensor]]] = None
+    collate_impl: Optional[Callable[..., Dict[str, torch.Tensor]]] = None
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
     skip_getting_attention_mask_from_dataset: bool = True
@@ -88,22 +93,20 @@ class HFConversationDatasetProvider(DatasetProvider):
 
     # Enable batch-level online sequence packing (dataset-level packing is available in FinetuneDatasetProvider)
     enable_in_batch_packing: bool = False
+    # Active user: Qwen3-VL. Its model step owns the packing path because it
+    # needs the original tensors before building Qwen3-VL-specific packed
+    # metadata. Qwen3.5-VL also sets this defensively while packing is off.
+    defer_in_batch_packing_to_step: bool = False
+
+    # Collate-time VLM padding controls. ConfigContainer sets pad_to_max_length
+    # for PP/EP fixed-shape cases; otherwise collate pads to an efficient multiple
+    # capped by seq_length.
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
 
     # Per-sample padding multiple used by collate-time in-batch packing.
     # ConfigContainer fills this from model CP/SP constraints when available.
     in_batch_packing_pad_to_multiple_of: int = 1
-
-    def _collate_supports_packing(self, processor: Any) -> bool:
-        collate_key = type(processor).__name__ if processor is not None else "default"
-        if self.collate_impl is not None:
-            selected_impl = self.collate_impl
-        else:
-            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
-
-            selected_impl = COLLATE_FNS.get(collate_key)
-        if selected_impl is None:
-            return False
-        return "pack_sequences" in inspect.signature(selected_impl).parameters
 
     def _get_maker(self) -> Callable[..., List[Dict[str, Any]]]:
         return get_hf_dataset_maker(self.maker_name)
@@ -125,13 +128,20 @@ class HFConversationDatasetProvider(DatasetProvider):
         base_examples = maker(**kwargs)  # type: ignore[misc]
         if not isinstance(base_examples, list) or len(base_examples) == 0:
             raise ValueError(f"Maker '{self.maker_name}' returned no examples for split='{split}'")
+        collate_impl = self.collate_impl
+        if collate_impl is None and _is_text_chat_example(base_examples[0]):
+            collate_impl = text_chat_collate_fn
         return ConversationDataset(
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
-            collate_impl=self.collate_impl,
-            pack_sequences=self.enable_in_batch_packing and self._collate_supports_packing(processor),
-            pack_sequences_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
+            collate_impl=collate_impl,
+            sequence_length=self.seq_length,
+            pad_to_max_length=self.pad_to_max_length,
+            pad_to_multiple_of=self.pad_to_multiple_of,
+            enable_in_batch_packing=self.enable_in_batch_packing,
+            defer_in_batch_packing_to_step=self.defer_in_batch_packing_to_step,
+            in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
     def _load_processor_or_tokenizer(self, tokenizer: Any | None = None) -> Any:

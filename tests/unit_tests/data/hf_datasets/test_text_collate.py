@@ -24,15 +24,19 @@ pytestmark = pytest.mark.unit
 class _TextChatTokenizer:
     pad_token_id = 0
     pad_token = "<pad>"
+    padding_side = "right"
     eos_token_id = 2
     added_tokens_decoder = {}
     chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
     def __init__(self):
         self.conversations = []
+        self.padding_values = []
+        self.template_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         self.conversations.append(conversation)
+        self.template_kwargs.append(kwargs)
         if tokenize:
             assert kwargs.get("return_assistant_tokens_mask") is True
             if conversation[-1]["content"] == "bye":
@@ -40,8 +44,19 @@ class _TextChatTokenizer:
             return {"input_ids": [11, 21, 22], "assistant_masks": [0, 1, 1]}
         return "bye" if conversation[-1]["content"] == "bye" else "hello"
 
-    def __call__(self, text, padding=True, truncation=False, return_tensors="pt", max_length=None, **kwargs):
+    def __call__(
+        self,
+        text,
+        padding=True,
+        truncation=False,
+        return_tensors="pt",
+        max_length=None,
+        pad_to_multiple_of=None,
+        **kwargs,
+    ):
         texts = text if isinstance(text, list) else [text]
+        if isinstance(text, list):
+            self.padding_values.append(padding)
         tokenized = [[11, 12, 21, 22] if item == "bye" else [11, 21, 22] for item in texts]
         if truncation and max_length is not None:
             tokenized = [ids[:max_length] for ids in tokenized]
@@ -49,6 +64,8 @@ class _TextChatTokenizer:
             max_len = max_length
         else:
             max_len = max(len(ids) for ids in tokenized) if padding else None
+            if max_len is not None and pad_to_multiple_of is not None and pad_to_multiple_of > 1:
+                max_len = ((max_len + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
         input_ids = []
         attention_mask = []
         for ids in tokenized:
@@ -56,8 +73,64 @@ class _TextChatTokenizer:
             mask = [1] * len(row)
             if max_len is not None:
                 pad_len = max_len - len(row)
-                row.extend([self.pad_token_id] * pad_len)
-                mask.extend([0] * pad_len)
+                if self.padding_side == "left":
+                    row = [self.pad_token_id] * pad_len + row
+                    mask = [0] * pad_len + mask
+                else:
+                    row.extend([self.pad_token_id] * pad_len)
+                    mask.extend([0] * pad_len)
+            input_ids.append(row)
+            attention_mask.append(mask)
+        return {
+            "input_ids": torch.tensor(input_ids, dtype=torch.long),
+            "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
+        }
+
+
+class _ChatMLBoundaryTokenizer:
+    pad_token_id = 0
+    pad_token = "<pad>"
+    added_tokens_decoder = {102: "<|im_end|>"}
+    chat_template = "<|im_start|>user\n{{ user }}<|im_end|>\n<|im_start|>assistant\n{{ assistant }}<|im_end|>\n"
+
+    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+        if tokenize:
+            raise AssertionError("boundary fallback test should render then tokenize")
+        return "rendered-boundary"
+
+    def __call__(
+        self,
+        text,
+        padding=True,
+        truncation=False,
+        return_tensors="pt",
+        max_length=None,
+        add_special_tokens=True,
+        **kwargs,
+    ):
+        del kwargs, add_special_tokens
+        if text == "<|im_start|>assistant\n":
+            return {"input_ids": [101]}
+        if text == "<|im_end|>":
+            return {"input_ids": [102]}
+        if text == "<|im_end|>\n":
+            return {"input_ids": [102, 103]}
+
+        texts = text if isinstance(text, list) else [text]
+        tokenized = [[100, 10, 102, 103, 101, 21, 22, 102, 103] for _ in texts]
+        if truncation and max_length is not None:
+            tokenized = [ids[:max_length] for ids in tokenized]
+        max_len = (
+            max_length if padding == "max_length" and max_length is not None else max(len(ids) for ids in tokenized)
+        )
+        input_ids = []
+        attention_mask = []
+        for ids in tokenized:
+            row = list(ids)
+            mask = [1] * len(row)
+            pad_len = max_len - len(row)
+            row.extend([self.pad_token_id] * pad_len)
+            mask.extend([0] * pad_len)
             input_ids.append(row)
             attention_mask.append(mask)
         return {
@@ -93,6 +166,62 @@ def test_text_chat_collate_fn_builds_shifted_assistant_labels_from_messages():
     assert batch["token_count"] == [3, 4]
 
 
+def test_text_chat_collate_fn_pads_non_packed_sequences_to_multiple():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, pad_to_multiple_of=4)
+
+    assert batch["tokens"].tolist() == [[11, 21, 22, 0]]
+    assert batch["attention_mask"].tolist() == [[1, 1, 1, 0]]
+    assert batch["position_ids"].tolist() == [[0, 1, 2, 3]]
+
+
+def test_text_chat_collate_fn_uses_chatml_boundary_mask_without_generation_template():
+    tokenizer = _ChatMLBoundaryTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer)
+
+    assert batch["tokens"].tolist() == [[100, 10, 102, 103, 101, 21, 22, 102, 103]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+
+
+@pytest.mark.parametrize("enable_in_batch_packing", [False, True])
+def test_text_chat_collate_fn_forwards_tools_to_render_and_mask_templates(enable_in_batch_packing):
+    tokenizer = _TextChatTokenizer()
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ],
+            "tools": tools,
+        }
+    ]
+
+    text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=enable_in_batch_packing)
+
+    assert tokenizer.template_kwargs
+    assert all(template_kwargs.get("tools") == tools for template_kwargs in tokenizer.template_kwargs)
+
+
 def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
     tokenizer = _TextChatTokenizer()
     examples = [
@@ -117,6 +246,7 @@ def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
 
 def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     tokenizer = _TextChatTokenizer()
+    tokenizer.padding_side = "left"
     examples = [
         {
             "messages": [
@@ -132,17 +262,22 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
         },
     ]
 
-    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True)
+    batch = text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=True)
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 11, 12, 21, 22]]
+    assert tokenizer.padding_values == [False, False]
+    assert tokenizer.padding_side == "left"
     assert batch["input_ids"].data_ptr() == batch["tokens"].data_ptr()
     assert batch["labels"].tolist() == [[21, 22, -100, -100, 21, 22, -100]]
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 0, 1, 2, 3]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 3, 7]]
-    assert batch["cu_seqlens_argmin"].item() == 3
-    assert batch["max_seqlen"].tolist() == [[4]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 7]
+    assert batch["max_seqlen_q"].item() == 4
+    assert batch["max_seqlen_kv"].item() == 4
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded" not in batch
     assert "cu_seqlens_unpadded_argmin" not in batch
 
@@ -164,15 +299,22 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
         },
     ]
 
-    batch = text_chat_collate_fn(examples, tokenizer, pack_sequences=True, pack_sequences_pad_to_multiple_of=4)
+    batch = text_chat_collate_fn(
+        examples, tokenizer, enable_in_batch_packing=True, in_batch_packing_pad_to_multiple_of=4
+    )
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 0, 11, 12, 21, 22]]
     assert batch["labels"].tolist() == [[21, 22, -100, -100, -100, 21, 22, -100]]
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0, 0.0]]
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3, 0, 1, 2, 3]]
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 4, 8]]
-    assert batch["cu_seqlens_argmin"].item() == 3
-    assert batch["max_seqlen"].tolist() == [[4]]
-    assert batch["cu_seqlens_unpadded"].tolist() == [[0, 3, 7]]
-    assert batch["cu_seqlens_unpadded_argmin"].item() == 3
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 7]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 8]
+    assert batch["max_seqlen_q"].item() == 4
+    assert batch["max_seqlen_kv"].item() == 4
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_argmin" not in batch
+    assert "cu_seqlens_unpadded" not in batch
+    assert "cu_seqlens_unpadded_argmin" not in batch
