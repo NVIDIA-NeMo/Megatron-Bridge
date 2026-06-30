@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -1089,10 +1089,7 @@ class TestHybridMtpPatternParsing:
         cfg_inferred = MockConfigContainer(model=MockModelConfig(**(base_cfg | {"mtp_num_layers": None})))
 
         parsed_pattern = SimpleNamespace(main_pattern="M*", mtp_pattern="MM", mtp_num_depths=2)
-        mock_module = MagicMock()
-        mock_module.parse_hybrid_pattern.return_value = parsed_pattern
-
-        with patch("megatron.bridge.training.utils.flop_utils.importlib.import_module", return_value=mock_module):
+        with patch("megatron.bridge.training.utils.flop_utils.parse_hybrid_pattern", return_value=parsed_pattern):
             flops_explicit_zero = num_floating_point_operations(cfg_explicit_zero, batch_size=batch_size)
             flops_inferred = num_floating_point_operations(cfg_inferred, batch_size=batch_size)
 
