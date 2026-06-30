@@ -877,9 +877,8 @@ class Qwen3VLModel(MegatronModule):
             if packed_cp_index is not None:
                 labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
                 if loss_mask is not None:
-                    original_loss_mask_shape = loss_mask.shape
                     loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
-                    return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
+                    return_compacted_loss_mask = True
             elif self.config.sequence_parallel:
                 supervision_mask_source = input_ids
                 if supervision_mask_source is None:
@@ -897,14 +896,13 @@ class Qwen3VLModel(MegatronModule):
                         pg_collection=self.pg_collection,
                     )[0]
                 if loss_mask is not None:
-                    original_loss_mask_shape = loss_mask.shape
                     loss_mask = preprocess_packed_seqs(
                         loss_mask,
                         packed_supervision_mask,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
-                    return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
+                    return_compacted_loss_mask = True
         elif cp_size > 1:
             labels, _ = _split_if_full_sequence(
                 labels,
@@ -914,15 +912,13 @@ class Qwen3VLModel(MegatronModule):
                 full_sequence_length=full_sequence_length,
             )
             if loss_mask is not None:
-                original_loss_mask_shape = loss_mask.shape
-                loss_mask, _ = _split_if_full_sequence(
+                loss_mask, return_compacted_loss_mask = _split_if_full_sequence(
                     loss_mask,
                     cp_size=cp_size,
                     seq_dim=1,
                     cp_rank=cp_rank,
                     full_sequence_length=full_sequence_length,
                 )
-                return_compacted_loss_mask = loss_mask.shape != original_loss_mask_shape
 
         output = self.language_model(
             input_ids=lm_input_ids,

@@ -23,7 +23,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.data.sequence_batching import pad_or_pack_sequence
+from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -113,6 +113,30 @@ def _uses_qwen_mrope_metadata(cfg: ConfigContainer) -> bool:
     )
 
 
+def _pack_deferred_batch(batch: dict[str, Any], *, pad_to_multiple_of: int) -> None:
+    """Pack a deferred batch while preserving optional multi-axis position IDs."""
+    position_ids = batch.get("position_ids")
+    mrope_keys: tuple[str, ...] = ()
+    sequence_tensor_pad_values = None
+    if _has_qwen_mrope_position_ids(batch):
+        mrope_keys = tuple(f"_mrope_position_ids_{axis}" for axis in range(position_ids.size(0)))
+        for axis, key in enumerate(mrope_keys):
+            batch[key] = position_ids[axis]
+        batch["position_ids"] = position_ids[0]
+        sequence_tensor_pad_values = dict.fromkeys(mrope_keys, 0)
+
+    prepare_padded_or_packed_sequence_batch(
+        batch,
+        sequence_length=None,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=pad_to_multiple_of,
+        sequence_tensor_pad_values=sequence_tensor_pad_values,
+    )
+
+    if mrope_keys:
+        batch["position_ids"] = torch.stack([batch.pop(key) for key in mrope_keys])
+
+
 def _project_visual_inputs_for_pp_stage(visual_inputs: Any, *, is_first_pp_stage: bool) -> Any:
     """Drop visual payload tensors from PP stages that only need visual metadata."""
     if visual_inputs is None or is_first_pp_stage:
@@ -134,6 +158,7 @@ def get_batch_from_iterator(
     is_last_pp_stage: bool,
     defer_in_batch_packing_to_step: bool = False,
     use_qwen_mrope_metadata: bool = False,
+    context_parallel_size: int = 1,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -161,10 +186,17 @@ def get_batch_from_iterator(
         required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
+    has_packed_metadata = batch.get("cu_seqlens_q") is not None
     can_use_mrope_metadata_only = (
         use_qwen_mrope_metadata and _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
     )
-    needs_input_ids = is_first_pp_stage or is_last_pp_stage or not can_use_mrope_metadata_only
+    needs_input_ids = (
+        is_first_pp_stage
+        or is_last_pp_stage
+        or use_mtp
+        or (has_packed_metadata and context_parallel_size > 1)
+        or not can_use_mrope_metadata_only
+    )
     if needs_input_ids:
         required_device_keys.update(("tokens", "input_ids"))
     required_device_keys.add("position_ids")
@@ -218,6 +250,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         is_last_pp_stage=is_last,
         defer_in_batch_packing_to_step=_defer_in_batch_packing_to_step(cfg),
         use_qwen_mrope_metadata=_uses_qwen_mrope_metadata(cfg),
+        context_parallel_size=pg_collection.cp.size(),
     )
 
     visual_inputs = batch.get("visual_inputs")
@@ -269,7 +302,7 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    if cu_seqlens is None and _defer_in_batch_packing_to_step(state.cfg):
+    if packed_seq_params is None and _defer_in_batch_packing_to_step(state.cfg):
         packed_batch = {
             "input_ids": tokens,
             "labels": labels,
@@ -277,22 +310,18 @@ def forward_step(
             "attention_mask": attention_mask,
             "position_ids": position_ids,
         }
-        pad_or_pack_sequence(
+        _pack_deferred_batch(
             packed_batch,
-            sequence_length=None,
-            enable_in_batch_packing=True,
-            in_batch_packing_pad_to_multiple_of=getattr(state.cfg.dataset, "in_batch_packing_pad_to_multiple_of", 1),
+            pad_to_multiple_of=getattr(state.cfg.dataset, "in_batch_packing_pad_to_multiple_of", 1),
         )
         tokens = packed_batch["input_ids"]
         labels = packed_batch.get("labels")
         loss_mask = packed_batch.get("loss_mask")
         attention_mask = packed_batch.get("attention_mask")
         position_ids = packed_batch.get("position_ids")
-        cu_seqlens = packed_batch.get("cu_seqlens")
-        cu_seqlens_argmin = packed_batch.get("cu_seqlens_argmin")
-        max_seqlen = packed_batch.get("max_seqlen")
-        cu_seqlens_unpadded = packed_batch.get("cu_seqlens_unpadded")
-        cu_seqlens_unpadded_argmin = packed_batch.get("cu_seqlens_unpadded_argmin")
+        packed_seq_params = {
+            key: packed_batch[key] for key in _PACKED_SEQ_PARAM_KEYS if packed_batch.get(key) is not None
+        }
 
     # Accumulate FLOPS metadata across micro-batches.
     # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).

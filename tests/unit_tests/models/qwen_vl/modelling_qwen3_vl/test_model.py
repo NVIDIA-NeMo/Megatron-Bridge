@@ -31,6 +31,7 @@ import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from PIL import Image
@@ -602,6 +603,78 @@ class TestQwen3VLModel:
         assert language_model.last_kwargs is not None
         assert language_model.last_kwargs["visual_pos_masks"] is None
         assert language_model.last_kwargs["decoder_input"].shape == (2, 1, 4)
+
+    def test_forward_returns_reordered_same_shape_loss_mask(self, monkeypatch):
+        """Packed SP must return a transformed loss mask even when its shape is unchanged."""
+
+        def fake_preprocess(tensor, *args, **kwargs):  # noqa: ARG001
+            return (tensor.roll(shifts=-1, dims=1),)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.preprocess_packed_seqs",
+            fake_preprocess,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.get_packed_seq_attention_mask",
+            lambda tensor, packed_seq_params: torch.ones_like(tensor, dtype=torch.bool),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_push",
+            lambda *_args, **_kwargs: None,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model.torch.cuda.nvtx.range_pop",
+            lambda *_args, **_kwargs: None,
+        )
+
+        class DummyLanguageModel:
+            def __init__(self):
+                self.rotary_pos_emb = SimpleNamespace(is_thd_format=False)
+
+            def __call__(self, **kwargs):  # noqa: ARG002
+                return torch.ones(1)
+
+        language_model = DummyLanguageModel()
+        model = SimpleNamespace(
+            pre_process=False,
+            config=SimpleNamespace(sequence_parallel=True),
+            pg_collection=SimpleNamespace(
+                cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
+                tp=SimpleNamespace(rank=lambda: 0, size=lambda: 2),
+                pp=object(),
+            ),
+            language_model=language_model,
+            use_dist_train=False,
+        )
+        cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+        cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=cu_seqlens,
+            cu_seqlens_kv=cu_seqlens,
+            cu_seqlens_q_padded=cu_seqlens_padded,
+            cu_seqlens_kv_padded=cu_seqlens_padded,
+            max_seqlen_q=4,
+            max_seqlen_kv=4,
+        )
+        input_ids = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+        position_ids = torch.arange(8).view(1, 1, 8).expand(3, -1, -1).clone()
+        labels = input_ids.clone()
+        loss_mask = torch.tensor([[1.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 0.0]])
+
+        output, transformed_loss_mask = Qwen3VLModel.forward(
+            model,
+            input_ids=input_ids,
+            position_ids=position_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            labels=labels,
+            loss_mask=loss_mask,
+            packed_seq_params=packed_seq_params,
+        )
+
+        assert torch.equal(output, torch.ones(1))
+        assert transformed_loss_mask.shape == loss_mask.shape
+        assert torch.equal(transformed_loss_mask, loss_mask.roll(shifts=-1, dims=1))
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)

@@ -217,6 +217,33 @@ def test_get_batch_from_iterator_uses_mrope_metadata_only_on_middle_pp_stage():
     assert out["visual_inputs"].image_grid_thw is not None
 
 
+@pytest.mark.parametrize(("use_mtp", "context_parallel_size"), [(True, 1), (False, 2)])
+def test_get_batch_from_iterator_keeps_input_ids_for_middle_stage_features(use_mtp, context_parallel_size):
+    batch = _make_batch()
+    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
+    if context_parallel_size > 1:
+        batch["cu_seqlens_q"] = torch.tensor([0, 3], dtype=torch.int32)
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask", "cu_seqlens_q"]:
+        if key in batch:
+            batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=use_mtp,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+        use_qwen_mrope_metadata=True,
+        context_parallel_size=context_parallel_size,
+    )
+
+    assert out["tokens"] is not None
+    assert out["input_ids"] is not None
+
+
 def test_get_batch_from_iterator_keeps_input_ids_for_non_qwen_3d_position_ids():
     batch = _make_batch()
     batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
@@ -436,6 +463,39 @@ def test_forward_step_packs_deferred_in_batch_sequences(monkeypatch):
     assert packed_seq_params.max_seqlen_q == 4
 
 
+def test_forward_step_packs_deferred_mrope_position_ids(monkeypatch):
+    inner_model = _PackedForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+    state = _make_forward_step_state()
+    state.cfg.dataset.skip_getting_attention_mask_from_dataset = False
+    state.cfg.dataset.enable_in_batch_packing = True
+    state.cfg.dataset.defer_in_batch_packing_to_step = True
+    state.cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
+
+    base_position_ids = torch.tensor([[10, 11, 12, 13], [20, 21, 22, 23]])
+    batch = {
+        "input_ids": torch.tensor([[1, 2, 0, 0], [3, 4, 5, 0]]),
+        "labels": torch.tensor([[2, -100, -100, -100], [4, 5, -100, -100]]),
+        "loss_mask": torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0]]),
+        "position_ids": torch.stack([base_position_ids, base_position_ids + 100, base_position_ids + 200]),
+        "attention_mask": torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.bool),
+        "visual_inputs": None,
+    }
+
+    output, _ = forward_step(state, _Iterator(batch), model)
+
+    assert output.item() == 0.0
+    expected_position_ids = torch.tensor(
+        [
+            [[10, 11, 0, 0, 20, 21, 22, 0]],
+            [[110, 111, 0, 0, 120, 121, 122, 0]],
+            [[210, 211, 0, 0, 220, 221, 222, 0]],
+        ]
+    )
+    assert torch.equal(inner_model.received_kwargs["position_ids"], expected_position_ids)
+
+
 def test_forward_step_sets_hybrid_total_tokens_from_available_sequence_tensor(monkeypatch):
     """Test hybrid packed params derive total tokens from tokens, labels, position_ids, or config."""
     captured_total_tokens = []
@@ -471,9 +531,10 @@ def test_forward_step_sets_hybrid_total_tokens_from_available_sequence_tensor(mo
         "loss_mask": torch.ones(1, 11),
         "position_ids": torch.ones(3, 1, 13, dtype=torch.long),
         "attention_mask": None,
-        "cu_seqlens": torch.tensor([[0, 7]], dtype=torch.int32),
-        "cu_seqlens_argmin": torch.tensor([[7]], dtype=torch.int32),
-        "max_seqlen": torch.tensor([[7]], dtype=torch.int32),
+        "cu_seqlens_q": torch.tensor([0, 7], dtype=torch.int32),
+        "cu_seqlens_kv": torch.tensor([0, 7], dtype=torch.int32),
+        "max_seqlen_q": torch.tensor(7, dtype=torch.int32),
+        "max_seqlen_kv": torch.tensor(7, dtype=torch.int32),
         "visual_inputs": None,
     }
     run_case(base_batch)

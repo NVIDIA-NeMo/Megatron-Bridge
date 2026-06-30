@@ -320,7 +320,11 @@ def forward_step(
             loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
         else:
-            output_tensor = model(**forward_args)
+            model_output = model(**forward_args)
+            if isinstance(model_output, tuple):
+                output_tensor, loss_mask = model_output
+            else:
+                output_tensor = model_output
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 
