@@ -83,12 +83,13 @@ class LoRA(PEFT, ModuleMatcher):
         dropout (float): Dropout rate for the low-rank projection. Defaults to 0.0.
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
-        sequence_parallel_recompute (bool): Retain only the sequence-local LoRA-A input for
-            column-parallel adapters. MCore asynchronously re-gathers it in backward and overlaps
-            the collective with dgrad computation. The LoRA path gathers the local shard in forward
-            and re-gathers it in backward; when the baseline already gathers before LoRA, only the
-            backward gather is additional. It has no effect without TP>1 and SP, and falls back for
-            unsupported adapters or overlapping recompute.
+        sequence_parallel_input_regather (bool): Reduce retained activation memory for eligible
+            column-parallel LoRA-A projections. The full LayerNorm output consumed by LoRA-A is
+            gathered temporarily in forward, released after the LoRA-A computation, and gathered
+            again during backward for the LoRA-A weight gradient. MCore overlaps the backward
+            all-gather with dgrad computation when possible. This has no effect when sequence
+            parallelism is disabled and falls back for unsupported adapters or overlapping
+            activation recompute. Defaults to False.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
@@ -114,7 +115,7 @@ class LoRA(PEFT, ModuleMatcher):
     alpha: int = 32
     dropout: float = 0.0
     dropout_position: Literal["pre", "post"] = "pre"
-    sequence_parallel_recompute: bool = False
+    sequence_parallel_input_regather: bool = False
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
@@ -171,7 +172,7 @@ class LoRA(PEFT, ModuleMatcher):
             attrs = get_adapter_attributes_from_linear(
                 module,
                 is_expert=is_expert,
-                sequence_parallel_recompute=self.sequence_parallel_recompute and not is_expert,
+                sequence_parallel_input_regather=self.sequence_parallel_input_regather and not is_expert,
             )
 
             dim = get_effective_lora_dim(
@@ -229,7 +230,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     is_expert=is_expert,
                     a2a_experimental=self.a2a_experimental,
-                    sequence_parallel_recompute=self.sequence_parallel_recompute,
+                    sequence_parallel_input_regather=self.sequence_parallel_input_regather,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 )

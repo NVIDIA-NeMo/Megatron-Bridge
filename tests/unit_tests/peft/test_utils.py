@@ -350,8 +350,8 @@ class TestGetAdapterAttributes:
         assert not attrs.disable_sequence_parallel_comm  # Should be False when sequence_parallel is True
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
-    def test_get_adapter_attributes_te_sequence_parallel_recompute(self):
-        """Test that targeted recompute makes TE return the local LayerNorm shard."""
+    def test_get_adapter_attributes_te_sequence_parallel_input_regather(self):
+        """Test that input re-gather makes TE return the local LayerNorm shard."""
 
         class FakeTELayerNormColumnParallelLinear(nn.Module):
             def __init__(self):
@@ -386,11 +386,11 @@ class TestGetAdapterAttributes:
             assert baseline.return_layernorm_output_gathered
             assert baseline_attrs.disable_sequence_parallel_comm
 
-            recompute = FakeTELayerNormColumnParallelLinear()
-            recompute_attrs = get_adapter_attributes_from_linear(recompute, sequence_parallel_recompute=True)
-            assert recompute.return_layernorm_output
-            assert not recompute.return_layernorm_output_gathered
-            assert not recompute_attrs.disable_sequence_parallel_comm
+            regather = FakeTELayerNormColumnParallelLinear()
+            regather_attrs = get_adapter_attributes_from_linear(regather, sequence_parallel_input_regather=True)
+            assert regather.return_layernorm_output
+            assert not regather.return_layernorm_output_gathered
+            assert not regather_attrs.disable_sequence_parallel_comm
 
     def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
@@ -643,7 +643,7 @@ class TestParallelLinearAdapter:
     @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sequence_parallel_recompute_uses_mcore_sp_linear(
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_uses_mcore_sp_linear(
         self,
         mock_row_linear,
         mock_col_linear,
@@ -668,7 +668,7 @@ class TestParallelLinearAdapter:
             input_is_parallel=False,
             model_parallel_config=mock_config,
             disable_sequence_parallel_comm=False,
-            sequence_parallel_recompute=True,
+            sequence_parallel_input_regather=True,
             pg_collection=make_mock_pg_collection(tp_size=2),
         )
         local_input = torch.randn(3, 8, requires_grad=True)
@@ -683,7 +683,7 @@ class TestParallelLinearAdapter:
     @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sequence_parallel_recompute_fallback_uses_external_gather(
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_fallback_uses_external_gather(
         self,
         mock_row_linear,
         mock_col_linear,
@@ -709,7 +709,7 @@ class TestParallelLinearAdapter:
             input_is_parallel=False,
             model_parallel_config=mock_config,
             disable_sequence_parallel_comm=False,
-            sequence_parallel_recompute=True,
+            sequence_parallel_input_regather=True,
             pg_collection=make_mock_pg_collection(tp_size=2),
         )
         local_input = torch.randn(3, 8, requires_grad=True)
@@ -722,7 +722,7 @@ class TestParallelLinearAdapter:
     @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sequence_parallel_recompute_tp1_fallback(
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_tp1_fallback(
         self,
         mock_row_linear,
         mock_col_linear,
@@ -748,7 +748,7 @@ class TestParallelLinearAdapter:
             input_is_parallel=False,
             model_parallel_config=mock_config,
             disable_sequence_parallel_comm=False,
-            sequence_parallel_recompute=True,
+            sequence_parallel_input_regather=True,
             pg_collection=make_mock_pg_collection(tp_size=1),
         )
         local_input = torch.randn(3, 8, requires_grad=True)
@@ -760,7 +760,7 @@ class TestParallelLinearAdapter:
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_sequence_parallel_recompute_eligibility_gates(
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_eligibility_gates(
         self, mock_row_linear, mock_col_linear, mock_config
     ):
         """Only qkv/fc1 SP LoRA without overlapping recompute should be eligible."""
@@ -778,34 +778,34 @@ class TestParallelLinearAdapter:
             input_is_parallel=False,
             model_parallel_config=mock_config,
             disable_sequence_parallel_comm=False,
-            sequence_parallel_recompute=True,
+            sequence_parallel_input_regather=True,
             pg_collection=make_mock_pg_collection(tp_size=2),
         )
         x = torch.randn(3, 8, requires_grad=True)
 
-        assert adapter._sequence_parallel_recompute_eligibility(x) == (True, None)
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
 
         mock_linear_in.weight.requires_grad_(False)
-        assert not adapter._sequence_parallel_recompute_eligibility(x)[0]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
         mock_linear_in.weight.requires_grad_(True)
 
         adapter.base_linear_name = "decoder.layers.0.self_attention.linear_proj"
-        assert not adapter._sequence_parallel_recompute_eligibility(x)[0]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
         adapter.base_linear_name = "decoder.layers.0.mlp.linear_fc1"
 
         adapter.input_is_parallel = True
-        assert not adapter._sequence_parallel_recompute_eligibility(x)[0]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
         adapter.input_is_parallel = False
 
         mock_config.recompute_granularity = "selective"
         mock_config.recompute_modules = ["mlp"]
-        assert not adapter._sequence_parallel_recompute_eligibility(x)[0]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
 
         adapter.base_linear_name = "decoder.layers.0.self_attention.linear_qkv"
-        assert adapter._sequence_parallel_recompute_eligibility(x) == (True, None)
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
 
         mock_config.recompute_granularity = "full"
-        assert not adapter._sequence_parallel_recompute_eligibility(x)[0]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")

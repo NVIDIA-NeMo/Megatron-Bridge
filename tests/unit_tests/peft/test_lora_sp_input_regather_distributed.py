@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Two-rank parity test for LoRA sequence-parallel activation recompute.
+"""Two-rank parity test for LoRA sequence-parallel input re-gather.
 
 Run with:
 uv run python -m torch.distributed.run --nproc_per_node=2 -m pytest \
-    tests/unit_tests/peft/test_lora_sp_recompute_distributed.py
+    tests/unit_tests/peft/test_lora_sp_input_regather_distributed.py
 """
 
 import os
@@ -38,7 +38,7 @@ _TP_SIZE = 2
 def _make_adapter(
     pg_collection: ProcessGroupCollection,
     *,
-    sequence_parallel_recompute: bool,
+    sequence_parallel_input_regather: bool,
 ) -> ParallelLinearAdapter:
     """Construct the real MCore-backed adapter used by the parity test."""
     config = ModelParallelConfig(
@@ -56,7 +56,7 @@ def _make_adapter(
         input_is_parallel=False,
         model_parallel_config=config,
         disable_sequence_parallel_comm=False,
-        sequence_parallel_recompute=sequence_parallel_recompute,
+        sequence_parallel_input_regather=sequence_parallel_input_regather,
         pg_collection=pg_collection,
     )
 
@@ -99,8 +99,8 @@ def _run_microbatches(
 
 
 @pytest.mark.gpu
-def test_sequence_parallel_recompute_distributed_backward_parity() -> None:
-    """Native SP should match the baseline through fused two-microbatch backward."""
+def test_sequence_parallel_input_regather_distributed_backward_parity() -> None:
+    """Input re-gather should match the baseline through fused two-microbatch backward."""
     if int(os.environ.get("WORLD_SIZE", "1")) != _TP_SIZE:
         pytest.skip("requires a two-rank torch.distributed launch")
     if not torch.cuda.is_available():
@@ -126,29 +126,29 @@ def test_sequence_parallel_recompute_distributed_backward_parity() -> None:
         model_parallel_cuda_manual_seed(2026, force_reset_rng=True)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
-        baseline = _make_adapter(pg_collection, sequence_parallel_recompute=False)
-        native_sp = _make_adapter(pg_collection, sequence_parallel_recompute=True)
+        baseline = _make_adapter(pg_collection, sequence_parallel_input_regather=False)
+        regather = _make_adapter(pg_collection, sequence_parallel_input_regather=True)
         _set_nonzero_weights(baseline)
-        native_sp.load_state_dict(baseline.state_dict())
+        regather.load_state_dict(baseline.state_dict())
 
         rank = dist.get_rank()
         input_values = torch.arange(1, 49, device="cuda", dtype=torch.float32).reshape(3, 2, 8)
         local_inputs = [input_values + rank, input_values.flip(0) + rank + 0.5]
 
         baseline_results = _run_microbatches(baseline, local_inputs)
-        native_results = _run_microbatches(native_sp, local_inputs)
+        regather_results = _run_microbatches(regather, local_inputs)
 
-        for baseline_tensors, native_tensors in zip(baseline_results[:2], native_results[:2], strict=True):
-            for baseline_tensor, native_tensor in zip(baseline_tensors, native_tensors, strict=True):
-                torch.testing.assert_close(native_tensor, baseline_tensor, rtol=0, atol=0)
+        for baseline_tensors, regather_tensors in zip(baseline_results[:2], regather_results[:2], strict=True):
+            for baseline_tensor, regather_tensor in zip(baseline_tensors, regather_tensors, strict=True):
+                torch.testing.assert_close(regather_tensor, baseline_tensor, rtol=0, atol=0)
 
         baseline_main_grads = baseline_results[2]
-        native_main_grads = native_results[2]
+        regather_main_grads = regather_results[2]
         for microbatch in range(2):
-            assert baseline_main_grads[microbatch].keys() == native_main_grads[microbatch].keys()
+            assert baseline_main_grads[microbatch].keys() == regather_main_grads[microbatch].keys()
             for name in baseline_main_grads[microbatch]:
                 torch.testing.assert_close(
-                    native_main_grads[microbatch][name],
+                    regather_main_grads[microbatch][name],
                     baseline_main_grads[microbatch][name],
                     rtol=0,
                     atol=0,
@@ -159,7 +159,7 @@ def test_sequence_parallel_recompute_distributed_backward_parity() -> None:
             for name in baseline_main_grads[0]
         ), "the second microbatch must accumulate into fused main_grad"
         assert all(parameter.grad is None for parameter in baseline.parameters())
-        assert all(parameter.grad is None for parameter in native_sp.parameters())
+        assert all(parameter.grad is None for parameter in regather.parameters())
     finally:
         if owns_model_parallel and parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
