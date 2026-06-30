@@ -439,8 +439,8 @@ class TestMegatronPretrainingBatchSampler:
         assert all_indices_sorted == list(range(32))
 
 
-class TestFinetuningUtilities:
-    """Tests for finetuning data handling utilities."""
+class TestBatchUtilities:
+    """Tests for batch handling utilities."""
 
     def test_split_batch_into_microbatches_basic(self):
         """Test basic batch splitting functionality."""

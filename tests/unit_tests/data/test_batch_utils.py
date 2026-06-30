@@ -12,11 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for finetuning data utilities."""
+"""Tests for batch data utilities."""
 
+import importlib
+
+import pytest
 import torch
 
 from megatron.bridge.data.batch_utils import prepare_finetuning_batch
+
+
+def test_finetuning_module_is_removed():
+    """Test that the removed finetuning compatibility module cannot be imported."""
+    with pytest.raises(ModuleNotFoundError, match=r"megatron\.bridge\.data\.finetuning"):
+        importlib.import_module("megatron.bridge.data.finetuning")
 
 
 def test_prepare_finetuning_batch_none_iterator():
