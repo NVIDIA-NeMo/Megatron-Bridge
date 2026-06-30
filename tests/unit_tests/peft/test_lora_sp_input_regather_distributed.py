@@ -93,7 +93,9 @@ def _run_microbatches(
 
         outputs.append(output.detach().clone())
         input_grads.append(x.grad.detach().clone())
-        main_grads.append({name: parameter.main_grad.detach().clone() for name, parameter in adapter.named_parameters()})
+        main_grads.append(
+            {name: parameter.main_grad.detach().clone() for name, parameter in adapter.named_parameters()}
+        )
 
     return outputs, input_grads, main_grads
 
