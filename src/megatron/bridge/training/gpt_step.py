@@ -408,14 +408,22 @@ def _forward_step_common(
     # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
     # change), instead of running the not-yet-CP-safe cu_seqlens path.
     cp_use_thd = pg_collection.cp.size() == 1
+    # Source the THD cu_seqlens metadata from the packed-sequence dict returned by
+    # get_batch (None for dense batches). The current packed layout exposes
+    # cu_seqlens_q/cu_seqlens_q_padded; the legacy layout exposes cu_seqlens. Map the
+    # padded current key onto cu_seqlens so the Σᵢ sᵢ² term is computed in both cases.
+    flops_seq_metadata = packed_seq_metadata or {}
+    flops_cu_seqlens = flops_seq_metadata.get("cu_seqlens")
+    if flops_cu_seqlens is None:
+        flops_cu_seqlens = flops_seq_metadata.get("cu_seqlens_q_padded") or flops_seq_metadata.get("cu_seqlens_q")
     accumulate_flops_metadata(
         state,
         tokens,
         config_seq_len=getattr(config, "seq_length", None),
-        cu_seqlens=cu_seqlens if cp_use_thd else None,
-        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
-        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
-        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
+        cu_seqlens=flops_cu_seqlens if cp_use_thd else None,
+        cu_seqlens_argmin=flops_seq_metadata.get("cu_seqlens_argmin") if cp_use_thd else None,
+        cu_seqlens_unpadded=flops_seq_metadata.get("cu_seqlens_unpadded") if cp_use_thd else None,
+        cu_seqlens_unpadded_argmin=flops_seq_metadata.get("cu_seqlens_unpadded_argmin") if cp_use_thd else None,
     )
 
     forward_args = {
