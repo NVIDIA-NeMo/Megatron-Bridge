@@ -186,16 +186,29 @@ does **not** break determinism here.
 
 ## 6. Artifacts
 
-| | path |
-|---|---|
-| Processed (leaderboard.txt + bitwise_check.txt + submit logs) | `nsys-compare-24node-routerfusion-v2/` |
-| §2 trace pairing (det 3745946 vs nondet 3712403, rank-0 CSVs + leaderboard) | `nsys-trace-det-vs-nondet-expected/` |
-| det+nsys log (3706179) | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1782886365/.../log-*_3706179_0.out` |
-| nondet+nsys log (3706214) | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1782886365/.../log-*_3706214_0.out` |
-| Determinism (no-nsys) jobs | 3706236 / 3706255 / 3707706 / 3707730 |
-| nondet+nsys rechecks | 3712367 / 3712403 (step-time noise, §3) |
-| det+nsys rechecks (median, §3.1) | 3745946 / 3746206 |
-| Launch script | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` |
+Organized under `nsys-det-3run-24node-routerfusion/` (repo-relative; `raw/` are symlinks into the
+per-run experiment dirs — only the comparison runs' nsys profiles + logs are kept):
+
+```
+nsys-det-3run-24node-routerfusion/
+├── processed/
+│   ├── jobid-{det,nondet,det-bitwise}.txt   # 3745946 / 3712403 / 3706236
+│   ├── wdj-{det,nondet,det-bitwise}.txt      # wandb run names
+│   ├── leaderboard.txt                       # §2 trace (rank-0)
+│   ├── nsys-det.csv                          # rank-0 NVTX (det+nsys 3745946)
+│   └── nsys-nondet.csv                       # rank-0 NVTX (nondet+nsys 3712403)
+└── raw/
+    ├── det/          log-*_3745946_0.out + profile_*_3745946_node0_rank0.{nsys-rep,sqlite}
+    ├── nondet/       log-*_3712403_0.out + profile_*_3712403_node0_rank0.{nsys-rep,sqlite}
+    └── det-bitwise/  log-*_3706236_0.out   (no nsys — determinism check)
+```
+
+| Role | job | notes |
+|---|---|---|
+| det + nsys (perf, §2/§3) | 3745946 | det median (9,065 ms); one of 3 det+nsys (3706179 / 3745946 / 3746206) |
+| non-det + nsys (perf, §2/§3) | 3712403 | ~0.9% faster; one of 3 nondet+nsys (3706214 / 3712367 / 3712403) |
+| det no-nsys (determinism, §4) | 3706236 | one of 4 bit-exact allocations (3706236 / 3706255 / 3707706 / 3707730) |
+| Launch script | — | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` |
 
 > **Bottom line**: at 24 nodes with `moe_router_fusion=true` + `fill_uninitialized_memory=false`,
 > determinism is **bit-exact across 4 allocations**, and the determinism **step-time penalty is within
