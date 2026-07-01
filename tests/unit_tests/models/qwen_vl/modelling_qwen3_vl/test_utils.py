@@ -16,22 +16,15 @@
 
 import datetime
 import os
-import sys
 from types import SimpleNamespace
 
 import pytest
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
-from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import model as qwen3_vl_model
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
-    _get_packed_cp_index,
-    _language_model_packed_seq_params,
-    _prepare_packed_bshd_tensor,
-    _prepare_packed_lm_input_ids,
     _select_sequence,
     _split_if_full_sequence,
 )
@@ -68,142 +61,6 @@ Test utils functions for Qwen3VL model.
 """
 
 
-def test_language_model_packed_seq_params_uses_actual_cu_seqlens_for_sequence_parallel():
-    """Test that padded cu-seqlens are removed for the TP/SP language-model THD stream."""
-    actual = torch.tensor([0, 3, 5], dtype=torch.int32)
-    padded = torch.tensor([0, 4, 8], dtype=torch.int32)
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=actual,
-        cu_seqlens_kv=actual,
-        cu_seqlens_q_padded=padded,
-        cu_seqlens_kv_padded=padded,
-        max_seqlen_q=4,
-        max_seqlen_kv=4,
-        total_tokens=8,
-    )
-
-    language_model_params = _language_model_packed_seq_params(
-        packed_seq_params,
-        use_actual_cu_seqlens=True,
-    )
-
-    assert language_model_params is not packed_seq_params
-    assert language_model_params.cu_seqlens_q is actual
-    assert language_model_params.cu_seqlens_kv is actual
-    assert language_model_params.cu_seqlens_q_padded is None
-    assert language_model_params.cu_seqlens_kv_padded is None
-    assert language_model_params.total_tokens is None
-
-    aligned_language_model_params = _language_model_packed_seq_params(
-        packed_seq_params,
-        use_actual_cu_seqlens=True,
-        total_sequence_length=8,
-    )
-
-    assert torch.equal(aligned_language_model_params.cu_seqlens_q, torch.tensor([0, 3, 8], dtype=torch.int32))
-    assert torch.equal(aligned_language_model_params.cu_seqlens_kv, torch.tensor([0, 3, 8], dtype=torch.int32))
-    assert aligned_language_model_params.max_seqlen_q == 5
-    assert aligned_language_model_params.max_seqlen_kv == 5
-
-
-def test_language_model_packed_seq_params_keeps_padded_cu_seqlens_for_context_parallel():
-    """Test that CP keeps padded segment lengths while aligning the final stream length."""
-    actual = torch.tensor([0, 1234, 2420], dtype=torch.int32)
-    padded = torch.tensor([0, 1240, 2432], dtype=torch.int32)
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=actual,
-        cu_seqlens_kv=actual,
-        cu_seqlens_q_padded=padded,
-        cu_seqlens_kv_padded=padded,
-        max_seqlen_q=1240,
-        max_seqlen_kv=1240,
-        total_tokens=2432,
-    )
-
-    language_model_params = _language_model_packed_seq_params(
-        packed_seq_params,
-        use_actual_cu_seqlens=False,
-        use_padded_cu_seqlens=True,
-        total_sequence_length=2424,
-    )
-
-    expected = torch.tensor([0, 1240, 2424], dtype=torch.int32)
-    assert language_model_params is not packed_seq_params
-    assert torch.equal(language_model_params.cu_seqlens_q, expected)
-    assert torch.equal(language_model_params.cu_seqlens_kv, expected)
-    assert torch.equal(language_model_params.cu_seqlens_q_padded, expected)
-    assert torch.equal(language_model_params.cu_seqlens_kv_padded, expected)
-    assert torch.all((language_model_params.cu_seqlens_q[1:] - language_model_params.cu_seqlens_q[:-1]) % 4 == 0)
-    assert language_model_params.total_tokens is None
-    assert get_packed_seq_attention_mask(torch.ones(1, 2432), language_model_params).sum().item() == 2424
-
-
-def test_language_model_packed_seq_params_returns_original_when_padded_stream_is_aligned():
-    """Test CP packed metadata is reused when padded cu-seqlens already match the stream."""
-    padded = torch.tensor([0, 4, 8], dtype=torch.int32)
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=padded,
-        cu_seqlens_kv=padded,
-        cu_seqlens_q_padded=padded,
-        cu_seqlens_kv_padded=padded,
-        max_seqlen_q=4,
-        max_seqlen_kv=4,
-        total_tokens=8,
-    )
-
-    language_model_params = _language_model_packed_seq_params(
-        packed_seq_params,
-        use_actual_cu_seqlens=False,
-        use_padded_cu_seqlens=True,
-        total_sequence_length=8,
-    )
-
-    assert language_model_params is packed_seq_params
-
-
-def test_get_packed_cp_index_uses_padded_cu_seqlens(monkeypatch):
-    """Packed CP slicing must use padded packed-sequence boundaries."""
-    actual = torch.tensor([0, 6, 14], dtype=torch.int32)
-    padded = torch.tensor([0, 8, 16], dtype=torch.int32)
-    seen = {}
-
-    class FakeTransformerEngineTorch:
-        @staticmethod
-        def thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
-            seen["cu_seqlens"] = cu_seqlens
-            seen["total_tokens"] = total_tokens
-            seen["cp_size"] = cp_size
-            seen["cp_rank"] = cp_rank
-            return torch.tensor([0, 1, 14, 15], dtype=torch.int64)
-
-    monkeypatch.setitem(sys.modules, "transformer_engine_torch", FakeTransformerEngineTorch)
-
-    packed_seq_params = PackedSeqParams(
-        qkv_format="thd",
-        cu_seqlens_q=actual,
-        cu_seqlens_kv=actual,
-        cu_seqlens_q_padded=padded,
-        cu_seqlens_kv_padded=padded,
-    )
-
-    index = _get_packed_cp_index(
-        packed_seq_params,
-        total_tokens=16,
-        cp_size=4,
-        cp_rank=0,
-        device=torch.device("cpu"),
-    )
-
-    assert torch.equal(seen["cu_seqlens"], padded)
-    assert seen["total_tokens"] == 16
-    assert seen["cp_size"] == 4
-    assert seen["cp_rank"] == 0
-    assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
-
-
 def test_select_sequence_handles_none_and_selects_dimension():
     """Test packed CP indexing helper handles optional tensors and keeps output contiguous."""
     index = torch.tensor([2, 0], dtype=torch.long)
@@ -215,94 +72,6 @@ def test_select_sequence_handles_none_and_selects_dimension():
 
     assert torch.equal(selected, value.index_select(1, index))
     assert selected.is_contiguous()
-
-
-def test_prepare_packed_lm_input_ids_branches(monkeypatch):
-    """Test packed LM token helper handles missing IDs, CP indexing, and packed compaction."""
-    input_ids = torch.tensor([[1, 2, 0, 3, 4, 0]])
-    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
-    packed_seq_params = SimpleNamespace(
-        cu_seqlens_q=torch.tensor([0, 2, 4], dtype=torch.int32),
-        cu_seqlens_q_padded=torch.tensor([0, 3, 6], dtype=torch.int32),
-    )
-
-    none_ids, returned_mask, total_length = _prepare_packed_lm_input_ids(
-        None,
-        attention_mask,
-        packed_seq_params,
-        None,
-        cp_size=1,
-        pg_collection=object(),
-    )
-    assert none_ids is None
-    assert returned_mask is attention_mask
-    assert total_length is None
-
-    cp_index = torch.tensor([0, 3, 4], dtype=torch.long)
-    selected_ids, returned_mask, total_length = _prepare_packed_lm_input_ids(
-        input_ids,
-        attention_mask,
-        packed_seq_params,
-        cp_index,
-        cp_size=2,
-        pg_collection=object(),
-    )
-    assert torch.equal(selected_ids, torch.tensor([[1, 3, 4]]))
-    assert returned_mask is attention_mask
-    assert total_length == input_ids.size(1)
-
-    captured = {}
-
-    def fake_preprocess_packed_seqs(val, mask, *, pre_process, pg_collection):  # noqa: ARG001
-        captured["mask"] = mask
-        return (val[:, mask[0]].contiguous(),)
-
-    monkeypatch.setattr(qwen3_vl_model, "preprocess_packed_seqs", fake_preprocess_packed_seqs)
-
-    compacted_ids, generated_mask, total_length = _prepare_packed_lm_input_ids(
-        input_ids,
-        None,
-        packed_seq_params,
-        None,
-        cp_size=2,
-        pg_collection=object(),
-    )
-
-    expected_mask = torch.tensor([[1, 1, 0, 1, 1, 0]], dtype=torch.bool)
-    assert torch.equal(generated_mask, expected_mask)
-    assert torch.equal(captured["mask"], expected_mask)
-    assert torch.equal(compacted_ids, torch.tensor([[1, 2, 3, 4]]))
-    assert total_length == compacted_ids.size(1) * 2
-
-
-def test_prepare_packed_bshd_tensor_selects_or_compacts(monkeypatch):
-    """Test packed BSHD helper uses CP indexing when available and compacts otherwise."""
-    value = torch.arange(12).view(1, 6, 2)
-    attention_mask = torch.tensor([[1, 1, 0, 1, 1, 0]], dtype=torch.bool)
-    cp_index = torch.tensor([1, 4], dtype=torch.long)
-
-    selected = _prepare_packed_bshd_tensor(
-        value,
-        attention_mask,
-        cp_index,
-        seq_dim=1,
-        pg_collection=object(),
-    )
-    assert torch.equal(selected, value.index_select(1, cp_index))
-
-    def fake_preprocess_packed_seqs(val, mask, *, pre_process, pg_collection):  # noqa: ARG001
-        return (val[:, mask[0]].contiguous(),)
-
-    monkeypatch.setattr(qwen3_vl_model, "preprocess_packed_seqs", fake_preprocess_packed_seqs)
-
-    compacted = _prepare_packed_bshd_tensor(
-        value,
-        attention_mask,
-        None,
-        seq_dim=1,
-        pg_collection=object(),
-    )
-    assert torch.equal(compacted, value[:, attention_mask[0]])
 
 
 def test_split_if_full_sequence_only_splits_full_length_inputs():

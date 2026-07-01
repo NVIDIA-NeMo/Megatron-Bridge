@@ -23,7 +23,6 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -85,59 +84,6 @@ def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torc
     return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
-def _defer_in_batch_packing_to_step(cfg: ConfigContainer) -> bool:
-    """Return whether the current dataset expects the training step to pack the batch."""
-    dataset_cfg = getattr(cfg, "dataset", None)
-    return bool(
-        dataset_cfg is not None
-        and getattr(dataset_cfg, "enable_in_batch_packing", False)
-        and getattr(dataset_cfg, "defer_in_batch_packing_to_step", False)
-    )
-
-
-def _has_qwen_mrope_position_ids(batch: Mapping[str, Any]) -> bool:
-    """Return whether the batch carries precomputed Qwen MRoPE position IDs."""
-    position_ids = batch.get("position_ids")
-    return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
-
-
-def _uses_qwen_mrope_metadata(cfg: ConfigContainer) -> bool:
-    """Return whether the model config supports Qwen-style explicit MRoPE metadata."""
-    model_cfg = getattr(cfg, "model", None)
-    return bool(
-        model_cfg is not None
-        and getattr(model_cfg, "position_embedding_type", None) == "mrope"
-        and getattr(model_cfg, "mrope_section", None) is not None
-        and hasattr(model_cfg, "vision_start_token_id")
-        and hasattr(model_cfg, "image_token_id")
-        and hasattr(model_cfg, "video_token_id")
-    )
-
-
-def _pack_deferred_batch(batch: dict[str, Any], *, pad_to_multiple_of: int) -> None:
-    """Pack a deferred batch while preserving optional multi-axis position IDs."""
-    position_ids = batch.get("position_ids")
-    mrope_keys: tuple[str, ...] = ()
-    sequence_tensor_pad_values = None
-    if _has_qwen_mrope_position_ids(batch):
-        mrope_keys = tuple(f"_mrope_position_ids_{axis}" for axis in range(position_ids.size(0)))
-        for axis, key in enumerate(mrope_keys):
-            batch[key] = position_ids[axis]
-        batch["position_ids"] = position_ids[0]
-        sequence_tensor_pad_values = dict.fromkeys(mrope_keys, 0)
-
-    prepare_padded_or_packed_sequence_batch(
-        batch,
-        sequence_length=None,
-        enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=pad_to_multiple_of,
-        sequence_tensor_pad_values=sequence_tensor_pad_values,
-    )
-
-    if mrope_keys:
-        batch["position_ids"] = torch.stack([batch.pop(key) for key in mrope_keys])
-
-
 def _project_visual_inputs_for_pp_stage(visual_inputs: Any, *, is_first_pp_stage: bool) -> Any:
     """Drop visual payload tensors from PP stages that only need visual metadata."""
     if visual_inputs is None or is_first_pp_stage:
@@ -157,9 +103,6 @@ def get_batch_from_iterator(
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
-    defer_in_batch_packing_to_step: bool = False,
-    use_qwen_mrope_metadata: bool = False,
-    context_parallel_size: int = 1,
 ) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
@@ -187,20 +130,7 @@ def get_batch_from_iterator(
         required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
-    has_packed_metadata = batch.get("cu_seqlens_q") is not None
-    can_use_mrope_metadata_only = (
-        use_qwen_mrope_metadata and _has_qwen_mrope_position_ids(batch) and not defer_in_batch_packing_to_step
-    )
-    needs_input_ids = (
-        is_first_pp_stage
-        or is_last_pp_stage
-        or use_mtp
-        or (has_packed_metadata and context_parallel_size > 1)
-        or not can_use_mrope_metadata_only
-    )
-    if needs_input_ids:
-        required_device_keys.update(("tokens", "input_ids"))
-    required_device_keys.add("position_ids")
+    required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
 
@@ -249,9 +179,6 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
-        defer_in_batch_packing_to_step=_defer_in_batch_packing_to_step(cfg),
-        use_qwen_mrope_metadata=_uses_qwen_mrope_metadata(cfg),
-        context_parallel_size=pg_collection.cp.size(),
     )
 
     visual_inputs = batch.get("visual_inputs")
@@ -288,6 +215,11 @@ def forward_step(
 
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+    dataset_cfg = state.cfg.dataset
+    if getattr(dataset_cfg, "enable_in_batch_packing", False) and getattr(
+        dataset_cfg, "defer_in_batch_packing_to_step", False
+    ):
+        raise ValueError("vlm_step requires collate-time in-batch packing; set defer_in_batch_packing_to_step=False")
 
     timers("batch-generator", log_level=2).start()
     pg_collection = get_pg_collection(model)
@@ -302,27 +234,6 @@ def forward_step(
             visual_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
-
-    if packed_seq_params is None and _defer_in_batch_packing_to_step(state.cfg):
-        packed_batch = {
-            "input_ids": tokens,
-            "labels": labels,
-            "loss_mask": loss_mask,
-            "attention_mask": attention_mask,
-            "position_ids": position_ids,
-        }
-        _pack_deferred_batch(
-            packed_batch,
-            pad_to_multiple_of=getattr(state.cfg.dataset, "in_batch_packing_pad_to_multiple_of", 1),
-        )
-        tokens = packed_batch["input_ids"]
-        labels = packed_batch.get("labels")
-        loss_mask = packed_batch.get("loss_mask")
-        attention_mask = packed_batch.get("attention_mask")
-        position_ids = packed_batch.get("position_ids")
-        packed_seq_params = {
-            key: packed_batch[key] for key in _PACKED_SEQ_PARAM_KEYS if packed_batch.get(key) is not None
-        }
 
     # Accumulate FLOPS metadata across micro-batches. Passing ``cu_seqlens`` gives
     # the THD-correct Σᵢ sᵢ² for the attention term instead of the pack-length²
@@ -381,15 +292,7 @@ def forward_step(
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            if tokens is not None:
-                total_tokens = tokens.size(1)
-            elif labels is not None:
-                total_tokens = labels.size(1)
-            elif position_ids is not None:
-                total_tokens = position_ids.size(-1)
-            else:
-                total_tokens = getattr(config, "seq_length", None)
-            packed_seq_params["total_tokens"] = total_tokens
+            packed_seq_params["total_tokens"] = tokens.size(1) if tokens is not None else labels.size(1)
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     if loss_mask is not None:

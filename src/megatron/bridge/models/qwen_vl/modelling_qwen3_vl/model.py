@@ -30,7 +30,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_packed_seq_attention_mask, get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
     Qwen3VLTransformerConfig,
@@ -43,132 +43,18 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
-    preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
     split_deepstack_embs,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-
-
-def _retarget_cu_seqlens(
-    cu_seqlens: torch.Tensor,
-    *,
-    max_seqlen: int,
-    total_sequence_length: int | None,
-) -> tuple[torch.Tensor, int]:
-    """Align the final cu-seqlens offset with the local THD stream length."""
-    if total_sequence_length is None or int(cu_seqlens[-1].item()) == total_sequence_length:
-        return cu_seqlens, max_seqlen
-
-    cu_seqlens = cu_seqlens.clone()
-    cu_seqlens[-1] = total_sequence_length
-    max_seqlen = int((cu_seqlens[1:] - cu_seqlens[:-1]).max().item())
-    return cu_seqlens, max_seqlen
-
-
-def _language_model_packed_seq_params(
-    packed_seq_params: PackedSeqParams | None,
-    *,
-    use_actual_cu_seqlens: bool,
-    use_padded_cu_seqlens: bool = False,
-    total_sequence_length: int | None = None,
-) -> PackedSeqParams | None:
-    """Return packed metadata compatible with the language model THD stream."""
-    if (
-        use_padded_cu_seqlens
-        and total_sequence_length is not None
-        and packed_seq_params is not None
-        and packed_seq_params.cu_seqlens_q_padded is not None
-        and packed_seq_params.cu_seqlens_kv_padded is not None
-    ):
-        cu_seqlens_q = packed_seq_params.cu_seqlens_q_padded
-        cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
-        cu_seqlens_q, max_seqlen_q = _retarget_cu_seqlens(
-            cu_seqlens_q,
-            max_seqlen=packed_seq_params.max_seqlen_q,
-            total_sequence_length=total_sequence_length,
-        )
-        cu_seqlens_kv, max_seqlen_kv = _retarget_cu_seqlens(
-            cu_seqlens_kv,
-            max_seqlen=packed_seq_params.max_seqlen_kv,
-            total_sequence_length=total_sequence_length,
-        )
-        if (
-            cu_seqlens_q is packed_seq_params.cu_seqlens_q_padded
-            and cu_seqlens_kv is packed_seq_params.cu_seqlens_kv_padded
-        ):
-            return packed_seq_params
-        return PackedSeqParams(
-            qkv_format=packed_seq_params.qkv_format,
-            cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_kv=cu_seqlens_kv,
-            max_seqlen_q=max_seqlen_q,
-            max_seqlen_kv=max_seqlen_kv,
-            cu_seqlens_q_padded=cu_seqlens_q,
-            cu_seqlens_kv_padded=cu_seqlens_kv,
-            local_cp_size=packed_seq_params.local_cp_size,
-            cp_group=packed_seq_params.cp_group,
-            total_tokens=None,
-        )
-
-    if (
-        not use_actual_cu_seqlens
-        or packed_seq_params is None
-        or packed_seq_params.cu_seqlens_q_padded is None
-        or packed_seq_params.cu_seqlens_q is None
-    ):
-        return packed_seq_params
-
-    cu_seqlens_q = packed_seq_params.cu_seqlens_q
-    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv
-    cu_seqlens_q, max_seqlen_q = _retarget_cu_seqlens(
-        cu_seqlens_q,
-        max_seqlen=packed_seq_params.max_seqlen_q,
-        total_sequence_length=total_sequence_length,
-    )
-    cu_seqlens_kv, max_seqlen_kv = _retarget_cu_seqlens(
-        cu_seqlens_kv,
-        max_seqlen=packed_seq_params.max_seqlen_kv,
-        total_sequence_length=total_sequence_length,
-    )
-
-    return PackedSeqParams(
-        qkv_format=packed_seq_params.qkv_format,
-        cu_seqlens_q=cu_seqlens_q,
-        cu_seqlens_kv=cu_seqlens_kv,
-        max_seqlen_q=max_seqlen_q,
-        max_seqlen_kv=max_seqlen_kv,
-        local_cp_size=packed_seq_params.local_cp_size,
-        cp_group=packed_seq_params.cp_group,
-        total_tokens=None,
-    )
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
 def _is_qwen_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
     """Return whether ``position_ids`` is explicit Qwen MRoPE metadata."""
     return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
-
-
-def _get_packed_cp_index(
-    packed_seq_params: PackedSeqParams,
-    *,
-    total_tokens: int,
-    cp_size: int,
-    cp_rank: int,
-    device: torch.device,
-) -> torch.Tensor:
-    """Return this CP rank's TE THD partition indices for a packed sequence stream."""
-    import transformer_engine_torch as tex
-
-    cu_seqlens = (
-        packed_seq_params.cu_seqlens_q_padded
-        if packed_seq_params.cu_seqlens_q_padded is not None
-        else packed_seq_params.cu_seqlens_q
-    )
-    index = tex.thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank)
-    return index.to(device=device, dtype=torch.long)
 
 
 def _select_sequence(
@@ -181,42 +67,6 @@ def _select_sequence(
     if val is None:
         return None
     return val.index_select(seq_dim, index).contiguous()
-
-
-def _prepare_packed_lm_input_ids(
-    input_ids: torch.Tensor | None,
-    attention_mask: torch.Tensor | None,
-    packed_seq_params: PackedSeqParams,
-    packed_cp_index: torch.Tensor | None,
-    *,
-    cp_size: int,
-    pg_collection: ProcessGroupCollection,
-) -> tuple[torch.Tensor | None, torch.Tensor | None, int | None]:
-    """Return language-model token IDs aligned with the packed embedding stream."""
-    if input_ids is None:
-        return None, attention_mask, None
-
-    if packed_cp_index is not None:
-        return _select_sequence(input_ids, packed_cp_index, seq_dim=1), attention_mask, input_ids.size(1)
-
-    if attention_mask is None:
-        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-    lm_input_ids = preprocess_packed_seqs(input_ids, attention_mask, pre_process=True, pg_collection=pg_collection)[0]
-    return lm_input_ids, attention_mask, lm_input_ids.size(1) * cp_size
-
-
-def _prepare_packed_bshd_tensor(
-    val: torch.Tensor,
-    attention_mask: torch.Tensor,
-    packed_cp_index: torch.Tensor | None,
-    *,
-    seq_dim: int,
-    pg_collection: ProcessGroupCollection,
-) -> torch.Tensor:
-    """Return a packed tensor in BSHD-like layout."""
-    if packed_cp_index is not None:
-        return _select_sequence(val, packed_cp_index, seq_dim=seq_dim)
-    return preprocess_packed_seqs(val, attention_mask, pre_process=True, pg_collection=pg_collection)[0]
 
 
 def _split_if_full_sequence(
@@ -537,11 +387,8 @@ class Qwen3VLModel(MegatronModule):
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
         # there is a workaround for supporting sequence packing with context parallelism
-        # cp split with sequence packing will make model lose vision token information, so we need to keep
-        # the original input_ids and pack them after vision embedding is calculated,
-        # cooporate with verl's models/mcore/model_forward.py
-        # pack the combined_embeddings to thd here, we check if packed_seq_params is None to determine if we need to pack the combined_embeddings to thd
-        # this function needs the position_ids and attention_mask in BSHD format, no matter use packed_seq or not
+        # Packed batches already arrive in MCore THD layout from the collator. The
+        # model only applies rank-local CP indices after merging vision embeddings.
 
         Args:
             image_data (torch.Tensor): input image of shape [total_thw_size, n_features].
@@ -557,9 +404,9 @@ class Qwen3VLModel(MegatronModule):
 
         Returns:
             torch.Tensor | tuple[torch.Tensor, torch.Tensor] | dict[str, torch.Tensor]: Language-model loss of shape
-                [b, s] when labels are provided, otherwise logits of shape [b, s, vocab_size]. Packed CP/SP paths
-                that transform the supervision mask return ``(output, loss_mask)``. Non-last distributed-training
-                stages return ``{"language_module": output}``.
+                [b, s] when labels are provided, otherwise logits of shape [b, s, vocab_size]. CP paths that slice
+                the supervision mask return ``(output, loss_mask)``. Non-last distributed-training stages return
+                ``{"language_module": output}``.
         """
         del inference_context, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
@@ -578,7 +425,7 @@ class Qwen3VLModel(MegatronModule):
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
         packed_cp_index = (
-            _get_packed_cp_index(
+            get_packed_seq_cp_partition_indices(
                 packed_seq_params,
                 total_tokens=input_ids.size(1),
                 cp_size=cp_size,
@@ -591,10 +438,9 @@ class Qwen3VLModel(MegatronModule):
 
         # input_ids to pass to the language model for MTP (Multi-Token Prediction).
         # MTP's _get_embeddings rolls input_ids to generate future-token embeddings,
-        # so it must be a real tensor. For packed sequences we use the THD-format
-        # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
+        # so it must be a real tensor. Packed input IDs already use THD layout and
+        # are indexed below only when CP is enabled.
         lm_input_ids = input_ids
-        language_model_total_sequence_length = None
         full_sequence_length = input_ids.size(1) if input_ids is not None else None
         if self.language_model is not None:
             self.language_model.rotary_pos_emb.is_thd_format = False
@@ -703,61 +549,20 @@ class Qwen3VLModel(MegatronModule):
             if packed_seq_params is not None:
                 if cp_size > 1 and packed_cp_index is None:
                     raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
-                lm_input_ids, attention_mask, language_model_total_sequence_length = _prepare_packed_lm_input_ids(
-                    input_ids,
-                    attention_mask,
-                    packed_seq_params,
-                    packed_cp_index,
-                    cp_size=cp_size,
-                    pg_collection=self.pg_collection,
-                )
                 if packed_cp_index is not None:
-                    vision_mask_thd = _select_sequence(vision_mask, packed_cp_index, seq_dim=1)
-                else:
-                    _, _, vision_mask_thd = reorganize_inputs(
-                        input_ids=lm_input_ids,
-                        pixel_values=pixel_values,
-                        pixel_values_videos=pixel_values_videos,
-                        image_grid_thw=image_grid_thw,
-                        video_grid_thw=video_grid_thw,
-                        image_input_mask=image_input_mask,
-                        video_input_mask=video_input_mask,
-                        image_token_id=self.image_token_id,
-                        video_token_id=self.video_token_id,
-                        square_merge_size=self.square_merge_size,
-                    )
+                    lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
+                    vision_mask_local = _select_sequence(vision_mask, packed_cp_index, seq_dim=1)
+                    if deepstack_feature_lists is not None:
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        new_deepstack_feature_lists = []
+                        for deepstack_visual_embed in deepstack_feature_lists:
+                            tmp_embeddings[vision_mask] = deepstack_visual_embed
+                            tmp_embeddings_local = _select_sequence(tmp_embeddings, packed_cp_index, seq_dim=1)
+                            new_deepstack_feature_lists.append(tmp_embeddings_local[vision_mask_local].contiguous())
+                        deepstack_feature_lists = new_deepstack_feature_lists
 
-                if deepstack_feature_lists is not None:
-                    tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
-                    new_deepstack_feature_lists = []
-                    for deepstack_visual_embed in deepstack_feature_lists:
-                        tmp_embeddings[vision_mask] = deepstack_visual_embed
-                        tmp_embeddings_thd = _prepare_packed_bshd_tensor(
-                            tmp_embeddings.contiguous(),
-                            attention_mask,
-                            packed_cp_index,
-                            seq_dim=1,
-                            pg_collection=self.pg_collection,
-                        )
-                        new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
-
-                    deepstack_feature_lists = new_deepstack_feature_lists
-
-                vision_mask = vision_mask_thd
-                if packed_cp_index is not None:
+                    vision_mask = vision_mask_local
                     combined_embeddings = _select_sequence(combined_embeddings, packed_cp_index, seq_dim=0)
-                else:
-                    combined_embeddings = (
-                        _prepare_packed_bshd_tensor(
-                            combined_embeddings.transpose(0, 1).contiguous(),
-                            attention_mask,
-                            packed_cp_index,
-                            seq_dim=1,
-                            pg_collection=self.pg_collection,
-                        )
-                        .transpose(0, 1)
-                        .contiguous()
-                    )
             elif combined_embeddings is not None and cp_size > 1:
                 combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
@@ -769,17 +574,8 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
-            # On non-pre_process PP stages (e.g. the last stage where MTP runs),
-            # convert lm_input_ids to THD format so it matches position_ids.
-            if packed_seq_params is not None:
-                lm_input_ids, attention_mask, language_model_total_sequence_length = _prepare_packed_lm_input_ids(
-                    input_ids,
-                    attention_mask,
-                    packed_seq_params,
-                    packed_cp_index,
-                    cp_size=cp_size,
-                    pg_collection=self.pg_collection,
-                )
+            if packed_cp_index is not None:
+                lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -828,25 +624,8 @@ class Qwen3VLModel(MegatronModule):
         if packed_seq_params is not None:
             if packed_cp_index is not None:
                 position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
-            else:
-                if attention_mask is None:
-                    mask_source = input_ids if input_ids is not None else position_ids[0]
-                    attention_mask = get_packed_seq_attention_mask(mask_source, packed_seq_params)
-                # convert position_ids to THD format
-                position_ids = (
-                    preprocess_packed_seqs(
-                        position_ids.permute(1, 2, 0),
-                        attention_mask,
-                        pre_process=True,
-                        pg_collection=self.pg_collection,
-                    )[0]
-                    .permute(2, 0, 1)
-                    .contiguous()
-                )
             attention_mask = None
             self.language_model.rotary_pos_emb.is_thd_format = True
-            if language_model_total_sequence_length is None:
-                language_model_total_sequence_length = position_ids.size(-1) * cp_size
         elif cp_size > 1:
             lm_input_ids, _ = _split_if_full_sequence(
                 lm_input_ids,
@@ -868,43 +647,13 @@ class Qwen3VLModel(MegatronModule):
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
 
-        language_model_packed_seq_params = _language_model_packed_seq_params(
-            packed_seq_params,
-            use_actual_cu_seqlens=self.config.sequence_parallel and cp_size <= 1,
-            use_padded_cu_seqlens=cp_size > 1,
-            total_sequence_length=language_model_total_sequence_length,
-        )
-        return_compacted_loss_mask = False
+        return_sliced_loss_mask = False
         if packed_seq_params is not None:
             if packed_cp_index is not None:
                 labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
                 if loss_mask is not None:
                     loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
-                    return_compacted_loss_mask = True
-            elif self.config.sequence_parallel:
-                supervision_mask_source = input_ids
-                if supervision_mask_source is None:
-                    supervision_mask_source = labels if labels is not None else loss_mask
-                packed_supervision_mask = (
-                    None
-                    if supervision_mask_source is None
-                    else get_packed_seq_attention_mask(supervision_mask_source, packed_seq_params)
-                )
-                if labels is not None:
-                    labels = preprocess_packed_seqs(
-                        labels,
-                        packed_supervision_mask,
-                        pre_process=True,
-                        pg_collection=self.pg_collection,
-                    )[0]
-                if loss_mask is not None:
-                    loss_mask = preprocess_packed_seqs(
-                        loss_mask,
-                        packed_supervision_mask,
-                        pre_process=True,
-                        pg_collection=self.pg_collection,
-                    )[0]
-                    return_compacted_loss_mask = True
+                    return_sliced_loss_mask = True
         elif cp_size > 1:
             labels, _ = _split_if_full_sequence(
                 labels,
@@ -914,7 +663,7 @@ class Qwen3VLModel(MegatronModule):
                 full_sequence_length=full_sequence_length,
             )
             if loss_mask is not None:
-                loss_mask, return_compacted_loss_mask = _split_if_full_sequence(
+                loss_mask, return_sliced_loss_mask = _split_if_full_sequence(
                     loss_mask,
                     cp_size=cp_size,
                     seq_dim=1,
@@ -930,7 +679,7 @@ class Qwen3VLModel(MegatronModule):
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
             inference_params=inference_params,  # currently always None
-            packed_seq_params=language_model_packed_seq_params,
+            packed_seq_params=packed_seq_params,
             runtime_gather_output=runtime_gather_output,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
@@ -941,6 +690,6 @@ class Qwen3VLModel(MegatronModule):
         if self.use_dist_train:
             if not is_pp_last_stage(self.pg_collection.pp):
                 return {"language_module": output}
-        if return_compacted_loss_mask:
+        if return_sliced_loss_mask:
             return output, loss_mask
         return output

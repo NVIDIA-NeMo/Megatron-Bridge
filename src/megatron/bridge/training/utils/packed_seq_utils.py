@@ -21,6 +21,41 @@ from megatron.core.packed_seq_params import PackedSeqParams
 PackedMetadataValue = torch.Tensor | int | None
 
 
+def get_packed_seq_cp_partition_indices(
+    packed_seq_params: PackedSeqParams,
+    *,
+    total_tokens: int,
+    cp_size: int,
+    cp_rank: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return the Transformer Engine partition indices for packed CP.
+
+    Args:
+        packed_seq_params: MCore THD metadata for the full packed stream.
+        total_tokens: Total padded token count before CP partitioning.
+        cp_size: Context-parallel world size.
+        cp_rank: Context-parallel rank.
+        device: Device on which the returned indices will be consumed.
+
+    Returns:
+        Long tensor containing this CP rank's indices into the full stream.
+
+    Raises:
+        ValueError: If packed query sequence boundaries are unavailable.
+    """
+    cu_seqlens = packed_seq_params.cu_seqlens_q_padded
+    if cu_seqlens is None:
+        cu_seqlens = packed_seq_params.cu_seqlens_q
+    if cu_seqlens is None:
+        raise ValueError("Packed CP partitioning requires cu_seqlens_q metadata.")
+
+    import transformer_engine_torch as tex
+
+    index = tex.thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank)
+    return index.to(device=device, dtype=torch.long)
+
+
 def unpack_mcore_thd_tensor_for_position_ids(
     tensor: torch.Tensor,
     packed_seq_params: PackedSeqParams,

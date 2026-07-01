@@ -188,11 +188,11 @@ def test_get_batch_from_iterator_projects_visual_payload_on_middle_pp_stage():
     assert out_vi.image_grid_thw is not None
     assert vi.pixel_values is not None
     assert vi.pixel_values.shape == original_pixel_values.shape
-    # Ordinary 2D text position ids are not enough for Qwen MRoPE, so keep input ids.
+    # Token and position IDs stay available to every PP stage.
     assert out["input_ids"] is not None
 
 
-def test_get_batch_from_iterator_uses_mrope_metadata_only_on_middle_pp_stage():
+def test_get_batch_from_iterator_keeps_input_ids_with_multiaxis_position_ids():
     batch = _make_batch()
     batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
     for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
@@ -207,89 +207,13 @@ def test_get_batch_from_iterator_uses_mrope_metadata_only_on_middle_pp_stage():
         skip_getting_attention_mask_from_dataset=True,
         is_first_pp_stage=False,
         is_last_pp_stage=False,
-        use_qwen_mrope_metadata=True,
     )
 
-    assert out["tokens"] is None
-    assert out["input_ids"] is None
+    assert out["tokens"] is not None
+    assert out["input_ids"] is not None
     assert out["position_ids"].shape == (3, 1, 3)
     assert out["visual_inputs"].pixel_values is None
     assert out["visual_inputs"].image_grid_thw is not None
-
-
-@pytest.mark.parametrize(("use_mtp", "context_parallel_size"), [(True, 1), (False, 2)])
-def test_get_batch_from_iterator_keeps_input_ids_for_middle_stage_features(use_mtp, context_parallel_size):
-    batch = _make_batch()
-    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
-    if context_parallel_size > 1:
-        batch["cu_seqlens_q"] = torch.tensor([0, 3], dtype=torch.int32)
-    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask", "cu_seqlens_q"]:
-        if key in batch:
-            batch[key] = _as_nocuda(batch[key])
-    vi = batch["visual_inputs"]
-    vi.pixel_values = _as_nocuda(vi.pixel_values)
-    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
-
-    out = get_batch_from_iterator(
-        _Iterator(batch),
-        use_mtp=use_mtp,
-        skip_getting_attention_mask_from_dataset=True,
-        is_first_pp_stage=False,
-        is_last_pp_stage=False,
-        use_qwen_mrope_metadata=True,
-        context_parallel_size=context_parallel_size,
-    )
-
-    assert out["tokens"] is not None
-    assert out["input_ids"] is not None
-
-
-def test_get_batch_from_iterator_keeps_input_ids_for_non_qwen_3d_position_ids():
-    batch = _make_batch()
-    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
-    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
-        batch[key] = _as_nocuda(batch[key])
-    vi = batch["visual_inputs"]
-    vi.pixel_values = _as_nocuda(vi.pixel_values)
-    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
-
-    out = get_batch_from_iterator(
-        _Iterator(batch),
-        use_mtp=False,
-        skip_getting_attention_mask_from_dataset=True,
-        is_first_pp_stage=False,
-        is_last_pp_stage=False,
-    )
-
-    assert out["tokens"] is not None
-    assert out["input_ids"] is not None
-    assert out["position_ids"].shape == (3, 1, 3)
-    assert out["visual_inputs"].pixel_values is None
-
-
-def test_get_batch_from_iterator_keeps_input_ids_when_step_must_pack_middle_pp_stage():
-    batch = _make_batch()
-    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
-    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
-        batch[key] = _as_nocuda(batch[key])
-    vi = batch["visual_inputs"]
-    vi.pixel_values = _as_nocuda(vi.pixel_values)
-    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
-
-    out = get_batch_from_iterator(
-        _Iterator(batch),
-        use_mtp=False,
-        skip_getting_attention_mask_from_dataset=True,
-        is_first_pp_stage=False,
-        is_last_pp_stage=False,
-        defer_in_batch_packing_to_step=True,
-        use_qwen_mrope_metadata=True,
-    )
-
-    assert out["tokens"] is not None
-    assert out["input_ids"] is not None
-    assert out["position_ids"].shape == (3, 1, 3)
-    assert out["visual_inputs"].pixel_values is None
 
 
 class _MockProcessGroup:
@@ -431,128 +355,16 @@ def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
     assert inner_model.received_kwargs["mm_token_type_ids"] is not None
 
 
-def test_forward_step_packs_deferred_in_batch_sequences(monkeypatch):
+def test_forward_step_rejects_deferred_in_batch_packing(monkeypatch):
     inner_model = _PackedForwardModel()
     model = _ForwardWrapper(inner_model)
     _patch_forward_step_deps(monkeypatch, model)
     state = _make_forward_step_state()
-    state.cfg.dataset.skip_getting_attention_mask_from_dataset = False
     state.cfg.dataset.enable_in_batch_packing = True
     state.cfg.dataset.defer_in_batch_packing_to_step = True
-    state.cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
 
-    batch = {
-        "input_ids": torch.tensor([[1, 2, 0, 0], [3, 4, 5, 0]]),
-        "labels": torch.tensor([[2, -100, -100, -100], [4, 5, -100, -100]]),
-        "loss_mask": torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0]]),
-        "position_ids": torch.arange(4).unsqueeze(0).expand(2, -1),
-        "attention_mask": torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.bool),
-        "visual_inputs": None,
-    }
-
-    output, _ = forward_step(state, _Iterator(batch), model)
-
-    assert output.item() == 0.0
-    assert inner_model.received_kwargs is not None
-    assert inner_model.received_kwargs["input_ids"].tolist() == [[1, 2, 0, 0, 3, 4, 5, 0]]
-    assert inner_model.received_kwargs["attention_mask"] is None
-    packed_seq_params = inner_model.received_kwargs["packed_seq_params"]
-    assert packed_seq_params is not None
-    assert packed_seq_params.cu_seqlens_q.tolist() == [0, 2, 5]
-    assert packed_seq_params.cu_seqlens_q_padded.tolist() == [0, 4, 8]
-    assert packed_seq_params.max_seqlen_q == 4
-
-
-def test_forward_step_packs_deferred_mrope_position_ids(monkeypatch):
-    inner_model = _PackedForwardModel()
-    model = _ForwardWrapper(inner_model)
-    _patch_forward_step_deps(monkeypatch, model)
-    state = _make_forward_step_state()
-    state.cfg.dataset.skip_getting_attention_mask_from_dataset = False
-    state.cfg.dataset.enable_in_batch_packing = True
-    state.cfg.dataset.defer_in_batch_packing_to_step = True
-    state.cfg.dataset.in_batch_packing_pad_to_multiple_of = 4
-
-    base_position_ids = torch.tensor([[10, 11, 12, 13], [20, 21, 22, 23]])
-    batch = {
-        "input_ids": torch.tensor([[1, 2, 0, 0], [3, 4, 5, 0]]),
-        "labels": torch.tensor([[2, -100, -100, -100], [4, 5, -100, -100]]),
-        "loss_mask": torch.tensor([[1.0, 0.0, 0.0, 0.0], [1.0, 1.0, 0.0, 0.0]]),
-        "position_ids": torch.stack([base_position_ids, base_position_ids + 100, base_position_ids + 200]),
-        "attention_mask": torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.bool),
-        "visual_inputs": None,
-    }
-
-    output, _ = forward_step(state, _Iterator(batch), model)
-
-    assert output.item() == 0.0
-    expected_position_ids = torch.tensor(
-        [
-            [[10, 11, 0, 0, 20, 21, 22, 0]],
-            [[110, 111, 0, 0, 120, 121, 122, 0]],
-            [[210, 211, 0, 0, 220, 221, 222, 0]],
-        ]
-    )
-    assert torch.equal(inner_model.received_kwargs["position_ids"], expected_position_ids)
-
-
-def test_forward_step_sets_hybrid_total_tokens_from_available_sequence_tensor(monkeypatch):
-    """Test hybrid packed params derive total tokens from tokens, labels, position_ids, or config."""
-    captured_total_tokens = []
-
-    def fake_get_packed_seq_params(packed_seq_params):
-        captured_total_tokens.append(packed_seq_params["total_tokens"])
-        return packed_seq_params
-
-    monkeypatch.setattr("megatron.bridge.training.vlm_step.get_packed_seq_params", fake_get_packed_seq_params)
-
-    def run_case(batch, *, is_first_stage=True, is_last_stage=True):
-        inner_model = _PackedForwardModel()
-        inner_model.config.is_hybrid_model = True
-        model = _ForwardWrapper(inner_model)
-        _patch_forward_step_deps(monkeypatch, model)
-        monkeypatch.setattr(
-            "megatron.bridge.training.vlm_step.is_pp_first_stage", lambda _: is_first_stage, raising=True
-        )
-        monkeypatch.setattr(
-            "megatron.bridge.training.vlm_step.is_pp_last_stage", lambda _: is_last_stage, raising=True
-        )
-        state = _make_forward_step_state()
-        inner_model.config.seq_length = 32
-        state.cfg.dataset.enable_in_batch_packing = True
-
-        output, _ = forward_step(state, _Iterator(batch), model)
-
-        assert output.item() == 0.0
-
-    base_batch = {
-        "input_ids": torch.ones(1, 7, dtype=torch.long),
-        "labels": torch.ones(1, 11, dtype=torch.long),
-        "loss_mask": torch.ones(1, 11),
-        "position_ids": torch.ones(3, 1, 13, dtype=torch.long),
-        "attention_mask": None,
-        "cu_seqlens_q": torch.tensor([0, 7], dtype=torch.int32),
-        "cu_seqlens_kv": torch.tensor([0, 7], dtype=torch.int32),
-        "max_seqlen_q": torch.tensor(7, dtype=torch.int32),
-        "max_seqlen_kv": torch.tensor(7, dtype=torch.int32),
-        "visual_inputs": None,
-    }
-    run_case(base_batch)
-
-    labels_batch = dict(base_batch)
-    labels_batch["input_ids"] = None
-    run_case(labels_batch, is_first_stage=False)
-
-    position_ids_batch = dict(labels_batch)
-    position_ids_batch["labels"] = None
-    position_ids_batch["loss_mask"] = None
-    run_case(position_ids_batch, is_first_stage=False, is_last_stage=False)
-
-    config_batch = dict(position_ids_batch)
-    config_batch["position_ids"] = None
-    run_case(config_batch, is_first_stage=False, is_last_stage=False)
-
-    assert captured_total_tokens == [7, 11, 13, 32]
+    with pytest.raises(ValueError, match="requires collate-time in-batch packing"):
+        forward_step(state, _Iterator(_make_visual_forward_batch()), model)
 
 
 def test_get_batch_consumes_collated_sequence_shape(monkeypatch):

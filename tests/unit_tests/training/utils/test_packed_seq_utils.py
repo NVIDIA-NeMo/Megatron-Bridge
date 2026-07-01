@@ -12,14 +12,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_cp_partition_indices,
     get_packed_seq_params,
     repack_mcore_thd_position_ids,
     unpack_mcore_thd_tensor_for_position_ids,
 )
+
+
+def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch):
+    actual = torch.tensor([0, 6, 14], dtype=torch.int32)
+    padded = torch.tensor([0, 8, 16], dtype=torch.int32)
+    seen = {}
+
+    class FakeTransformerEngineTorch:
+        @staticmethod
+        def thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
+            seen["cu_seqlens"] = cu_seqlens
+            seen["total_tokens"] = total_tokens
+            seen["cp_size"] = cp_size
+            seen["cp_rank"] = cp_rank
+            return torch.tensor([0, 1, 14, 15], dtype=torch.int64)
+
+    monkeypatch.setitem(sys.modules, "transformer_engine_torch", FakeTransformerEngineTorch)
+
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=actual,
+        cu_seqlens_kv=actual,
+        cu_seqlens_q_padded=padded,
+        cu_seqlens_kv_padded=padded,
+    )
+
+    index = get_packed_seq_cp_partition_indices(
+        packed_seq_params,
+        total_tokens=16,
+        cp_size=4,
+        cp_rank=0,
+        device=torch.device("cpu"),
+    )
+
+    assert torch.equal(seen["cu_seqlens"], padded)
+    assert seen["total_tokens"] == 16
+    assert seen["cp_size"] == 4
+    assert seen["cp_rank"] == 0
+    assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
 
 
 def test_unpack_and_repack_mcore_thd_position_rows():
