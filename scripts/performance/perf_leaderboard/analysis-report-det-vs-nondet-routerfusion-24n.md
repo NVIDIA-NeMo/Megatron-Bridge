@@ -81,22 +81,29 @@ and (new) `torch.utils.deterministic.fill_uninitialized_memory=False`.
 independent no-nsys allocations — 8890.8 / 8906.2 / 8868.4 / 8898.9 ms → **mean ≈ 8891 ms**, range
 8868–8906 (0.4% spread). det+nsys adds ~150 ms (9041.4 ms). So det throughput is highly stable.
 
-**What is NOT solid (the det-vs-non-det delta):** there is only **one** non-det sample (9251.7 ms at
-iter 50). At face value det looks ~2% *faster* — **do not trust that**, for two reasons:
+**What is NOT solid (the det-vs-non-det delta) — measured, then re-checked:** using the robust metric
+(mean step time over iters 20–49, not a single iteration), across 1 det and **3 non-det** allocations:
 
-1. It is a single iteration on a single allocation, so it carries node/run jitter (for reference, the
-   2026-06-12 report's non-det iter-50 was 8041 ms — i.e. the non-det number swings by ~15% across
-   environments, far larger than the ~2% "gap" measured here).
-2. It **contradicts §4 below**: in the nsys window the det arm pays a real tax in P2P comm
-   (`recv_backward` +24%) and Mamba backward (+16%). A run that is paying that tax in the profile
-   cannot also be reliably "faster" overall — the two disagreeing is itself the signal that the
-   iter-50 delta is within noise.
+| arm | windowed mean step time (iters 20–49) |
+|---|---|
+| det (job 3706179) | 9158.2 ms |
+| non-det #1 (3706214) | 9101.4 ms |
+| non-det #2 recheck-a (3712367) | 9196.5 ms |
+| non-det #3 recheck-b (3712403) | 9000.4 ms |
 
-**Honest conclusion:** we cannot state a determinism perf cost (or savings) from this run.
-`fill_uninitialized_memory=False` removes a known det-only overhead (its purpose) and *should* shrink
-the penalty seen previously, but **quantifying it requires a matched multi-run non-det baseline over
-the same window** — which this run does not have (4 det samples vs 1 non-det). Treat §4 as the
-qualitative "where det differs" map, not a net-cost number.
+The three non-det allocations span **9000–9197 ms (~2.2%)**, and **det (9158) sits *inside* that
+range.** So the det-vs-non-det difference is **within cross-allocation noise** — no determinism cost
+(or savings) is resolvable here. Two earlier readings were undersampling artifacts and are retracted:
+- "det ~2% *faster*" came from **iter 50 only**, where the v2 non-det spiked to 9251 ms (its
+  recheck-a/b iter-50 were 9090 / 8981 — no spike, confirming the spike was a fluke).
+- "det ~0.6% *slower*" came from a single det-vs-single-nondet windowed comparison, now swamped by the
+  ~2% spread seen across non-det allocations alone.
+
+**Honest conclusion:** at this sample size the determinism step-time cost is **indistinguishable from
+noise (≲1% vs a ~2% cross-allocation spread)**. `fill_uninitialized_memory=False` removes a known
+det-only overhead (its purpose) and plausibly shrank the +17% penalty from the 2026-06-12 report, but
+**resolving a real cost would need many matched runs on both arms**. Treat §4 as the qualitative
+"where det differs" map, not a net-cost number.
 
 ---
 
@@ -148,16 +155,17 @@ to a step-time number (see §3: the det-vs-non-det total is not quantifiable fro
   under each run's experiment dir; reuse the queries in `analysis_report_det_vs_nondet.md §8`.
 - **Single-rank, first-PP-stage** visibility; **mock data + force-balanced routing**; **iters 15–17**
   are still warmup for the leaderboard window, while the headline uses the iter-50 log line.
-- **Only 1 non-det sample vs 4 det samples**, so the det-vs-non-det *cost* is **not quantified** here
-  (see §3). The solid results are (a) bit-exact determinism across 4 independent allocations, and
-  (b) tightly reproducible det step time (~8891 ms). A matched multi-run non-det baseline is the
-  outstanding follow-up.
+- **1 det vs 3 non-det windowed samples** show det sitting *inside* the non-det ~2% cross-allocation
+  spread, so the det-vs-non-det *cost* is **not resolvable** here (see §3). The solid results are
+  (a) bit-exact determinism across 4 independent allocations, and (b) tightly reproducible det step
+  time (~8891 ms no-nsys). Fully quantifying the cost needs many matched runs on both arms.
 
 ---
 
 ## 6. Artifacts
 
 - Reports: `nsys-compare-24node-routerfusion-v2/{leaderboard.txt, bitwise_check.txt}`
-- Job IDs: det=3706179, nondet=3706214, det-no-nsys=3706236 / 3706255; extra det (4-way check) = 3707706 / 3707730
+- Job IDs: det=3706179, nondet=3706214, det-no-nsys=3706236 / 3706255; extra det (4-way check) = 3707706 / 3707730;
+  nondet+nsys recheck = 3712367 / 3712403
 - Code under test: `model.moe_router_fusion=true` (launcher) + `fill_uninitialized_memory=False`
   (`src/megatron/bridge/training/config.py`, aliased-import fix)
