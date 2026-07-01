@@ -93,6 +93,7 @@ def main(
     trust_remote_code: bool | None = None,
     strict: bool = False,
     skip_save: bool = False,
+    sequence_parallel: bool = False,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -123,6 +124,7 @@ def main(
         model_config.params_dtype = torch.bfloat16
         model_config.expert_model_parallel_size = ep
         model_config.expert_tensor_parallel_size = etp
+        model_config.sequence_parallel = sequence_parallel
 
         # Once all overrides are set, finalize the builder config before loading.
         model_config.finalize()
@@ -136,6 +138,7 @@ def main(
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
                 "params_dtype": torch.bfloat16,
+                "sequence_parallel": sequence_parallel,
             },
             wrap_with_ddp=False,
         )
@@ -149,6 +152,7 @@ def main(
         model_config.params_dtype = torch.bfloat16
         model_config.expert_model_parallel_size = ep
         model_config.expert_tensor_parallel_size = etp
+        model_config.sequence_parallel = sequence_parallel
 
         # Once all overrides are set, finalize the builder config before construction.
         model_config.finalize()
@@ -267,6 +271,11 @@ if __name__ == "__main__":
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
+    parser.add_argument(
+        "--sequence-parallel",
+        action="store_true",
+        help="Enable sequence parallelism (required by some architectures when TP > 1)",
+    )
 
     parser.add_argument(
         "--megatron-save-path",
@@ -297,6 +306,7 @@ if __name__ == "__main__":
         args.megatron_load_path,
         args.trust_remote_code,
         skip_save=args.skip_save,
+        sequence_parallel=args.sequence_parallel,
     )
 
     if torch.distributed.is_initialized():

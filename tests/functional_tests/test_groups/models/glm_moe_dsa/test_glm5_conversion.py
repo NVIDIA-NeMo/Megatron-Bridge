@@ -230,6 +230,8 @@ class TestGLM5Conversion:
             "--ep",
             str(ep),
         ]
+        if tp > 1:
+            cmd.append("--sequence-parallel")
 
         result = subprocess.run(
             cmd,
