@@ -206,10 +206,12 @@ class DataloaderConfig:
 
     dataloader_load: str | None = None
     """Directory to restore dataloader stream-position state from on resume. When ``None`` (the
-    default), it is colocated under an ``energon`` subdirectory of ``checkpoint.load``. If that
-    directory does not exist (e.g. a checkpoint saved before this feature) the dataloader starts
-    fresh; if it exists but the current rank's state file is missing, resume fails loudly rather
-    than silently changing the data order."""
+    default), it is resolved to the ``energon`` subdirectory of whichever checkpoint is actually
+    loaded -- ``checkpoint.save`` for a non-persistent or local checkpoint, ``checkpoint.load`` for a
+    persistent one, or the parent of a directly specified iteration directory. If that directory does
+    not exist (e.g. a checkpoint saved before this feature) the dataloader starts fresh; if it exists
+    but the current rank's state file is missing, resume fails loudly rather than silently changing
+    the data order."""
 
     def finalize(self):
         """Finalize dataloader config field constraints."""

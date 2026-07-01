@@ -16,6 +16,10 @@ Megatron Bridge uses Megatron Core's distributed checkpointing system, which is 
 
 **Parallelism Flexibility**: The system provides flexibility to resume training using different parallelism strategies. You can change tensor parallelism, pipeline parallelism, or data parallelism sizes between checkpoint save and load operations.
 
+```{note}
+This flexibility applies to the model and optimizer checkpoint. Restoring **Energon dataloader state** (see [Dataloader State (Energon)](#dataloader-state-energon) below) is saved per data-parallel rank, so it requires the **same data-parallel size** at load. Tensor, pipeline, and context parallelism may still change freely.
+```
+
 **Scalability**: Handles all types of parallelism including:
 - **Data Parallelism (DP)**: Replicates the model across multiple GPUs with different data batches
 - **Tensor Parallelism (TP)**: Distributes individual layer parameters across GPUs  
@@ -203,7 +207,7 @@ The checkpoint includes the following components when using the `torch_dist` che
 - **Training state**: Captures the current iteration count, number of consumed samples, and the state of the learning rate scheduler.
 - **Configuration**: Serialized as a YAML file (`run_config.yaml`) containing the complete `ConfigContainer`.
 - **Tokenizer files**: All tokenizer artifacts (vocabulary, special tokens, config) for self-contained checkpoints.
-- **Dataloader states**: Ensures deterministic resumption of data iteration.
+- **Dataloader state (Energon only)**: Saved in a sibling `energon/` tree for deterministic data resumption; see [Dataloader State (Energon)](#dataloader-state-energon).
 - **Metadata**: Used for validating and correctly loading the checkpoint.
 
 Megatron Bridge creates checkpoints with the following directory structure:
@@ -227,11 +231,11 @@ checkpoint_dir/
 │   │   ├── tokenizer_config.json            # Tokenizer configuration
 │   │   ├── special_tokens_map.json          # Special token definitions
 │   │   └── ...                              # Other tokenizer artifacts
-│   ├── dataloader_state/                     # Data iterator states
-│   │   ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader state
-│   │   ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader state
-│   │   ├── train_dataloader_dprank002.pt    # DP rank 2 dataloader state
-│   │   └── ...                              # One file per DP rank
+├── energon/                                   # Energon dataloader state
+│   └── iter_N/                                # Keyed by iteration, matching the model checkpoint step
+│       ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader stream position
+│       ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader stream position
+│       └── ...                              # One file per data-parallel rank
 ```
 
 ### Tokenizer Assets
@@ -290,7 +294,7 @@ Keying by the **pure** data-parallel rank (excluding context parallelism) means 
 
 ### Configuration
 
-Both paths default to an `energon/` subdirectory of the checkpoint directory, so no configuration is needed for the common case — saving model checkpoints implies saving and restoring dataloader state:
+The save path defaults to an `energon/` subdirectory of `checkpoint.save`. The load path defaults to the `energon/` subdirectory of whichever checkpoint is actually restored (see below). So no configuration is needed for the common case: saving model checkpoints implies saving and restoring dataloader state.
 
 ```python
 from megatron.bridge.data.energon.energon_provider import EnergonProvider  # or a subclass
@@ -298,11 +302,13 @@ from megatron.bridge.data.energon.energon_provider import EnergonProvider  # or 
 dataset = EnergonProvider(
     ...,
     # dataloader_save defaults to "{checkpoint.save}/energon"
-    # dataloader_load defaults to "{checkpoint.load}/energon"
+    # dataloader_load defaults to the "energon" subdir of the checkpoint actually loaded:
+    #   checkpoint.save for a non-persistent or local checkpoint, checkpoint.load for a
+    #   persistent one, or the parent of a directly specified iter_N directory.
 )
 ```
 
-Set `dataset.dataloader_save` / `dataset.dataloader_load` explicitly to override the destination. The fields have no effect for non-Energon dataloaders.
+The load default follows the actual source because the checkpoint restored on resume is not always rooted at `checkpoint.load`: a non-persistent or local checkpoint is selected from `checkpoint.save`, and a directly specified `iter_N` directory holds its `energon/` state one level up. Set `dataset.dataloader_save` / `dataset.dataloader_load` explicitly to override the destination. The fields have no effect for non-Energon dataloaders.
 
 ### Restore Behavior and Failure Modes
 

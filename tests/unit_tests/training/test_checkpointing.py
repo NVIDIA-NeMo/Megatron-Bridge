@@ -24,6 +24,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
     _DIRECT_ITERATION_DIR_SENTINEL,
+    DATALOADER_STATE_SUBDIR,
     CheckpointLoadContext,
     CheckpointManager,
     CheckpointSaveContext,
@@ -38,6 +39,7 @@ from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
+    _record_dataloader_state_dir,
     _save_hf_adapter_weights,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
@@ -1749,6 +1751,121 @@ class TestLoadBaseCheckpoint:
         with patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration") as mock_get_np_iter:
             _load_base_checkpoint("/ckpt/iter_0001000", base_config, pg_collection=mock_pg_collection)
             mock_get_np_iter.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_under_load_dir_for_persistent(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A persistent checkpoint records its dataloader-state dir under load_dir, for setup() to restore."""
+        mock_resolve.return_value = (100, False)
+        mock_get_np_iter.return_value = -1  # no non-persistent checkpoint
+        mock_file_exists.return_value = True
+        mock_get_format.return_value = "torch_dist"
+        base_config.ckpt_format = "torch_dist"
+        mock_load_global.return_value = ({"model": "x"}, "/ckpt/iter_0000100", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint("/ckpt", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_under_save_for_non_persistent(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        mock_load_np,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A non-persistent/local checkpoint records its dataloader-state dir under checkpoint.save, not load."""
+        base_config.save = "/save_dir"
+        mock_resolve.return_value = (50, False)  # older persistent
+        mock_get_np_iter.return_value = 100  # newer non-persistent wins
+        mock_file_exists.return_value = False
+        mock_load_np.return_value = ({"model": "x"}, "np_name", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint("/load_dir", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/save_dir", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_one_level_up_for_direct_iteration(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A direct iter_N directory records its dataloader-state dir one level up (the energon sibling)."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "torch_dist"
+        mock_load_global.return_value = ({"model": "x"}, "/ckpt/iter_0001000", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint(
+            "/ckpt/iter_0001000", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection
+        )
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_none_when_no_checkpoint_found(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        base_config,
+        mock_pg_collection,
+    ):
+        """No checkpoint selected => dataloader_state_dir is None so resume restores nothing."""
+        mock_resolve.return_value = (-1, False)
+        mock_get_np_iter.return_value = -1
+        mock_file_exists.return_value = False
+
+        ctx = {}
+        _load_base_checkpoint("/ckpt", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] is None
+
+
+class TestRecordDataloaderStateDir:
+    """Tests for _record_dataloader_state_dir, which captures where setup() restores dataloader state."""
+
+    def test_joins_energon_subdir(self):
+        ctx = {}
+        _record_dataloader_state_dir(ctx, "/ckpt")
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    def test_none_base_records_none(self):
+        ctx = {}
+        _record_dataloader_state_dir(ctx, None)
+        assert ctx["dataloader_state_dir"] is None
+
+    def test_none_context_is_noop(self):
+        """Must not raise when there is no context to record into."""
+        _record_dataloader_state_dir(None, "/ckpt")
 
 
 class TestLoadModelWeightsFromCheckpoint:

@@ -14,7 +14,6 @@
 
 import inspect
 import logging
-import os
 import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
@@ -29,9 +28,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
-from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -43,7 +42,6 @@ from megatron.bridge.training.checkpointing import (
     CheckpointManager,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
-    DATALOADER_STATE_SUBDIR,
     maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
@@ -398,15 +396,17 @@ def setup(
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
 
-    # Resume the dataloader stream position from the loaded checkpoint so a resumed run continues
-    # over the same data (currently only Megatron Energon). Runs after the iterator is built and the
-    # model checkpoint load restored state.train_state.step. Defaults the source to an `energon`
-    # subdir of checkpoint.load; an explicit dataset.dataloader_load overrides. No-op for
-    # non-Energon dataloaders or checkpoints saved without dataloader state.
-    if should_load_checkpoint:
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
         dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
-        if dataloader_load_path is None and cfg.checkpoint.load:
-            dataloader_load_path = os.path.join(cfg.checkpoint.load, DATALOADER_STATE_SUBDIR)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
         maybe_load_dataloader_state(
             train_data_iterator,
             state.train_state.step,

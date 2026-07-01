@@ -1601,6 +1601,14 @@ def cleanup_old_non_persistent_checkpoint(
         remove_iter_ckpts(rm_iter_ckpts)
 
 
+def _record_dataloader_state_dir(checkpointing_context: dict[str, Any] | None, base_dir: str | None) -> None:
+    """Record where setup() should restore Energon dataloader state from: ``{base_dir}/energon`` or None."""
+    if checkpointing_context is not None:
+        checkpointing_context["dataloader_state_dir"] = (
+            os.path.join(base_dir, DATALOADER_STATE_SUBDIR) if base_dir else None
+        )
+
+
 def maybe_save_dataloader_state(
     model: list[MegatronModule] | MegatronModule,
     train_iterator: Any,
@@ -3385,6 +3393,10 @@ def _load_base_checkpoint(
     Returns:
         Tuple of (state_dict, checkpoint_name, release, ckpt_type).
     """
+    # save_checkpoint writes dataloader state to "{checkpoint.save}/energon/iter_N", a sibling of the
+    # iter_N model dirs. Each branch passes the root of the checkpoint it selects to _record_dataloader_state_dir.
+    _record_dataloader_state_dir(checkpointing_context, None)
+
     # Resolve which iteration to load
     iteration, release = _resolve_checkpoint_iteration(
         load_dir=load_dir,
@@ -3395,6 +3407,9 @@ def _load_base_checkpoint(
     # and skip non-persistent checkpoint and tracker file logic.
     if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
         checkpoint_path = load_dir
+        # load_dir is the iter_N dir itself, so the checkpoint root (holding the energon/ sibling) is
+        # one level up.
+        _record_dataloader_state_dir(checkpointing_context, os.path.dirname(os.path.normpath(load_dir)))
         ckpt_format = _get_checkpoint_format(checkpoint_path)
         if not rank0:
             print_rank_0(f" loading {ckpt_format} checkpoint directly from {checkpoint_path}")
@@ -3443,6 +3458,8 @@ def _load_base_checkpoint(
 
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
+            # Non-persistent (global and local) state is written under checkpoint.save, already the root.
+            _record_dataloader_state_dir(checkpointing_context, ckpt_cfg.save)
             return _load_non_persistent_base_checkpoint(
                 non_persistent_global_dir,
                 ckpt_cfg,
@@ -3469,6 +3486,9 @@ def _load_base_checkpoint(
             sys.exit()
 
         return None, "", False, None
+
+    # load_dir is already the root dir of a persistent checkpoint
+    _record_dataloader_state_dir(checkpointing_context, load_dir)
 
     # Determine the checkpoint format from config, assert it matches auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)
