@@ -26,7 +26,7 @@ Supported models:
 Example usage:
     >>> from megatron.bridge import AutoBridge
     >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
-    >>> provider = bridge.to_megatron_provider()
+    >>> model_config = bridge.get_model_config()
 """
 
 from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel

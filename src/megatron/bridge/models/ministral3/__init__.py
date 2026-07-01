@@ -33,7 +33,7 @@ Supported models:
 Example usage:
     >>> from megatron.bridge import AutoBridge
     >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Ministral-3-3B-Base-2512")
-    >>> provider = bridge.to_megatron_provider()
+    >>> model_config = bridge.get_model_config()
 """
 
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge

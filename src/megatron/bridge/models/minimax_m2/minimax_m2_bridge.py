@@ -129,7 +129,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M2")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = MiniMaxM2ModelConfig

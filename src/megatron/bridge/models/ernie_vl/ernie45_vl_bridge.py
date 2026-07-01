@@ -391,7 +391,7 @@ class Ernie45VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("baidu/ERNIE-4.5-VL-28B-A3B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = Ernie45VLModelConfig

@@ -44,7 +44,7 @@ class NemotronBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-4-340B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [

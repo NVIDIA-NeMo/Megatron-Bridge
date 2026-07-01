@@ -62,7 +62,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
         ...     trust_remote_code=True
         ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = LlamaNemotronModelConfig

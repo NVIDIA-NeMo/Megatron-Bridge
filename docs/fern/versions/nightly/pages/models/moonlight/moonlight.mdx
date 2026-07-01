@@ -28,16 +28,16 @@ from megatron.bridge import AutoBridge
 
 # Example: Moonlight-16B-A3B
 bridge = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B")
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 2
-provider.pipeline_model_parallel_size = 1
-provider.expert_model_parallel_size = 8
-provider.sequence_parallel = True
+model_config.tensor_model_parallel_size = 2
+model_config.pipeline_model_parallel_size = 1
+model_config.expert_model_parallel_size = 8
+model_config.sequence_parallel = True
 
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Export Megatron → HF

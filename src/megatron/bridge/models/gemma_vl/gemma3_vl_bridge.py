@@ -57,7 +57,7 @@ class Gemma3VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("google/gemma-3-4b-it")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = Gemma3VLModelConfig

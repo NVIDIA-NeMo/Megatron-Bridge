@@ -105,7 +105,7 @@ class Step37Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained(
         ...     "/path/to/step3p7_flash_bf16", trust_remote_code=True
         ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     # The same translation table Step35Bridge uses (so the parent

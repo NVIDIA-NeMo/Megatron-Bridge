@@ -54,7 +54,7 @@ class GLM47FlashBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.7-Flash")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig

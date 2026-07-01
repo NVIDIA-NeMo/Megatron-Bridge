@@ -71,7 +71,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-397B-A17B")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-397B-A17B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = QwenHybridModelConfig
@@ -441,7 +441,7 @@ class Qwen35Bridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-27B-LM")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-27B-LM")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = QwenHybridModelConfig

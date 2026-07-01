@@ -23,6 +23,9 @@ import pytest
 pytestmark = pytest.mark.unit
 
 EXAMPLES_ROOT = Path(__file__).parents[3] / "examples"
+REPO_ROOT = EXAMPLES_ROOT.parent
+DOCS_ROOT = REPO_ROOT / "docs"
+NIGHTLY_DOCS_ROOT = DOCS_ROOT / "fern" / "versions" / "nightly" / "pages"
 
 # Remove entries as these integrations gain standalone ModelConfig/ModelBuilder
 # support or no longer require a persistent provider-based HF loading hook.
@@ -31,7 +34,6 @@ TEMPORARY_FALLBACKS = {
         Path("distillation/llama/distill_llama32_3b-1b.py"),
         Path("megatron_mimo/qwen35_vl/finetune_qwen35_vl.py"),
         Path("models/diffusion/inference_dllm.py"),
-        Path("rl/rlhf_with_bridge.py"),
     },
     "provider_bridge": {
         Path("models/flux/conversion/convert_checkpoints.py"),
@@ -73,3 +75,21 @@ def test_examples_do_not_use_removed_model_construction_aliases() -> None:
                 violations.append(f"{relative_path}:{node.lineno}:{node.func.attr}")
 
     assert not violations, "Deprecated model construction aliases remain: " + ", ".join(violations)
+
+
+def test_user_docs_default_to_builder_backed_model_construction() -> None:
+    violations: list[str] = []
+    paths = [REPO_ROOT / "README.md", *DOCS_ROOT.rglob("*.md"), *NIGHTLY_DOCS_ROOT.rglob("*.mdx")]
+    compatibility_references = {
+        DOCS_ROOT / "bridge-guide.md",
+        NIGHTLY_DOCS_ROOT / "bridge-guide.mdx",
+    }
+    for path in paths:
+        if path in compatibility_references:
+            # The API reference intentionally documents deprecated compatibility aliases.
+            continue
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if "to_megatron_provider(" in line or "provide_distributed_model(" in line:
+                violations.append(f"{path.relative_to(REPO_ROOT)}:{line_number}")
+
+    assert not violations, "User docs still default to provider construction: " + ", ".join(violations)

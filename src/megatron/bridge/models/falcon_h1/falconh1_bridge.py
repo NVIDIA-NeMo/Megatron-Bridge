@@ -55,7 +55,7 @@ class FalconH1Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("tiiuae/Falcon-H1-7B-Instruct", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [

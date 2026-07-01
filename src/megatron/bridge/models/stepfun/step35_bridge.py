@@ -238,7 +238,7 @@ class Step35Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("stepfun-ai/Step-3.5-Flash")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     CONFIG_MAPPING = MegatronModelBridge.CONFIG_MAPPING + [

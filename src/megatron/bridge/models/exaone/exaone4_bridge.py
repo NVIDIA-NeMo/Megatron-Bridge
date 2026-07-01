@@ -85,7 +85,7 @@ class Exaone4Bridge(MegatronModelBridge):
         ...     "LGAI-EXAONE/EXAONE-4.0-1.2B",
         ...     trust_remote_code=True,
         ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = Exaone4ModelConfig

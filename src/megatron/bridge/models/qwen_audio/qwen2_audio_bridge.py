@@ -66,7 +66,7 @@ class Qwen2AudioBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen2-Audio-7B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen2AudioModelProvider":

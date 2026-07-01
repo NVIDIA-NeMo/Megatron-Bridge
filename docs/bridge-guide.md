@@ -299,11 +299,13 @@ AutoBridge.can_handle(path: str | Path, trust_remote_code: bool = False) -> bool
 AutoBridge.list_supported_models() -> list[str]
 AutoBridge.supports(config: Any) -> bool
 
-# Provider/model construction
-AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
+# Model construction
 AutoBridge.get_model_config() -> ModelConfig
 AutoBridge.get_megatron_model(model_config: ModelConfig | None = None, *, load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
-AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]  # Compatibility alias
+
+# Temporary compatibility aliases (deprecated)
+AutoBridge.to_megatron_provider(load_weights: bool = True, hf_path: str | Path | None = None) -> GPTModelProvider
+AutoBridge.to_megatron_model(load_weights: bool = True, hf_path: str | Path | None = None, **kwargs) -> list[MegatronModule]
 
 # HF → Megatron weights
 AutoBridge.load_hf_weights(model: list[MegatronModule], hf_path: str | Path | None = None) -> None

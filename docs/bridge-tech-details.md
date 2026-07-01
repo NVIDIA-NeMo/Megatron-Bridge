@@ -42,9 +42,9 @@ from megatron.bridge import AutoBridge
 
 # Build bridge and instantiate Megatron model(s)
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-provider = bridge.to_megatron_provider()
-provider.finalize()
-megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config = bridge.get_model_config()
+model_config.finalize()
+megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 (2) Gather all params: After the model is created, the bridge enumerates all named parameters and buffers across PP ranks. It then sorts them to produce a deterministic global order, ensuring every rank uses the same mapping order for collective operations during conversion.

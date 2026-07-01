@@ -61,7 +61,7 @@ class Qwen3VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-VL-8B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen3VLModelProvider":
@@ -261,7 +261,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen3VLMoEModelProvider":
