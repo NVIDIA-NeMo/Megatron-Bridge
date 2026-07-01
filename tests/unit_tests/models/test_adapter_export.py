@@ -1307,10 +1307,11 @@ class TestExportAdapterScript:
         model_chunks = [MagicMock(), MagicMock()]
         for chunk in model_chunks:
             chunk.to.return_value = chunk
-        provider = MagicMock()
-        provider.provide_distributed_model.return_value = model_chunks
+        model_config = MagicMock()
+        model_config.pre_wrap_hooks = []
         bridge = MagicMock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
+        bridge.get_megatron_model.return_value = model_chunks
 
         with (
             patch(
@@ -1334,6 +1335,13 @@ class TestExportAdapterScript:
         mock_state_dict.assert_not_called()
         mock_load.assert_not_called()
         bridge.save_hf_adapter.assert_not_called()
+        assert model_config.use_cpu_initialization is False
+        assert model_config.init_model_with_meta_device is False
+        bridge.get_megatron_model.assert_called_once_with(
+            model_config,
+            load_weights=False,
+            wrap_with_ddp=False,
+        )
         for chunk in model_chunks:
             chunk.load_state_dict.assert_not_called()
         mock_destroy_mp.assert_called_once()
@@ -1357,10 +1365,11 @@ class TestExportAdapterScript:
         )
         model_chunk = MagicMock()
         model_chunk.to.return_value = model_chunk
-        provider = MagicMock()
-        provider.provide_distributed_model.return_value = [model_chunk]
+        model_config = MagicMock()
+        model_config.pre_wrap_hooks = []
         bridge = MagicMock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
+        bridge.get_megatron_model.return_value = [model_chunk]
 
         with (
             patch(
@@ -1413,10 +1422,11 @@ class TestExportAdapterScript:
         )
         model_chunk = MagicMock()
         model_chunk.to.return_value = model_chunk
-        provider = MagicMock()
-        provider.provide_distributed_model.return_value = [model_chunk]
+        model_config = MagicMock()
+        model_config.pre_wrap_hooks = []
         bridge = MagicMock()
-        bridge.to_megatron_provider.return_value = provider
+        bridge.get_model_config.return_value = model_config
+        bridge.get_megatron_model.return_value = [model_chunk]
         lora = MagicMock()
         state_dicts = [{"model": {"new": object()}}, {"model": {"legacy": object()}}]
 

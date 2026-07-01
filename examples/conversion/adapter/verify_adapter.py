@@ -205,6 +205,8 @@ def _build_megatron_lora_model(
     model_config.tensor_model_parallel_size = tp
     model_config.pipeline_model_parallel_size = pp
     model_config.expert_model_parallel_size = ep
+    model_config.use_cpu_initialization = cpu
+    model_config.init_model_with_meta_device = False
     model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
     model_config.finalize()
 
@@ -216,8 +218,6 @@ def _build_megatron_lora_model(
     model = bridge.get_megatron_model(
         model_config,
         wrap_with_ddp=False,
-        use_cpu_initialization=cpu,
-        init_model_with_meta_device=False,
     )
 
     sharded_sd = _generate_model_state_dict(model, {})

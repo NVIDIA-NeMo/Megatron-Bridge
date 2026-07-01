@@ -192,6 +192,8 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
     model_config.sequence_parallel = args.sequence_parallel
     model_config.pipeline_dtype = args.dtype
     model_config.params_dtype = args.dtype
+    model_config.use_cpu_initialization = False
+    model_config.init_model_with_meta_device = False
     model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
     model_config.finalize()
     try:
@@ -199,8 +201,6 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
             model_config,
             load_weights=False,
             wrap_with_ddp=False,
-            use_cpu_initialization=False,
-            init_model_with_meta_device=False,
         )
         model = [chunk.to(device) for chunk in model]
         if len(model) != 1:

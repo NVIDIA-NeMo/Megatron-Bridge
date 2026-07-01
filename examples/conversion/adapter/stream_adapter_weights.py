@@ -422,6 +422,8 @@ def main() -> None:
     model_config.params_dtype = torch.bfloat16
     model_config.expert_model_parallel_size = args.expert_model_parallel_size
     model_config.expert_tensor_parallel_size = args.expert_tensor_parallel_size
+    model_config.use_cpu_initialization = not use_gpu
+    model_config.init_model_with_meta_device = not use_gpu
 
     print_rank_0("🧩 Registering Canonical LoRA adapters...")
     register_canonical_lora_adapter(model_config, adapter_dim=args.adapter_dim, adapter_alpha=args.adapter_alpha)
@@ -438,8 +440,6 @@ def main() -> None:
         megatron_model = bridge.get_megatron_model(
             model_config,
             wrap_with_ddp=False,
-            use_cpu_initialization=not use_gpu,
-            init_model_with_meta_device=not use_gpu,
         )
         if use_gpu:
             megatron_model = [chunk.to(device) for chunk in megatron_model]
