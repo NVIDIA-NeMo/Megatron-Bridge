@@ -17,15 +17,20 @@ Unit tests for Qwen3.5 bridge functionality.
 """
 
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen.model_config import (
+    QwenHybridModelBuilder,
+    qwen_hybrid_mtp_block_spec,
+)
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
 
 
@@ -111,6 +116,43 @@ class TestQwen35DenseBridge:
         assert "experimental_attention_variant" not in result.__dict__
         restored = type(result).from_dict(result.as_dict())
         assert callable(restored.transformer_layer_spec)
+        assert restored.get_builder_cls() is QwenHybridModelBuilder
+
+    def test_model_config_mtp_uses_experimental_attention_spec(self, qwen3_5_27b_config_dict):
+        qwen3_5_27b_config_dict["mtp_num_hidden_layers"] = 1
+        pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_5_27b_config_dict))
+        result = Qwen35Bridge().model_config_bridge(pretrained)
+        block_spec = result.transformer_layer_spec(result, pp_rank=0)
+
+        with patch("megatron.bridge.models.qwen.model_config.get_gpt_mtp_block_spec") as get_mtp_spec:
+            get_mtp_spec.return_value = "mtp-spec"
+
+            assert qwen_hybrid_mtp_block_spec(result, block_spec) == "mtp-spec"
+
+        get_mtp_spec.assert_called_once_with(
+            result.transformer,
+            block_spec.layer_specs[-1],
+            use_transformer_engine=True,
+            vp_stage=None,
+        )
+
+    def test_model_config_mtp_allows_pipeline_stage_without_decoder_layers(self, qwen3_5_27b_config_dict):
+        qwen3_5_27b_config_dict["mtp_num_hidden_layers"] = 1
+        pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_5_27b_config_dict))
+        result = Qwen35Bridge().model_config_bridge(pretrained)
+        empty_block_spec = TransformerBlockSubmodules(layer_specs=[])
+
+        with patch("megatron.bridge.models.qwen.model_config.get_gpt_mtp_block_spec") as get_mtp_spec:
+            get_mtp_spec.return_value = None
+
+            assert qwen_hybrid_mtp_block_spec(result, empty_block_spec) is None
+
+        get_mtp_spec.assert_called_once_with(
+            result.transformer,
+            empty_block_spec,
+            use_transformer_engine=True,
+            vp_stage=None,
+        )
 
     def test_provider_bridge_basic(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test basic provider_bridge functionality."""
@@ -308,7 +350,7 @@ class TestQwen35DenseBridge:
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]
 
         # Should have embedding mappings
-        assert "model.embed_tokens.weight" in hf_params
+        assert "model.language_model.embed_tokens.weight" in hf_params
         assert "embedding.word_embeddings.weight" in megatron_params
 
         # Should have output layer mappings
@@ -316,8 +358,33 @@ class TestQwen35DenseBridge:
         assert "output_layer.weight" in megatron_params
 
         # Should have layer norm mappings
-        assert "model.norm.weight" in hf_params
+        assert "model.language_model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
+
+    def test_mapping_registry_detects_nested_language_model_prefix(self):
+        bridge = Qwen35Bridge()
+        source = Mock()
+        source.get_all_keys.return_value = {
+            "model.language_model.embed_tokens.weight",
+            "model.language_model.layers.0.self_attn.q_proj.weight",
+        }
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        auto_mappings = [mapping for mapping in registry.mappings if type(mapping).__name__ == "AutoMapping"]
+
+        assert "model.language_model.embed_tokens.weight" in [mapping.hf_param for mapping in auto_mappings]
+
+    def test_mapping_registry_falls_back_to_legacy_language_model_prefix(self):
+        bridge = Qwen35Bridge()
+        source = Mock()
+        source.get_all_keys.return_value = {"model.embed_tokens.weight", "model.layers.0.self_attn.q_proj.weight"}
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        auto_mappings = [mapping for mapping in registry.mappings if type(mapping).__name__ == "AutoMapping"]
+
+        assert "model.embed_tokens.weight" in [mapping.hf_param for mapping in auto_mappings]
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
@@ -669,14 +736,36 @@ class TestQwen35MoEBridge:
         hf_params = [mapping.hf_param for mapping in auto_mappings]
         megatron_params = [mapping.megatron_param for mapping in auto_mappings]
 
-        assert "model.embed_tokens.weight" in hf_params
+        assert "model.language_model.embed_tokens.weight" in hf_params
         assert "embedding.word_embeddings.weight" in megatron_params
 
         assert "lm_head.weight" in hf_params
         assert "output_layer.weight" in megatron_params
 
-        assert "model.norm.weight" in hf_params
+        assert "model.language_model.norm.weight" in hf_params
         assert "decoder.final_layernorm.weight" in megatron_params
+
+    def test_mapping_registry_detects_nested_language_model_prefix(self):
+        bridge = Qwen35MoEBridge()
+        source = Mock()
+        source.get_all_keys.return_value = {"model.language_model.embed_tokens.weight"}
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        auto_mappings = [mapping for mapping in registry.mappings if type(mapping).__name__ == "AutoMapping"]
+
+        assert "model.language_model.embed_tokens.weight" in [mapping.hf_param for mapping in auto_mappings]
+
+    def test_mapping_registry_falls_back_to_legacy_language_model_prefix(self):
+        bridge = Qwen35MoEBridge()
+        source = Mock()
+        source.get_all_keys.return_value = {"model.embed_tokens.weight", "model.layers.0.self_attn.q_proj.weight"}
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        auto_mappings = [mapping for mapping in registry.mappings if type(mapping).__name__ == "AutoMapping"]
+
+        assert "model.embed_tokens.weight" in [mapping.hf_param for mapping in auto_mappings]
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""

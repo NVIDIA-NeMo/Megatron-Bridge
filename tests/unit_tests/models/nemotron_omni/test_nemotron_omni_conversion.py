@@ -183,6 +183,11 @@ def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
     )
 
     assert result is built_model
+    assert config.language_model_type == "nemotron6-moe"
+    assert captured["language_transformer_config"].language_model_type == "nemotron6-moe"
+    assert captured["vision_transformer_config"].vision_model_type == "radio"
+    assert not hasattr(config.transformer, "language_model_type")
+    assert not hasattr(config.transformer, "vision_model_type")
     assert captured["sound_model"] is sound_encoder
     assert captured["sound_projection"] is sound_projection
     assert captured["separate_video_embedder"] is True
@@ -193,6 +198,15 @@ def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
     assert captured["pg_collection"] is pg_collection
     assert captured["vp_stage"] == 2
     assert projector_kwargs["pg_collection"] is pg_collection
+
+
+def test_nemotron_omni_config_defaults_to_omni_runtime_family():
+    config = NemotronOmniModelConfig(
+        transformer=TransformerConfig(num_layers=1, hidden_size=64, num_attention_heads=4),
+    )
+
+    assert config.language_model_type == "nemotron6-moe"
+    assert config.tokenizer_type == "nemotron6-moe"
 
 
 def test_nemotron_omni_bridge_config_roundtrips_exact_mcore_config():

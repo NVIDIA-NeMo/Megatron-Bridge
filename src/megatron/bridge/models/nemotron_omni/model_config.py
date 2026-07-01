@@ -14,6 +14,7 @@
 
 """Serializable Nemotron Omni config and independent multimodal builder."""
 
+import copy
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import ClassVar
@@ -35,6 +36,8 @@ class NemotronOmniModelConfig(NemotronVLModelConfig):
     """Pure VL and sound assembly inputs for Nemotron Omni."""
 
     builder: ClassVar[str] = "megatron.bridge.models.nemotron_omni.model_config.NemotronOmniModelBuilder"
+    language_model_type: str = "nemotron6-moe"
+    tokenizer_type: str = "nemotron6-moe"
     img_start_token_id: int = 21
     img_end_token_id: int = 22
     vision_class_token_len: int = 10
@@ -69,8 +72,12 @@ class NemotronOmniModelBuilder(NemotronVLModelBuilder):
         """Build one Nemotron Omni pipeline stage."""
         config = self._model_config
         assert isinstance(config, NemotronOmniModelConfig)
-        language_cfg = config.transformer
+        language_cfg = copy.copy(config.transformer)
+        # LLaVAModel dispatches between GPTModel and HybridModel using this
+        # runtime family marker. Keep it out of the serialized MCore config.
+        language_cfg.language_model_type = config.language_model_type
         vision_cfg = self._build_vision_config(language_cfg)
+        vision_cfg.vision_model_type = config.vision_model_type
         vision_cfg.pipeline_model_parallel_size = 1
         vision_cfg.class_token_len = config.vision_class_token_len
         projection_cfg = self._build_projection_config(language_cfg, config.vision_proj_ffn_hidden_size)

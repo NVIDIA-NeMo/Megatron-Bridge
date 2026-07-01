@@ -214,6 +214,7 @@ def mock_text_config_dense():
     config.hidden_act = "gelu_pytorch_tanh"
     config.torch_dtype = "bfloat16"
     config.hidden_size_per_layer_input = 0
+    config.attention_k_eq_v = True
     config.enable_moe_block = False
     config.layer_types = (
         ["sliding_attention"] * 5 + ["full_attention"] + ["sliding_attention"] * 5 + ["full_attention"]
@@ -310,6 +311,31 @@ def test_gemma4_vl_model_config_bridge_roundtrips_exact_mcore_config(
     assert type(restored.transformer) is TransformerConfig
     assert restored.get_builder_cls() is builder_class
     assert restored.as_dict() == config.as_dict()
+    if config_class is Gemma4VLModelConfig:
+        assert config.transformer.moe_grouped_gemm is True
+        assert config.transformer.moe_token_dispatcher_type == "alltoall"
+        assert config.transformer.moe_router_load_balancing_type == "aux_loss"
+        assert config.transformer.moe_router_pre_softmax is True
+        assert config.transformer.moe_shared_expert_overlap is False
+        assert config.transformer.moe_layer_freq == 1
+    else:
+        assert config.global_kv_channels == 512
+        assert config.num_global_query_groups == 2
+        assert config.attention_k_eq_v is True
+        assert config.window_attn_skip_freq == ([True] * 5 + [False]) * 2
+
+
+def test_gemma4_dense_model_config_falls_back_from_null_global_attention_fields(vl_bridge, mock_hf_pretrained_dense):
+    pretrained = mock_hf_pretrained_dense
+    pretrained.config.text_config.global_head_dim = None
+    pretrained.config.text_config.num_global_key_value_heads = None
+    pretrained.config.text_config = _serializable_text_config(pretrained.config.text_config)
+    pretrained.config.audio_config = None
+
+    config = vl_bridge.model_config_bridge(pretrained)
+
+    assert config.global_kv_channels == 256
+    assert config.num_global_query_groups == 4
 
 
 def test_gemma4_vl_model_config_bridge_preserves_multiple_eos_tokens(vl_bridge, mock_hf_pretrained_moe):

@@ -44,6 +44,18 @@ from megatron.bridge.models.qwen.qwen35_common import (
 )
 
 
+def _hf_language_model_prefix(bridge: MegatronModelBridge) -> tuple[str, set[str]]:
+    """Return the current language-model prefix, with legacy key fallback."""
+    hf_pretrained = getattr(bridge, "hf_pretrained", None)
+    if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
+        return "model.language_model.", set()
+
+    hf_keys = set(hf_pretrained.state.source.get_all_keys())
+    if any(key.startswith(("model.layers.", "model.embed_tokens.", "model.norm.")) for key in hf_keys):
+        return "model.", hf_keys
+    return "model.language_model.", hf_keys
+
+
 @MegatronModelBridge.register_bridge(source=Qwen3_5MoeForCausalLM, target=GPTModel, model_type="qwen3_5_moe_text")
 class Qwen35MoEBridge(MegatronModelBridge):
     """
@@ -390,7 +402,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         Naming Convention:
         - Megatron language model params are prefixed with "decoder."
-        - HF language model params are prefixed with "model.layers.*"
+        - HF language model params use either "model.layers.*" or
+          "model.language_model.layers.*", matching the source checkpoint.
 
         Returns:
             MegatronMappingRegistry with all parameter mappings
@@ -399,16 +412,12 @@ class Qwen35MoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
-        mtp_experts_packed = False
-        hf_pretrained = getattr(self, "hf_pretrained", None)
-        if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
-            hf_keys = set(hf_pretrained.state.source.get_all_keys())
-            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
-                mtp_experts_packed = True
+        hf_prefix, hf_keys = _hf_language_model_prefix(self)
+        mtp_experts_packed = "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys
 
         mapping_list = []
 
-        mapping_list.extend(self._get_moe_lm_mappings(megatron_prefix=""))
+        mapping_list.extend(self._get_moe_lm_mappings(hf_prefix=hf_prefix, megatron_prefix=""))
         mapping_list.extend(self._get_moe_mtp_mappings(megatron_prefix="", mtp_experts_packed=mtp_experts_packed))
         return MegatronMappingRegistry(*mapping_list)
 
@@ -645,8 +654,9 @@ class Qwen35Bridge(MegatronModelBridge):
         - Pre-MLP layernorm fused into mlp.linear_fc1 (not a separate pre_mlp_layernorm)
         - No MoE router, routed expert MLPs, or shared expert mappings
         """
+        hf_prefix, _ = _hf_language_model_prefix(self)
         mapping_list = []
 
-        mapping_list.extend(self._get_dense_lm_mappings(megatron_prefix=""))
+        mapping_list.extend(self._get_dense_lm_mappings(hf_prefix=hf_prefix, megatron_prefix=""))
         mapping_list.extend(self._get_dense_mtp_mappings(megatron_prefix=""))
         return MegatronMappingRegistry(*mapping_list)

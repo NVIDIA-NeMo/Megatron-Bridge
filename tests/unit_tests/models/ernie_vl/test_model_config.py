@@ -3,7 +3,13 @@
 from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.common.base import ModelConfig
-from megatron.bridge.models.ernie_vl.model_config import Ernie45VLModelConfig
+from megatron.bridge.models.ernie_vl.model_config import Ernie45VLModelConfig, _namespace
+
+
+def test_namespace_preserves_nested_non_string_key_mappings():
+    result = _namespace({"rope_scaling": {"factor_by_layer": {0: 1.0, 1: 2.0}}})
+
+    assert result.rope_scaling.factor_by_layer == {0: 1.0, 1: 2.0}
 
 
 def test_ernie_vl_config_roundtrip_preserves_exact_mcore_configs():

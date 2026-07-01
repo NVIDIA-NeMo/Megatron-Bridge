@@ -35,6 +35,8 @@ class NemotronVLModelConfig(NemotronHModelConfig):
     """Pure-data Nemotron VL build configuration."""
 
     builder: ClassVar[str] = "megatron.bridge.models.nemotron_vl.model_config.NemotronVLModelBuilder"
+    language_model_type: str = "nemotron5-hybrid-12b"
+    vision_model_type: str = "radio"
     image_token_index: int = 131072
     tokenizer_type: str = "nemotron-h-5p5-reasoning"
     vision_proj_ffn_hidden_size: int = 20480
@@ -108,8 +110,12 @@ class NemotronVLModelBuilder(HybridModelBuilder):
     ) -> NemotronVLModel:
         """Build one Nemotron VL pipeline stage."""
         config = self._model_config
-        language_cfg = config.transformer
+        language_cfg = copy.copy(config.transformer)
+        # LLaVAModel uses this family marker to select HybridModel instead of
+        # treating hybrid_stack_spec as a regular GPT TransformerBlock spec.
+        language_cfg.language_model_type = config.language_model_type
         vision_cfg = self._build_vision_config(language_cfg)
+        vision_cfg.vision_model_type = config.vision_model_type
         projection_cfg = self._build_projection_config(language_cfg, config.vision_proj_ffn_hidden_size)
         projection_spec = self._projection_spec()
         add_encoder = pre_process if pre_process is not None else True

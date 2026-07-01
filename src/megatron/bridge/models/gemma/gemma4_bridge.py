@@ -135,10 +135,11 @@ class Gemma4Bridge(MegatronModelBridge):
         )
         if is_dense:
             config.update(
-                global_kv_channels=int(getattr(hf_config, "global_head_dim", 512)),
+                global_kv_channels=int(getattr(hf_config, "global_head_dim", None) or hf_config.head_dim),
                 num_global_query_groups=int(
-                    getattr(hf_config, "num_global_key_value_heads", hf_config.num_key_value_heads)
+                    getattr(hf_config, "num_global_key_value_heads", None) or hf_config.num_key_value_heads
                 ),
+                attention_k_eq_v=bool(getattr(hf_config, "attention_k_eq_v", False)),
                 sliding_window_rope_base=float(sliding_rope.get("rope_theta", 10_000.0)),
                 full_attention_rope_base=float(full_rope.get("rope_theta", 1_000_000.0)),
                 full_attention_rope_partial_factor=float(full_rope.get("partial_rotary_factor", 0.25)),
@@ -163,6 +164,16 @@ class Gemma4Bridge(MegatronModelBridge):
                 moe_router_topk=int(getattr(hf_config, "top_k_experts", 8)),
                 moe_ffn_hidden_size=int(getattr(hf_config, "moe_intermediate_size", 704)),
                 moe_shared_expert_intermediate_size=int(getattr(hf_config, "intermediate_size", 2112)),
+                moe_shared_expert_overlap=False,
+                moe_shared_expert_gate=False,
+                moe_grouped_gemm=True,
+                moe_token_dispatcher_type="alltoall",
+                moe_router_load_balancing_type="aux_loss",
+                moe_router_pre_softmax=True,
+                moe_router_dtype="fp32",
+                moe_aux_loss_coeff=0.001,
+                moe_permute_fusion=True,
+                moe_layer_freq=1,
             )
         return config
 

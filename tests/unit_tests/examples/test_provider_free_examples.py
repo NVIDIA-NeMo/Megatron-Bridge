@@ -44,6 +44,11 @@ TEMPORARY_FALLBACKS = {
         Path("models/flux/conversion/convert_checkpoints.py"),
         Path("models/wan/conversion/convert_checkpoints.py"),
     },
+    "direct_model_provider_import": {
+        Path("megatron_mimo/llava/megatron_mimo_training_llava.py"),
+        Path("megatron_mimo/llava/megatron_mimo_training_llava_audio.py"),
+        Path("megatron_mimo/qwen35_vl/finetune_qwen35_vl.py"),
+    },
 }
 
 
@@ -53,6 +58,9 @@ def test_examples_only_use_allowlisted_provider_fallbacks() -> None:
     for path in EXAMPLES_ROOT.rglob("*.py"):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("megatron.bridge.models."):
+                if any(alias.name.endswith("Provider") for alias in node.names):
+                    calls["direct_model_provider_import"].add(path.relative_to(EXAMPLES_ROOT))
             if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
                 continue
             if node.func.attr in calls:

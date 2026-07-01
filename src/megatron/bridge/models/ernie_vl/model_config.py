@@ -14,9 +14,10 @@
 
 """Pure ERNIE 4.5 VL model config and standalone builder."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import ClassVar, cast
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
@@ -31,10 +32,11 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_conf
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
-def _namespace(data: dict[str, object]) -> SimpleNamespace:
-    return SimpleNamespace(
-        **{key: _namespace(value) if isinstance(value, dict) else value for key, value in data.items()}
-    )
+def _namespace(data: Mapping[object, object]) -> SimpleNamespace | dict[object, object]:
+    converted = {key: _namespace(value) if isinstance(value, dict) else value for key, value in data.items()}
+    if not all(isinstance(key, str) for key in converted):
+        return converted
+    return SimpleNamespace(**cast(dict[str, object], converted))
 
 
 @dataclass(kw_only=True)

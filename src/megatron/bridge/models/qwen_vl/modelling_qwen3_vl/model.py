@@ -606,7 +606,7 @@ class Qwen3VLModel(MegatronModule):
             # For simplicity, we set hf_attention_mask to None.
             hf_attention_mask = None
             position_ids, _ = get_rope_index(
-                self.config.spatial_merge_size,
+                self.vision_transformer_config.spatial_merge_size,
                 self.image_token_id,
                 self.video_token_id,
                 self.vision_start_token_id,

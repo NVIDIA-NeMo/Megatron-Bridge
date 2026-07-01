@@ -124,13 +124,13 @@ try:
     SMOKE_LOCK_DIR.mkdir(parents=True, exist_ok=True)
     os.environ["MEGATRON_CONFIG_LOCK_DIR"] = str(SMOKE_LOCK_DIR)
     bridge = AutoBridge.from_hf_pretrained(model_path, dtype=torch.bfloat16)
-    provider = bridge.to_megatron_provider(load_weights=True)
-    provider.tensor_model_parallel_size = 1
-    provider.pipeline_model_parallel_size = 1
-    provider.pipeline_dtype = torch.bfloat16
-    provider.params_dtype = torch.bfloat16
-    provider.finalize()
-    model = provider.provide_distributed_model(wrap_with_ddp=False)
+    model_config = bridge.get_model_config()
+    model_config.transformer.tensor_model_parallel_size = 1
+    model_config.transformer.pipeline_model_parallel_size = 1
+    model_config.transformer.pipeline_dtype = torch.bfloat16
+    model_config.transformer.params_dtype = torch.bfloat16
+    model_config.finalize()
+    model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
     if isinstance(model, list):
         model = model[0]
 

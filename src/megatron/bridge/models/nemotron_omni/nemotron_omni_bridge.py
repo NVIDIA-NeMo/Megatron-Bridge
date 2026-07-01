@@ -97,6 +97,7 @@ class NemotronOmniBridge(NemotronVLBridge):
             image_token_index=int(getattr(hf_config, "img_context_token_id", 18)),
             img_start_token_id=21,
             img_end_token_id=22,
+            language_model_type="nemotron6-moe",
             tokenizer_type="nemotron6-moe",
             use_vision_backbone_fp8_arch=False,
             dynamic_resolution=True,

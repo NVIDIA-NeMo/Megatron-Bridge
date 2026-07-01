@@ -14,6 +14,7 @@
 
 """Builder-backed model configurations for Gemma text models."""
 
+import copy
 from dataclasses import dataclass, field, replace
 from typing import Callable, ClassVar, cast
 
@@ -259,6 +260,7 @@ class Gemma4DenseModelConfig(BridgeGPTModelConfig):
     builder: ClassVar[str] = "megatron.bridge.models.gemma.model_config.Gemma4DenseModelBuilder"
     global_kv_channels: int = 512
     num_global_query_groups: int = 2
+    attention_k_eq_v: bool = False
     sliding_window_rope_base: float = 10_000.0
     full_attention_rope_base: float = 1_000_000.0
     full_attention_rope_partial_factor: float = 0.25
@@ -274,11 +276,26 @@ class Gemma4DenseModelBuilder(GPTModelBuilder):
     def build_model(self, pg_collection, pre_process=None, post_process=None, vp_stage=None):
         """Build one Gemma4 Dense pipeline stage."""
         config = cast(Gemma4DenseModelConfig, self._model_config)
-        runtime_config = replace(config, transformer_layer_spec=get_gemma4_layer_spec(config.transformer))
+        runtime_transformer = copy.copy(config.transformer)
+        for name in (
+            "global_kv_channels",
+            "num_global_query_groups",
+            "attention_k_eq_v",
+            "num_kv_shared_layers",
+            "per_layer_embed_vocab_size",
+            "per_layer_embed_dim",
+            "window_attn_skip_freq",
+        ):
+            setattr(runtime_transformer, name, getattr(config, name))
+        runtime_config = replace(
+            config,
+            transformer=runtime_transformer,
+            transformer_layer_spec=get_gemma4_layer_spec(runtime_transformer),
+        )
         model = GPTModelBuilder(runtime_config).build_model(pg_collection, pre_process, post_process, vp_stage)
         model.rotary_pos_emb = Gemma4DenseRotaryEmbedding(config)
         if getattr(model, "pre_process", False):
-            _attach_ple_modules(model, config.transformer, config)
+            _attach_ple_modules(model, runtime_transformer, config)
         wire_gemma4_kv_sharing(model)
         _install_ple_forward(model)
         _install_gemma4_dense_load_state_aliases(model)

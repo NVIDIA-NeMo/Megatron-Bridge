@@ -115,6 +115,10 @@ class TestNemotronVLBridgeInitialization:
         assert captured["add_encoder"] is False
         assert captured["pg_collection"] is pg_collection
         assert captured["vp_stage"] == 3
+        assert captured["language_transformer_config"].language_model_type == "nemotron5-hybrid-12b"
+        assert captured["vision_transformer_config"].vision_model_type == "radio"
+        assert not hasattr(config.transformer, "language_model_type")
+        assert not hasattr(config.transformer, "vision_model_type")
 
 
 class TestNemotronVLBridgeProviderBridge:
