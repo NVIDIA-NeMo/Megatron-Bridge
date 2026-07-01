@@ -56,7 +56,7 @@ class _FakeModelCfg:
         self.virtual_pipeline_model_parallel_size = None
         self.context_parallel_size = 1
         self.expert_model_parallel_size = 1
-        self.expert_tensor_parallel_size = 1
+        self.expert_tensor_parallel_size = None
         self.sequence_parallel = False
         self.seq_length = 64
         self.num_layers = 4
@@ -81,6 +81,9 @@ class _FakeModelCfg:
         self.vocab_size = 151552  # GLM vocab size
 
     def finalize(self):
+        from megatron.bridge.models.transformer_config import _set_moe_expert_tensor_parallel_default
+
+        _set_moe_expert_tensor_parallel_default(self)
         return None
 
 
@@ -334,6 +337,9 @@ def test_glm45_355b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 8
     assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size is None
+    cfg.model.finalize()
+    assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.peft is None
 
 
