@@ -1667,7 +1667,6 @@ class AutoBridge(Generic[MegatronModelT]):
             try:
                 model = self.get_megatron_model(
                     model_config,
-                    load_weights=True,
                     pg_collection=pg_collection,
                     wrap_with_ddp=False,
                     data_parallel_random_init=False,
