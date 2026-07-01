@@ -67,7 +67,7 @@ docker buildx build \
   --target nemo_fw_base_final \
   --build-arg FW_DEP_BUILDER=base \
   --build-arg FW_BASE_FINAL=fw_toolkit_builder \
-  --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3 \
+  --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 \
   -t fw-base:latest \
   .
 ```
