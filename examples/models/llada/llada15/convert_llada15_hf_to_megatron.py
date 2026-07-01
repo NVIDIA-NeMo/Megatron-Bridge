@@ -91,6 +91,7 @@ def main():
         args.out_path,
         hf_tokenizer_path=args.hf_path,
         hf_tokenizer_kwargs={"trust_remote_code": True},
+        model_config=model_config,
     )
     print("Done.")
 
