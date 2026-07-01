@@ -43,6 +43,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
+    preprocess_packed_seqs,
     qwen3vl_cp_split,
     reorganize_inputs,
     split_data_cp_rank,
@@ -55,6 +56,11 @@ from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_pa
 def _is_qwen_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
     """Return whether ``position_ids`` is explicit Qwen MRoPE metadata."""
     return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
+
+
+def _is_legacy_packed_bshd(input_ids: torch.Tensor | None, packed_seq_params: PackedSeqParams | None) -> bool:
+    """Return whether the deprecated Qwen step supplied packed metadata with BSHD inputs."""
+    return packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
 
 
 def _select_sequence(
@@ -424,6 +430,7 @@ class Qwen3VLModel(MegatronModule):
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
+        legacy_packed_bshd = _is_legacy_packed_bshd(input_ids, packed_seq_params)
         packed_cp_index = (
             get_packed_seq_cp_partition_indices(
                 packed_seq_params,
@@ -432,7 +439,7 @@ class Qwen3VLModel(MegatronModule):
                 cp_rank=cp_rank,
                 device=input_ids.device,
             )
-            if packed_seq_params is not None and cp_size > 1 and input_ids is not None
+            if packed_seq_params is not None and cp_size > 1 and input_ids is not None and not legacy_packed_bshd
             else None
         )
 
@@ -547,9 +554,56 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
             if packed_seq_params is not None:
-                if cp_size > 1 and packed_cp_index is None:
+                if legacy_packed_bshd:
+                    if attention_mask is None:
+                        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                    lm_input_ids = preprocess_packed_seqs(
+                        input_ids,
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    _, _, vision_mask_thd = reorganize_inputs(
+                        input_ids=lm_input_ids,
+                        pixel_values=pixel_values,
+                        pixel_values_videos=pixel_values_videos,
+                        image_grid_thw=image_grid_thw,
+                        video_grid_thw=video_grid_thw,
+                        image_input_mask=image_input_mask,
+                        video_input_mask=video_input_mask,
+                        image_token_id=self.image_token_id,
+                        video_token_id=self.video_token_id,
+                        square_merge_size=self.square_merge_size,
+                    )
+
+                    if deepstack_feature_lists is not None:
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        new_deepstack_feature_lists = []
+                        for deepstack_visual_embed in deepstack_feature_lists:
+                            tmp_embeddings[vision_mask] = deepstack_visual_embed
+                            tmp_embeddings_thd = preprocess_packed_seqs(
+                                tmp_embeddings.contiguous(),
+                                attention_mask,
+                                pre_process=True,
+                                pg_collection=self.pg_collection,
+                            )[0]
+                            new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
+                        deepstack_feature_lists = new_deepstack_feature_lists
+
+                    vision_mask = vision_mask_thd
+                    combined_embeddings = (
+                        preprocess_packed_seqs(
+                            combined_embeddings.transpose(0, 1).contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0]
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
+                elif cp_size > 1 and packed_cp_index is None:
                     raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
-                if packed_cp_index is not None:
+                elif packed_cp_index is not None:
                     lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
                     vision_mask_local = _select_sequence(vision_mask, packed_cp_index, seq_dim=1)
                     if deepstack_feature_lists is not None:
@@ -574,7 +628,16 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
-            if packed_cp_index is not None:
+            if legacy_packed_bshd:
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                lm_input_ids = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=True,
+                    pg_collection=self.pg_collection,
+                )[0]
+            elif packed_cp_index is not None:
                 lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
 
         visual_pos_masks = vision_mask
@@ -619,10 +682,21 @@ class Qwen3VLModel(MegatronModule):
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=hf_attention_mask,
-                packed_seq_params=packed_seq_params,
+                packed_seq_params=None if legacy_packed_bshd else packed_seq_params,
             )  #  [3*b*s]
         if packed_seq_params is not None:
-            if packed_cp_index is not None:
+            if legacy_packed_bshd:
+                position_ids = (
+                    preprocess_packed_seqs(
+                        position_ids.permute(1, 2, 0),
+                        attention_mask,
+                        pre_process=True,
+                        pg_collection=self.pg_collection,
+                    )[0]
+                    .permute(2, 0, 1)
+                    .contiguous()
+                )
+            elif packed_cp_index is not None:
                 position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
             attention_mask = None
             self.language_model.rotary_pos_emb.is_thd_format = True

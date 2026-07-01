@@ -101,8 +101,8 @@ def test_split_if_full_sequence_only_splits_full_length_inputs():
     assert unchanged is already_local
 
 
-def test_get_flat_packed_ranges_rejects_invalid_metadata_and_clamps_truncated_segments():
-    """Test flat packed geometry handles invalid metadata and truncated local input."""
+def test_get_flat_packed_ranges_rejects_invalid_or_truncated_metadata():
+    """Test flat packed geometry requires complete, consistent metadata."""
     input_ids = torch.zeros((1, 4), dtype=torch.long)
     invalid_params = SimpleNamespace(
         cu_seqlens_q=torch.tensor([0, 2], dtype=torch.int32),
@@ -113,8 +113,8 @@ def test_get_flat_packed_ranges_rejects_invalid_metadata_and_clamps_truncated_se
         cu_seqlens_q_padded=torch.tensor([0, 5, 8], dtype=torch.int32),
     )
 
-    assert _get_flat_packed_ranges(input_ids, invalid_params, allow_truncated=True) is None
-    assert _get_flat_packed_ranges(input_ids, truncated_params, allow_truncated=True) == [(0, 3, 4)]
+    assert _get_flat_packed_ranges(input_ids, invalid_params) is None
+    assert _get_flat_packed_ranges(input_ids, truncated_params) is None
 
 
 def test_get_rope_index_video_tokens_use_video_grid():
@@ -611,18 +611,16 @@ class TestQwen3VLUtils:
         assert torch.equal(attention_mask, expected)
 
     def test_get_packed_seq_attention_mask_flat_padded_truncated(self):
-        """Test flat packed mask clamps segments when padded metadata exceeds the local input."""
+        """Test flat packed mask rejects metadata that exceeds the input."""
         input_ids = torch.zeros((1, 10), dtype=torch.long)
         packed_seq_params = SimpleNamespace(
             cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
             cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
         )
 
-        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
-
-        expected = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 0, 1, 1]], dtype=torch.bool)
         assert _get_flat_packed_ranges(input_ids, packed_seq_params) is None
-        assert torch.equal(attention_mask, expected)
+        with pytest.raises(ValueError, match="does not match its padded cu-seqlens"):
+            get_packed_seq_attention_mask(input_ids, packed_seq_params)
 
     def test_get_rope_index_flat_packed_resets_positions_per_segment(self):
         """Test packed-flat Qwen MRoPE resets position ids at each cu_seqlens boundary."""

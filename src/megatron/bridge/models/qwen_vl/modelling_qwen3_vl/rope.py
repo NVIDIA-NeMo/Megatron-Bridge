@@ -44,8 +44,6 @@ def _get_packed_cu_seqlens(
 def _get_flat_packed_ranges(
     input_ids: torch.Tensor,
     packed_seq_params: PackedSeqParams | None,
-    *,
-    allow_truncated: bool = False,
 ) -> list[tuple[int, int, int]] | None:
     """Return ``(padded_start, valid_end, padded_end)`` ranges for flat packed input."""
     if packed_seq_params is None or input_ids is None or input_ids.dim() != 2 or input_ids.size(0) != 1:
@@ -61,17 +59,13 @@ def _get_flat_packed_ranges(
         return None
 
     max_len = input_ids.size(1)
-    if not allow_truncated and int(cu_seqlens_padded[-1].item()) > max_len:
+    if int(cu_seqlens_padded[-1].item()) != max_len:
         return None
 
     ranges = []
     for idx in range(cu_seqlens_padded.numel() - 1):
         padded_start = int(cu_seqlens_padded[idx].item())
-        if padded_start >= max_len:
-            break
         padded_end = int(cu_seqlens_padded[idx + 1].item())
-        if allow_truncated:
-            padded_end = min(padded_end, max_len)
         unpadded_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
         valid_end = min(padded_start + unpadded_len, padded_end)
         ranges.append((padded_start, valid_end, padded_end))
@@ -95,11 +89,14 @@ def get_packed_seq_attention_mask(input_ids: torch.Tensor, packed_seq_params: Pa
     attention_mask = torch.zeros_like(input_ids, dtype=torch.bool)
     seq_count = cu_seqlens_padded.numel() - 1
 
-    flat_packed_ranges = _get_flat_packed_ranges(input_ids, packed_seq_params, allow_truncated=True)
+    flat_packed_ranges = _get_flat_packed_ranges(input_ids, packed_seq_params)
     if flat_packed_ranges is not None:
         for padded_start, valid_end, _ in flat_packed_ranges:
             attention_mask[0, padded_start:valid_end] = True
         return attention_mask
+
+    if input_ids.dim() == 2 and input_ids.size(0) == 1 and seq_count > 1:
+        raise ValueError("Flat packed input length does not match its padded cu-seqlens metadata.")
 
     for idx in range(min(input_ids.size(0), seq_count)):
         seq_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())

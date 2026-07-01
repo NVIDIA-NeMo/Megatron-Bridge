@@ -18,8 +18,13 @@ from types import SimpleNamespace
 
 import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.multi_token_prediction import roll_tensor
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
+    Qwen3VLGPTModel,
+    _get_mtp_packed_seq_params,
+)
 
 
 class _DummyDecoder:
@@ -125,6 +130,67 @@ def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
 
     assert output == "ok"
     assert calls["group"] is expected_group
+
+
+def test_mtp_uses_padded_boundaries_for_packed_token_rolling():
+    """MTP rolls within physical padded segments instead of crossing alignment gaps."""
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+    )
+
+    mtp_packed_seq_params = _get_mtp_packed_seq_params(packed_seq_params)
+    tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+    rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
+
+    assert mtp_packed_seq_params is not packed_seq_params
+    assert mtp_packed_seq_params.cu_seqlens_q is cu_seqlens_padded
+    assert packed_seq_params.cu_seqlens_q is cu_seqlens
+    assert rolled_tokens.tolist() == [[2, 3, 0, 0, 5, 6, 0, 0]]
+
+
+def test_mtp_postprocess_receives_padded_boundaries():
+    """Qwen keeps original metadata for attention and padded offsets for MTP postprocessing."""
+
+    class _DummyMTPModel(_DummyModel):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sequence_parallel=False)
+            self.mtp_process = True
+
+    dummy = _DummyMTPModel()
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+    )
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=torch.zeros((1, 8), dtype=torch.long),
+        position_ids=torch.zeros((3, 1, 8), dtype=torch.long),
+        attention_mask=None,
+        packed_seq_params=packed_seq_params,
+    )
+
+    assert output == "ok"
+    assert dummy.decoder.called_with["packed_seq_params"] is packed_seq_params
+    assert dummy.postprocess_args["packed_seq_params"] is not packed_seq_params
+    assert dummy.postprocess_args["packed_seq_params"].cu_seqlens_q is cu_seqlens_padded
+    assert packed_seq_params.cu_seqlens_q is cu_seqlens
 
 
 def test_tied_mtp_state_dict_drops_redundant_output_weight():
