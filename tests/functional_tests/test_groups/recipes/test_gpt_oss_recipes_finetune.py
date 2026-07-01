@@ -174,7 +174,9 @@ class TestGPTOSSFinetuneRecipes:
             (
                 "gpt_oss_20b_lora",
                 {
-                    "num_layers": 2,  # Match toy model
+                    "num_layers": 4,  # Two toy GPT-OSS layers represented as attention/MoE hybrid layers.
+                    "hybrid_layer_pattern": "*E*E",
+                    "window_attn_skip_freq": [True, False, False, False],
                     "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
@@ -193,7 +195,9 @@ class TestGPTOSSFinetuneRecipes:
             (
                 "gpt_oss_20b_full",
                 {
-                    "num_layers": 2,  # Match toy model
+                    "num_layers": 4,  # Two toy GPT-OSS layers represented as attention/MoE hybrid layers.
+                    "hybrid_layer_pattern": "*E*E",
+                    "window_attn_skip_freq": [True, False, False, False],
                     "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
@@ -243,6 +247,8 @@ class TestGPTOSSFinetuneRecipes:
 
         # Apply model overrides
         for attribute_name, attribute_value in model_overrides.items():
+            if not hasattr(config.model, attribute_name):
+                raise ValueError(f"Unknown model override: {attribute_name}")
             setattr(config.model, attribute_name, attribute_value)
 
         # Override to use smaller model for faster testing
