@@ -15,6 +15,7 @@
 """Functional smoke tests for GPT-OSS finetuning recipe configurations."""
 
 import json
+import os
 
 import pytest
 import torch
@@ -285,6 +286,9 @@ class TestGPTOSSFinetuneRecipes:
 
         initialize_distributed()
         try:
+            for env_var in ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN"):
+                os.environ.pop(env_var, None)
+
             # Run finetuning
             finetune(config, forward_step)
 
