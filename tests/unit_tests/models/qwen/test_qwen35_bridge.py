@@ -386,6 +386,79 @@ class TestQwen35DenseBridge:
 
         assert "model.embed_tokens.weight" in [mapping.hf_param for mapping in auto_mappings]
 
+    def test_mapping_registry_detects_per_expert_decoder_weights(self):
+        bridge = Qwen35MoEBridge()
+        source = Mock()
+        source.get_all_keys.return_value = {
+            "model.embed_tokens.weight",
+            "model.layers.0.mlp.experts.0.gate_proj.weight",
+            "model.layers.0.mlp.experts.0.up_proj.weight",
+            "model.layers.0.mlp.experts.0.down_proj.weight",
+        }
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        expert_fc1 = [
+            mapping
+            for mapping in registry.mappings
+            if mapping.megatron_param == "decoder.layers.*.mlp.experts.linear_fc1.weight*"
+        ]
+
+        assert any(type(mapping).__name__ == "GatedMLPMapping" for mapping in expert_fc1)
+        assert all(type(mapping).__name__ != "FusedGatedExpertMapping" for mapping in expert_fc1)
+
+    @pytest.mark.parametrize(
+        ("hf_keys", "expected"),
+        [
+            (set(), True),
+            ({"model.layers.3.mlp.experts.gate_up_proj"}, True),
+            ({"model.layers.3.mlp.experts.7.gate_proj.weight"}, False),
+        ],
+    )
+    def test_expert_storage_detection(self, hf_keys, expected):
+        assert Qwen35MoEBridge._experts_are_packed(hf_keys, hf_prefix="model.") is expected
+
+    @pytest.mark.parametrize(
+        ("mtp_key", "expected_type"),
+        [
+            ("mtp.layers.3.mlp.experts.gate_up_proj", "FusedGatedExpertMapping"),
+            ("mtp.layers.3.mlp.experts.7.gate_proj.weight", "GatedMLPMapping"),
+        ],
+    )
+    def test_mapping_registry_detects_mtp_expert_storage_at_any_layer(self, mtp_key, expected_type):
+        bridge = Qwen35MoEBridge()
+        source = Mock()
+        source.get_all_keys.return_value = {
+            "model.layers.0.mlp.experts.gate_up_proj",
+            mtp_key,
+        }
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        mtp_expert_fc1 = [
+            mapping
+            for mapping in registry.mappings
+            if mapping.megatron_param == "mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*"
+        ]
+
+        assert [type(mapping).__name__ for mapping in mtp_expert_fc1] == [expected_type]
+
+    def test_per_expert_mapping_resolves_global_expert_suffix(self):
+        mappings = Qwen35MoEBridge._get_moe_lm_mappings(experts_packed=False)
+        expert_fc1 = next(
+            mapping
+            for mapping in mappings
+            if mapping.megatron_param == "decoder.layers.*.mlp.experts.linear_fc1.weight*"
+        )
+
+        resolved = expert_fc1.resolve(("3", "7"))
+
+        assert resolved.megatron_param == "decoder.layers.3.mlp.experts.linear_fc1.weight7"
+        assert resolved.hf_param == {
+            "gate": "model.layers.3.mlp.experts.7.gate_proj.weight",
+            "up": "model.layers.3.mlp.experts.7.up_proj.weight",
+        }
+
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
         bridge = Qwen35Bridge()

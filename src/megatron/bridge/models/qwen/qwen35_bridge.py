@@ -89,7 +89,20 @@ class Qwen35MoEBridge(MegatronModelBridge):
     MODEL_CONFIG_CLASS = QwenHybridModelConfig
 
     @staticmethod
-    def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix=""):
+    def _experts_are_packed(hf_keys: set[str], *, hf_prefix: str) -> bool:
+        """Detect packed expert tensors, preserving packed layout when keys are unavailable."""
+        expert_prefix = f"{hf_prefix}layers."
+        if any(key.startswith(expert_prefix) and ".mlp.experts.gate_up_proj" in key for key in hf_keys):
+            return True
+        if any(
+            key.startswith(expert_prefix) and ".mlp.experts." in key and key.endswith(".gate_proj.weight")
+            for key in hf_keys
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _get_moe_lm_mappings(hf_prefix: str = "model.", *, megatron_prefix: str = "", experts_packed: bool = True):
         """Get language model parameter mappings for MoE Qwen3.5.
 
         Args:
@@ -97,6 +110,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
                 for LM and "model.language_model.layers.*" for VL models.
             megatron_prefix: Prefix for Megatron param names. Use "" for LM
                 (default) and "language_model." for VL models.
+            experts_packed: Whether routed experts use packed tensors instead
+                of one gate/up/down tensor per expert.
 
         Returns:
             List of mapping objects for the MoE LM portion.
@@ -191,13 +206,29 @@ class Qwen35MoEBridge(MegatronModelBridge):
                 # Language Model: MoE Expert MLPs (routed experts)
                 # Uses GatedMLPMapping for gate+up projection fusion
                 # =============================================================
-                FusedGatedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
+                *(
+                    [
+                        FusedGatedExpertMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.gate_up_proj",
+                        ),
+                        FusedExpertMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
+                        ),
+                    ]
+                    if experts_packed
+                    else [
+                        GatedMLPMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                            gate=f"{hf_prefix}layers.*.mlp.experts.*.gate_proj.weight",
+                            up=f"{hf_prefix}layers.*.mlp.experts.*.up_proj.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.*.down_proj.weight",
+                        ),
+                    ]
                 ),
                 # Sequential (non-grouped) experts <-> per-expert unfused HF weights. Needed when
                 # moe_grouped_gemm is disabled (e.g. ModelOpt pruning) and for checkpoints that store
@@ -413,11 +444,20 @@ class Qwen35MoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
         hf_prefix, hf_keys = _hf_language_model_prefix(self)
-        mtp_experts_packed = "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys
+        experts_packed = self._experts_are_packed(hf_keys, hf_prefix=hf_prefix)
+        mtp_experts_packed = any(
+            key.startswith("mtp.layers.") and ".mlp.experts.gate_up_proj" in key for key in hf_keys
+        )
 
         mapping_list = []
 
-        mapping_list.extend(self._get_moe_lm_mappings(hf_prefix=hf_prefix, megatron_prefix=""))
+        mapping_list.extend(
+            self._get_moe_lm_mappings(
+                hf_prefix=hf_prefix,
+                megatron_prefix="",
+                experts_packed=experts_packed,
+            )
+        )
         mapping_list.extend(self._get_moe_mtp_mappings(megatron_prefix="", mtp_experts_packed=mtp_experts_packed))
         return MegatronMappingRegistry(*mapping_list)
 

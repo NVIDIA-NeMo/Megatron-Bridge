@@ -275,16 +275,25 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
-        mtp_experts_packed = False
+        hf_keys: set[str] = set()
         hf_pretrained = getattr(self, "hf_pretrained", None)
         if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
             hf_keys = set(hf_pretrained.state.source.get_all_keys())
-            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
-                mtp_experts_packed = True
+        experts_packed = Qwen35MoEBridge._experts_are_packed(
+            hf_keys,
+            hf_prefix="model.language_model.",
+        )
+        mtp_experts_packed = any(
+            key.startswith("mtp.layers.") and ".mlp.experts.gate_up_proj" in key for key in hf_keys
+        )
 
         mapping_list = []
         mapping_list.extend(
-            Qwen35MoEBridge._get_moe_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
+            Qwen35MoEBridge._get_moe_lm_mappings(
+                hf_prefix="model.language_model.",
+                megatron_prefix="language_model.",
+                experts_packed=experts_packed,
+            )
         )
         mapping_list.extend(
             Qwen35MoEBridge._get_moe_mtp_mappings(
