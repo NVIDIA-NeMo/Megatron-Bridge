@@ -52,7 +52,7 @@ docker buildx build \
   --target nemo_fw_base_final \
   --build-arg FW_DEP_BUILDER=trtllm_builder \
   --build-arg FW_BASE_FINAL=trtllm_install \
-  --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.02-py3 \
+  --build-arg NEMO_FW_BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3 \
   --build-arg TRT_LLM_COMMIT=v1.3.0rc4 \
   --build-arg VLLM_VERSION=v0.14.1 \
   -t fw-base:latest \
