@@ -4208,6 +4208,8 @@ class TestLayerWiseOptimizerCheckpointing:
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.
         mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
+
+
 class TestMaybeLoadDataloaderState:
     """Tests for restoring Energon dataloader stream-position state on resume."""
 
@@ -4347,21 +4349,15 @@ class TestMaybeSaveDataloaderState:
     def test_noop_when_no_path(self):
         """No save path => nothing is saved."""
         train_iterator = self._iterator()
-        maybe_save_dataloader_state(
-            Mock(), train_iterator, 10, None, pg_collection=self._pg()
-        )
+        maybe_save_dataloader_state(Mock(), train_iterator, 10, None, pg_collection=self._pg())
         train_iterator.iterable.save_state.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "ranks", [{"cp": 1}, {"tp": 1}, {"pp": 1}], ids=["cp", "tp", "pp"]
-    )
+    @pytest.mark.parametrize("ranks", [{"cp": 1}, {"tp": 1}, {"pp": 1}], ids=["cp", "tp", "pp"])
     def test_skips_nonzero_cp_tp_pp_rank(self, ranks):
         """Tensor/pipeline/context-parallel ranks all replicate the per-DP-rank state, so only the
         tp0/pp0/cp0 leader writes preventing racing on the same train_dataloader_dprank{dp}.pt file."""
         train_iterator = self._iterator()
-        maybe_save_dataloader_state(
-            Mock(), train_iterator, 10, "/some/path", pg_collection=self._pg(**ranks)
-        )
+        maybe_save_dataloader_state(Mock(), train_iterator, 10, "/some/path", pg_collection=self._pg(**ranks))
         train_iterator.iterable.save_state.assert_not_called()
 
     @patch("megatron.bridge.training.checkpointing.torch.save")
@@ -4370,9 +4366,7 @@ class TestMaybeSaveDataloaderState:
         train_iterator = self._iterator()
         # patch barrier: no real process group exists in a unit test.
         with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
-            maybe_save_dataloader_state(
-                Mock(), train_iterator, 10, str(tmp_path), pg_collection=self._pg(dp=2)
-            )
+            maybe_save_dataloader_state(Mock(), train_iterator, 10, str(tmp_path), pg_collection=self._pg(dp=2))
 
         train_iterator.iterable.save_state.assert_called_once_with()
         saved_dict, saved_path = mock_save.call_args[0]
