@@ -235,6 +235,27 @@ class TestNemotronLabsDiffusionBridgeModelConfig:
         assert transformer.fp16 is False
         assert config.scatter_embedding_sequence_parallel is False
 
+    def test_vlm_weight_tying_uses_top_level_config(self):
+        text_config = types.SimpleNamespace(
+            hidden_size=1024,
+            intermediate_size=4096,
+            num_hidden_layers=8,
+            num_attention_heads=8,
+            num_key_value_heads=4,
+            head_dim=128,
+            vocab_size=32000,
+            max_position_embeddings=4096,
+            rms_norm_eps=1e-5,
+            tie_word_embeddings=True,
+            rope_parameters={"rope_theta": 10000.0},
+        )
+        hf_config = types.SimpleNamespace(text_config=text_config, tie_word_embeddings=False)
+        hf_config.to_dict = lambda: {"text_config": dict(vars(text_config))}
+
+        config = NemotronLabsDiffusionBridge().model_config_bridge(DummyHFPretrained(hf_config))
+
+        assert config.share_embeddings_and_output_weights is False
+
 
 class TestNemotronLabsDiffusionBridgeMappingRegistryVLM:
     """Tests for the VLM-format mapping registry (HF keys use language_model.* prefix)."""

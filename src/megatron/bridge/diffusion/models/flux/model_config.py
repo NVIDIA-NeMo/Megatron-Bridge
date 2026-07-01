@@ -54,7 +54,15 @@ class FluxModelBuilder(GPTModelBuilder):
         """Build one FLUX model stage."""
         return Flux(
             config=self._model_config.transformer,
-            architecture_config=self._model_config,
+            num_joint_layers=self._model_config.num_joint_layers,
+            num_single_layers=self._model_config.num_single_layers,
+            in_channels=self._model_config.in_channels,
+            context_dim=self._model_config.context_dim,
+            model_channels=self._model_config.model_channels,
+            axes_dims_rope=self._model_config.axes_dims_rope,
+            patch_size=self._model_config.patch_size,
+            guidance_embed=self._model_config.guidance_embed,
+            vec_in_dim=self._model_config.vec_in_dim,
             pre_process=True if pre_process is None else pre_process,
             post_process=True if post_process is None else post_process,
         )

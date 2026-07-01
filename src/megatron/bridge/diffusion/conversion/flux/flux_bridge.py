@@ -61,11 +61,10 @@ class FluxBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("black-forest-labs/FLUX.1-dev")
-        >>> model_config = bridge.to_megatron_model_config(load_weights=False)
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = FluxModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map diffusers FLUX settings to pure model-config fields."""

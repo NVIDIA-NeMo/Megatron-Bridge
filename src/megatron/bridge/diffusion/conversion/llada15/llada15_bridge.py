@@ -67,7 +67,6 @@ class LLaDA15Bridge(MegatronModelBridge):
     """HF ``LLaDAModelLM`` ↔ Megatron ``GPTModel`` bridge."""
 
     MODEL_CONFIG_CLASS = LLaDA15ModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map LLaDA1.5 HF settings to builder-backed GPT config fields."""
@@ -101,6 +100,7 @@ class LLaDA15Bridge(MegatronModelBridge):
             "attention_dropout": hf_config.attention_dropout,
             "bf16": True,
             "params_dtype": torch.bfloat16,
+            "autocast_dtype": torch.bfloat16,
             "make_vocab_size_divisible_by": self.make_vocab_size_divisible_by(vocab_size),
         }
 

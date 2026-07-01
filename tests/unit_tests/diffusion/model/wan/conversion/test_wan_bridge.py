@@ -81,6 +81,26 @@ def test_provider_bridge_constructs_provider_with_expected_fields():
     assert provider.attention_dropout == 0
 
 
+def test_model_config_bridge_preserves_wan_architecture_fields():
+    class DummyHF:
+        def __init__(self, cfg):
+            self.config = cfg
+
+    cfg = _make_cfg()
+    config = wan_bridge_module.WanBridge().model_config_bridge(DummyHF(cfg))
+
+    assert config.transformer.hidden_size == cfg.num_attention_heads * cfg.attention_head_dim
+    assert config.transformer.num_layers == cfg.num_layers
+    assert config.transformer.ffn_hidden_size == cfg.ffn_dim
+    assert config.crossattn_emb_size == config.transformer.hidden_size
+    assert config.in_channels == cfg.in_channels
+    assert config.out_channels == cfg.out_channels
+    assert config.patch_temporal == cfg.patch_size[0]
+    assert config.patch_spatial == cfg.patch_size[1]
+    assert config.freq_dim == cfg.freq_dim
+    assert config.text_dim == cfg.text_dim
+
+
 def test_mapping_registry_registers_module_types_and_builds_mappings(monkeypatch):
     calls_register_module_type = []
 

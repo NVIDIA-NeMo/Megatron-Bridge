@@ -45,11 +45,10 @@ class WanBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("WAN-3D-1.3B-v1")
-        >>> model_config = bridge.to_megatron_model_config(load_weights=False)
+        >>> model_config = bridge.get_model_config()
     """
 
     MODEL_CONFIG_CLASS = WanModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map diffusers Wan settings to pure model-config fields."""

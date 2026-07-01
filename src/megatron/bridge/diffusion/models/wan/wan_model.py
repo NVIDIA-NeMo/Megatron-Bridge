@@ -38,6 +38,13 @@ from megatron.bridge.diffusion.models.wan.wan_layer_spec import (
 from .rope_utils import Wan3DRopeEmbeddings
 
 
+def _build_wan_layer_spec(factory, *, layernorm_across_heads: bool):
+    """Build the default Wan spec while preserving zero-argument custom factories."""
+    if factory is WanLayerWithAdaLNspec:
+        return factory(layernorm_across_heads=layernorm_across_heads)
+    return factory()
+
+
 def sinusoidal_embedding_1d(dim, position):  # noqa: D103
     # preprocess
     assert dim % 2 == 0
@@ -93,20 +100,47 @@ class WanModel(VisionModule):
     def __init__(
         self,
         config: TransformerConfig,
-        architecture_config=None,
         pre_process: bool = True,
         post_process: bool = True,
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
         transformer_decoder_layer_spec=WanLayerWithAdaLNspec,
+        *,
+        crossattn_emb_size: int | None = None,
+        in_channels: int | None = None,
+        out_channels: int | None = None,
+        patch_spatial: int | None = None,
+        patch_temporal: int | None = None,
+        freq_dim: int | None = None,
+        text_dim: int | None = None,
+        layernorm_across_heads: bool | None = None,
+        qkv_format: str | None = None,
         **kwargs,
     ):
         super(WanModel, self).__init__(config=config)
-        self.architecture_config = architecture_config or config
+
+        crossattn_emb_size = (
+            crossattn_emb_size if crossattn_emb_size is not None else getattr(config, "crossattn_emb_size", 1536)
+        )
+        in_channels = in_channels if in_channels is not None else getattr(config, "in_channels", 16)
+        out_channels = out_channels if out_channels is not None else getattr(config, "out_channels", 16)
+        patch_spatial = patch_spatial if patch_spatial is not None else getattr(config, "patch_spatial", 2)
+        patch_temporal = patch_temporal if patch_temporal is not None else getattr(config, "patch_temporal", 1)
+        freq_dim = freq_dim if freq_dim is not None else getattr(config, "freq_dim", 256)
+        text_dim = text_dim if text_dim is not None else getattr(config, "text_dim", 4096)
+        layernorm_across_heads = (
+            layernorm_across_heads
+            if layernorm_across_heads is not None
+            else getattr(config, "layernorm_across_heads", True)
+        )
+        qkv_format = qkv_format if qkv_format is not None else getattr(config, "qkv_format", "thd")
 
         self.config: TransformerConfig = config
 
-        self.transformer_decoder_layer_spec = transformer_decoder_layer_spec()
+        self.transformer_decoder_layer_spec = _build_wan_layer_spec(
+            transformer_decoder_layer_spec,
+            layernorm_across_heads=layernorm_across_heads,
+        )
         self.pre_process = pre_process
         self.post_process = post_process
         self.fp16_lm_cross_entropy = fp16_lm_cross_entropy
@@ -117,12 +151,13 @@ class WanModel(VisionModule):
         self.model_type = ModelType.encoder_or_decoder
 
         self.num_heads = self.config.num_attention_heads
-        self.freq_dim = self.architecture_config.freq_dim
-        self.in_channels = self.architecture_config.in_channels
-        self.out_channels = self.architecture_config.out_channels
-        self.patch_spatial = self.architecture_config.patch_spatial
-        self.patch_temporal = self.architecture_config.patch_temporal
+        self.freq_dim = freq_dim
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.patch_spatial = patch_spatial
+        self.patch_temporal = patch_temporal
         self.patch_size = (self.patch_temporal, self.patch_spatial, self.patch_spatial)
+        self.qkv_format = qkv_format
 
         # these attributes are unused for images/videos, we just set because bridge training requires for LLMs
         self.share_embeddings_and_output_weights = False
@@ -137,9 +172,9 @@ class WanModel(VisionModule):
             )
 
         self.text_embedding = nn.Sequential(
-            nn.Linear(self.architecture_config.text_dim, self.architecture_config.crossattn_emb_size),
+            nn.Linear(text_dim, crossattn_emb_size),
             nn.GELU(approximate="tanh"),
-            nn.Linear(self.architecture_config.crossattn_emb_size, self.architecture_config.crossattn_emb_size),
+            nn.Linear(crossattn_emb_size, crossattn_emb_size),
         )
 
         # As in diffuser's Wan implementation

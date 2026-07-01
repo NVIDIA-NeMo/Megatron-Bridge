@@ -64,7 +64,6 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
 
     _is_text_only: bool = True
     MODEL_CONFIG_CLASS = NemotronLabsDiffusionModelConfig
-    CUSTOM_PROVIDER_MODEL_CONFIG_SUPPORTED = True
 
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Map Nemotron Labs Diffusion HF settings to pure GPT config fields."""
@@ -82,7 +81,11 @@ class NemotronLabsDiffusionBridge(MegatronModelBridge):
             "vocab_size": text_config.vocab_size,
             "seq_length": text_config.max_position_embeddings,
             "layernorm_epsilon": getattr(text_config, "rms_norm_eps", 1e-5),
-            "share_embeddings_and_output_weights": getattr(text_config, "tie_word_embeddings", False),
+            "share_embeddings_and_output_weights": getattr(
+                hf_config,
+                "tie_word_embeddings",
+                getattr(text_config, "tie_word_embeddings", False),
+            ),
             "rotary_base": text_config.rope_parameters["rope_theta"],
             "position_embedding_type": "none",
             "normalization": "RMSNorm",

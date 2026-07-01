@@ -15,13 +15,27 @@
 import pytest
 import torch
 
-from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep, wan_data_step
+import megatron.bridge.diffusion.models.wan.wan_step as wan_step_module
+from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep, _get_qkv_format, wan_data_step
 
 
 class _DummyIter:
     def __init__(self, batch):
         # mimic attribute used inside wan_data_step
         self.iterable = [batch]
+
+
+class _Wrapper:
+    def __init__(self, module):
+        self.module = module
+
+
+def test_wan_qkv_format_comes_from_unwrapped_runtime_model(monkeypatch):
+    model = type("WanRuntime", (), {"qkv_format": "thd", "config": object()})()
+    wrapper = _Wrapper(model)
+    monkeypatch.setattr(wan_step_module, "unwrap_model", lambda candidate: candidate.module)
+
+    assert _get_qkv_format(wrapper) == "thd"
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="wan_data_step moves tensors to CUDA")

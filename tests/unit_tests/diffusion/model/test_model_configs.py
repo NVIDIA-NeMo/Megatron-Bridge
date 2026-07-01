@@ -68,14 +68,44 @@ def test_nemotron_labs_diffusion_recipes_do_not_import_model_providers():
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("config_class", "builder_class", "target"),
+    ("config_class", "builder_class", "target", "expected_architecture"),
     [
-        (FluxModelConfig, FluxModelBuilder, "megatron.bridge.diffusion.models.flux.model_config.Flux"),
-        (WanModelConfig, WanModelBuilder, "megatron.bridge.diffusion.models.wan.model_config.WanModel"),
+        (
+            FluxModelConfig,
+            FluxModelBuilder,
+            "megatron.bridge.diffusion.models.flux.model_config.Flux",
+            {
+                "num_joint_layers": 19,
+                "num_single_layers": 38,
+                "in_channels": 64,
+                "context_dim": 4096,
+                "model_channels": 256,
+                "axes_dims_rope": [16, 56, 56],
+                "patch_size": 1,
+                "guidance_embed": False,
+                "vec_in_dim": 768,
+            },
+        ),
+        (
+            WanModelConfig,
+            WanModelBuilder,
+            "megatron.bridge.diffusion.models.wan.model_config.WanModel",
+            {
+                "crossattn_emb_size": 1536,
+                "in_channels": 16,
+                "out_channels": 16,
+                "patch_spatial": 2,
+                "patch_temporal": 1,
+                "freq_dim": 256,
+                "text_dim": 4096,
+                "layernorm_across_heads": True,
+                "qkv_format": "thd",
+            },
+        ),
     ],
 )
-def test_custom_diffusion_builders_pass_exact_transformer_and_outer_config(
-    monkeypatch, config_class, builder_class, target
+def test_custom_diffusion_builders_pass_exact_transformer_and_explicit_architecture(
+    monkeypatch, config_class, builder_class, target, expected_architecture
 ):
     transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
     config = config_class(transformer=transformer, vocab_size=32)
@@ -83,11 +113,12 @@ def test_custom_diffusion_builders_pass_exact_transformer_and_outer_config(
 
     def fake_model(transformer_config=None, *args, **kwargs):
         captured["transformer"] = kwargs.pop("config", transformer_config)
-        captured["architecture_config"] = kwargs["architecture_config"]
+        captured["architecture"] = {name: kwargs[name] for name in expected_architecture}
+        assert "architecture_config" not in kwargs
         return object()
 
     monkeypatch.setattr(target, fake_model)
     builder_class(config).build_model(object(), pre_process=True, post_process=True)
 
     assert type(captured["transformer"]) is TransformerConfig
-    assert captured["architecture_config"] is config
+    assert captured["architecture"] == expected_architecture

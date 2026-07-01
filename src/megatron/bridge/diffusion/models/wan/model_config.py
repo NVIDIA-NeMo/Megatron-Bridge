@@ -38,6 +38,8 @@ class WanModelConfig(BridgeGPTModelConfig):
     freq_dim: int = 256
     text_len: int = 512
     text_dim: int = 4096
+    layernorm_across_heads: bool = True
+    qkv_format: str = "thd"
 
 
 class WanModelBuilder(GPTModelBuilder):
@@ -57,7 +59,15 @@ class WanModelBuilder(GPTModelBuilder):
             post_process = parallel_state.is_pipeline_last_stage()
         return WanModel(
             self._model_config.transformer,
-            architecture_config=self._model_config,
+            crossattn_emb_size=self._model_config.crossattn_emb_size,
+            in_channels=self._model_config.in_channels,
+            out_channels=self._model_config.out_channels,
+            patch_spatial=self._model_config.patch_spatial,
+            patch_temporal=self._model_config.patch_temporal,
+            freq_dim=self._model_config.freq_dim,
+            text_dim=self._model_config.text_dim,
+            layernorm_across_heads=self._model_config.layernorm_across_heads,
+            qkv_format=self._model_config.qkv_format,
             pre_process=pre_process,
             post_process=post_process,
             fp16_lm_cross_entropy=self._model_config.fp16_lm_cross_entropy,
