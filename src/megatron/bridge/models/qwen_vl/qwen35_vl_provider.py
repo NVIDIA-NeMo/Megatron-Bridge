@@ -34,38 +34,20 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, List, Optional
 
-import transformers
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    get_transformer_block_with_experimental_attention_variant_spec,
-)
-from megatron.core.transformer.spec_utils import ModuleSpec
-from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
-from packaging.version import Version as PkgVersion
-
-
-_TRANSFORMERS_HAS_QWEN3_5_MOE = PkgVersion(transformers.__version__) >= PkgVersion("5.2.0")
-
-if _TRANSFORMERS_HAS_QWEN3_5_MOE:
-    from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeVisionConfig
-else:
-    Qwen3_5MoeVisionConfig = None  # type: ignore[assignment,misc]
-
-try:
-    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
-
-    _TRANSFORMERS_HAS_QWEN3_5 = True
-except ImportError:
-    _TRANSFORMERS_HAS_QWEN3_5 = False
-    Qwen3_5VisionConfig = None  # type: ignore[assignment,misc]
-
 from megatron.core.extensions.transformer_engine import (
     TEColumnParallelLinear,
     TENorm,
     TERowParallelLinear,
 )
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
+from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
+from megatron.bridge.models.conversion.transformers_version import require_transformers_version
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
@@ -79,23 +61,32 @@ _QWEN_VISUAL_ENCODER_KEY = "qwen_visual"
 _IMAGES_MODALITY_KEY = "images"
 
 
-def _check_qwen3_5_available() -> None:
-    """Raise a clear error if transformers doesn't have qwen3_5 (dense) support."""
-    if not _TRANSFORMERS_HAS_QWEN3_5:
-        raise ImportError(
-            f"Qwen3.5 VL (dense) requires transformers with qwen3_5 model support, "
-            f"but found {transformers.__version__}. "
-            "Please upgrade: pip install --upgrade transformers"
-        )
+def _get_qwen3_5_vision_config_class() -> type:
+    """Return the guarded Qwen3.5 dense vision config class."""
+    symbol = "transformers.models.qwen3_5.configuration_qwen3_5.Qwen3_5VisionConfig"
+    require_transformers_version(
+        "Qwen3.5 VL (dense)",
+        "5.2.0",
+        symbols=(symbol,),
+        action="construct the model provider",
+    )
+    from transformers.models.qwen3_5.configuration_qwen3_5 import Qwen3_5VisionConfig
+
+    return Qwen3_5VisionConfig
 
 
-def _check_qwen3_5_moe_available() -> None:
-    """Raise a clear error if transformers doesn't have qwen3_5_moe support."""
-    if not _TRANSFORMERS_HAS_QWEN3_5_MOE:
-        raise ImportError(
-            f"Qwen3.5 VL (MoE) requires transformers >= 5.2.0, but found {transformers.__version__}. "
-            "Please upgrade: pip install --upgrade transformers"
-        )
+def _get_qwen3_5_moe_vision_config_class() -> type:
+    """Return the guarded Qwen3.5 MoE vision config class."""
+    symbol = "transformers.models.qwen3_5_moe.configuration_qwen3_5_moe.Qwen3_5MoeVisionConfig"
+    require_transformers_version(
+        "Qwen3.5 VL (MoE)",
+        "5.2.0",
+        symbols=(symbol,),
+        action="construct the model provider",
+    )
+    from transformers.models.qwen3_5_moe.configuration_qwen3_5_moe import Qwen3_5MoeVisionConfig
+
+    return Qwen3_5MoeVisionConfig
 
 
 @dataclass
@@ -198,9 +189,9 @@ class Qwen35VLModelProvider(GPTModelProvider):
         return {_IMAGES_MODALITY_KEY: self.image_token_id}
 
     def __post_init__(self):
-        _check_qwen3_5_available()
+        vision_config_class = _get_qwen3_5_vision_config_class()
         if self.vision_config is None:
-            self.vision_config = Qwen3_5VisionConfig()
+            self.vision_config = vision_config_class()
         super().__post_init__()
 
     def finalize(self) -> None:
@@ -388,9 +379,9 @@ class Qwen35VLMoEModelProvider(GPTModelProvider):
         return {_IMAGES_MODALITY_KEY: self.image_token_id}
 
     def __post_init__(self):
-        _check_qwen3_5_moe_available()
+        vision_config_class = _get_qwen3_5_moe_vision_config_class()
         if self.vision_config is None:
-            self.vision_config = Qwen3_5MoeVisionConfig()
+            self.vision_config = vision_config_class()
         super().__post_init__()
 
     def finalize(self) -> None:

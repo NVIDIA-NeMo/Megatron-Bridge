@@ -15,7 +15,6 @@
 import logging
 
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import GlmMoeDsaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -32,7 +31,12 @@ logger = logging.getLogger(__name__)
 
 
 @MegatronModelBridge.register_bridge(
-    source=GlmMoeDsaForCausalLM, target=GPTModel, provider=MLAModelProvider, model_type="glm_moe_dsa"
+    source="GlmMoeDsaForCausalLM",
+    target=GPTModel,
+    provider=MLAModelProvider,
+    model_type="glm_moe_dsa",
+    min_transformers_version="5.2.0",
+    required_transformers_symbols=("transformers.GlmMoeDsaForCausalLM",),
 )
 class GLM5Bridge(MegatronModelBridge):
     """

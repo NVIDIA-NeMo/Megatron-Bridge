@@ -323,8 +323,6 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
-        from transformers import AutoConfig
-
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
         from megatron.bridge.training.model_load_save import load_model_config
 
@@ -352,7 +350,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 "Loading a model with trust_remote_code=True allows arbitrary code execution "
                 "from the model repository. Only use this with models you trust."
             )
-        hf_cfg = AutoConfig.from_pretrained(hf_model_id, trust_remote_code=trust_remote_code)
+        hf_cfg = safe_load_config_with_retry(hf_model_id, trust_remote_code=trust_remote_code)
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
@@ -1932,6 +1930,15 @@ class AutoBridge(Generic[MegatronModelT]):
                         f"  • src/megatron/bridge/models/llama/llama_bridge.py\n"
                         f"  • src/megatron/bridge/models/qwen/qwen_2_causal_bridge.py"
                     ) from None
+
+                registered_source_name = arch_key if isinstance(arch_key, str) else arch_key.__name__
+                bridge_class = model_bridge.get_registered_bridge_class(
+                    source_name=registered_source_name,
+                    model_type=getattr(config, "model_type", None),
+                )
+                if bridge_class is not None:
+                    action = "select this model configuration" if path is None else f"load model {path}"
+                    bridge_class.require_transformers_compatibility(action=action)
 
     def _get_model_instance(self, model: list[MegatronModelT]) -> MegatronModelT:
         model_instance = model[0]

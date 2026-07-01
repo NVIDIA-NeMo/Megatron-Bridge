@@ -17,7 +17,6 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -101,7 +100,13 @@ def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
     provider.moe_permute_fusion = True
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5MoeForCausalLM, target=GPTModel, model_type="qwen3_5_moe_text")
+@MegatronModelBridge.register_bridge(
+    source="Qwen3_5MoeForCausalLM",
+    target=GPTModel,
+    model_type="qwen3_5_moe_text",
+    min_transformers_version="5.2.0",
+    required_transformers_symbols=("transformers.Qwen3_5MoeForCausalLM",),
+)
 class Qwen35MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Language Model (MoE variant).
@@ -430,7 +435,13 @@ class Qwen35MoEBridge(MegatronModelBridge):
         return MegatronMappingRegistry(*mapping_list)
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5ForCausalLM, target=GPTModel, model_type="qwen3_5_text")
+@MegatronModelBridge.register_bridge(
+    source="Qwen3_5ForCausalLM",
+    target=GPTModel,
+    model_type="qwen3_5_text",
+    min_transformers_version="5.2.0",
+    required_transformers_symbols=("transformers.Qwen3_5ForCausalLM",),
+)
 class Qwen35Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Dense Language Model.
