@@ -713,14 +713,14 @@ class TestMegatronPretrainingBatchSampler:
         assert epoch != list(range(16))
 
 
-class TestFinetuningUtilities:
-    """Tests for finetuning data handling utilities."""
+class TestBatchUtilities:
+    """Tests for batch handling utilities."""
 
     def test_split_batch_into_microbatches_basic(self):
         """Test basic batch splitting functionality."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.randint(0, 1000, (16, 240)),
@@ -740,7 +740,7 @@ class TestFinetuningUtilities:
         """Test that splitting preserves data integrity."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.arange(16 * 10).reshape(16, 10),
@@ -760,7 +760,7 @@ class TestFinetuningUtilities:
         """Test splitting with mixed tensor and non-tensor items."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.randint(0, 1000, (16, 240)),
@@ -781,7 +781,7 @@ class TestFinetuningUtilities:
         """Test prepare_finetuning_batch function."""
         import torch
 
-        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+        from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
         # Create mock dataloader that yields global batches
         def mock_dataloader():
@@ -818,7 +818,7 @@ class TestFinetuningUtilities:
         """Test with different seq_lengths across global batches."""
         import torch
 
-        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+        from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
         # Mock dataloader with variable seq_lengths
         def mock_dataloader():
