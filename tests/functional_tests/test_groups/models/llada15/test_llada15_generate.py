@@ -32,7 +32,6 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.diffusion.models.llada15.inference_llada15 import _unwrap, generate_block_diffusion
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
@@ -74,7 +73,7 @@ def _init_distributed():
 
 def _build_toy_model():
     vocab_size = TOY["vocab_size"]
-    transformer = TransformerConfig(
+    config = LLaDA15ModelConfig(
         normalization="RMSNorm",
         gated_linear_unit=True,
         activation_func=F.silu,
@@ -92,9 +91,6 @@ def _build_toy_model():
         ffn_hidden_size=TOY["ffn_hidden_size"],
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
-    )
-    config = LLaDA15ModelConfig(
-        transformer=transformer,
         vocab_size=vocab_size,
         seq_length=TOY["seq_length"],
     )
@@ -116,7 +112,7 @@ class TestLLaDA15ToyGenerate:
         _init_distributed()
         model = _build_toy_model()
         # Every layer's core attention must be the TE-backed LLaDA1.5 attention.
-        # _unwrap drops the Float16Module/DDP wrapper added by provide_distributed_model.
+        # _unwrap drops any mixed-precision or distributed wrapper added by the builder.
         for layer in _unwrap(model).decoder.layers:
             assert isinstance(layer.self_attention.core_attention, LLaDA15TEDotProductAttention)
 
