@@ -185,7 +185,10 @@ def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
     assert result is built_model
     assert config.language_model_type == "nemotron6-moe"
     assert captured["language_transformer_config"].language_model_type == "nemotron6-moe"
+    assert captured["language_transformer_config"].normalization == "RMSNorm"
     assert captured["vision_transformer_config"].vision_model_type == "radio"
+    assert captured["vision_transformer_config"].normalization == "LayerNorm"
+    assert captured["vision_projection_config"].normalization == "RMSNorm"
     assert not hasattr(config.transformer, "language_model_type")
     assert not hasattr(config.transformer, "vision_model_type")
     assert captured["sound_model"] is sound_encoder
@@ -198,6 +201,7 @@ def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
     assert captured["pg_collection"] is pg_collection
     assert captured["vp_stage"] == 2
     assert projector_kwargs["pg_collection"] is pg_collection
+    assert projector_kwargs["config"].normalization == "RMSNorm"
 
 
 def test_nemotron_omni_config_defaults_to_omni_runtime_family():
@@ -218,6 +222,7 @@ def test_nemotron_omni_bridge_config_roundtrips_exact_mcore_config():
 
     assert type(config) is NemotronOmniModelConfig
     assert type(config.transformer) is TransformerConfig
+    assert config.transformer.normalization == "RMSNorm"
     assert type(restored) is NemotronOmniModelConfig
     assert type(restored.transformer) is TransformerConfig
     assert restored.get_builder_cls() is NemotronOmniModelBuilder

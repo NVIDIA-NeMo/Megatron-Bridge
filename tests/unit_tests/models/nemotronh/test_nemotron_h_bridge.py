@@ -186,6 +186,7 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
 
         # Check normalization settings
+        assert result.normalization == "RMSNorm"
         assert result.layernorm_epsilon == mock_nemotronh_config.layer_norm_epsilon
 
     def test_provider_bridge_dtype_handling(self, mock_nemotronh_config):

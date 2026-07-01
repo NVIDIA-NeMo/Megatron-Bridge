@@ -260,6 +260,7 @@ class NemotronHBridge(MegatronModelBridge):
         kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
         kwargs.update(
+            normalization="RMSNorm",
             position_embedding_type="none",
             activation_func=squared_relu,
             masked_softmax_fusion=True,
