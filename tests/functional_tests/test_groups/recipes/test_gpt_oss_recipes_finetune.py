@@ -15,11 +15,9 @@
 """Functional smoke tests for GPT-OSS finetuning recipe configurations."""
 
 import json
-import os
 
 import pytest
 import torch
-from megatron.core.transformer.enums import AttnBackend
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -190,7 +188,6 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
-                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 True,
@@ -212,7 +209,6 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
-                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 False,
@@ -286,9 +282,6 @@ class TestGPTOSSFinetuneRecipes:
 
         initialize_distributed()
         try:
-            for env_var in ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN"):
-                os.environ.pop(env_var, None)
-
             # Run finetuning
             finetune(config, forward_step)
 
