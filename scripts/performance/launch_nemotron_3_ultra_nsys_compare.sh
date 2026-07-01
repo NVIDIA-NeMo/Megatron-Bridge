@@ -50,12 +50,12 @@ set -euo pipefail
 
 : "${HF_TOKEN:?set HF_TOKEN}"
 : "${WANDB_API_KEY:?set WANDB_API_KEY}"
-: "${ACCOUNT:?set ACCOUNT}"
+ACCOUNT="${ACCOUNT:-nemotron_sw_pre}"
 : "${PARTITION:?set PARTITION}"
-# Path to a local enroot squashfs. For many-rank runs, stripe it across all OSTs
-# (`lfs setstripe -c -1 <dir>` then copy the image in) so image reads at startup
-# don't bottleneck a few OSTs.
-: "${CONTAINER_IMAGE:?set CONTAINER_IMAGE (local enroot squashfs)}"
+# Absolute path to a local enroot squashfs (enroot/pyxis won't resolve a relative path).
+# For many-rank runs, stripe it across all OSTs (`lfs setstripe -c -1 <dir>` then copy the
+# image in) so image reads at startup don't bottleneck a few OSTs.
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.04.01.squashfs}"
 : "${REPO_ROOT:?set REPO_ROOT (absolute path to this checkout)}"
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 
