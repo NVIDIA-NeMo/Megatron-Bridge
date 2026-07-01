@@ -25,12 +25,18 @@ from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDa
 from megatron.bridge.data.hf_datasets.makers import (
     get_hf_dataset_maker,
 )
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 from megatron.bridge.data.vlm_processing import get_processor_tokenizer
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 logger = logging.getLogger(__name__)
+
+
+def _is_text_chat_example(example: dict[str, Any]) -> bool:
+    """Return whether an HF conversation row is text-only chat data."""
+    return "messages" in example or "conversations" in example
 
 
 @dataclass(kw_only=True)
@@ -122,11 +128,14 @@ class HFConversationDatasetProvider(DatasetProvider):
         base_examples = maker(**kwargs)  # type: ignore[misc]
         if not isinstance(base_examples, list) or len(base_examples) == 0:
             raise ValueError(f"Maker '{self.maker_name}' returned no examples for split='{split}'")
+        collate_impl = self.collate_impl
+        if collate_impl is None and _is_text_chat_example(base_examples[0]):
+            collate_impl = text_chat_collate_fn
         return ConversationDataset(
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,
-            collate_impl=self.collate_impl,
+            collate_impl=collate_impl,
             sequence_length=self.seq_length,
             pad_to_max_length=self.pad_to_max_length,
             pad_to_multiple_of=self.pad_to_multiple_of,
