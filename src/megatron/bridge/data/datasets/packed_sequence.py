@@ -77,8 +77,8 @@ def _materialize_dataset_items(dataset, num_workers):
         torch.multiprocessing.set_sharing_strategy(previous_sharing_strategy)
 
 
-def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int, pad_id: int) -> None:
-    """Pad a single data point in place so its sequences are divisible by the requested multiple.
+def _pre_pad_data_point(data: dict, max_seq_length: int, max_stored_length_to_pad: int, pad_id: int) -> None:
+    """Pad a single data point so its runtime segment length is divisible by the requested multiple.
 
     Pads ``input_ids``/``context_ids`` with ``pad_id`` and ``loss_mask`` with ``0`` (no loss on
     pad positions). The chat preprocessing path (``_chat_preprocess``) returns ``torch`` tensors
@@ -88,11 +88,12 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int,
 
     Args:
         data: A single tokenized example. Mutated in place.
-        max_seq_length: Hard upper bound; sequences longer than this are truncated.
-        max_length_to_pad: Target length to pad up to (a multiple of ``pad_seq_to_mult``).
+        max_seq_length: Hard upper bound for the runtime sequence length after next-token shifting.
+        max_stored_length_to_pad: Stored target length to pad/truncate to. This is the divisible runtime
+            target plus one token because packed SFT labels are derived by shifting ``input_ids``.
         pad_id: Token id used to pad ``input_ids``/``context_ids``.
     """
-    assert max_seq_length >= max_length_to_pad
+    assert max_seq_length + 1 >= max_stored_length_to_pad
     # loss_mask must be padded too (with 0), otherwise samples that round to the same padded
     # input_ids length but had different original lengths keep mismatched loss_mask lengths.
     pad_values = {"input_ids": pad_id, "context_ids": pad_id, "loss_mask": 0}
@@ -103,18 +104,16 @@ def _pre_pad_data_point(data: dict, max_seq_length: int, max_length_to_pad: int,
         # _chat_preprocess returns torch tensors / numpy arrays; normalize to a plain list.
         val = val.tolist() if hasattr(val, "tolist") else list(val)
         sequence_length = len(val)
-        if sequence_length <= max_length_to_pad:
-            # input_ids are truncated by 1 for labels; add 1 extra pad token
-            val = val + [pad_value] * (max_length_to_pad - sequence_length + 1)
+        if sequence_length <= max_stored_length_to_pad:
+            val = val + [pad_value] * (max_stored_length_to_pad - sequence_length)
         else:
-            if sequence_length > max_seq_length:
+            if sequence_length > max_seq_length + 1:
                 logger.info(
                     "Sequence length %d exceeds max_seq_length %d; truncating for packing.",
                     sequence_length,
                     max_seq_length,
                 )
-            # Keep the runtime segment length (stored length minus one) at the divisible pad target.
-            val = val[:max_length_to_pad] + [pad_value]
+            val = val[:max_stored_length_to_pad]
         data[key] = val
     return
 
@@ -169,11 +168,23 @@ def tokenize_dataset(
 
     # Keep the historical minimum of 16 unless a larger multiple is requested.
     pad_seq_length_to_mult = 1 if pad_seq_to_mult is None else max(1, pad_seq_to_mult)
+    runtime_max_seq_length = max_seq_length
+    max_runtime_pad_cap = None
+    if pad_seq_length_to_mult > 1:
+        # Runtime segments, not stored input_ids, must be divisible for THD+CP. Stored samples
+        # carry one extra token because packed SFT labels are derived by shifting input_ids.
+        max_runtime_pad_cap = (runtime_max_seq_length // pad_seq_length_to_mult) * pad_seq_length_to_mult
+        if max_runtime_pad_cap == 0:
+            raise ValueError(
+                f"max_seq_length ({runtime_max_seq_length}) must be at least the effective padding multiple "
+                f"({pad_seq_length_to_mult})."
+            )
+    stored_max_seq_length = runtime_max_seq_length + 1 if max_runtime_pad_cap is not None else runtime_max_seq_length
 
     dataset = create_sft_dataset(
         path=path,
         tokenizer=tokenizer,
-        seq_length=max_seq_length,
+        seq_length=stored_max_seq_length,
         seed=seed,
         is_test=True,
         pad_seq_length_to_mult=pad_seq_length_to_mult,
@@ -182,28 +193,20 @@ def tokenize_dataset(
 
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
-    max_seq_length = dataset.max_seq_length
-
-    max_pad_cap = None
-    if pad_seq_to_mult > 1:
-        # Stored samples need one extra token for next-token labels, so cap the divisible runtime length below the pack.
-        max_pad_cap = ((max_seq_length - 1) // pad_seq_length_to_mult) * pad_seq_length_to_mult
-        if max_pad_cap == 0:
-            raise ValueError(
-                f"max_seq_length ({max_seq_length}) must be greater than the effective padding multiple "
-                f"({pad_seq_length_to_mult})."
-            )
+    max_seq_length = runtime_max_seq_length
 
     dataset = _materialize_dataset_items(dataset, num_tokenizer_workers)
 
-    if max_pad_cap is not None:
+    if max_runtime_pad_cap is not None:
 
         def ceil_to_nearest(n, m):
             return (n + m - 1) // m * m
 
         for data in dataset:
-            max_length_to_pad = min(max_pad_cap, ceil_to_nearest(len(data["input_ids"]), pad_seq_length_to_mult))
-            _pre_pad_data_point(data, max_seq_length, max_length_to_pad, pad_id)
+            runtime_len = max(len(data["input_ids"]) - 1, 0)
+            runtime_length_to_pad = min(max_runtime_pad_cap, ceil_to_nearest(runtime_len, pad_seq_length_to_mult))
+            max_stored_length_to_pad = runtime_length_to_pad + 1
+            _pre_pad_data_point(data, max_seq_length, max_stored_length_to_pad, pad_id)
 
     return dataset
 
