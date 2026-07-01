@@ -18,27 +18,29 @@ selective recompute. **New vs the baseline report**: `model.moe_router_fusion=tr
 
 ## Runs Compared
 
-| | Det + nsys (3706179) | Non-det + nsys (3706214) | Det no-nsys (3706236) |
-|---|---|---|---|
-| wandb (`mbridge-dev`) | [gbzxks86](https://wandb.ai/nvidia/mbridge-dev/runs/gbzxks86) | [e2i1o8wg](https://wandb.ai/nvidia/mbridge-dev/runs/e2i1o8wg) | [6d54qxmy](https://wandb.ai/nvidia/mbridge-dev/runs/6d54qxmy) |
-| Steady-state step time (iter 50) | **9,041 ms** | **9,252 ms** | 8,891 ms |
-| Throughput (TFLOP/s/GPU, iter 50) | **433.6** | **423.7** | 440.9 |
-| **Step time Δ (median, 3 runs/arm)** | — | **det −25 ms (−0.3%)** — within noise (§3.1) | — |
-| Bit-wise reproducible | ✓ (matches no-nsys, §4) | n/a | ✓ |
+Perf comparison uses **nsys runs only** (both arms instrumented — apples-to-apples), **3 samples per
+arm**, iter-50 steady-state (post-nsys-window, so no profiling cost). Reported as the **median** of the 3.
 
-**Headline: at 24 nodes there is no resolvable determinism step-time penalty — the det/non-det
-difference is within run-to-run noise.** With **3 samples per arm**, the median iter-50 step time is
-det+nsys **9,065 ms** vs non-det+nsys **9,090 ms** (**Δ −0.3%**, det marginally faster — i.e.
-indistinguishable). Each arm's own spread (det 9,041–9,140 ms; non-det 8,981–9,252 ms) is *larger* than
-the gap. This is the expected outcome after `fill_uninitialized_memory=false` removes the det-only
-NaN-fill overhead — and it contrasts sharply with the 3072-GPU companion's clean **+14.3%** det penalty
-(that penalty does not appear at 24n). See §3 for the multi-sample analysis.
+| | Det + nsys | Non-det + nsys |
+|---|---|---|
+| jobs (3 samples/arm) | 3706179 / 3745946 / 3746206 | 3706214 / 3712367 / 3712403 |
+| wandb (primary) | [gbzxks86](https://wandb.ai/nvidia/mbridge-dev/runs/gbzxks86) | [e2i1o8wg](https://wandb.ai/nvidia/mbridge-dev/runs/e2i1o8wg) |
+| **Median step time (iter 50)** | **9,065 ms** | **9,090 ms** |
+| **Median throughput (TFLOP/s/GPU)** | **432.5** | **431.3** |
+| **Step time Δ (det − nondet)** | — | **−25 ms (−0.3%)** — within noise (§3) |
+| **Throughput Δ (det − nondet)** | — | **+1.2 (+0.3%)** — within noise (§3) |
+| Bit-wise reproducible | ✓ (§4) | n/a |
 
-**Methodology note**: nsys window = iters 15–17 (`profile_step_start=15 / end=18`). All iter-50 numbers
-are **post-window**, so none carries active-profiling cost — the det-vs-nondet step time is a clean
-signal. The det+nsys vs det-no-nsys gap (9,041 vs 8,891 ms, ~1.7%) is run-to-run / nsys-attach
-variation, not capture cost. Leaderboard totals in §2 are **3-iter window** totals (divide by 3 for
-per-iter); **§2 is rank-0 (first PP stage) only**.
+**Headline: at 24 nodes there is no resolvable determinism penalty — det vs non-det is within
+run-to-run noise.** Median over 3 nsys runs/arm: step time **9,065 ms (det)** vs **9,090 ms (non-det)**
+→ **Δ −25 ms (−0.3%)**; throughput **432.5** vs **431.3 TFLOP/s/GPU** → **Δ +1.2 (+0.3%)**. Both deltas
+are *smaller than each arm's own run-to-run spread* (det 9,041–9,140 ms; non-det 8,981–9,252 ms), so the
+determinism cost is indistinguishable from noise at this scale (§3).
+
+**Methodology note**: nsys window = iters 15–17 (`profile_step_start=15 / end=18`); iter-50 is
+**post-window**, so it carries no active-profiling cost — a clean det-vs-nondet signal. **Only the nsys
+runs are used for the step comparison** — the no-nsys det runs are used *solely* for the determinism
+check (§4), never as step-time datapoints. §2 leaderboard totals are **3-iter window**, **rank-0 only**.
 
 ---
 
@@ -112,16 +114,16 @@ det-penalty direction — so the det cost reads as a clean positive signal (not 
 SendRecv bypasses `NCCL_ALGO`), **MLP forward** (+11%), the **Mamba selective-scan backward** +
 `causal_conv1d_bwd` (deterministic scan path, +13% / +191%), the recompute `CheckpointFunction` (+8%),
 and the non-fused cross-entropy `aten::sum` / `aten::zeros`. GEMM (`linear_fc1/fc2`,
-`_GroupedLinearBackward`) and `mcore.fusions` are near-identical or marginally det-faster. Mechanism
-matches the 3072-GPU §2. This is the *where-det-differs* map; the *net* step-time delta is still within
-noise (§3).
+`_GroupedLinearBackward`) and `mcore.fusions` are near-identical or marginally det-faster — the classic
+deterministic-substitute pattern (extra `fill`/`zeros`/`sum` + deterministic Mamba scan). This is the
+*where-det-differs* map; the *net* step-time delta is still within noise (§3).
 
 ---
 
 ## 3. Step Time: Within Run-to-Run Noise at 24n
 
-Following the 3072-GPU doc's convention (iter-50 steady-state, post-window), but with **multiple
-allocations** because the per-iter step time is noisy on this comm-heavy recipe.
+Uses iter-50 steady-state step time (post-nsys-window), with **multiple allocations per arm** because
+the per-iter step time is noisy on this comm-heavy recipe.
 
 ### 3.1 iter-50 step time across allocations (3 samples per arm)
 
@@ -144,18 +146,27 @@ so a <1% det-vs-nondet effect cannot be resolved here.
 
 ### 3.3 conclusion
 
-At 24 nodes the determinism step-time cost is **within noise** (contrast 3072's clean +14.3%). The
-likely reason it is so small here is `fill_uninitialized_memory=false`, which removes the det-only
-NaN-fill overhead; §2 shows the residual det tax (comm/Mamba) is offset by equal/faster compute.
-Resolving a sub-1% cost would need many matched runs per arm.
+At 24 nodes the determinism step-time cost is **within run-to-run noise** — median Δ **−25 ms (−0.3%)**
+step / **+1.2 TFLOP/s (+0.3%)** throughput, both smaller than the ~2–3% per-arm spread. §2 shows *where*
+det differs (comm + Mamba + unfused-CE substitutes), offset by equal/faster compute, but the net is
+sub-noise. Resolving a sub-1% cost would need many matched runs per arm.
+
+### 3.4 NOT measured here: the improvement from the flags
+
+This report is **det vs non-det**, both carrying `moe_router_fusion=true` (and the det arm
+`fill_uninitialized_memory=false`) — it does **not** measure how much those settings *improve* perf
+versus a recipe without them. There is **no matched no-flags baseline** in this run, so no
+improvement number is claimed. Quantifying that requires a separate 24n run with the flags **off**
+(and same GPU count) — a follow-up, not done here. (Do **not** use the 3072-GPU report's numbers as
+that baseline — different GPU count, not a matched comparison.)
 
 ---
 
 ## 4. Determinism — BIT-EXACT across 4 allocations ✓
 
-Unlike the 3072-GPU pair (which diverges from iter 3), the 24n deterministic recipe is **bit-identical**
-across four independent no-nsys allocations (3706236 / 3706255 / 3707706 / 3707730) and the det+nsys
-run (3706179) — nsys instrumentation does not perturb results.
+The 24n deterministic recipe is **bit-identical** across four independent no-nsys allocations
+(3706236 / 3706255 / 3707706 / 3707730) and the det+nsys run (3706179) — nsys instrumentation does not
+perturb results.
 
 | iter | lm loss (identical across all det runs) |
 |---|---|
@@ -211,6 +222,7 @@ nsys-det-3run-24node-routerfusion/
 | Launch script | — | `scripts/performance/launch_nemotron_3_ultra_nsys_compare.sh` |
 
 > **Bottom line**: at 24 nodes with `moe_router_fusion=true` + `fill_uninitialized_memory=false`,
-> determinism is **bit-exact across 4 allocations**, and the determinism **step-time penalty is within
-> run-to-run noise** (median det ≈ non-det; contrast the 3072-GPU companion's +14.3%). §2 is the
-> rank-0 first-stage cost map (comm + Mamba + unfused-CE), not a net step-time number.
+> determinism is **bit-exact across 4 allocations**, and the det-vs-non-det **step-time penalty is within
+> run-to-run noise** (median Δ −25 ms / −0.3% step, +1.2 / +0.3% throughput — nsys runs only). §2 is the
+> rank-0 first-stage cost map (comm + Mamba + unfused-CE), not a net step-time number. This report does
+> not measure the improvement from the flags themselves (no matched no-flags baseline — §3.4).
