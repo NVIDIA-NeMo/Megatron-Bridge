@@ -433,6 +433,7 @@ class TestAutoBridge:
 
             # Assertions
             assert result == mock_provider
+            assert bridge._model_config is mock_provider
             mock_model_bridge.provider_bridge.assert_called_once_with(mock_hf_model)
 
     def test_to_megatron_provider_with_different_model_types(self):
@@ -556,6 +557,7 @@ class TestAutoBridge:
         assert result.get_builder_cls() is GPTModelBuilder
         assert result.transformer.perform_initialization is True
         assert result.pre_wrap_hooks == []
+        assert bridge._model_config is model_config
         mock_model_bridge.model_config_bridge.assert_called_once_with(mock_hf_model)
 
     def test_get_megatron_model_loads_weights_before_existing_pre_wrap_hooks(self):
@@ -614,6 +616,76 @@ class TestAutoBridge:
         assert result.pre_wrap_hooks == [original_hook]
         mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_hf_model, models)
         original_hook.assert_called_once_with(models)
+
+    def test_get_megatron_model_uses_finalized_default_config_and_loads_weights(self):
+        """The simple entry point builds a default config and loads weights."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock()
+        model_config = Mock()
+        model_config.transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+        model_config.extra_checkpoint_metadata = None
+        model_config.pre_wrap_hooks = []
+        model_config.post_wrap_hooks = []
+        models = [Mock()]
+
+        class FakeBuilder:
+            def __init__(self, config):
+                self.config = config
+
+            def build_distributed_models(self, **kwargs):
+                result = models
+                for hook in self.config.pre_wrap_hooks:
+                    result = hook(result)
+                return result
+
+        model_config.get_builder_cls.return_value = FakeBuilder
+        mock_model_bridge.load_weights_hf_to_megatron.side_effect = lambda _pretrained, model_list: model_list
+        bridge = AutoBridge(mock_hf_model)
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", mock_model_bridge),
+            patch.object(bridge, "get_model_config", return_value=model_config) as mock_get_config,
+        ):
+            result = bridge.get_megatron_model(
+                pg_collection=Mock(spec=ProcessGroupCollection),
+                wrap_with_ddp=False,
+            )
+
+        assert result is models
+        assert bridge._model_config is model_config
+        mock_get_config.assert_called_once_with()
+        model_config.finalize.assert_called_once_with()
+        mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(mock_hf_model, models)
+
+    def test_get_megatron_model_reuses_registered_model_config(self):
+        """An omitted config reuses the bridge's single current config."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = AutoBridge(mock_hf_model)
+        model_config = GPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            vocab_size=32,
+        )
+        models = [Mock()]
+        builder = Mock()
+        builder.build_distributed_models.return_value = models
+        bridge._model_config = model_config
+
+        with (
+            patch.object(bridge, "get_model_config") as mock_get_config,
+            patch.object(model_config, "finalize") as mock_finalize,
+            patch.object(model_config, "get_builder_cls", return_value=Mock(return_value=builder)),
+        ):
+            result = bridge.get_megatron_model(
+                load_weights=False,
+                pg_collection=Mock(spec=ProcessGroupCollection),
+                wrap_with_ddp=False,
+            )
+
+        assert result is models
+        assert bridge._model_config is model_config
+        assert not hasattr(bridge, "_model_configs")
+        mock_get_config.assert_not_called()
+        mock_finalize.assert_called_once_with()
 
     def test_get_megatron_model_loads_explicit_hf_path_and_serializes_metadata(self):
         """An explicit source path is loaded and persisted as serializable metadata."""
@@ -697,9 +769,13 @@ class TestAutoBridge:
         """An alternate checkpoint path is meaningful only for a weighted build."""
         bridge = AutoBridge(Mock(spec=PreTrainedCausalLM))
         model_config = Mock(transformer=SimpleNamespace(), pre_wrap_hooks=[])
+        current_config = Mock(spec=GPTModelConfig)
+        bridge._model_config = current_config
 
         with pytest.raises(ValueError, match="hf_path is only valid"):
             bridge.get_megatron_model(model_config, load_weights=False, hf_path="local/hf/path")
+
+        assert bridge._model_config is current_config
 
     def test_get_megatron_model_restores_config_after_weighted_build_failure(self):
         """A failed weighted build leaves the caller's reusable config unchanged."""
@@ -735,6 +811,8 @@ class TestAutoBridge:
             bridge = AutoBridge(hf_config)
             config = bridge.get_model_config()
             config.finalize()
+            current_config = Mock(spec=GPTModelConfig)
+            bridge._model_config = current_config
             with pytest.raises(RuntimeError, match="build failed"):
                 bridge.get_megatron_model(
                     config,
@@ -748,6 +826,7 @@ class TestAutoBridge:
         assert config.pre_wrap_hooks is original_hooks
         assert config.pre_wrap_hooks == original_hooks
         assert config.extra_checkpoint_metadata == {"existing": "value"}
+        assert bridge._model_config is current_config
 
     def test_to_megatron_model_config_is_config_only_alias(self):
         """The old config entry point delegates without weight-loading arguments."""
@@ -852,6 +931,7 @@ class TestAutoBridge:
             bridge.get_megatron_model(model_config, load_weights=False, wrap_with_ddp=False)
 
         mock_get_pg.assert_called_once_with(model_config.transformer)
+        assert bridge._model_config is model_config
         model_config.finalize.assert_not_called()
         builder.build_distributed_models.assert_called_once_with(
             pg_collection=pg_collection,
@@ -1644,9 +1724,7 @@ class TestAutoBridge:
         mock_bridge.get_model_config.assert_called_once_with()
         mock_replace_configs.assert_called_once_with(mock_model_config, use_cpu_initialization=True)
         mock_model_config.finalize.assert_called_once_with()
-        mock_bridge.get_megatron_model.assert_called_once_with(
-            mock_model_config, load_weights=True, wrap_with_ddp=False
-        )
+        mock_bridge.get_megatron_model.assert_called_once_with(mock_model_config, wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
@@ -1683,9 +1761,7 @@ class TestAutoBridge:
         mock_bridge.get_model_config.assert_called_once_with()
         mock_replace_configs.assert_called_once_with(mock_model_config, use_cpu_initialization=True)
         mock_model_config.finalize.assert_called_once_with()
-        mock_bridge.get_megatron_model.assert_called_once_with(
-            mock_model_config, load_weights=True, wrap_with_ddp=False
-        )
+        mock_bridge.get_megatron_model.assert_called_once_with(mock_model_config, wrap_with_ddp=False)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
@@ -1767,13 +1843,13 @@ class TestAutoBridge:
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
+        bridge._model_config = model_config
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
             bridge.save_megatron_model(
                 mock_megatron_model,
                 "./checkpoint_path",
                 low_memory_save=True,
-                model_config=model_config,
             )
 
             mock_save_megatron_model.assert_called_once_with(
@@ -1821,10 +1897,13 @@ class TestAutoBridge:
         bridge = AutoBridge.__new__(AutoBridge)
         model = Mock()
         provider = Mock(spec=GPTModelProvider)
+        current_config = Mock(spec=GPTModelConfig)
+        bridge._model_config = current_config
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save:
             bridge.save_megatron_model([model], "./checkpoint_path", model_config=provider)
 
+        assert bridge._model_config is current_config
         mock_save.assert_called_once_with(
             [model],
             "./checkpoint_path",
@@ -1834,13 +1913,13 @@ class TestAutoBridge:
             model_config=provider,
         )
 
-    def test_save_megatron_model_requires_explicit_config(self):
-        """Saving never relies on hidden bridge or runtime config state."""
+    def test_save_megatron_model_requires_registered_or_explicit_config(self):
+        """Saving explains how to provide config when the bridge has none."""
         bridge = AutoBridge.__new__(AutoBridge)
         model = Mock()
 
         with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save:
-            with pytest.raises(TypeError, match="model_config"):
+            with pytest.raises(ValueError, match="No model config is registered"):
                 bridge.save_megatron_model([model], "./checkpoint_path")
 
         mock_save.assert_not_called()
@@ -1888,7 +1967,7 @@ class TestAutoBridge:
                 result = bridge.load_megatron_model("./checkpoint_path")
 
                 assert result == [mock_model]
-                assert not hasattr(bridge, "_model_configs")
+                assert bridge._model_config is mock_model_config
                 mock_load_megatron_model.assert_called_once()
                 mock_iterdir.assert_called_once()
 
@@ -1913,7 +1992,7 @@ class TestAutoBridge:
 
         assert models == [mock_model]
         assert model_config is mock_model_config
-        assert not hasattr(bridge, "_model_configs")
+        assert bridge._model_config is mock_model_config
 
     def test_load_megatron_model_with_iter_folder(self):
         """Test load_megatron_model with iter_ folders."""

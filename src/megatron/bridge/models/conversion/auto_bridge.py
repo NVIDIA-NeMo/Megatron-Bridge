@@ -269,9 +269,7 @@ class AutoBridge(Generic[MegatronModelT]):
     Example:
         >>> # Load and convert a model to Megatron format
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Meta-Llama-3-8B")
-        >>> model_config = bridge.get_model_config()
-        >>> model_config.finalize()
-        >>> megatron_model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
+        >>> megatron_model = bridge.get_megatron_model(wrap_with_ddp=False)
 
         >>> # Export a Megatron model back to HuggingFace format
         >>> bridge.save_hf_pretrained(megatron_model, "./exported_model")
@@ -302,6 +300,7 @@ class AutoBridge(Generic[MegatronModelT]):
         self.hf_model_id: Optional[str] = None
         trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
         self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
+        self._model_config: ModelConfig | ModelProviderMixin | None = None
 
     @classmethod
     def list_supported_models(cls) -> list[str]:
@@ -443,11 +442,10 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> bridge = AutoBridge.from_hf_config(config)
             >>>
             >>> # Create Megatron model with random initialization
-            >>> model_config = bridge.get_model_config()
-            >>> model_config.finalize()
-            >>> model = bridge.get_megatron_model(model_config, load_weights=False, wrap_with_ddp=False)
+            >>> model = bridge.get_megatron_model(load_weights=False, wrap_with_ddp=False)
 
             >>> # Or use for architecture exploration
+            >>> model_config = bridge.get_model_config()
             >>> transformer_config = model_config.transformer
             >>> print(f"Hidden size: {transformer_config.hidden_size}")
             >>> print(f"Num layers: {transformer_config.num_layers}")
@@ -1218,7 +1216,7 @@ class AutoBridge(Generic[MegatronModelT]):
         low_memory_save: bool = False,
         hf_tokenizer_kwargs: Optional[dict] = None,
         *,
-        model_config: ModelConfig | ModelProviderMixin,
+        model_config: ModelConfig | ModelProviderMixin | None = None,
     ) -> None:
         """
         Save a Megatron model in native Megatron checkpoint format without optimizer
@@ -1243,11 +1241,10 @@ class AutoBridge(Generic[MegatronModelT]):
                 Common options include trust_remote_code=True for models with custom tokenizers,
                 or use_fast=True for models that require the fast tokenizer.
             model_config: Exact outer configuration used to build or load ``model``.
+                When omitted, the bridge's current model config is used.
         Example:
             >>> # Save model checkpoint after conversion
-            >>> bridge.save_megatron_model(
-            ...     megatron_model, "./megatron_checkpoint", model_config=model_config
-            ... )
+            >>> bridge.save_megatron_model(megatron_model, "./megatron_checkpoint")
 
             >>> # Save model checkpoint with tokenizer metadata
             >>> bridge.save_megatron_model(
@@ -1270,11 +1267,22 @@ class AutoBridge(Generic[MegatronModelT]):
             - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
             - The checkpoint format follows Megatron's standard structure for compatibility
             - When low_memory_save=True, the model is deleted and cannot be used afterward
+            - Each bridge tracks one current config. Pass ``model_config`` explicitly
+              when saving an older model after another config, build, or load call.
         """
         try:
             from megatron.bridge.training.model_load_save import save_megatron_model
         except ImportError:
             raise ImportError("megatron.bridge.training is not available.")
+
+        if model_config is None:
+            model_config = getattr(self, "_model_config", None)
+        if model_config is None:
+            raise ValueError(
+                "No model config is registered on this bridge. Call get_model_config(), "
+                "get_megatron_model(), or load_megatron_model() first, or pass model_config explicitly."
+            )
+
         save_megatron_model(
             model,
             path,
@@ -1367,6 +1375,7 @@ class AutoBridge(Generic[MegatronModelT]):
             return_model_config=True,
         )
         models = model if isinstance(model, list) else [model]
+        self._model_config = model_config
         if return_model_config:
             return models, model_config
         return models
@@ -1419,7 +1428,7 @@ class AutoBridge(Generic[MegatronModelT]):
         model_config = bridge.get_model_config()
         _override_embedded_transformer_configs(model_config, use_cpu_initialization=True)
         model_config.finalize()
-        megatron_model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
+        megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
         # Save as Megatron checkpoint
         hf_tokenizer_kwargs = {}
@@ -1600,7 +1609,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # adapter weights are exported at full precision; bfloat16 downstream
         # PEFT merges can introduce ~1e-3 weight errors that compound into
         # large logit diffs.
+        current_model_config = getattr(self, "_model_config", None)
         model_config = self.get_model_config()
+        self._model_config = current_model_config
         transformer_config = _override_embedded_transformer_configs(
             model_config,
             pipeline_dtype=torch.float32,
@@ -1653,32 +1664,36 @@ class AutoBridge(Generic[MegatronModelT]):
         with model_context:
             model_config.finalize()
             pg_collection = self._get_or_initialize_pg_collection(transformer_config)
-            model = self.get_megatron_model(
-                model_config,
-                load_weights=True,
-                pg_collection=pg_collection,
-                wrap_with_ddp=False,
-                data_parallel_random_init=False,
-            )
-            _load_and_export_adapter(model)
+            try:
+                model = self.get_megatron_model(
+                    model_config,
+                    load_weights=True,
+                    pg_collection=pg_collection,
+                    wrap_with_ddp=False,
+                    data_parallel_random_init=False,
+                )
+                _load_and_export_adapter(model)
+            finally:
+                self._model_config = current_model_config
 
     def push_to_hub(self, path: str | Path) -> None: ...
 
     def get_megatron_model(
         self,
-        model_config: ModelConfig,
+        model_config: ModelConfig | None = None,
         *,
-        load_weights: bool,
+        load_weights: bool = True,
         hf_path: str | Path | None = None,
         pg_collection: ProcessGroupCollection | None = None,
         **kwargs: Unpack[BuildDistributedModelKwargs],
     ) -> list[MegatronModelT]:
-        """Build a Megatron model from an explicitly finalized model config.
+        """Build a Megatron model, loading Hugging Face weights by default.
 
         Args:
-            model_config: Finalized builder-backed model configuration. Obtain it
-                with :meth:`get_model_config`, apply any overrides, then call its
-                ``finalize()`` method before passing it here.
+            model_config: Optional finalized builder-backed model configuration.
+                When omitted, this method reuses and finalizes the bridge's current
+                builder-backed config, or obtains the default when none exists.
+                Pass an explicit config when applying custom overrides.
             load_weights: Whether to load HuggingFace weights into the newly built
                 model before distributed wrapping.
             hf_path: Optional HuggingFace checkpoint path to load instead of the
@@ -1690,6 +1705,15 @@ class AutoBridge(Generic[MegatronModelT]):
         Returns:
             The distributed Megatron model stages created by the configured builder.
         """
+        current_config = getattr(self, "_model_config", None)
+        if model_config is None:
+            if isinstance(current_config, ModelConfig):
+                model_config = current_config
+            else:
+                model_config = self.get_model_config()
+                self._model_config = current_config
+            model_config.finalize()
+
         transformer_config = getattr(model_config, "transformer", None)
         if transformer_config is None:
             raise TypeError(f"{type(model_config).__name__} does not define a nested transformer config.")
@@ -1758,6 +1782,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 model_config.extra_checkpoint_metadata = original_metadata
             original_pre_wrap_hooks[:] = original_pre_wrap_hook_values
             model_config.pre_wrap_hooks = original_pre_wrap_hooks
+        self._model_config = model_config
         return models
 
     def to_megatron_model(
@@ -1770,12 +1795,14 @@ class AutoBridge(Generic[MegatronModelT]):
     ) -> list[MegatronModelT]:
         """Backward-compatible alias that prepares config before model construction.
 
-        New code should call :meth:`get_model_config`, finalize the returned
-        configuration explicitly, and pass it to :meth:`get_megatron_model`.
+        New code can call :meth:`get_megatron_model` directly for defaults. Legacy
+        precision, initialization, or hook overrides must instead be applied to an
+        explicit config before finalization.
         """
         warnings.warn(
             "AutoBridge.to_megatron_model() is deprecated and will be removed in a future release. "
-            "Use get_model_config(), finalize the config, and pass it to get_megatron_model() instead.",
+            "Use get_megatron_model() for defaults. For custom precision, initialization, or hooks, "
+            "use get_model_config(), apply the overrides, finalize it, and pass it to get_megatron_model().",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1900,6 +1927,7 @@ class AutoBridge(Generic[MegatronModelT]):
             metadata["hf_model_id"] = hf_identifier
             model_config.extra_checkpoint_metadata = metadata
 
+        self._model_config = model_config
         return model_config
 
     def to_megatron_model_config(self) -> ModelConfig:
@@ -1953,8 +1981,8 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         warnings.warn(
             "AutoBridge.to_megatron_provider() and provider-based model construction are deprecated and will be "
-            "removed in a future release. Use get_model_config(), finalize the config, and pass it to "
-            "get_megatron_model() instead.",
+            "removed in a future release. Use get_megatron_model() for defaults, or configure and finalize an "
+            "explicit model config before passing it to get_megatron_model().",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -1992,6 +2020,7 @@ class AutoBridge(Generic[MegatronModelT]):
         if hf_identifier:
             setattr(provider, "hf_model_id", hf_identifier)
 
+        self._model_config = provider
         return provider
 
     @staticmethod
@@ -2042,9 +2071,7 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Example:
             >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B")
-            >>> model_config = bridge.get_model_config()
-            >>> model_config.finalize()
-            >>> megatron_model = bridge.get_megatron_model(model_config, load_weights=True, wrap_with_ddp=False)
+            >>> megatron_model = bridge.get_megatron_model(wrap_with_ddp=False)
             >>> tasks = bridge.get_conversion_tasks(megatron_model)
             >>>
             >>> for task in tasks:
