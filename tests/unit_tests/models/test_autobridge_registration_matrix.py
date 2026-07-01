@@ -103,6 +103,7 @@ STRING_REGISTRATIONS = {
     "Gemma4ForCausalLM",
     "Gemma4ForConditionalGeneration",
     "Glm4MoeLiteForCausalLM",
+    "GlmMoeDsaForCausalLM",
     "KimiK25ForConditionalGeneration",
     "KimiK2ForCausalLM",
     "MiMoForCausalLM",
@@ -113,7 +114,9 @@ STRING_REGISTRATIONS = {
     "NemotronH_Nano_VL_V2",
     "NemotronLabsDiffusionModel",
     "Qwen3ASRForConditionalGeneration",
+    "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
+    "Qwen3_5MoeForCausalLM",
     "Qwen3_5MoeForConditionalGeneration",
     "SarvamMLAForCausalLM",
     "SarvamMoEForCausalLM",
@@ -123,7 +126,7 @@ STRING_REGISTRATIONS = {
 
 
 def test_public_autobridge_import_registers_every_supported_model() -> None:
-    """The public package import must install every expected bridge registration."""
+    """The public import must register every bridge and lazily reject incompatible ones."""
     result = subprocess.run(
         [
             sys.executable,

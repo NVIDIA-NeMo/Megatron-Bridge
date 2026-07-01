@@ -97,6 +97,13 @@ def _deepseek_v4_hf_config():
 class TestNativeDeepSeekV4ConfigTranslation:
     """Native Transformers DSv4 config fields must map back to MCore fields."""
 
+    def test_bridge_declares_native_transformers_requirement(self):
+        assert DeepSeekV4Bridge.MIN_TRANSFORMERS_VERSION == "5.8.0"
+        assert DeepSeekV4Bridge.REQUIRED_TRANSFORMERS_SYMBOLS == (
+            "transformers.DeepseekV4Config",
+            "transformers.DeepseekV4ForCausalLM",
+        )
+
     def test_compress_ratios_from_native_layer_types(self):
         hf_config = SimpleNamespace(
             num_hidden_layers=4,

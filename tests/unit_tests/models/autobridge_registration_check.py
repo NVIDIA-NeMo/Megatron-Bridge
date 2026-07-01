@@ -20,10 +20,12 @@ import json
 import sys
 from typing import cast
 
+from packaging.version import Version
 from transformers import PretrainedConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion import model_bridge
+from megatron.bridge.models.conversion.transformers_version import TransformersVersionError
 
 
 def main() -> None:
@@ -46,7 +48,19 @@ def main() -> None:
             config.update({"auto_map": {"AutoModelForCausalLM": f"modeling_test.{architecture}"}})
         assert AutoBridge.supports(config), f"AutoBridge rejected {architecture}"
 
-        bridge = AutoBridge.from_hf_config(config)
+        try:
+            bridge = AutoBridge.from_hf_config(config)
+        except TransformersVersionError as error:
+            bridge_class = model_bridge.get_registered_bridge_class(source_name=architecture)
+            assert bridge_class is not None, f"missing guarded bridge class index for {architecture}"
+            min_version = bridge_class.MIN_TRANSFORMERS_VERSION
+            assert min_version is not None, f"{architecture} raised without compatibility metadata"
+            assert error.model_name == architecture
+            assert error.required_version == Version(min_version)
+            if error.installed_version >= error.required_version:
+                assert error.missing_symbols == bridge_class.REQUIRED_TRANSFORMERS_SYMBOLS
+            continue
+
         selected_bridge = bridge._model_bridge
         actual_bridge_class = f"{type(selected_bridge).__module__}.{type(selected_bridge).__name__}"
 

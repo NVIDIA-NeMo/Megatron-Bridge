@@ -340,6 +340,11 @@ class _ReplicatedOptional(ReplicatedMapping):
     target=GPTModel,
     provider=MLAModelProvider,
     model_type="deepseek_v4",
+    min_transformers_version="5.8.0",
+    required_transformers_symbols=(
+        "transformers.DeepseekV4Config",
+        "transformers.DeepseekV4ForCausalLM",
+    ),
 )
 class DeepSeekV4Bridge(MegatronModelBridge):
     """Megatron Bridge implementation for DeepSeek-V4 causal language models."""

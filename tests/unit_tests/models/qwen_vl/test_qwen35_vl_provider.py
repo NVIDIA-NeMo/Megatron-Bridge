@@ -19,16 +19,17 @@ import pytest
 from megatron.core.transformer.attention import SelfAttention
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.conversion.transformers_version import is_transformers_min_version
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
-    _TRANSFORMERS_HAS_QWEN3_5,
-    _TRANSFORMERS_HAS_QWEN3_5_MOE,
     Qwen3VLSelfAttention,
     Qwen35VLModelProvider,
     Qwen35VLMoEModelProvider,
     _patch_standard_attention_specs,
 )
 
+
+_TRANSFORMERS_HAS_QWEN3_5 = is_transformers_min_version("5.2.0")
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
 
@@ -233,7 +234,7 @@ class TestQwen35VLModelProvider:
         assert mtp_model_layer.submodules.self_attention.module is Qwen3VLSelfAttention
 
 
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEModelProvider:
     """Tests for the MoE Qwen3.5 VL model provider."""
 
