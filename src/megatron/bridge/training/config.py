@@ -575,6 +575,15 @@ class TrainingConfig(MTrainTrainingConfig):
     skip_sync_grad_norm_across_mp: bool = False
     """Skips syncing the grad norm across the model parallel group."""
 
+    fill_uninitialized_memory: bool = True
+    """Controls torch.utils.deterministic.fill_uninitialized_memory in deterministic mode.
+
+    When deterministic_mode is on, torch.use_deterministic_algorithms(True) also enables
+    fill_uninitialized_memory, which fills uninitialized tensors with NaN/junk as a
+    correctness-debugging aid at a real throughput cost. Default True preserves that
+    (torch's own default); set False to disable the fill and recover throughput.
+    Reproducibility is unaffected either way. Only has effect when deterministic_mode is True."""
+
     # ---------------- Validation config. ----------------
 
     eval_iters: int | None = None
@@ -1095,6 +1104,18 @@ class ConfigContainer(Container):
 
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
+
+        # use_deterministic_algorithms(True) also turns on fill_uninitialized_memory,
+        # which fills uninitialized tensors with NaN/junk as a correctness-debugging aid
+        # at a real throughput cost. Expose it as an option: `train.fill_uninitialized_memory`
+        # defaults to True (torch's own default, unchanged), and can be set False to disable
+        # the fill and recover throughput without affecting reproducibility. Runs inside the
+        # per-rank config setup, so it takes effect on every node.
+        # NOTE: alias the import (`as _torch_det`) so it does NOT rebind the module-level
+        # `torch` as a function-local, which would shadow the `torch.` uses above.
+        import torch.utils.deterministic as _torch_det
+
+        _torch_det.fill_uninitialized_memory = getattr(self.train, "fill_uninitialized_memory", True)
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """

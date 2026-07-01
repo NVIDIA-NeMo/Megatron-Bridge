@@ -5,12 +5,12 @@
 # 2076499 / 2076503 (vanilla deterministic) and reproduced 2026-06-12 jobs 2102770 / 2103151
 # (deterministic + DDP overlap).
 #
-# Dispatcher note: this recipe runs with ``moe_token_dispatcher_type=alltoall``.
-# ``--moe_flex_dispatcher_backend hybridep`` is intentionally NOT set. The HybridEP
-# buffer fails to allocate on NVL16-block hardware at EP=32 (CUDA fabric handle
-# import requires a single NVL72-style NVLink domain). The two positional
-# ``model.moe_flex_dispatcher_backend=*`` overrides below are stored but unread
-# because ``moe_token_dispatcher_type`` stays ``alltoall``.
+# Dispatcher note: this recipe runs with ``moe_token_dispatcher_type=alltoall``
+# and leaves ``moe_flex_dispatcher_backend=null`` (the alltoall default). HybridEP
+# is intentionally NOT selected: its buffer fails to allocate on NVL16-block
+# hardware at EP=32 (CUDA fabric handle import requires a single NVL72-style
+# NVLink domain). ``moe_flex_dispatcher_backend`` is only read when
+# ``moe_token_dispatcher_type=flex``, so with ``alltoall`` the backend value is moot.
 #
 # Required env vars before running:
 #   HF_TOKEN          Hugging Face token (for the Nemotron tokenizer)
@@ -53,7 +53,9 @@ HF_HUB_OFFLINE="${HF_HUB_OFFLINE:-1}"
 # and reject jobs that don't request them; others (gb200 partitions) do. Auto-
 # detect by Slurm ClusterName; override with GRES=... (GRES="" forces no --gres).
 if [ -z "${GRES+x}" ]; then
-  _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}')
+  # `|| true`: scontrol can return non-zero transiently; without it, set -o pipefail
+  # would make this assignment fail and `set -e` would silently kill the launcher.
+  _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}' || true)
   case "$_cluster" in
     oci-hsg-cs-001*) GRES="gpu:4" ;;  # NVL72 batch partition needs an explicit GPU request
     *)               GRES="" ;;        # default: partition auto-allocates GPUs
@@ -110,6 +112,7 @@ MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
   model.attention_backend=fused \
   model.deterministic_mode=true \
   model.cross_entropy_loss_fusion=false \
+  model.moe_router_fusion=true \
   model.moe_token_dispatcher_type=alltoall \
   model.moe_flex_dispatcher_backend=null \
   ddp.overlap_grad_reduce=false \
@@ -121,8 +124,8 @@ MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
   logger.log_memory_to_tensorboard=true \
   logger.throughput_window_size=1 \
   logger.tensorboard_log_interval=1 \
-  model.moe_flex_dispatcher_backend=hybridep \
   ddp.overlap_grad_reduce=true \
   ddp.overlap_param_gather=true \
   train.manual_gc=true \
-  train.manual_gc_interval=100
+  train.manual_gc_interval=100 \
+  train.fill_uninitialized_memory=false

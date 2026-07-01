@@ -111,7 +111,9 @@ echo "Auto-selected profiling_ranks: ${PROFILE_RANKS_CSV} (NGPUS=${NGPUS})"
 # others (gb200 partitions) allocate GPUs from the partition itself. Auto-detect
 # by Slurm ClusterName; override with GRES=... (GRES="" forces no --gres).
 if [ -z "${GRES+x}" ]; then
-    _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}')
+    # `|| true`: scontrol can return non-zero transiently; without it, set -o pipefail
+    # would make this assignment fail and `set -e` would silently kill the launcher.
+    _cluster=$(scontrol show config 2>/dev/null | awk -F= '/^[[:space:]]*ClusterName/{gsub(/[[:space:]]/,"",$2);print $2}' || true)
     case "$_cluster" in
         oci-hsg-cs-001*) GRES="gpu:${GN}" ;;  # NVL72 batch partition needs an explicit GPU request
         *)               GRES="" ;;            # default: partition auto-allocates GPUs
@@ -125,8 +127,12 @@ GRES_ARG=()
 # --additional_slurm_params. For reserved large-scale runs, e.g.:
 #   ADDITIONAL_SLURM_PARAMS="reservation=<your_reservation>;qos=<your_qos>"
 ADDITIONAL_SLURM_PARAMS="${ADDITIONAL_SLURM_PARAMS:-}"
-SLURM_EXTRA_ARG=()
-[ -n "$ADDITIONAL_SLURM_PARAMS" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$ADDITIONAL_SLURM_PARAMS")
+# SERIALIZE=1 chains the runs with Slurm `afterany` dependencies so only ONE runs
+# at a time (a single NGPUS-sized allocation) instead of all in parallel — polite to
+# others sharing the reservation. Each run still gets its own wandb run / experiment
+# dir (distinct -wdj); only scheduling is chained. Built per-run in submit_run().
+SERIALIZE="${SERIALIZE:-0}"
+PREV_JOBID=""
 
 submit_run() {
     local MODE="$1"  # "det" | "nondet" | "det-bitwise" | "det-bitwise2"
@@ -179,10 +185,20 @@ submit_run() {
         )
     fi
 
+    # Slurm extra params for THIS run: reservation/qos (global) + an afterany
+    # dependency on the previous run when SERIALIZE=1 (one allocation at a time).
+    local _extra="$ADDITIONAL_SLURM_PARAMS"
+    if [ "$SERIALIZE" = "1" ] && [ -n "$PREV_JOBID" ]; then
+        _extra="${_extra:+$_extra;}dependency=afterany:$PREV_JOBID"
+    fi
+    local SLURM_EXTRA_ARG=()
+    [ -n "$_extra" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$_extra")
+
     # --- Positional override block: mirrors launch_nemotron_3_ultra_deterministic.sh ---
-    # The two ``false → true`` last-wins DDP overlap toggles and the trailing
-    # ``model.moe_flex_dispatcher_backend=hybridep`` field are kept verbatim so
+    # The two ``false → true`` last-wins DDP overlap toggles are kept verbatim so
     # this run is the bit-exact-proven recipe + optional nsys instrumentation.
+    # ``moe_flex_dispatcher_backend`` stays ``null`` (the alltoall default); HybridEP
+    # is not selected because ``moe_token_dispatcher_type`` stays ``alltoall``.
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
@@ -210,6 +226,7 @@ submit_run() {
         model.attention_backend=fused \
         model.deterministic_mode="$DET_MODE" \
         model.cross_entropy_loss_fusion="$CE_FUSION" \
+        model.moe_router_fusion=true \
         model.moe_token_dispatcher_type=alltoall \
         model.moe_flex_dispatcher_backend=null \
         ddp.overlap_grad_reduce=false \
@@ -221,15 +238,17 @@ submit_run() {
         logger.log_memory_to_tensorboard=true \
         logger.throughput_window_size=1 \
         logger.tensorboard_log_interval=1 \
-        model.moe_flex_dispatcher_backend=hybridep \
         ddp.overlap_grad_reduce=true \
         ddp.overlap_param_gather=true \
         train.manual_gc=true \
         train.manual_gc_interval=100 \
+        train.fill_uninitialized_memory=false \
         "${NSYS_HYDRA_OVERRIDES[@]}" 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
 
     grep -oE "Job id: [0-9]+" "$OUT_DIR/submit-${MODE}.log" | head -1 | awk '{print $3}' > "$OUT_DIR/jobid-${MODE}.txt"
     echo "$MODE job: $(cat "$OUT_DIR/jobid-${MODE}.txt")  (wandb=$WDJ)"
+    # Record for the next run's afterany dependency when SERIALIZE=1.
+    PREV_JOBID=$(cat "$OUT_DIR/jobid-${MODE}.txt")
     echo "$WDJ" > "$OUT_DIR/wdj-${MODE}.txt"
 }
 
@@ -245,20 +264,21 @@ submit_run() {
 submit_run det
 submit_run nondet
 submit_run det-bitwise
-# det-bitwise2 (2nd no-nsys run) intentionally NOT submitted: only 3 runs requested
-# (det+nsys, non-det+nsys, det+no-nsys). Re-enable for the 4-run cross-allocation check.
-# submit_run det-bitwise2
+# det-bitwise2 (2nd no-nsys run): ENABLED so two independent no-nsys deterministic
+# allocations can be diffed bit-wise against each other — the determinism-trust check.
+submit_run det-bitwise2
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
 JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
+JOB_BITWISE2=$(cat "$OUT_DIR/jobid-det-bitwise2.txt")
 
-# Wait for all three to complete.
+# Wait for all four to complete.
 deadline=$(($(date +%s) + WAIT_TIMEOUT_SEC))
 while :; do
-    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE" -h 2>/dev/null | wc -l)
+    pending=$(squeue -j "$JOB_DET,$JOB_NONDET,$JOB_BITWISE,$JOB_BITWISE2" -h 2>/dev/null | wc -l)
     [ "$pending" -eq 0 ] && break
     if [ "$(date +%s)" -gt "$deadline" ]; then
-        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE" >&2
+        echo "ERROR: timed out waiting for jobs $JOB_DET / $JOB_NONDET / $JOB_BITWISE / $JOB_BITWISE2" >&2
         exit 124
     fi
     echo "$(date -Iseconds)  waiting for jobs: $pending still in queue"
@@ -331,6 +351,7 @@ echo ""
 echo "=== Bit-wise determinism check ==="
 DET_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det.txt)" -name "log-*${JOB_DET}*.out" -type f 2>/dev/null | head -1)
 BIT_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise.txt)" -name "log-*${JOB_BITWISE}*.out" -type f 2>/dev/null | head -1)
+BIT2_LOG=$(find "$HOME/.nemo_run/experiments/$(cat $OUT_DIR/wdj-det-bitwise2.txt)" -name "log-*${JOB_BITWISE2}*.out" -type f 2>/dev/null | head -1)
 
 extract_loss() {
     local LOG="$1" it="$2"
@@ -358,7 +379,11 @@ diff_table() {
                             || echo "  → at least one sampled iter disagrees"
 }
 {
-    diff_table "det+nsys"    "det+no-nsys"  "$DET_LOG"  "$BIT_LOG"
+    # nsys-on vs nsys-off: measures the nsys instrumentation effect on the det recipe.
+    diff_table "det+nsys"    "det+no-nsys"    "$DET_LOG"  "$BIT_LOG"
+    # two independent no-nsys det allocations vs each other: the determinism-trust check
+    # (if these disagree, the recipe is NOT bit-exact across allocations at this scale).
+    diff_table "det+no-nsys" "det+no-nsys#2"  "$BIT_LOG"  "$BIT2_LOG"
 } | tee "$OUT_DIR/bitwise_check.txt"
 
 echo ""
@@ -366,4 +391,4 @@ echo "Reports written to:"
 echo "  perf leaderboard:    $OUT_DIR/leaderboard.txt"
 echo "  bit-wise check:      $OUT_DIR/bitwise_check.txt"
 echo "CSVs:           $OUT_DIR/nsys-det.csv  $OUT_DIR/nsys-nondet.csv"
-echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE"
+echo "Job IDs:        det=$JOB_DET  nondet=$JOB_NONDET  det-bitwise=$JOB_BITWISE  det-bitwise2=$JOB_BITWISE2"
