@@ -62,6 +62,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _grid_dp_size(grid: object) -> int:
+    """Return the static DP dimension from a MegatronMIMO hyper-comm grid."""
+    dim_names = getattr(grid, "dim_names", None)
+    shape = getattr(grid, "shape", None)
+    if dim_names is None or shape is None or "dp" not in dim_names:
+        return 1
+    return int(shape[list(dim_names).index("dp")])
+
+
 def train_step_megatron_mimo(
     forward_step_func: Callable,
     data_iterator: Iterator,
@@ -76,6 +85,7 @@ def train_step_megatron_mimo(
     num_microbatches: int,
     seq_length: int,
     micro_batch_size: int,
+    scheduler_micro_batch_size: int | None = None,
 ) -> Tuple[Dict[str, torch.Tensor], Optional[float], Optional[int]]:
     """Single MegatronMIMO training step.
 
@@ -92,7 +102,9 @@ def train_step_megatron_mimo(
         module_to_grid_tuple: List of (module, grid) tuples.
         num_microbatches: Number of microbatches per iteration.
         seq_length: Sequence length.
-        micro_batch_size: Micro batch size.
+        micro_batch_size: Rank-local micro batch size passed to the pipeline schedule.
+        scheduler_micro_batch_size: Global logical micro batch size used for optimizer
+            scheduler progress. Defaults to ``micro_batch_size``.
 
     Returns:
         Tuple of (loss_dict, skipped_iter, grad_norm, num_zeros_in_grad).
@@ -128,7 +140,8 @@ def train_step_megatron_mimo(
 
     # Step learning rate schedulers
     if update_successful:
-        increment = num_microbatches * micro_batch_size * global_state.cfg.data_parallel_size
+        scheduler_micro_batch_size = scheduler_micro_batch_size or micro_batch_size
+        increment = num_microbatches * scheduler_micro_batch_size * global_state.cfg.data_parallel_size
         for module_name, scheduler in schedulers.items():
             if scheduler is not None:
                 scheduler.step(increment=increment)
@@ -271,6 +284,19 @@ def train_megatron_mimo(
     if checkpoint_manager is None:
         checkpoint_manager = DefaultCheckpointManager(cfg.checkpoint)
 
+    schedule_micro_batch_size = micro_batch_size
+    if bool(getattr(getattr(cfg, "mimo", None), "scalable_dp", False)):
+        active_grid = megatron_mimo_infra.module_to_grid_map.get(active_module_name)
+        active_dp_size = _grid_dp_size(active_grid) if active_grid is not None else 1
+        if micro_batch_size % active_dp_size != 0:
+            raise ValueError(
+                f"scalable_dp requires micro_batch_size ({micro_batch_size}) to be divisible by "
+                f"the active module DP size ({active_dp_size}) for module {active_module_name!r}."
+            )
+        # The loader already returns this rank's scalable-data-parallel shard, so give the schedule the
+        # rank-local count while global accounting below stays on the full micro-batch.
+        schedule_micro_batch_size = micro_batch_size // active_dp_size
+
     # Initialize tracking variables
     total_loss_dict = {}
     history_wct = []
@@ -335,7 +361,8 @@ def train_megatron_mimo(
             module_to_grid_tuple=module_to_grid_tuple,
             num_microbatches=num_microbatches,
             seq_length=seq_length,
-            micro_batch_size=micro_batch_size,
+            micro_batch_size=schedule_micro_batch_size,
+            scheduler_micro_batch_size=micro_batch_size,
         )
 
         # Stop iteration timer
@@ -460,5 +487,13 @@ def train_megatron_mimo(
         )
 
     timers("interval-time").stop()
+
+    # Release the reorder prefetch thread (when the train iterator is a ReorderingBuffer) so its
+    # daemon thread and side Gloo/NCCL process groups are torn down at the end of the loop instead
+    # of leaking until GC runs ``__del__`` — important on in-process restart / data-iterator rebuild,
+    # where a new buffer is constructed while the old thread may still be blocked on a side-PG
+    # collective. ``hasattr`` duck-types it: a no-op for plain iterators / the non-reorder path.
+    if hasattr(train_data_iterator, "shutdown"):
+        train_data_iterator.shutdown()
 
     logger.info(f"Rank {dist.get_rank()}: MegatronMIMO training completed")

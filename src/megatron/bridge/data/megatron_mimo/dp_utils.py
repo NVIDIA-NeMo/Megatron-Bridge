@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import builtins
+import logging
 from typing import TYPE_CHECKING, Any, Dict, Tuple
 
 import torch
@@ -15,6 +16,9 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
+
+
+logger = logging.getLogger(__name__)
 
 
 def _batch_dim_for_tensor(key: str, value: torch.Tensor) -> int:
@@ -172,22 +176,29 @@ def get_megatron_mimo_dp_info(
 def get_megatron_mimo_sampling_info(
     megatron_mimo_cfg: "MegatronMIMOParallelismConfig",
     grids: Dict[str, "HyperCommGrid"],
+    *,
+    scalable_dp: bool = False,
 ) -> Tuple[int, int, bool]:
     """Get sampler DP rank, size, and data-loading flag for MegatronMIMO.
 
-    In heterogeneous MegatronMIMO, modules may have different DP sizes.  The data
-    loader must give every data-loading rank the **same global micro-batch**
-    so that :func:`slice_batch_for_megatron_mimo` (called in the forward step) can
-    sub-shard it consistently with the :class:`BridgeCommunicator` fan-in /
-    fan-out routing.
+    In heterogeneous MegatronMIMO, modules may have different DP sizes.
 
-    This function therefore returns ``dp_size=1, dp_rank=0`` for all ranks,
-    disabling DP sharding at the sampler level.  Per-module DP sharding is
-    deferred to :func:`slice_batch_for_megatron_mimo`.
+    **Default (full-batch reads).** Returns ``dp_size=1, dp_rank=0`` for all ranks, so the data
+    loader gives every data-loading rank the **same global micro-batch**; per-module DP sharding
+    is deferred to :func:`slice_batch_for_megatron_mimo` in the forward step, consistent with the
+    :class:`BridgeCommunicator` fan-in / fan-out routing.
+
+    **Scalable data parallelism (``scalable_dp=True``).** Returns this rank's **module-local**
+    ``(dp_rank, dp_size)`` so the sampler hands each rank only its disjoint scalable-data-parallel shard (the
+    caller must set the loader's per-rank ``micro_batch_size`` to ``global_micro_batch // dp``).
+    The per-microbatch cost rebalancing is then done by communication in
+    :class:`megatron.bridge.data.megatron_mimo.reorder_buffer.ReorderingBuffer`, and the forward
+    step does **not** slice again.
 
     Args:
         megatron_mimo_cfg: MegatronMIMO parallelism configuration.
         grids: Module name to HyperCommGrid mapping.
+        scalable_dp: When ``True``, shard reads at the sampler (module-local DP).
 
     Returns:
         Tuple of (sampler_dp_rank, sampler_dp_size, needs_data).
@@ -197,9 +208,13 @@ def get_megatron_mimo_sampling_info(
         return 0, 1, False
 
     needs_data = _needs_data_for_module(my_grid, my_module)
-    # All data-loading ranks use the same sampler settings so they load
-    # identical global micro-batches.  Module-local DP slicing happens later
-    # in forward_step via slice_batch_for_megatron_mimo.
+    if scalable_dp:
+        # Disjoint reads: each rank's sampler emits only its module-local DP shard. The
+        # reorder buffer rebalances across the module DP group by per-sample all-to-all.
+        dp_pg = my_grid.get_pg(["dp"])
+        return dp_pg.rank(), dp_pg.size(), needs_data
+    # All data-loading ranks use the same sampler settings so they load identical global
+    # micro-batches; module-local DP slicing happens later in forward_step.
     return 0, 1, needs_data
 
 
@@ -278,3 +293,51 @@ def slice_batch_for_megatron_mimo(
             sliced[key] = value
 
     return sliced
+
+
+def is_vision_subdict(value: Any) -> bool:
+    """Whether ``value`` is a vision-encoder sub-dict (carries ``hidden_states`` + ``grid_thw``).
+
+    Single source of truth for vision-sub-dict detection, shared by the slice, gather, and merge
+    visitors so a vision key rename is a one-line change.
+    """
+    return (
+        isinstance(value, dict)
+        and isinstance(value.get("hidden_states"), torch.Tensor)
+        and isinstance(value.get("grid_thw"), torch.Tensor)
+    )
+
+
+def real_token_lengths(
+    input_ids: torch.Tensor,
+    *,
+    pad_token_id: int,
+    attention_mask: "torch.Tensor | None" = None,
+) -> torch.Tensor:
+    """Per-sample real (non-pad) token length for a ``[B, S]`` batch.
+
+    Length-source priority (authoritative first):
+
+    1. ``attention_mask.sum(dim=1)`` when an ``attention_mask`` of matching ``[B, S]`` shape
+       is present — the true padding mask, so it is the authoritative length source.
+    2. else ``(input_ids != pad_token_id).sum(dim=1)`` — the configured pad id.
+
+    ``loss_mask`` is deliberately **not** used: it is a supervision mask (zeros
+    supervised-but-not-loss tokens such as the prompt) and would under-count the real
+    sequence length.
+
+    Args:
+        input_ids: Padded token ids ``[B, S]``.
+        pad_token_id: Pad id used for the fallback ``!= pad`` length.
+        attention_mask: Optional ``[B, S]`` padding mask (1 = real, 0 = pad).
+
+    Returns:
+        An ``int64`` tensor of shape ``[B]`` with each sample's real length.
+    """
+    if (
+        isinstance(attention_mask, torch.Tensor)
+        and attention_mask.dim() == 2
+        and attention_mask.shape == input_ids.shape
+    ):
+        return attention_mask.to(torch.bool).sum(dim=1).to(torch.long)
+    return (input_ids != pad_token_id).sum(dim=1).to(torch.long)

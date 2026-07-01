@@ -17,7 +17,11 @@ from typing import List
 import numpy as np
 import pytest
 
-from megatron.bridge.data.datasets.packing_utils import first_fit, first_fit_decreasing
+from megatron.bridge.data.datasets.packing_utils import (
+    balanced_index_order,
+    first_fit,
+    first_fit_decreasing,
+)
 
 
 def _first_fit_linear(seqlens: List[int], pack_size: int) -> List[List[int]]:
@@ -83,3 +87,48 @@ class TestSegmentTreeMatchesLinearScan:
         seqlens = list(np.random.randint(1, 2048, size=5000))
         pack_size = 2048
         assert first_fit(seqlens, pack_size) == _first_fit_linear(seqlens, pack_size)
+
+
+@pytest.mark.unit
+def test_dead_cost_balanced_pack_removed():
+    # F15: cost_balanced_pack is dead (production reorders via balanced_index_order) -> deleted.
+    import megatron.bridge.data.datasets.packing_utils as packing_utils
+
+    assert not hasattr(packing_utils, "cost_balanced_pack")
+
+
+@pytest.mark.unit
+def test_dead_maybe_reorder_global_batch_removed():
+    # F15: maybe_reorder_global_batch deleted; production uses compute_reorder_perm + reorder_and_slice.
+    import megatron.bridge.data.megatron_mimo.dp_utils as dp_utils
+
+    assert not hasattr(dp_utils, "maybe_reorder_global_batch")
+
+
+@pytest.mark.unit
+class TestBalancedIndexOrder:
+    def test_valid_permutation_and_equal_groups(self):
+        costs = [5.0, 1.0, 4.0, 2.0, 3.0, 6.0]
+        order = balanced_index_order(costs, n_groups=2)
+        assert sorted(order) == list(range(6))  # permutation
+        # contiguous equal halves
+        g0, g1 = order[:3], order[3:]
+        assert len(g0) == 3 and len(g1) == 3
+
+    def test_balances_contiguous_shards(self):
+        # grouped heavies; naive contiguous split would imbalance
+        costs = [10.0, 10.0, 10.0, 1.0, 1.0, 1.0]
+        order = balanced_index_order(costs, n_groups=3)  # 2 per group
+        groups = [order[0:2], order[2:4], order[4:6]]
+        totals = [sum(costs[i] for i in g) for g in groups]
+        assert max(totals) - min(totals) == 0.0  # each group one heavy + one light
+
+    def test_determinism(self):
+        costs = [3.0, 1.0, 9.0, 0.5, 4.0, 2.0]
+        assert balanced_index_order(costs, 2) == balanced_index_order(costs, 2)
+
+    def test_errors(self):
+        with pytest.raises(ValueError):
+            balanced_index_order([1.0, 2.0, 3.0], 2)  # 3 not divisible by 2
+        with pytest.raises(ValueError):
+            balanced_index_order([1.0], 0)

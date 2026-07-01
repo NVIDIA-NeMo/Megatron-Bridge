@@ -1024,6 +1024,130 @@ class InProcessRestartConfig:
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
+@dataclass
+class MegatronMIMOFeatureConfig:
+    """Configuration for MegatronMIMO data-efficiency features.
+
+    Groups three independent knobs for heterogeneous multimodal data-parallel training:
+
+    1. **Scalable data parallelism** (:attr:`scalable_dp`) — each rank reads only its disjoint
+       ``1/dp`` shard of the global micro-batch instead of every rank reading the full batch
+       (the host-IO / CPU-memory win).
+    2. **Intra-microbatch reordering** (:attr:`intra_microbatch_reorder`) — on top of (1),
+       rebalances the per-micro-batch vision load across the module DP group by a per-sample
+       all-to-all, cutting the per-step DP straggler.
+    3. **In-batch sequence packing** (:attr:`pack_sequences_in_batch`) — concatenates each
+       language shard's real tokens into a single block-diagonal sequence so the LM skips
+       padding compute.
+
+    See ``docs/training/mimo-intra-microbatch-reorder.md``.
+
+    Replaces the previous ``MIMO_*`` environment flags so the settings are captured in
+    the serialized run config (reproducible) and validated up front.
+    """
+
+    pack_sequences_in_batch: bool = False
+    """Pack each language DP shard's real tokens into a single ``[1, T]`` packed sequence (THD layout)."""
+
+    scalable_dp: bool = False
+    """Scalable data parallelism: each rank's sampler reads only its disjoint ``1/dp`` shard of the
+    global micro-batch instead of every rank reading the full batch and slicing locally. Cuts host
+    IO / CPU-resident data scaling with the DP degree. This is the base read-sharding feature;
+    :attr:`intra_microbatch_reorder` optionally rebalances those shards on top. See
+    ``megatron.bridge.data.megatron_mimo.reorder_buffer``."""
+
+    intra_microbatch_reorder: bool = True
+    """Intra-microbatch reordering: when :attr:`scalable_dp` is set, rebalance each micro-batch
+    across the module DP group by a per-sample all-to-all (cost all-gather + ragged exchange) so
+    per-rank vision load is even, cutting the per-step DP straggler. When ``False``, each rank
+    processes its **natural, unbalanced** ``1/dp`` shard with no exchange — the scalable-data-parallel
+    baseline that isolates the read-sharding win from the rebalancing win. Only used when
+    :attr:`scalable_dp` is set."""
+
+    overlap_intra_microbatch_reorder: bool = True
+    """Run step ``t+1``'s intra-microbatch reorder exchange (Gloo cost all-gather + NCCL all-to-all) on a
+    background thread + dedicated CUDA stream so the transfer is hidden behind step ``t``'s
+    compute. This is what turns the scalable-data-parallel read win into a net throughput win — without it the
+    exchange sits synchronously on the critical path. Requires ``CUDA_DEVICE_MAX_CONNECTIONS != 1``
+    and a separate NCCL PG from the gradient all-reduce. Only used when :attr:`intra_microbatch_reorder` is
+    set; set ``False`` to run the exchange synchronously (debugging / constrained connections).
+
+    With :attr:`reorder_window_size` > 1 this becomes **cross-window prefetch**: the entire next
+    window's exchange runs while the current window's micro-batches compute."""
+
+    reorder_window_size: int = 1
+    """Number of micro-batches ``W`` exchanged together as one window. The single per-sample
+    all-to-all then covers ``W`` micro-batches and is reassembled per slot, and (with overlap) the
+    next window's exchange is hidden behind the current window's ``W`` micro-batches of compute
+    (cross-window prefetch). ``1`` (default) is the historical per-micro-batch behavior, byte-for-byte.
+    Setting ``W`` equal to the **gradient-accumulation count** is the desired configuration — the
+    single window collective then lands once per optimizer step (this is recommended, not enforced).
+    Costs ``~2·W`` resident micro-batches (consuming + prefetched). Only used when
+    :attr:`intra_microbatch_reorder` is set."""
+
+    cost_linear_vit: float = 1.0
+    """Per-patch ViT cost coefficient (linear in the patch count); mirrors vision-encoder FLOPs. With
+    :attr:`cost_linear_lm` it forms the per-sample reordering cost
+    ``cost_linear_vit·patches + cost_linear_lm·real_tokens``. The patch count is the intrinsic,
+    collation-independent per-image patch count, so vision and language derive the same canonical order
+    without cross-module communication."""
+
+    cost_linear_lm: float = 0.0
+    """Per-token LM cost coefficient (linear in the token count); mirrors language-model FLOPs. Adds
+    ``cost_linear_lm·real_tokens`` to the reordering cost, where ``real_tokens`` is the **real (non-pad)
+    token count** of ``input_ids`` (via ``attention_mask`` when present, else ``!= pad_token_id``). The
+    real count is intrinsic to the sample — invariant to how each module's collator pads — so it keeps the
+    assignment collation-independent (the *padded* length would differ between shards and mispair the
+    fan-out). ``0.0`` (the default) disables the LM term, leaving a patch-only cost; relies on
+    :attr:`pad_token_id` only when no ``attention_mask`` is present."""
+
+    pad_token_id: int = 0
+    """Model/tokenizer pad id used to derive real (non-pad) token lengths for the per-sample
+    cost and sequence packing. Must match the collator's padding id. Lengths are taken from
+    ``attention_mask`` when present (the authoritative padding mask); this id is the fallback
+    via ``input_ids != pad_token_id``. Some models legitimately use ``0`` as the pad id."""
+
+    def finalize(self) -> None:
+        """Validate the feature configuration.
+
+        Raises:
+            ValueError: If ``cost_linear_vit`` or ``cost_linear_lm`` is negative, ``pad_token_id`` is
+                negative, or ``intra_microbatch_reorder`` runs (``scalable_dp`` and
+                ``intra_microbatch_reorder`` both set) with both coefficients non-positive (the reordering
+                assignment would be ill-defined — an all-zero cost).
+        """
+        if self.cost_linear_vit < 0:
+            raise ValueError(
+                f"MegatronMIMOFeatureConfig.cost_linear_vit must be non-negative, got {self.cost_linear_vit}."
+            )
+        if self.cost_linear_lm < 0:
+            raise ValueError(
+                f"MegatronMIMOFeatureConfig.cost_linear_lm must be non-negative, got {self.cost_linear_lm}."
+            )
+        if not isinstance(self.pad_token_id, int) or self.pad_token_id < 0:
+            raise ValueError(
+                f"MegatronMIMOFeatureConfig.pad_token_id must be a non-negative int, got {self.pad_token_id!r}."
+            )
+        if not isinstance(self.reorder_window_size, int) or self.reorder_window_size < 1:
+            raise ValueError(
+                f"MegatronMIMOFeatureConfig.reorder_window_size must be an int >= 1, got {self.reorder_window_size!r}."
+            )
+        if (
+            self.scalable_dp
+            and self.intra_microbatch_reorder
+            and self.cost_linear_vit <= 0.0
+            and self.cost_linear_lm <= 0.0
+        ):
+            raise ValueError(
+                "MegatronMIMOFeatureConfig: intra_microbatch_reorder=True requires cost_linear_vit > 0 or "
+                "cost_linear_lm > 0 (a non-degenerate per-sample cost). The reordering is decided independently on "
+                "the vision and language DP workers from intrinsic, collation-independent quantities — the "
+                "per-image patch count and the real (non-pad) token count — so both derive the same canonical "
+                "order without cross-module communication. (The *padded* sequence length is collation-dependent "
+                "and would mispair the BridgeCommunicator fan-out, so it is never used.)"
+            )
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -1061,6 +1185,7 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
+    mimo: Optional[MegatronMIMOFeatureConfig] = None
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -1241,6 +1366,8 @@ class ConfigContainer(Container):
             self.nvrx_straggler.finalize()
         if self.tensor_inspect is not None:
             self.tensor_inspect.finalize()
+        if self.mimo is not None:
+            self.mimo.finalize()
 
         # Sync config. If TE RNG tracker is set in either ways, set them in both places.
         if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:

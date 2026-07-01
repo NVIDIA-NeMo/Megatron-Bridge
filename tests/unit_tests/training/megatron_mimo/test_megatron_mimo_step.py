@@ -93,6 +93,9 @@ class TestForwardStep:
 
         # Create mock state
         mock_state = MagicMock()
+        mock_state.cfg.mimo = (
+            None  # MIMO data-efficiency features off (these tests don't exercise intra-microbatch reordering)
+        )
 
         # Create mock model with role=None (indicates last stage)
         mock_model = MagicMock()
@@ -120,6 +123,9 @@ class TestForwardStep:
         from megatron.bridge.training.megatron_mimo_step import forward_step
 
         mock_state = MagicMock()
+        mock_state.cfg.mimo = (
+            None  # MIMO data-efficiency features off (these tests don't exercise intra-microbatch reordering)
+        )
         mock_model = MagicMock()
         # Configure role to indicate intermediate stage (not last stage)
         mock_role = MagicMock()
@@ -147,6 +153,9 @@ class TestForwardStep:
         from megatron.bridge.training.megatron_mimo_step import forward_step
 
         mock_state = MagicMock()
+        mock_state.cfg.mimo = (
+            None  # MIMO data-efficiency features off (these tests don't exercise intra-microbatch reordering)
+        )
         mock_model = MagicMock()
         mock_role = MagicMock()
         mock_role.has_language_module = True
@@ -184,6 +193,9 @@ class TestForwardStep:
         from megatron.bridge.training.megatron_mimo_step import forward_step
 
         mock_state = MagicMock()
+        mock_state.cfg.mimo = (
+            None  # MIMO data-efficiency features off (these tests don't exercise intra-microbatch reordering)
+        )
         mock_model = MagicMock()
         mock_model.role = None  # role=None means is_last_stage=True
         # Return dict (incorrect for last stage)
