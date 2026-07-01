@@ -20,9 +20,23 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
     get_packed_seq_params,
+    get_packed_seq_q_cu_seqlens,
     repack_mcore_thd_position_ids,
     unpack_mcore_thd_tensor_for_position_ids,
 )
+
+
+def test_get_packed_seq_q_cu_seqlens_prefers_padded_boundaries():
+    actual = torch.tensor([0, 6, 14], dtype=torch.int32)
+    padded = torch.tensor([0, 8, 16], dtype=torch.int32)
+
+    unpadded, physical = get_packed_seq_q_cu_seqlens(PackedSeqParams(cu_seqlens_q=actual, cu_seqlens_q_padded=padded))
+    assert unpadded is actual
+    assert physical is padded
+
+    unpadded, physical = get_packed_seq_q_cu_seqlens(PackedSeqParams(cu_seqlens_q=actual))
+    assert unpadded is actual
+    assert physical is actual
 
 
 def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch):

@@ -35,6 +35,7 @@ from torch import Tensor
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
 
 
 def _get_mtp_packed_seq_params(packed_seq_params: PackedSeqParams | None) -> PackedSeqParams | None:
@@ -42,12 +43,13 @@ def _get_mtp_packed_seq_params(packed_seq_params: PackedSeqParams | None) -> Pac
     if packed_seq_params is None or packed_seq_params.cu_seqlens_q_padded is None:
         return packed_seq_params
 
+    _, cu_seqlens_q = get_packed_seq_q_cu_seqlens(packed_seq_params)
     cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
     if cu_seqlens_kv is None:
-        cu_seqlens_kv = packed_seq_params.cu_seqlens_q_padded
+        cu_seqlens_kv = cu_seqlens_q
     return replace(
         packed_seq_params,
-        cu_seqlens_q=packed_seq_params.cu_seqlens_q_padded,
+        cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_kv,
     )
 

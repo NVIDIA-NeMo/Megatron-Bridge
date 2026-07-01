@@ -53,14 +53,9 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 
 
-def _is_qwen_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
+def _is_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
     """Return whether ``position_ids`` is explicit Qwen MRoPE metadata."""
     return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
-
-
-def _is_legacy_packed_bshd(input_ids: torch.Tensor | None, packed_seq_params: PackedSeqParams | None) -> bool:
-    """Return whether the deprecated Qwen step supplied packed metadata with BSHD inputs."""
-    return packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
 
 
 def _select_sequence(
@@ -423,14 +418,16 @@ class Qwen3VLModel(MegatronModule):
         vision_embeds = None
         deepstack_feature_lists = None
 
-        if not _is_qwen_mrope_position_ids(position_ids):
+        if not _is_mrope_position_ids(position_ids):
             position_ids = None
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
-        legacy_packed_bshd = _is_legacy_packed_bshd(input_ids, packed_seq_params)
+        legacy_packed_bshd = (
+            packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
+        )
         packed_cp_index = (
             get_packed_seq_cp_partition_indices(
                 packed_seq_params,
@@ -699,7 +696,8 @@ class Qwen3VLModel(MegatronModule):
             elif packed_cp_index is not None:
                 position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
             attention_mask = None
-            self.language_model.rotary_pos_emb.is_thd_format = True
+            if self.language_model is not None:
+                self.language_model.rotary_pos_emb.is_thd_format = True
         elif cp_size > 1:
             lm_input_ids, _ = _split_if_full_sequence(
                 lm_input_ids,
@@ -715,7 +713,7 @@ class Qwen3VLModel(MegatronModule):
                 cp_rank=cp_rank,
                 full_sequence_length=full_sequence_length,
             )
-            if position_ids_were_split:
+            if position_ids_were_split and self.language_model is not None:
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
         torch.cuda.nvtx.range_pop()

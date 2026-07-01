@@ -29,16 +29,7 @@ from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-
-
-def _get_packed_cu_seqlens(
-    packed_seq_params: PackedSeqParams,
-) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """Return padded and unpadded cu-seqlens for Qwen packed text streams."""
-    cu_seqlens_padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
-    if cu_seqlens_padded is None:
-        cu_seqlens_padded = packed_seq_params.cu_seqlens_q
-    return cu_seqlens_padded, packed_seq_params.cu_seqlens_q
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
 
 
 def _get_flat_packed_ranges(
@@ -49,7 +40,7 @@ def _get_flat_packed_ranges(
     if packed_seq_params is None or input_ids is None or input_ids.dim() != 2 or input_ids.size(0) != 1:
         return None
 
-    cu_seqlens_padded, cu_seqlens_unpadded = _get_packed_cu_seqlens(packed_seq_params)
+    cu_seqlens_unpadded, cu_seqlens_padded = get_packed_seq_q_cu_seqlens(packed_seq_params)
     if (
         cu_seqlens_padded is None
         or cu_seqlens_unpadded is None
@@ -81,7 +72,7 @@ def get_packed_seq_attention_mask(input_ids: torch.Tensor, packed_seq_params: Pa
     token counts. Qwen3-VL still needs a dense mask for its local THD
     conversion, so derive it from the same metadata used by attention.
     """
-    cu_seqlens_padded, cu_seqlens_unpadded = _get_packed_cu_seqlens(packed_seq_params)
+    cu_seqlens_unpadded, cu_seqlens_padded = get_packed_seq_q_cu_seqlens(packed_seq_params)
 
     if cu_seqlens_padded is None or cu_seqlens_unpadded is None or cu_seqlens_padded.numel() < 2:
         return torch.ones_like(input_ids, dtype=torch.bool)
