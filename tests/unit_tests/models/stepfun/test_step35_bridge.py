@@ -254,8 +254,9 @@ class TestStep35BridgeProviderBridge:
         _, p = self._run()
         assert p.head_wise_attn_gate is True
 
-    def test_head_wise_gate_disables_attention_output_gate_for_mcore_dev(self):
-        """MCore dev rejects simultaneous head-wise and output gate layouts."""
+    def test_native_head_wise_gate_disables_attention_output_gate(self, monkeypatch):
+        """MCore versions with native scalar gates do not need the fallback."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
         _, p = self._run(
             hf_overrides={
                 "attention_output_gate": True,
@@ -265,6 +266,19 @@ class TestStep35BridgeProviderBridge:
 
         assert p.head_wise_attn_gate is True
         assert p.attention_output_gate is False
+
+    def test_attention_output_gate_preserved_as_legacy_mcore_fallback(self, monkeypatch):
+        """MCore versions without native scalar gates need expanded gate rows."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": True,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
 
     def test_attention_output_gate_preserved_without_head_wise_gate(self):
         _, p = self._run(

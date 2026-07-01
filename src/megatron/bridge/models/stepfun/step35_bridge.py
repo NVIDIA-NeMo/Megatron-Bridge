@@ -22,6 +22,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -54,6 +55,10 @@ logger = logging.getLogger(__name__)
 # `AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")` would route to a
 # different config class and the bridge resolution below would fail.
 AutoConfig.register("step3p5", Step35Config, exist_ok=True)
+
+
+def _mcore_supports_head_wise_attn_gate() -> bool:
+    return "head_wise_attn_gate" in getattr(MCoreTransformerConfig, "__dataclass_fields__", {})
 
 
 class StackedExpertAutoMapping(AutoMapping):
@@ -234,9 +239,13 @@ class Step35Bridge(MegatronModelBridge):
         """
         provider = super().provider_bridge(hf_pretrained)
 
-        if provider.head_wise_attn_gate and getattr(provider, "attention_output_gate", False):
-            # MCore dev treats the full-head-dim output gate and Step-3.5's
-            # scalar per-head gate as separate, mutually exclusive layouts.
+        if (
+            getattr(provider, "head_wise_attn_gate", False)
+            and getattr(provider, "attention_output_gate", False)
+            and _mcore_supports_head_wise_attn_gate()
+        ):
+            # Native head-wise gates and the full-head output gate are mutually
+            # exclusive. Older MCore versions need the output-gate fallback.
             provider.attention_output_gate = False
 
         hf_config = hf_pretrained.config
@@ -382,9 +391,8 @@ class Step35Bridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
-                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and
-                # append the scalar g_proj rows for MCore's head_wise_attn_gate
-                # layout.
+                # QKV + per-head gate: select the native scalar-gate layout or
+                # the expanded attention_output_gate fallback via the provider.
                 QKVGMapping(
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",
