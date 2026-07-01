@@ -45,7 +45,7 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     `is_full_iteration_cuda_graph(cfg.model)`.
     """
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_paged_stash = True
+    cfg.model.moe_paged_stash = False
     if cfg.model.moe_expert_rank_capacity_factor is None:
         cfg.model.moe_expert_rank_capacity_factor = 1.5
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
