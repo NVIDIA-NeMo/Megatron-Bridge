@@ -274,7 +274,6 @@ def load_bridge_model(
         pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=seed)
         model_list = bridge.get_megatron_model(
             model_config,
-            load_weights=True,
             pg_collection=pg_collection,
             wrap_with_ddp=False,
             data_parallel_random_init=False,

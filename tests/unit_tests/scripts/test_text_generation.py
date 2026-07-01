@@ -271,7 +271,6 @@ def test_load_bridge_model_builds_hf_weights_through_model_builder(text_generati
     assert calls["pg"] == (model_config.transformer, 17)
     assert calls["builder_config"] is model_config
     assert calls["build_kwargs"] == {
-        "load_weights": True,
         "pg_collection": "pg",
         "wrap_with_ddp": False,
         "data_parallel_random_init": False,
