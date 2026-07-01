@@ -32,6 +32,7 @@ Supported models:
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
+import copy
 from typing import TYPE_CHECKING, Any, Mapping, Union
 
 import torch
@@ -133,8 +134,18 @@ class Ministral3Bridge(MegatronModelBridge):
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Ministral 3 HF config to pure builder-backed config kwargs."""
         text_config = getattr(hf_config, "text_config", hf_config)
-        config_kwargs = super().hf_config_to_model_config_kwargs(text_config)
-        rope_parameters = getattr(text_config, "rope_parameters", {})
+        # The base bridge rejects generic YaRN because GPTModelConfig cannot
+        # represent it. Ministral3ModelConfig does represent every YaRN field,
+        # so bypass only that generic guard and map the values below.
+        base_text_config = copy.copy(text_config)
+        base_text_config.rope_scaling = None
+        config_kwargs = super().hf_config_to_model_config_kwargs(base_text_config)
+        rope_parameters = (
+            getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", None) or {}
+        )
+        correction_range_round_to_int = rope_parameters.get(
+            "correction_range_round_to_int", rope_parameters.get("truncate", False)
+        )
         hf_config_dict = _plain_config_dict(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",
@@ -160,13 +171,13 @@ class Ministral3Bridge(MegatronModelBridge):
             image_token_id=getattr(hf_config, "image_token_id", 10),
             spatial_merge_size=getattr(hf_config, "spatial_merge_size", 2),
             vision_feature_layer=getattr(hf_config, "vision_feature_layer", -1),
-            yarn_rotary_scaling_factor=16.0,
+            yarn_rotary_scaling_factor=rope_parameters.get("factor", 16.0),
             yarn_original_max_position_embeddings=rope_parameters.get("original_max_position_embeddings", 16384),
-            yarn_beta_fast=32.0,
-            yarn_beta_slow=1.0,
-            yarn_correction_range_round_to_int=False,
-            yarn_mscale=1.0,
-            yarn_mscale_all_dim=1.0,
+            yarn_beta_fast=rope_parameters.get("beta_fast", 32.0),
+            yarn_beta_slow=rope_parameters.get("beta_slow", 1.0),
+            yarn_correction_range_round_to_int=correction_range_round_to_int,
+            yarn_mscale=rope_parameters.get("mscale", 1.0),
+            yarn_mscale_all_dim=rope_parameters.get("mscale_all_dim", 1.0),
             llama_4_scaling_beta=rope_parameters.get("llama_4_scaling_beta", 0.0),
             llama_4_original_max_position_embeddings=rope_parameters.get("original_max_position_embeddings", 16384),
         )

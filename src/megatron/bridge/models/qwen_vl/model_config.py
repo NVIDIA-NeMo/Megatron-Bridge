@@ -38,6 +38,7 @@ from megatron.training.vocab_utils import calculate_padded_vocab_size
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.qwen.model_config import qwen_hybrid_mtp_block_spec
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
@@ -158,6 +159,22 @@ class Qwen25VLModelBuilder(GPTModelBuilder):
         return model
 
 
+@dataclass
+class DistTrainConfig:
+    """Distributed training settings shared by builder and legacy provider paths."""
+
+    use_dist_train: bool = False
+    vision_to_llm_dp_ratio: int | None = None
+    vision_world_size: int | None = None
+    language_world_size: int | None = None
+    vision_tensor_model_parallel_size: int | None = None
+    vision_pipeline_model_parallel_size: int | None = None
+    vision_context_parallel_size: int | None = None
+    vision_expert_tensor_parallel_size: int | None = None
+    vision_expert_model_parallel_size: int | None = None
+    has_language_module: bool = True
+
+
 @dataclass(kw_only=True)
 class Qwen3VLModelConfig(BridgeGPTModelConfig):
     """Pure builder input shared by dense and MoE Qwen3-VL."""
@@ -181,6 +198,7 @@ class Qwen3VLModelConfig(BridgeGPTModelConfig):
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
+    dist_train: DistTrainConfig = field(default_factory=DistTrainConfig)
     decoder_sparse_step: int = 1
     mlp_only_layers: list[int] = field(default_factory=list)
 
@@ -279,7 +297,7 @@ class Qwen35VLModelBuilder(Qwen3VLModelBuilder):
         vision_config = _vision_config_from_dict(config.vision_config, config.vision_config_target)
         layer_spec = get_transformer_block_with_experimental_attention_variant_spec(transformer, vp_stage=vp_stage)
         _patch_attention(layer_spec)
-        mtp_spec = mtp_block_spec(config, layer_spec, vp_stage=vp_stage)
+        mtp_spec = qwen_hybrid_mtp_block_spec(config, layer_spec, vp_stage=vp_stage)
         _patch_attention(mtp_spec)
         model = Qwen3VLModel(
             language_transformer_config=transformer,
@@ -301,6 +319,7 @@ class Qwen35VLModelBuilder(Qwen3VLModelBuilder):
 
 
 __all__ = [
+    "DistTrainConfig",
     "Qwen25VLModelBuilder",
     "Qwen25VLModelConfig",
     "Qwen35VLModelBuilder",

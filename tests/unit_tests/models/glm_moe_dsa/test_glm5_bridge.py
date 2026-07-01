@@ -184,9 +184,10 @@ def test_mapping_registry_includes_mtp_standalone_weights(glm5_bridge: GLM5Bridg
         assert mapping.hf_param == hf_param
 
 
-def test_mapping_registry_omits_mtp_mappings_without_nextn_layers() -> None:
+@pytest.mark.parametrize("num_nextn_predict_layers", [0, None])
+def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(num_nextn_predict_layers) -> None:
     """No MTP mappings are registered when the HF config has no MTP layers."""
     bridge = GLM5Bridge()
-    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0)
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=num_nextn_predict_layers)
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())

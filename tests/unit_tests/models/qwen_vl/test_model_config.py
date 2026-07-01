@@ -17,6 +17,7 @@ from megatron.bridge.models.qwen_omni.model_config import (
     Qwen25OmniModelConfig,
 )
 from megatron.bridge.models.qwen_vl.model_config import (
+    DistTrainConfig,
     Qwen3VLModelBuilder,
     Qwen3VLModelConfig,
     Qwen25VLModelBuilder,
@@ -56,7 +57,13 @@ def test_qwen_multimodal_model_configs_roundtrip(config_class):
     ("config_class", "payload"),
     [
         (Qwen25VLModelConfig, {"vision_config": {"hidden_size": 16, "depths": [1, 2]}}),
-        (Qwen3VLModelConfig, {"vision_config": {"hidden_size": 16, "deepstack_visual_indexes": [1]}}),
+        (
+            Qwen3VLModelConfig,
+            {
+                "vision_config": {"hidden_size": 16, "deepstack_visual_indexes": [1]},
+                "dist_train": DistTrainConfig(use_dist_train=True, vision_world_size=2, language_world_size=2),
+            },
+        ),
         (Qwen35VLModelConfig, {"vision_config": {"hidden_size": 16, "out_hidden_size": 32}}),
         (Qwen25OmniModelConfig, {"thinker_config": {"audio_config": {"d_model": 8}}}),
         (Qwen3OmniModelConfig, {"thinker_config": {"vision_config": {"depth": 2}}}),
@@ -181,6 +188,40 @@ def test_qwen25_builder_binds_mrope_before_language_model_construction(monkeypat
     assert type(config.transformer) is TransformerConfig
     assert config.transformer.__dict__ == transformer_state
     assert config.as_dict() == serialized_config
+
+
+@pytest.mark.unit
+def test_qwen35_builder_uses_hybrid_mtp_spec(monkeypatch):
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    config = Qwen35VLModelConfig(transformer=transformer, vocab_size=32)
+    layer_spec = SimpleNamespace()
+    mtp_spec = SimpleNamespace()
+    captured = {}
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.model_config._vision_config_from_dict", lambda *args: SimpleNamespace()
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.model_config.get_transformer_block_with_experimental_attention_variant_spec",
+        lambda runtime_config, vp_stage: layer_spec,
+    )
+
+    def capture_mtp(model_config, transformer_layer_spec, vp_stage):
+        assert model_config is config
+        assert transformer_layer_spec is layer_spec
+        assert vp_stage is None
+        return mtp_spec
+
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.model_config.qwen_hybrid_mtp_block_spec", capture_mtp)
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.model_config.Qwen3VLModel",
+        lambda **kwargs: captured.update(kwargs) or SimpleNamespace(),
+    )
+
+    Qwen35VLModelBuilder(config).build_model(SimpleNamespace(pp=None), pre_process=True, post_process=True)
+
+    assert captured["language_transformer_layer_spec"] is layer_spec
+    assert captured["mtp_block_spec"] is mtp_spec
 
 
 @pytest.mark.unit

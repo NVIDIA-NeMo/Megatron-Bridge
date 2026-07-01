@@ -115,9 +115,16 @@ class TestMinistral3BridgeInitialization:
             torch_dtype="bfloat16",
             rope_parameters={
                 "rope_theta": 1000000,
+                "factor": 8.0,
                 "original_max_position_embeddings": 512,
+                "beta_fast": 24.0,
+                "beta_slow": 2.0,
+                "mscale": 0.75,
+                "mscale_all_dim": 0.5,
+                "truncate": True,
                 "llama_4_scaling_beta": 0.5,
             },
+            rope_scaling={"rope_type": "yarn", "factor": 16.0},
         )
         hf_config = SimpleNamespace(
             model_type="mistral3",
@@ -131,7 +138,13 @@ class TestMinistral3BridgeInitialization:
         assert isinstance(result, Ministral3ModelConfig)
         assert type(result.transformer) is TransformerConfig
         assert result.llama_4_scaling_beta == 0.5
+        assert result.yarn_rotary_scaling_factor == 8.0
         assert result.yarn_original_max_position_embeddings == 512
+        assert result.yarn_beta_fast == 24.0
+        assert result.yarn_beta_slow == 2.0
+        assert result.yarn_mscale == 0.75
+        assert result.yarn_mscale_all_dim == 0.5
+        assert result.yarn_correction_range_round_to_int is True
         assert "llama_4_scaling_beta" not in result.transformer.__dict__
         assert result.get_builder_cls() is Ministral3ModelBuilder
         restored = type(result).from_dict(result.as_dict())

@@ -19,16 +19,20 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+import torch
 import yaml
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.training.config import DistributedInitConfig
+from megatron.bridge.models.qwen_vl.model_config import DistTrainConfig, Qwen3VLModelConfig
+from megatron.bridge.training.config import DistributedInitConfig, RNGConfig
 from megatron.bridge.training.initialize import (
+    _create_dist_train_pgs,
     _initialize_tp_communicators,
     _setup_flight_recorder_env,
     set_jit_fusion_options,
+    torch_dist_init,
 )
 
 
@@ -51,6 +55,95 @@ def test_set_jit_fusion_options_preserves_outer_model_sequence_length() -> None:
         set_jit_fusion_options(model_config, micro_batch_size=2)
 
     warmup.assert_called_once_with(transformer, 2, seq_length=4096)
+
+
+def test_torch_dist_init_preserves_outer_dist_train_config() -> None:
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    model_config = Qwen3VLModelConfig(
+        transformer=transformer,
+        vocab_size=32,
+        dist_train=DistTrainConfig(use_dist_train=True, vision_world_size=2, language_world_size=2),
+    )
+    dist_config = DistributedInitConfig(lazy_mpu_init=True, use_decentralized_pg=True)
+    rng_config = RNGConfig()
+    pg_collection = Mock()
+
+    with (
+        patch("megatron.bridge.training.initialize._initialize_distributed", return_value=pg_collection) as initialize,
+        patch("megatron.bridge.training.initialize._set_random_seed"),
+        patch("megatron.bridge.training.initialize.parallel_state.set_tensor_model_parallel_world_size"),
+        patch("megatron.bridge.training.initialize.parallel_state.set_tensor_model_parallel_rank"),
+    ):
+        finish_mpu_init = torch_dist_init(
+            model_config=model_config,
+            dist_config=dist_config,
+            rng_config=rng_config,
+            micro_batch_size=1,
+            num_distributed_optimizer_instances=1,
+            get_embedding_ranks=None,
+            get_position_embedding_ranks=None,
+            skip_mpu_initialization=False,
+        )
+        assert callable(finish_mpu_init)
+        assert finish_mpu_init() is pg_collection
+
+    assert initialize.call_args.kwargs["model_config"] is model_config
+
+
+def test_create_dist_train_pgs_uses_independent_transformer_configs() -> None:
+    transformer = TransformerConfig(
+        num_layers=2,
+        hidden_size=16,
+        num_attention_heads=2,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=2,
+        pipeline_dtype=torch.bfloat16,
+    )
+    model_config = Qwen3VLModelConfig(
+        transformer=transformer,
+        vocab_size=32,
+        dist_train=DistTrainConfig(
+            use_dist_train=True,
+            vision_world_size=4,
+            language_world_size=4,
+            vision_tensor_model_parallel_size=1,
+            vision_pipeline_model_parallel_size=1,
+            vision_context_parallel_size=1,
+            vision_expert_tensor_parallel_size=1,
+            vision_expert_model_parallel_size=1,
+        ),
+    )
+    vision_pg = Mock()
+    language_pg = Mock()
+    result = Mock()
+    captured_configs = []
+
+    def capture_pg(config, *args, **kwargs):
+        captured_configs.append(config)
+        config.grid = Mock()
+        return vision_pg if len(captured_configs) == 1 else language_pg
+
+    with (
+        patch("megatron.bridge.training.initialize._create_pg_collection", side_effect=capture_pg),
+        patch("megatron.bridge.training.initialize.is_rank_in_pg", side_effect=lambda pg: pg is vision_pg),
+        patch("megatron.bridge.training.initialize.DistTrainProcessGroupCollection", return_value=result),
+        patch("megatron.bridge.training.initialize.MultiModulePipelineCommunicator", return_value=Mock()),
+        patch("megatron.bridge.training.initialize.get_rank_safe", return_value=1),
+    ):
+        assert _create_dist_train_pgs(model_config, 1, None, None) is result
+
+    vision_config, language_config = captured_configs
+    assert vision_config is not language_config
+    assert vision_config is not model_config.transformer
+    assert language_config is not model_config.transformer
+    assert vision_config.tensor_model_parallel_size == 1
+    assert vision_config.pipeline_model_parallel_size == 1
+    assert language_config.tensor_model_parallel_size == 2
+    assert language_config.pipeline_model_parallel_size == 2
+    assert model_config.transformer.tensor_model_parallel_size == 2
+    assert model_config.transformer.pipeline_model_parallel_size == 2
+    assert model_config.add_encoder is True
+    assert model_config.add_decoder is False
 
 
 class TestInitializeTPCommunicators:

@@ -138,12 +138,12 @@ class TestAutoBridgeDistributedSave(unittest.TestCase):
                 trust_remote_code=True,
             )
 
-            provider = bridge.to_megatron_provider()
-            provider.tensor_model_parallel_size = tp_size
-            provider.pipeline_model_parallel_size = pp_size
-            provider.finalize()
+            model_config = bridge.get_model_config()
+            model_config.tensor_model_parallel_size = tp_size
+            model_config.pipeline_model_parallel_size = pp_size
+            model_config.finalize()
 
-            model = provider.provide_distributed_model(wrap_with_ddp=False)
+            model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
             torch.cuda.synchronize()
             before_save = time.time()

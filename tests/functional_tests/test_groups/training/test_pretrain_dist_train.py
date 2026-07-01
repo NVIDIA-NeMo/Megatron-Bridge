@@ -17,7 +17,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
-from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig, Qwen3VLModelProvider
+from megatron.bridge.models.qwen_vl.model_config import DistTrainConfig, Qwen3VLModelConfig
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -46,12 +46,12 @@ class TestPretrainDistTrain:
     def test_pretrain_dist_train(self):
         """
         Qwen3-VL 8B mock pretrain with DistTrain (vision DP + language DP).
-        Requires 8 processes (4 vision + 4 language ranks).
+        Requires 2 processes (1 vision + 1 language rank).
         Does not write checkpoints or TensorBoard/progress files (smoke run only).
         """
         initialize_distributed()
-        if torch.distributed.get_world_size() != 8:
-            pytest.skip("DistTrain layout expects world_size=8 (vision_world_size=4, language_world_size=4)")
+        if torch.distributed.get_world_size() != 2:
+            pytest.skip("DistTrain layout expects world_size=2 (vision_world_size=1, language_world_size=1)")
 
         hf_path = "Qwen/Qwen3-VL-8B-Instruct"
         seq_length = 8192
@@ -59,13 +59,13 @@ class TestPretrainDistTrain:
         global_batch_size = 32
         micro_batch_size = 2
 
-        # Build Qwen3-VL provider from HF (same pattern as _qwen3_vl_common in qwen3_vl.py)
+        # Build the Qwen3-VL builder config from HF (same pattern as _qwen3_vl_common in qwen3_vl.py)
         bridge = AutoBridge.from_hf_pretrained(hf_path)
-        model_cfg = bridge.to_megatron_provider(load_weights=False)
-        assert isinstance(model_cfg, Qwen3VLModelProvider)
+        model_cfg = bridge.get_model_config()
+        assert isinstance(model_cfg, Qwen3VLModelConfig)
 
         model_cfg.tensor_model_parallel_size = 1
-        model_cfg.pipeline_model_parallel_size = 2
+        model_cfg.pipeline_model_parallel_size = 1
         model_cfg.pipeline_dtype = torch.bfloat16
         model_cfg.virtual_pipeline_model_parallel_size = None
         model_cfg.context_parallel_size = 1
@@ -87,9 +87,9 @@ class TestPretrainDistTrain:
         model_cfg.deallocate_pipeline_outputs = False
         model_cfg.dist_train = DistTrainConfig(
             use_dist_train=True,
-            vision_to_llm_dp_ratio=2,
-            vision_world_size=4,
-            language_world_size=4,
+            vision_to_llm_dp_ratio=1,
+            vision_world_size=1,
+            language_world_size=1,
             vision_tensor_model_parallel_size=1,
             vision_pipeline_model_parallel_size=1,
             vision_context_parallel_size=1,

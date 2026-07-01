@@ -254,7 +254,7 @@ class GLM5Bridge(MegatronModelBridge):
         )
 
         hf_config = self.hf_config
-        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
             # MTP specific mappings
