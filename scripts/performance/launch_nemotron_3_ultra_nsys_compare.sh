@@ -245,10 +245,11 @@ submit_run() {
         train.fill_uninitialized_memory=false \
         "${NSYS_HYDRA_OVERRIDES[@]}" 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
 
-    grep -oE "Job id: [0-9]+" "$OUT_DIR/submit-${MODE}.log" | head -1 | awk '{print $3}' > "$OUT_DIR/jobid-${MODE}.txt"
-    echo "$MODE job: $(cat "$OUT_DIR/jobid-${MODE}.txt")  (wandb=$WDJ)"
-    # Record for the next run's afterany dependency when SERIALIZE=1.
-    PREV_JOBID=$(cat "$OUT_DIR/jobid-${MODE}.txt")
+    # Capture the jobid once; reuse it for the file, the log line, and the next run's
+    # afterany dependency (SERIALIZE=1) — no re-reading the file.
+    PREV_JOBID=$(grep -oE "Job id: [0-9]+" "$OUT_DIR/submit-${MODE}.log" | head -1 | awk '{print $3}')
+    echo "$PREV_JOBID" > "$OUT_DIR/jobid-${MODE}.txt"
+    echo "$MODE job: $PREV_JOBID  (wandb=$WDJ)"
     echo "$WDJ" > "$OUT_DIR/wdj-${MODE}.txt"
 }
 

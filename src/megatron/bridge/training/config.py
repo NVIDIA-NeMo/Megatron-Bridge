@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import torch
+import torch.utils.deterministic
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig as MCoreGPTDatasetConfig
 from megatron.core.distributed import DistributedDataParallelConfig as MCoreDistributedDataParallelConfig
 from megatron.core.optimizer import OptimizerConfig as MCoreOptimizerConfig
@@ -1105,17 +1106,10 @@ class ConfigContainer(Container):
         # Enable deterministic algorithms in torch
         torch.use_deterministic_algorithms(True)
 
-        # use_deterministic_algorithms(True) also turns on fill_uninitialized_memory,
-        # which fills uninitialized tensors with NaN/junk as a correctness-debugging aid
-        # at a real throughput cost. Expose it as an option: `train.fill_uninitialized_memory`
-        # defaults to True (torch's own default, unchanged), and can be set False to disable
-        # the fill and recover throughput without affecting reproducibility. Runs inside the
-        # per-rank config setup, so it takes effect on every node.
-        # NOTE: alias the import (`as _torch_det`) so it does NOT rebind the module-level
-        # `torch` as a function-local, which would shadow the `torch.` uses above.
-        import torch.utils.deterministic as _torch_det
-
-        _torch_det.fill_uninitialized_memory = getattr(self.train, "fill_uninitialized_memory", True)
+        # use_deterministic_algorithms(True) also NaN-fills uninitialized tensors (a debug aid
+        # with a throughput cost); honor the config knob instead (defaults to torch's own True,
+        # set False to recover throughput). Reproducibility is unaffected either way.
+        torch.utils.deterministic.fill_uninitialized_memory = self.train.fill_uninitialized_memory
 
     def _validate_and_apply_megatron_fsdp_configs(self) -> None:
         """
