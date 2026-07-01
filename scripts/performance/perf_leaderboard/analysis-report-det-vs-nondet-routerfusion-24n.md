@@ -22,11 +22,15 @@
 
 | | det+nsys (3706179) | nondet+nsys (3706214) | det no-nsys #1 (3706236) | det no-nsys #2 (3706255) |
 |---|---|---|---|---|
+| **Role** | **perf comparison** | **perf comparison** | **determinism check** | **determinism check** |
 | Slurm runtime | 18:55 / 50 iters | 18:47 / 50 iters | 17:59 / 50 iters | 17:59 / 50 iters |
-| **Step time (iter 50, ms)** | **9041.4** | **9251.7** | 8890.8 | 8906.2 |
-| **Throughput (TFLOP/s/GPU, iter 50)** | **433.6** | **423.7** | 440.9 | 440.2 |
 | Bit-wise reproducible | ✓ | n/a | ✓ | ✓ |
 | wandb | [gbzxks86](https://wandb.ai/nvidia/mbridge-dev/runs/gbzxks86) | [e2i1o8wg](https://wandb.ai/nvidia/mbridge-dev/runs/e2i1o8wg) | [6d54qxmy](https://wandb.ai/nvidia/mbridge-dev/runs/6d54qxmy) | [j95nentq](https://wandb.ai/nvidia/mbridge-dev/runs/j95nentq) |
+
+> **Methodology.** Perf is compared **nsys-vs-nsys only** (det+nsys vs nondet+nsys — both instrumented,
+> apples-to-apples; windowed means in §3). The **no-nsys** runs are used **only** for the determinism
+> cross-check (§1); their step times are *not* put against nsys runs, since nsys adds ~150 ms/iter which
+> would confound the perf comparison. With that separation, det and non-det perf are expected to be close.
 
 ---
 
@@ -75,14 +79,15 @@ and (new) `torch.utils.deterministic.fill_uninitialized_memory=False`.
 
 ---
 
-## 3. Perf — determinism *cost* is NOT quantifiable from this run
+## 3. Perf — det vs non-det (nsys-only), within noise
 
-**What is solid (reproducibility):** the deterministic step time is tightly clustered across 4
-independent no-nsys allocations — 8890.8 / 8906.2 / 8868.4 / 8898.9 ms → **mean ≈ 8891 ms**, range
-8868–8906 (0.4% spread). det+nsys adds ~150 ms (9041.4 ms). So det throughput is highly stable.
+**Method:** compare **nsys runs only** — det+nsys vs nondet+nsys, both instrumented, using the mean
+step time over iters 20–49 (robust to single-iter jitter). No-nsys runs are deliberately excluded from
+this comparison — they are the determinism set (§1), and nsys adds ~150 ms/iter, so mixing them would
+confound perf. (For reference only, the no-nsys det step time is very stable, ~8891 ms mean across 4
+allocations — but that number is **not** compared against the instrumented non-det runs.)
 
-**What is NOT solid (the det-vs-non-det delta) — measured, then re-checked:** using the robust metric
-(mean step time over iters 20–49, not a single iteration), across 1 det and **3 non-det** allocations:
+Across 1 det and **3 non-det** nsys allocations:
 
 | arm | windowed mean step time (iters 20–49) |
 |---|---|
