@@ -32,6 +32,7 @@ import torch.nn.functional as F
 from megatron.core import parallel_state
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.diffusion.models.llada15.inference_llada15 import _unwrap, generate_block_diffusion
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
@@ -73,14 +74,13 @@ def _init_distributed():
 
 def _build_toy_model():
     vocab_size = TOY["vocab_size"]
-    config = LLaDA15ModelConfig(
+    transformer = TransformerConfig(
         normalization="RMSNorm",
         gated_linear_unit=True,
         activation_func=F.silu,
         add_bias_linear=False,
         add_qkv_bias=False,
         qk_layernorm=False,
-        rotary_base=500000.0,
         bf16=True,
         params_dtype=torch.bfloat16,
         num_layers=TOY["num_layers"],
@@ -91,6 +91,10 @@ def _build_toy_model():
         ffn_hidden_size=TOY["ffn_hidden_size"],
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
+    )
+    config = LLaDA15ModelConfig(
+        transformer=transformer,
+        rotary_base=500000.0,
         vocab_size=vocab_size,
         seq_length=TOY["seq_length"],
     )
