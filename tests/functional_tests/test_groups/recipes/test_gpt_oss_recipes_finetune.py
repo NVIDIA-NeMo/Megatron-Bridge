@@ -18,6 +18,7 @@ import json
 
 import pytest
 import torch
+from megatron.core.transformer.enums import AttnBackend
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -188,6 +189,7 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
+                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 True,
@@ -209,6 +211,7 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
+                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 False,
