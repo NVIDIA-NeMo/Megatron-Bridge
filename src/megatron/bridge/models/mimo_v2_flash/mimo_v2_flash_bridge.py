@@ -148,6 +148,10 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         """Map HF MiMo-V2-Flash state to pure builder config fields."""
         config = super().hf_config_to_model_config_kwargs(hf_config)
         config.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
             position_embedding_type="rope",
             rotary_base=float(hf_config.rope_theta),
             rotary_base_local=float(hf_config.swa_rope_theta),

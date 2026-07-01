@@ -172,6 +172,10 @@ class TestMiMoV2FlashModelConfig:
         assert config.hybrid_attention_pattern == [0, 1, 1, 1, 0, 1]
         assert config.rotary_base == 5_000_000
         assert config.rotary_base_local == 10_000
+        assert config.transformer.normalization == "RMSNorm"
+        assert config.transformer.gated_linear_unit is True
+        assert config.transformer.add_bias_linear is False
+        assert config.share_embeddings_and_output_weights is False
         serialized = config.as_dict()
         restored = MiMoV2FlashModelConfig.from_dict(serialized)
         assert restored.as_dict() == serialized
