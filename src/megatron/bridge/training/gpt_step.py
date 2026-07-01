@@ -408,27 +408,29 @@ def _forward_step_common(
     # CP > 1 stays on the BSHD term (the behavior this test passed on before the THD
     # change), instead of running the not-yet-CP-safe cu_seqlens path.
     cp_use_thd = pg_collection.cp.size() == 1
-    flops_packed_metadata = packed_seq_metadata if cp_use_thd and packed_seq_metadata is not None else {}
-    if flops_packed_metadata.get("cu_seqlens_q") is not None:
-        flops_cu_seqlens = flops_packed_metadata.get("cu_seqlens_q_padded")
-        if flops_cu_seqlens is None:
-            flops_cu_seqlens = flops_packed_metadata["cu_seqlens_q"]
-        flops_cu_seqlens_argmin = None
-        flops_cu_seqlens_unpadded = flops_packed_metadata["cu_seqlens_q"]
-        flops_cu_seqlens_unpadded_argmin = None
-    else:
-        flops_cu_seqlens = flops_packed_metadata.get("cu_seqlens")
-        flops_cu_seqlens_argmin = flops_packed_metadata.get("cu_seqlens_argmin")
-        flops_cu_seqlens_unpadded = flops_packed_metadata.get("cu_seqlens_unpadded")
-        flops_cu_seqlens_unpadded_argmin = flops_packed_metadata.get("cu_seqlens_unpadded_argmin")
+    cu_seqlens = None
+    cu_seqlens_argmin = None
+    cu_seqlens_unpadded = None
+    cu_seqlens_unpadded_argmin = None
+    if packed_seq_metadata is not None:
+        if packed_seq_metadata.get("cu_seqlens_q") is not None:
+            cu_seqlens_q = packed_seq_metadata.get("cu_seqlens_q")
+            cu_seqlens_q_padded = packed_seq_metadata.get("cu_seqlens_q_padded")
+            cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
+            cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
+        else:
+            cu_seqlens = packed_seq_metadata.get("cu_seqlens")
+            cu_seqlens_argmin = packed_seq_metadata.get("cu_seqlens_argmin")
+            cu_seqlens_unpadded = packed_seq_metadata.get("cu_seqlens_unpadded")
+            cu_seqlens_unpadded_argmin = packed_seq_metadata.get("cu_seqlens_unpadded_argmin")
     accumulate_flops_metadata(
         state,
         tokens,
         config_seq_len=getattr(config, "seq_length", None),
-        cu_seqlens=flops_cu_seqlens,
-        cu_seqlens_argmin=flops_cu_seqlens_argmin,
-        cu_seqlens_unpadded=flops_cu_seqlens_unpadded,
-        cu_seqlens_unpadded_argmin=flops_cu_seqlens_unpadded_argmin,
+        cu_seqlens=cu_seqlens if cp_use_thd else None,
+        cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
+        cu_seqlens_unpadded=cu_seqlens_unpadded if cp_use_thd else None,
+        cu_seqlens_unpadded_argmin=cu_seqlens_unpadded_argmin if cp_use_thd else None,
     )
 
     forward_args = {

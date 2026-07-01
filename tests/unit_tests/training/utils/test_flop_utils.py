@@ -472,6 +472,200 @@ class TestHybridLayerCounting:
 
 
 @pytest.mark.unit
+class TestHybridTransformerParity:
+    """Parity tests for equivalent logical transformer and physical hybrid patterns."""
+
+    @staticmethod
+    def _base_config(**overrides):
+        config = dict(
+            num_layers=4,
+            hidden_size=512,
+            seq_length=256,
+            ffn_hidden_size=1024,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=64,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=True,
+            mtp_num_layers=0,
+        )
+        config.update(overrides)
+        return config
+
+    def test_dense_physical_pattern_matches_transformer(self):
+        """A physical attention+MLP stack should match the equivalent dense transformer."""
+        batch_size = 2
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**self._base_config()))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **self._base_config(
+                    is_hybrid_model=True,
+                    num_layers=8,
+                    hybrid_layer_pattern="*-" * 4,
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_moe_physical_pattern_matches_transformer(self):
+        """GPT-OSS-style attention+MoE physical layers should not double-count FLOPs."""
+        batch_size = 2
+        moe_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**moe_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_hybrid_pattern_routes_to_hybrid_flop_path_without_flag(self):
+        """A hybrid_layer_pattern should be enough to select hybrid FLOP accounting."""
+        batch_size = 2
+        moe_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**moe_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_mixed_dense_and_moe_physical_pattern_matches_transformer(self):
+        """Hybrid FLOPs should match transformer FLOPs for mixed dense/MoE logical layers."""
+        batch_size = 2
+        mixed_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=[0, 1, 0, 1],
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**mixed_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    mixed_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*-*E*-*E",
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_sliding_window_physical_pattern_matches_transformer(self):
+        """Hybrid SWA counting should use physical layer positions in window_attn_skip_freq."""
+        batch_size = 2
+        moe_config = self._base_config(
+            seq_length=1024,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+            window_size=(127, 0),
+        )
+        transformer_cfg = MockConfigContainer(
+            model=MockModelConfig(**(moe_config | {"window_attn_skip_freq": [1, 0, 1, 0]}))
+        )
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                        "window_attn_skip_freq": [1, 0, 0, 0, 1, 0, 0, 0],
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_dynamic_sequence_lengths_match_transformer(self):
+        """Hybrid attention core FLOPs should use seqlen_squared_sum like transformer FLOPs."""
+        batch_size = 2
+        seqlen_sum = 128 + 640
+        seqlen_squared_sum = 128**2 + 640**2
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**self._base_config(num_layers=2)))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **self._base_config(
+                    is_hybrid_model=True,
+                    num_layers=4,
+                    hybrid_layer_pattern="*-" * 2,
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(
+            transformer_cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        hybrid_flops = num_floating_point_operations(
+            hybrid_cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+
+@pytest.mark.unit
 class TestGDNLayerFlops:
     """Tests for Gated DeltaNet (GDN) FLOPs calculation in transformer_flops path."""
 
@@ -944,10 +1138,7 @@ class TestHybridMtpPatternParsing:
         cfg_inferred = MockConfigContainer(model=MockModelConfig(**(base_cfg | {"mtp_num_layers": None})))
 
         parsed_pattern = SimpleNamespace(main_pattern="M*", mtp_pattern="MM", mtp_num_depths=2)
-        mock_module = MagicMock()
-        mock_module.parse_hybrid_pattern.return_value = parsed_pattern
-
-        with patch("megatron.bridge.training.utils.flop_utils.importlib.import_module", return_value=mock_module):
+        with patch("megatron.bridge.training.utils.flop_utils.parse_hybrid_pattern", return_value=parsed_pattern):
             flops_explicit_zero = num_floating_point_operations(cfg_explicit_zero, batch_size=batch_size)
             flops_inferred = num_floating_point_operations(cfg_inferred, batch_size=batch_size)
 

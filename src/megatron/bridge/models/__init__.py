@@ -94,6 +94,7 @@ from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
 )
+from megatron.bridge.models.mistral import MistralBridge
 from megatron.bridge.models.nemotron import (
     NemotronBridge,
 )
@@ -231,6 +232,7 @@ __all__ = [
     "LlamaBridge",
     "LlamaNemotronHeterogeneousProvider",
     "LlamaNemotronBridge",
+    "MistralBridge",
     "MistralModelProvider",
     # Ministral 3 Models
     "Ministral3Bridge",

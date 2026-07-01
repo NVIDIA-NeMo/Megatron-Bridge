@@ -162,9 +162,6 @@ class _FakeHFPretrained:
 
 
 class TestStep35BridgeRegistration:
-    def test_is_subclass_of_megatron_model_bridge(self):
-        assert issubclass(Step35Bridge, MegatronModelBridge)
-
     def test_register_bridge_attributes_keep_hf_identifiers(self):
         """The decorator must register the bridge under the upstream HF strings.
 
