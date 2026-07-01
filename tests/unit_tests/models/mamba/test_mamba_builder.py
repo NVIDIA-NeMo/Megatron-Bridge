@@ -43,6 +43,18 @@ class TestMambaModelBuilderCompatibility:
 
         assert isinstance(builder, HybridModelBuilder)
 
+    def test_flat_assignment_routes_fields_and_rejects_phantoms(self):
+        transformer = _make_transformer()
+        config = MambaModelConfig(transformer=transformer, vocab_size=32000)
+
+        config.tensor_model_parallel_size = 2
+        config.vocab_size = 64000
+
+        assert transformer.tensor_model_parallel_size == 2
+        assert config.vocab_size == 64000
+        with pytest.raises(AttributeError, match="phantom_field"):
+            config.phantom_field = True
+
     @patch("megatron.training.models.hybrid.HybridModel")
     def test_mamba_stack_spec_maps_to_hybrid_model_kwarg(self, mock_model):
         module_spec = ModuleSpec(module=object)

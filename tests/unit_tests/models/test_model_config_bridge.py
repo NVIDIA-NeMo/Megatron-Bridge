@@ -132,6 +132,46 @@ def test_model_config_bridge_rejects_unknown_fields() -> None:
         _UnknownFieldBridge().model_config_bridge(_hf_pretrained())
 
 
+def test_flat_model_config_assignment_routes_to_declared_owner() -> None:
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    model_config = BridgeGPTModelConfig(transformer=transformer, vocab_size=128)
+
+    model_config.tensor_model_parallel_size = 2
+    model_config.vocab_size = 256
+
+    assert transformer.tensor_model_parallel_size == 2
+    assert model_config.vocab_size == 256
+    assert "tensor_model_parallel_size" not in model_config.__dict__
+    assert "vocab_size" in model_config.__dict__
+
+
+def test_flat_model_config_assignment_synchronizes_overlapping_fields() -> None:
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    model_config = BridgeGPTModelConfig(
+        transformer=transformer,
+        use_transformer_engine_op_fuser=True,
+    )
+
+    assert model_config.use_transformer_engine_op_fuser is True
+    assert transformer.use_transformer_engine_op_fuser is True
+
+    model_config.use_transformer_engine_op_fuser = False
+
+    assert model_config.use_transformer_engine_op_fuser is False
+    assert transformer.use_transformer_engine_op_fuser is False
+
+
+def test_flat_model_config_assignment_rejects_phantom_fields() -> None:
+    model_config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    )
+
+    with pytest.raises(AttributeError, match="phantom_field"):
+        model_config.phantom_field = 1
+
+    assert "phantom_field" not in model_config.__dict__
+
+
 def test_partition_model_config_kwargs_rejects_non_init_fields() -> None:
     with pytest.raises(ValueError, match="derived_field"):
         _TestBridge._partition_model_config_kwargs(

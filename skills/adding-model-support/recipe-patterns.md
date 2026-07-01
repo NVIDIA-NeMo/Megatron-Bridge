@@ -27,12 +27,9 @@ def <model>_<size>_sft_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # Parallelism
-    cfg.model.transformer = dataclasses.replace(
-        cfg.model.transformer,
-        tensor_model_parallel_size=4,
-        pipeline_model_parallel_size=1,
-        sequence_parallel=True,
-    )
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.sequence_parallel = True
 
     # Training
     cfg.training.max_steps = 100
@@ -58,11 +55,8 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # PEFT typically uses smaller parallelism
-    cfg.model.transformer = dataclasses.replace(
-        cfg.model.transformer,
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-    )
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
 
     # PEFT uses higher LR
     cfg.optimizer.lr = 2e-4
@@ -148,7 +142,7 @@ Monkeypatch `AutoBridge` to return a mock model config. Verify `ConfigContainer`
 def test_sft_config(monkeypatch):
     monkeypatch.setattr("megatron.bridge.AutoBridge.from_hf_pretrained", mock_bridge)
     cfg = model_size_sft_config()
-    assert cfg.model.transformer.tensor_model_parallel_size == 4
+    assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.training.global_batch_size == 128
 ```
 

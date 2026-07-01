@@ -15,10 +15,11 @@
 """Serializable Bridge extension of Megatron-LM's GPT model config."""
 
 from dataclasses import dataclass, fields, is_dataclass
-from typing import Any, override
+from typing import Any
 
 from megatron.training.models.gpt import GPTModelConfig
 
+from megatron.bridge.models.config_proxy import FlatTransformerConfigMixin
 from megatron.bridge.utils.activation_map import callable_to_str, str_to_callable
 
 
@@ -71,23 +72,8 @@ def restore_model_config_callables(data: dict[str, Any]) -> dict[str, Any]:
 
 
 @dataclass(kw_only=True)
-class BridgeGPTModelConfig(GPTModelConfig):
+class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
     """GPTModelConfig that preserves registered activation functions on save."""
-
-    @override
-    def __setattr__(self, name: str, value: Any, /) -> None:
-        """Keep model dataclass fields on the model config.
-
-        Upstream ``GPTModelConfig`` proxies assignments to its nested transformer
-        whenever both objects expose the same field. Bridge constructs both
-        configs explicitly, so overlapping build fields such as ``rotary_base``
-        must remain present on the outer config as well.
-        """
-        model_fields = getattr(type(self), "__dataclass_fields__", {})
-        if name != "transformer" and name in model_fields:
-            object.__setattr__(self, name, value)
-            return
-        super().__setattr__(name, value)
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize config while preserving the activation symbol in metadata.

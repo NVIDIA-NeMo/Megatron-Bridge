@@ -15,33 +15,23 @@
 """Serializable pure model configuration for Nemotron-H."""
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
 
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols
 from megatron.training.models.hybrid import HybridModelConfig
 
+from megatron.bridge.models.config_proxy import FlatTransformerConfigMixin
 from megatron.bridge.models.gpt.model_config import ACTIVATION_FUNC_METADATA_KEY
 from megatron.bridge.utils.activation_map import callable_to_str
 
 
 @dataclass(kw_only=True)
-class NemotronHModelConfig(HybridModelConfig):
+class NemotronHModelConfig(FlatTransformerConfigMixin, HybridModelConfig):
     """Builder config that preserves Nemotron-H activation and MTP pattern."""
-
-    _FAMILY_BUILD_FIELDS: ClassVar[frozenset[str]] = frozenset(
-        {"mtp_hybrid_override_pattern", "keep_mtp_spec_in_bf16"}
-    )
 
     mtp_hybrid_override_pattern: str | None = None
     keep_mtp_spec_in_bf16: bool = False
     extra_checkpoint_metadata: dict[str, Any] = field(default_factory=dict)
-
-    def __setattr__(self, name: str, value: Any, /) -> None:
-        """Keep family-only build fields on the outer model config."""
-        if name in self._FAMILY_BUILD_FIELDS:
-            object.__setattr__(self, name, value)
-            return
-        super().__setattr__(name, value)
 
     def finalize(self) -> None:
         """Normalize the MTP pattern before the upstream hybrid builder runs."""

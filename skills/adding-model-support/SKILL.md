@@ -152,6 +152,10 @@ import them.
   applicable upstream config). Do not subclass it to carry family-only fields.
 - Store family-only construction data on the outer model config. The builder or layer-spec factory
   passes those values explicitly at construction time.
+- Expose declared nested transformer fields through the flat model-config API so recipe users can
+  write ``cfg.model.tensor_model_parallel_size = 4`` without knowing internal field ownership.
+  Flat assignment must route to the owning dataclass, synchronize overlapping declared fields,
+  and reject unknown names instead of creating phantom attributes.
 - Configs are pure serializable data. Builders own model construction and process-group state.
 - Never attach unknown fields with `setattr`; strict field partitioning must reject phantom fields.
 - Callable layer specs must have stable dataclass defaults so serialization can recreate them.
