@@ -15,9 +15,11 @@
 """Functional smoke tests for GPT-OSS finetuning recipe configurations."""
 
 import json
+import os
 
 import pytest
 import torch
+from megatron.core.transformer.enums import AttnBackend
 from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -134,6 +136,11 @@ class TestGPTOSSFinetuneRecipes:
         if parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
         destroy_rerun_state_machine()
+        # AutoBridge.import_ckpt constructs a model in-process and can leave TE
+        # backend env vars behind. Clear them so the finetune config below can
+        # choose its own backend deterministically.
+        for env_var in ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN"):
+            os.environ.pop(env_var, None)
 
         return str(megatron_checkpoint_dir)
 
@@ -188,6 +195,7 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
+                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 True,
@@ -209,6 +217,7 @@ class TestGPTOSSFinetuneRecipes:
                     "tensor_model_parallel_size": 1,
                     "pipeline_model_parallel_size": 1,
                     "expert_model_parallel_size": 1,
+                    "attention_backend": AttnBackend.unfused,
                     "sequence_parallel": False,
                 },
                 False,
