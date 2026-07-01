@@ -250,7 +250,7 @@ def main(
         if megatron_save_path:
             if is_rank_0:
                 console.print(f"Saving Megatron checkpoint in {megatron_save_path}...")
-            bridge.save_megatron_model(megatron_model, megatron_save_path, model_config=model_provider)
+            bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
 if __name__ == "__main__":

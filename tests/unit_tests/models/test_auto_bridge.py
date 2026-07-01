@@ -1731,7 +1731,6 @@ class TestAutoBridge:
             hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
             low_memory_save=True,
-            model_config=mock_model_config,
         )
 
     @patch("megatron.bridge.models.conversion.auto_bridge._override_embedded_transformer_configs")
@@ -1768,7 +1767,6 @@ class TestAutoBridge:
             hf_tokenizer_path="./local_model",
             hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
             low_memory_save=True,
-            model_config=mock_model_config,
         )
 
     def test_export_ckpt_basic(self):

@@ -104,7 +104,7 @@ class TestImportHfToMegatron:
         assert "low_memory_save" not in save_call[2]
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {"padding_side": "left", "trust_remote_code": True}
-        assert isinstance(save_call[2]["model_config"], _FakeProvider)
+        assert "model_config" not in save_call[2]
 
 
 class TestExportMegatronToHf:

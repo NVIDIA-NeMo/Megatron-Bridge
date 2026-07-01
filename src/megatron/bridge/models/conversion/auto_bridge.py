@@ -1251,7 +1251,6 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     megatron_model,
             ...     "./megatron_checkpoint",
             ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
-            ...     model_config=model_config,
             ... )
 
             >>> # Low-memory save (destroys model after save)
@@ -1259,7 +1258,6 @@ class AutoBridge(Generic[MegatronModelT]):
             ...     megatron_model,
             ...     "./megatron_checkpoint",
             ...     low_memory_save=True,
-            ...     model_config=model_config,
             ... )
 
         Note:
@@ -1445,7 +1443,6 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_tokenizer_path=hf_model_id,
             hf_tokenizer_kwargs=hf_tokenizer_kwargs,
             low_memory_save=True,
-            model_config=model_config,
         )
 
     def export_ckpt(
