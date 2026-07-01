@@ -184,20 +184,20 @@ def _export_adapter_distributed(args: argparse.Namespace) -> None:
     bridge = AutoBridge.from_hf_config(config)
     lora = _load_lora_config(ckpt_path)
 
-    provider = bridge.to_megatron_provider(load_weights=False)
-    provider.tensor_model_parallel_size = args.tp
-    provider.pipeline_model_parallel_size = args.pp
-    provider.expert_model_parallel_size = args.ep
-    provider.expert_tensor_parallel_size = args.etp
-    provider.sequence_parallel = args.sequence_parallel
-    provider.pipeline_dtype = args.dtype
-    provider.params_dtype = args.dtype
-    provider.finalize()
-    provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = args.tp
+    model_config.pipeline_model_parallel_size = args.pp
+    model_config.expert_model_parallel_size = args.ep
+    model_config.expert_tensor_parallel_size = args.etp
+    model_config.sequence_parallel = args.sequence_parallel
+    model_config.pipeline_dtype = args.dtype
+    model_config.params_dtype = args.dtype
+    model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+    model_config.finalize()
     try:
-        provider.initialize_model_parallel(seed=0)
-
-        model = provider.provide_distributed_model(
+        model = bridge.get_megatron_model(
+            model_config,
+            load_weights=False,
             wrap_with_ddp=False,
             use_cpu_initialization=False,
             init_model_with_meta_device=False,

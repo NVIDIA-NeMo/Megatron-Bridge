@@ -122,9 +122,9 @@ def main() -> None:
     logger.info("Megatron-Bridge Llama3.2 3B-1B Distillation Script with YAML & CLI Overrides")
     logger.info("------------------------------------------------------------------")
 
-    # Load base configurations as recipes and wrap provider for distillation mode.
-    # The recipe functions do not accept a load_weights argument; use AutoBridge
-    # directly to create providers that load HuggingFace weights.
+    # TODO: Migrate to ModelConfig once ModelOpt distillation accepts builder configs
+    # with persistent HF weight-loading hooks. Keep the deprecated provider as a
+    # temporary compatibility fallback so student and teacher weights are loaded.
     cfg: ConfigContainer = llama32_1b_pretrain_config()
     cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=True)
     teacher_cfg = llama32_3b_pretrain_config()

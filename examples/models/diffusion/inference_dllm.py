@@ -117,6 +117,8 @@ def _nemotron_load(args):
     )
 
     bridge = AutoBridge.from_hf_pretrained(args.hf_model, trust_remote_code=True, torch_dtype=torch.bfloat16)
+    # TODO: Remove this compatibility fallback after NemotronLabsDiffusion has a
+    # standalone ModelConfig and ModelBuilder implementation.
     provider = bridge.to_megatron_provider(load_weights=False)
     provider.tensor_model_parallel_size = args.tp
     provider.pipeline_model_parallel_size = 1

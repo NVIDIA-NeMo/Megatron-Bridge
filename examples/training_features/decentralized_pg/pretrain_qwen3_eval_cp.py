@@ -341,7 +341,7 @@ def main() -> None:
     bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-4B")
     # Randomly-initialised weights (skip HF weight loading): we train a small
     # downsized Qwen3-4B on mock data, so the real checkpoint is irrelevant.
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg = bridge.get_model_config()
 
     # Parallelism: model is always built with the TRAINING CP degree.
     # eval_cp_context() rebinds to eval_pgs at eval time.
@@ -450,7 +450,9 @@ def main() -> None:
     # Step 5: Build model with train_pgs
     # =========================================================================
     print_rank_0("\n--- Step 5: Creating model (with train_pgs, CP_train) ---")
-    model = cfg.model.provide_distributed_model(
+    model = bridge.get_megatron_model(
+        cfg.model,
+        load_weights=False,
         ddp_config=ddp_cfg,
         use_megatron_fsdp=False,
         use_torch_fsdp2=False,

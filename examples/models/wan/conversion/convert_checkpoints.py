@@ -141,6 +141,8 @@ def import_hf_to_megatron(
 
             hf = PreTrainedWAN(hf_model)
             bridge = WanBridge()
+            # TODO: Remove this compatibility fallback after WAN has a standalone
+            # ModelConfig/ModelBuilder conversion path.
             provider = bridge.provider_bridge(hf)
             provider.perform_initialization = False
             if hasattr(provider, "finalize"):

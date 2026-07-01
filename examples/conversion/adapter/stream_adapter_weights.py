@@ -20,7 +20,7 @@ Hugging Face model by using the AutoBridge conversion APIs.
 The example follows three steps:
 
 1. Load a Hugging Face pretrained model (default: meta-llama/Llama-3.2-1B) with
-   AutoBridge to obtain a Megatron provider.
+   AutoBridge to obtain a builder-backed Megatron model config.
 2. Register a Canonical LoRA adapter as a pre-wrap hook so that every targeted
    linear layer is wrapped with LoRA modules when the Megatron model is materialized.
 3. Stream the adapter weights with `AutoBridge.export_adapter_weights` and save
@@ -238,8 +238,8 @@ def distributed_context(
         dist.destroy_process_group()
 
 
-def register_canonical_lora_adapter(provider, adapter_dim: int, adapter_alpha: int) -> CanonicalLoRA:
-    """Register a Canonical LoRA pre-wrap hook on the given provider."""
+def register_canonical_lora_adapter(model_config, adapter_dim: int, adapter_alpha: int) -> CanonicalLoRA:
+    """Register a Canonical LoRA pre-wrap hook on the given model config."""
 
     canonical_lora = CanonicalLoRA(
         target_modules=[
@@ -257,11 +257,11 @@ def register_canonical_lora_adapter(provider, adapter_dim: int, adapter_alpha: i
     )
 
     def apply_lora(model_chunks):
-        # Apply LoRA in-place and return the adapted model chunks so that the provider
+        # Apply LoRA in-place and return the adapted model chunks so that the builder
         # can continue with the standard wrapping process.
         return canonical_lora(model_chunks, training=True)
 
-    provider.register_pre_wrap_hook(apply_lora)
+    model_config.pre_wrap_hooks.append(apply_lora)
     return canonical_lora
 
 
@@ -415,17 +415,17 @@ def main() -> None:
         ),
         torch_dtype=torch.bfloat16,
     )
-    provider = bridge.to_megatron_provider(load_weights=True)
-    provider.tensor_model_parallel_size = args.tensor_model_parallel_size
-    provider.pipeline_model_parallel_size = args.pipeline_model_parallel_size
-    provider.pipeline_dtype = torch.bfloat16
-    provider.params_dtype = torch.bfloat16
-    provider.expert_model_parallel_size = args.expert_model_parallel_size
-    provider.expert_tensor_parallel_size = args.expert_tensor_parallel_size
-    provider.finalize()
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = args.tensor_model_parallel_size
+    model_config.pipeline_model_parallel_size = args.pipeline_model_parallel_size
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = torch.bfloat16
+    model_config.expert_model_parallel_size = args.expert_model_parallel_size
+    model_config.expert_tensor_parallel_size = args.expert_tensor_parallel_size
 
     print_rank_0("🧩 Registering Canonical LoRA adapters...")
-    register_canonical_lora_adapter(provider, adapter_dim=args.adapter_dim, adapter_alpha=args.adapter_alpha)
+    register_canonical_lora_adapter(model_config, adapter_dim=args.adapter_dim, adapter_alpha=args.adapter_alpha)
+    model_config.finalize()
 
     print_rank_0("⚙️  Materializing Megatron model inside a temporary distributed context (backend=NCCL)...")
     with distributed_context(
@@ -435,7 +435,8 @@ def main() -> None:
         ep=args.expert_model_parallel_size,
         etp=args.expert_tensor_parallel_size,
     ):
-        megatron_model = provider.provide_distributed_model(
+        megatron_model = bridge.get_megatron_model(
+            model_config,
             wrap_with_ddp=False,
             use_cpu_initialization=not use_gpu,
             init_model_with_meta_device=not use_gpu,

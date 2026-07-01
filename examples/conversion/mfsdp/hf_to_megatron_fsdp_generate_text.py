@@ -115,7 +115,7 @@ def _get_world_size() -> int:
         return 1
 
 
-def _configure_model_provider(model_provider, tp: int, cp: int, ep: int) -> None:
+def _configure_model_config(model_config, tp: int, cp: int, ep: int) -> None:
     world_size = _get_world_size()
     mp_size = tp * cp * ep
     if mp_size <= 0:
@@ -125,11 +125,9 @@ def _configure_model_provider(model_provider, tp: int, cp: int, ep: int) -> None
             f"WORLD_SIZE ({world_size}) must be divisible by tp*cp*ep ({mp_size}). Got tp={tp}, cp={cp}, ep={ep}."
         )
 
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.context_parallel_size = cp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config.tensor_model_parallel_size = tp
+    model_config.context_parallel_size = cp
+    model_config.expert_model_parallel_size = ep
 
 
 @torchrun_main
@@ -146,9 +144,10 @@ def main(
         hf_model_id, trust_remote_code=trust_remote_code, torch_dtype=torch.bfloat16
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    _configure_model_provider(model_provider, tp=tp, cp=cp, ep=ep)
-    model_provider.gradient_accumulation_fusion = False
+    model_config = bridge.get_model_config()
+    _configure_model_config(model_config, tp=tp, cp=cp, ep=ep)
+    model_config.gradient_accumulation_fusion = False
+    model_config.finalize()
 
     ddp_config = DistributedDataParallelConfig(
         use_distributed_optimizer=True,
@@ -157,7 +156,9 @@ def main(
         data_parallel_sharding_strategy="optim_grads_params",
     )
 
-    megatron_model = model_provider.provide_distributed_model(
+    megatron_model = bridge.get_megatron_model(
+        model_config,
+        load_weights=False,
         ddp_config=ddp_config,
         use_megatron_fsdp=True,
         use_torch_fsdp2=False,

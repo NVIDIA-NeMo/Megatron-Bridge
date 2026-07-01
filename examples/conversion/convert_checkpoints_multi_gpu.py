@@ -124,26 +124,25 @@ def import_hf_to_megatron(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
+    model_config.pipeline_dtype = dtype
+    model_config.params_dtype = dtype
     # Auto-generate pipeline layout for models that need it (e.g. DSv4 hash MoE)
     if pp > 1 and hasattr(bridge._model_bridge, "generate_pipeline_layout"):
         hf_config = bridge.hf_pretrained.config
         num_layers = hf_config.num_hidden_layers
         mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-        model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
+        model_config.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
             num_layers, pp, mtp
         )
         print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config.finalize()
 
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     hf_tokenizer_kwargs = {}
     if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
@@ -193,13 +192,13 @@ def export_megatron_to_hf(
         torch_dtype=dtype,
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
+    model_config.pipeline_dtype = dtype
+    model_config.params_dtype = dtype
     # For PP > 1 export, read pipeline layout from checkpoint
     if pp > 1:
         from pathlib import Path
@@ -214,25 +213,25 @@ def export_megatron_to_hf(
                     cfg = yaml.safe_load(f)
                 saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
                 if isinstance(saved_layout, list):
-                    model_provider.pipeline_model_parallel_layout = saved_layout
+                    model_config.pipeline_model_parallel_layout = saved_layout
                     print_rank_0(f"  Read pipeline layout from checkpoint ({len(saved_layout)} stages)")
                     break
         # run_config.yaml serializes an already-finalized layout as an object stub
         # (the layout data is lost), so fall back to auto-generation like import does.
-        if not isinstance(getattr(model_provider, "pipeline_model_parallel_layout", None), list) and hasattr(
+        if not isinstance(getattr(model_config, "pipeline_model_parallel_layout", None), list) and hasattr(
             bridge._model_bridge, "generate_pipeline_layout"
         ):
             hf_config = bridge.hf_pretrained.config
             num_layers = hf_config.num_hidden_layers
             mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
-            model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
+            model_config.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
                 num_layers, pp, mtp
             )
             print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
     # Capture before finalize() turns the list into a PipelineParallelLayerLayout.
-    resolved_pp_layout = model_provider.pipeline_model_parallel_layout if pp > 1 else None
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    resolved_pp_layout = model_config.pipeline_model_parallel_layout if pp > 1 else None
+    model_config.finalize()
+    bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
 
     mp_overrides = {
         "tensor_model_parallel_size": tp,
@@ -242,7 +241,7 @@ def export_megatron_to_hf(
         "pipeline_dtype": dtype,
         "params_dtype": dtype,
     }
-    # load_megatron_model rebuilds the provider from the checkpoint's run_config,
+    # load_megatron_model rebuilds the model config from the checkpoint's run_config,
     # which lost the layout the same way — forward the resolved layout explicitly.
     if isinstance(resolved_pp_layout, list):
         mp_overrides["pipeline_model_parallel_layout"] = resolved_pp_layout

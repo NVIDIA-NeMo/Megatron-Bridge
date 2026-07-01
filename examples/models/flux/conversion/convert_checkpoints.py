@@ -127,6 +127,8 @@ def import_hf_to_megatron(
 
     hf = PreTrainedFlux(hf_model)
     bridge = FluxBridge()
+    # TODO: Remove this compatibility fallback after Flux has a standalone
+    # ModelConfig/ModelBuilder conversion path.
     provider = bridge.provider_bridge(hf)
     provider.perform_initialization = False
     # Finalize config so init_method/output_layer_init_method are set (required by Megatron MLP)

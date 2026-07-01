@@ -413,7 +413,7 @@ def megatron_generate_from_checkpoint(
         ep: Expert parallelism size override. (default: 1)
         etp: Expert tensor parallelism size override. (default: 1)
     """
-    from megatron.bridge.training.model_load_save import build_and_load_model, load_model_config, load_tokenizer
+    from megatron.bridge.training.model_load_save import load_megatron_model, load_model_config, load_tokenizer
 
     checkpoint_path = Path(megatron_path)
     # Check for iter_* folders
@@ -432,19 +432,27 @@ def megatron_generate_from_checkpoint(
 
     print_rank_0(f"Loading Megatron model from checkpoint at {checkpoint_path}")
 
-    # Override parallelisms in model config
-    model_provider, _ = load_model_config(str(checkpoint_path))
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
+    # Initialize model-parallel groups from the checkpoint architecture before
+    # loading. load_megatron_model applies the same overrides to the config it
+    # builds, while the existing distributed process group remains active.
+    model_config, _ = load_model_config(str(checkpoint_path))
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
+    model_config.finalize()
+    AutoBridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
 
-    # Initialize parallel state
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-
-    # Initialize and load the model and tokenizer
-    megatron_model = build_and_load_model(str(checkpoint_path), model_provider)
+    megatron_model = load_megatron_model(
+        str(checkpoint_path),
+        mp_overrides={
+            "tensor_model_parallel_size": tp,
+            "pipeline_model_parallel_size": pp,
+            "expert_model_parallel_size": ep,
+            "expert_tensor_parallel_size": etp,
+        },
+        skip_temp_dist_context=True,
+    )
     tokenizer = load_tokenizer(str(checkpoint_path))
 
     generated = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
@@ -479,20 +487,19 @@ def megatron_generate_from_hf(
 
     # Get model config from HF
     bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
-    model_provider = bridge.to_megatron_provider(load_weights=True)
+    model_config = bridge.get_model_config()
 
     # Override parallelisms
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
 
     # Initialize parallel state
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config.finalize()
 
     # Initialize and load the model and tokenizer
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
     tokenizer_cfg = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_model)
     tokenizer = build_tokenizer(tokenizer_cfg, trust_remote_code=True)
 

@@ -19,9 +19,9 @@ conversion between a Hugging Face model and a Megatron-LM model on multiple GPUs
 The process is as follows:
 1. An AutoBridge is initialized from a pretrained Hugging Face model
     (e.g., "meta-llama/Llama-3.2-1B"). This downloads the model from the Hub and loads it.
-2. The bridge's `to_megatron_provider` method is called to get a Megatron-LM compatible model provider.
-3. The model provider is configured for multi-GPU execution.
-4. The model provider is used to instantiate the Megatron-LM model.
+2. The bridge's `get_model_config` method creates a builder-backed model configuration.
+3. The model configuration is configured for multi-GPU execution.
+4. `get_megatron_model` instantiates the Megatron-LM model.
 5. The weights of the converted Megatron-LM model are verified against the original
     Hugging Face model.
 6. The `save_hf_pretrained` method is used to save the Megatron-LM
@@ -116,17 +116,17 @@ def main(
     )
 
     if megatron_load_path:
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.params_dtype = torch.bfloat16
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.params_dtype = torch.bfloat16
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
 
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
+        # Once all overrides are set, finalize the builder config before loading.
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
         megatron_model = bridge.load_megatron_model(
             megatron_load_path,
             mp_overrides={
@@ -142,18 +142,17 @@ def main(
         megatron_model = [m.cuda() for m in megatron_model]
 
     else:
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.params_dtype = torch.bfloat16
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.params_dtype = torch.bfloat16
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
 
-        # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        # Once all overrides are set, finalize the builder config before construction.
+        model_config.finalize()
+        megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
@@ -168,10 +167,10 @@ def main(
         table.add_column("Matches Original", justify="center")
 
     if is_rank_0:
-        console.print(f"[yellow]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/yellow]")
-        console.print(f"[yellow]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/yellow]")
-        console.print(f"[yellow]Expert parallel size: {model_provider.expert_model_parallel_size}[/yellow]")
-        console.print(f"[yellow]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/yellow]")
+        console.print(f"[yellow]Tensor parallel size: {model_config.tensor_model_parallel_size}[/yellow]")
+        console.print(f"[yellow]Pipeline parallel size: {model_config.pipeline_model_parallel_size}[/yellow]")
+        console.print(f"[yellow]Expert parallel size: {model_config.expert_model_parallel_size}[/yellow]")
+        console.print(f"[yellow]Expert tensor parallel size: {model_config.expert_tensor_parallel_size}[/yellow]")
 
     # Weight comparison handles three situations:
     #

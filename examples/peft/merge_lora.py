@@ -151,14 +151,14 @@ def merge_lora(
     print_rank_0(f"Loading base model from {base_dir}")
     bridge = AutoBridge.from_hf_pretrained(hf_model_path, trust_remote_code=True)
 
-    model_provider = bridge.to_megatron_provider(load_weights=False)
+    model_config = bridge.get_model_config()
 
     print_rank_0(f"Setting Parallelism: TP={args.tp} | PP={args.pp} | EP={args.ep}")
-    model_provider.tensor_model_parallel_size = args.tp
-    model_provider.pipeline_model_parallel_size = args.pp
-    model_provider.expert_model_parallel_size = args.ep
-    model_provider.expert_tensor_parallel_size = 1
-    model_provider.pipeline_dtype = torch.bfloat16
+    model_config.tensor_model_parallel_size = args.tp
+    model_config.pipeline_model_parallel_size = args.pp
+    model_config.expert_model_parallel_size = args.ep
+    model_config.expert_tensor_parallel_size = 1
+    model_config.pipeline_dtype = torch.bfloat16
     if args.cpu:
         if args.tp != 1 or args.pp != 1 or args.ep != 1:
             logger.warning("TP, PP, and EP must be 1 when using CPU merge. Setting to 1.")
@@ -167,7 +167,8 @@ def merge_lora(
             args.ep = 1
         if not torch.distributed.is_initialized():
             torch.distributed.init_process_group("gloo")
-    model_provider.initialize_model_parallel(seed=0)
+    model_config.finalize()
+    bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
 
     mp_overrides = {
         "tensor_model_parallel_size": args.tp,

@@ -290,6 +290,8 @@ def main() -> None:
             hf_path=hf_policy_model,
         ),
     )
+    # TODO: Migrate to ModelConfig once this training stack can preserve the HF
+    # weight-loading hook without carrying a provider in ConfigContainer.
     provider = bridge.to_megatron_provider(load_weights=True)
 
     cfg = build_config(provider, args)

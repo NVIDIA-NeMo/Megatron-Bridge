@@ -92,15 +92,14 @@ def _check_world_size(tp: int, cp: int, ep: int) -> None:
 
 def _build_fsdp_distributed_model(bridge: AutoBridge, tp: int, cp: int, ep: int, dtype: torch.dtype):
     """Build and return a Megatron-FSDP wrapped model list."""
-    model_provider = bridge.to_megatron_provider(load_weights=False)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.context_parallel_size = cp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.pipeline_dtype = dtype
-    model_provider.params_dtype = dtype
-    model_provider.gradient_accumulation_fusion = False
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.context_parallel_size = cp
+    model_config.expert_model_parallel_size = ep
+    model_config.pipeline_dtype = dtype
+    model_config.params_dtype = dtype
+    model_config.gradient_accumulation_fusion = False
+    model_config.finalize()
 
     ddp_config = DistributedDataParallelConfig(
         use_distributed_optimizer=True,
@@ -108,14 +107,16 @@ def _build_fsdp_distributed_model(bridge: AutoBridge, tp: int, cp: int, ep: int,
         use_megatron_fsdp=True,
         data_parallel_sharding_strategy="optim_grads_params",
     )
-    megatron_model = model_provider.provide_distributed_model(
+    megatron_model = bridge.get_megatron_model(
+        model_config,
+        load_weights=False,
         ddp_config=ddp_config,
         use_megatron_fsdp=True,
         use_torch_fsdp2=False,
         overlap_param_gather_with_optimizer_step=False,
         data_parallel_random_init=False,
     )
-    return model_provider, ddp_config, megatron_model
+    return model_config, ddp_config, megatron_model
 
 
 @torchrun_main
@@ -144,7 +145,7 @@ def import_hf_to_megatron_fsdp(
         torch_dtype=dtype,
     )
 
-    model_provider, _, megatron_model = _build_fsdp_distributed_model(bridge, tp=tp, cp=cp, ep=ep, dtype=dtype)
+    model_config, _, megatron_model = _build_fsdp_distributed_model(bridge, tp=tp, cp=cp, ep=ep, dtype=dtype)
 
     bridge.load_hf_weights(megatron_model)
 
@@ -161,7 +162,7 @@ def import_hf_to_megatron_fsdp(
         megatron_path,
         ckpt_format=ckpt_format,
         low_memory_save=effective_low_memory_save,
-        model_config=model_provider,
+        model_config=model_config,
     )
     print_rank_0(f"Import complete: {megatron_path}")
 
@@ -200,13 +201,13 @@ def export_megatron_to_hf(
     print_rank_0(f"Loading Megatron checkpoint from: {megatron_path}")
     if ckpt_format == "fsdp_dtensor":
         # Build an FSDP-wrapped model and load with the training checkpoint loader.
-        model_provider, ddp_config, megatron_model = _build_fsdp_distributed_model(
+        model_config, ddp_config, megatron_model = _build_fsdp_distributed_model(
             bridge, tp=tp, cp=cp, ep=ep, dtype=dtype
         )
 
         state = GlobalState()
         state.cfg = ConfigContainer(
-            model=model_provider,
+            model=model_config,
             train=None,
             optimizer=OptimizerConfig(use_distributed_optimizer=False),
             ddp=ddp_config,

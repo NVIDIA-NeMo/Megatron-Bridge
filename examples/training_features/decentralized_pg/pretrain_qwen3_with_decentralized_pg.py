@@ -441,7 +441,7 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # data with ``NullTokenizer``, so the architecture deliberately does not
     # match the real Qwen3-4B HF checkpoint. Skip weight loading; the model is
     # initialized randomly, which is what the manual-PG demo needs.
-    model_cfg = bridge.to_megatron_provider(load_weights=False)
+    model_cfg = bridge.get_model_config()
 
     # Parallelism - must match what we used to create pg_collection
     model_cfg.tensor_model_parallel_size = args.tp_size
@@ -559,7 +559,9 @@ def run_training(args: argparse.Namespace, pg_collection: ProcessGroupCollection
     # ===========================================================================
     print_rank_0("Creating model with pg_collection...")
 
-    model = cfg.model.provide_distributed_model(
+    model = bridge.get_megatron_model(
+        cfg.model,
+        load_weights=False,
         ddp_config=ddp_cfg,
         use_megatron_fsdp=False,
         use_torch_fsdp2=False,
