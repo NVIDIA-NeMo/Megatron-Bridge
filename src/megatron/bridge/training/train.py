@@ -852,7 +852,7 @@ def train_step(
 
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
-            from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
