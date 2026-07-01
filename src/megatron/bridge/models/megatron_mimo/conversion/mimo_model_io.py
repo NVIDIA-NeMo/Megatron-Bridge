@@ -138,8 +138,8 @@ def load_megatron_mimo_model(
     *,
     parallelism_config: Optional["MegatronMIMOParallelismConfig"] = None,
     ddp_config: Optional["DistributedDataParallelConfig"] = None,
-    fp16: bool = False,
-    bf16: bool = True,
+    fp16: bool | None = None,
+    bf16: bool | None = None,
     wrap_with_ddp: bool = False,
     data_parallel_random_init: bool = False,
 ) -> tuple["MimoModel", "MegatronMIMOInfra", "MegatronMIMOModelConfig"]:
@@ -149,7 +149,8 @@ def load_megatron_mimo_model(
         path: Checkpoint parent directory or an ``iter_*`` directory.
         parallelism_config: Optional per-component parallelism override.
         ddp_config: DDP config forwarded to ``build_megatron_mimo_model``.
-        fp16 / bf16: Precision flags forwarded to model construction.
+        fp16 / bf16: Optional precision overrides forwarded to model construction.
+            When omitted, the serialized model config controls precision.
         wrap_with_ddp: Whether to DDP-wrap.
         data_parallel_random_init: Forwarded to ``build_megatron_mimo_model``.
 

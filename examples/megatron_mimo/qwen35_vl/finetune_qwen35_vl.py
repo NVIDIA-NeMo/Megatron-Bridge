@@ -54,11 +54,12 @@ from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
 )
+from megatron.bridge.models.megatron_mimo.conversion import MegatronMIMOBridge
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import reorganize_inputs
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -238,8 +239,8 @@ def _grid_dim_rank(grid: Any, dim_name: str, default: int = 0) -> int:
     return int(grid.get_pg([dim_name]).rank())
 
 
-def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
-    grids = getattr(cfg.model, "_grids", None)
+def _batch_spec_for_rank(cfg: Any, grids: dict[str, Any] | None = None) -> MIMOBatchSpec:
+    grids = grids or getattr(cfg.model, "_grids", None)
     if not grids:
         return MIMOBatchSpec()
 
@@ -322,39 +323,33 @@ def _validate_mimo_batch_sizes(
     return summaries
 
 
-def _build_mimo_provider(
+def _build_mimo_model_config(
     hf_config: object,
     parallelism_config: MegatronMIMOParallelismConfig,
     args: argparse.Namespace,
-) -> MegatronMIMOProvider:
-    bridge = AutoBridge.from_hf_config(hf_config)
-    # TODO: Remove this compatibility fallback when MegatronMIMOProvider can adapt
-    # directly from a builder-backed Qwen3.5-VL ModelConfig.
-    standard_provider = bridge.to_megatron_provider(load_weights=False)
-    standard_provider.seq_length = args.seq_length
-    if hasattr(standard_provider, "language_max_sequence_length"):
-        standard_provider.language_max_sequence_length = args.seq_length
-    standard_provider.bf16 = not args.fp32
-    standard_provider.fp16 = False
-    standard_provider.use_cpu_initialization = True
-    if hasattr(standard_provider, "mtp_num_layers"):
-        standard_provider.mtp_num_layers = None
-    if hasattr(standard_provider, "_enable_in_batch_packing"):
-        standard_provider._enable_in_batch_packing = False
+) -> MegatronMIMOModelConfig:
+    source_bridge = AutoBridge.from_hf_config(hf_config)
+    bridge = MegatronMIMOBridge.from_bridge(source_bridge, parallelism_config=parallelism_config)
+    model_config = bridge.get_model_config()
+    source_config = model_config.source_model_config
+    source_config.seq_length = args.seq_length
+    if hasattr(source_config, "language_max_sequence_length"):
+        source_config.language_max_sequence_length = args.seq_length
+    source_config.bf16 = not args.fp32
+    source_config.fp16 = False
+    source_config.use_cpu_initialization = True
+    if hasattr(source_config, "mtp_num_layers"):
+        source_config.mtp_num_layers = None
+    if hasattr(source_config, "_enable_in_batch_packing"):
+        source_config._enable_in_batch_packing = False
 
-    provider = MegatronMIMOProvider.from_standard_provider(
-        standard_provider=standard_provider,
-        megatron_mimo_parallelism_config=parallelism_config,
-    )
-    provider.use_cpu_initialization = True
-    provider.bf16 = not args.fp32
-    provider.fp16 = False
-    provider.freeze_language_model = args.freeze_llm
-    provider.freeze_modality_encoders = {"images": args.freeze_vision}
-    provider.freeze_modality_projections = {"images": args.freeze_projector}
-    if not hasattr(provider, "num_moe_experts"):
-        provider.num_moe_experts = None
-    return provider
+    model_config.use_cpu_initialization = True
+    model_config.bf16 = not args.fp32
+    model_config.fp16 = False
+    model_config.freeze_language_model = args.freeze_llm
+    model_config.freeze_modality_encoders = {"images": args.freeze_vision}
+    model_config.freeze_modality_projections = {"images": args.freeze_projector}
+    return model_config
 
 
 def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvider:
@@ -818,7 +813,7 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
         base_collate = getattr(train_ds, "collate_fn", None)
         if base_collate is None:
             raise ValueError("HF conversation train dataset does not expose collate_fn.")
-        batch_spec = _batch_spec_for_rank(cfg)
+        batch_spec = _batch_spec_for_rank(cfg, grids)
         use_metadata_collate = not batch_spec.modality_inputs
         _log(
             f"mimo_batch_spec spec={batch_spec.describe()} collate={'metadata' if use_metadata_collate else 'visual'}"
@@ -899,7 +894,7 @@ def _build_checkpoint_config(args: argparse.Namespace) -> CheckpointConfig:
 
 
 def _register_converted_checkpoint_pre_wrap_hook(
-    model_provider: MegatronMIMOProvider,
+    model_config: MegatronMIMOModelConfig,
     checkpoint_path: str | None,
 ) -> None:
     if checkpoint_path is None:
@@ -909,11 +904,13 @@ def _register_converted_checkpoint_pre_wrap_hook(
         if len(model_list) != 1:
             raise ValueError(f"Expected a single MegatronMIMO model, got {len(model_list)} chunks.")
 
-        infra = model_provider.build_infra()
+        builder = model_config.get_builder_cls()(model_config)
+        builder.finalize()
+        infra = builder.build_infra()
         active_module_name, local_pg_collection = get_active_module_pg(infra)
         load_state = GlobalState()
         load_state.cfg = ConfigContainer(
-            model=model_provider,
+            model=model_config,
             train=None,
             optimizer=OptimizerConfig(use_distributed_optimizer=False),
             ddp=None,
@@ -948,12 +945,12 @@ def _register_converted_checkpoint_pre_wrap_hook(
         _log("converted MegatronMIMO checkpoint loaded before DDP wrap")
         return model_list
 
-    model_provider.register_pre_wrap_hook(_load_converted_checkpoint)
+    model_config.pre_wrap_hooks.append(_load_converted_checkpoint)
 
 
 def _build_config(
     *,
-    model_provider: MegatronMIMOProvider,
+    model_config: MegatronMIMOModelConfig,
     data_provider: HFConversationDatasetProvider,
     args: argparse.Namespace,
 ) -> ConfigContainer:
@@ -1008,7 +1005,7 @@ def _build_config(
             manual_gc_interval=100,
             manual_gc_eval=100,
         ),
-        model=model_provider,
+        model=model_config,
         optimizer=optimizer_cfg,
         scheduler=scheduler_cfg,
         dataset=data_provider,
@@ -1196,9 +1193,9 @@ def main() -> None:
         for summary in _validate_mimo_batch_sizes(parallelism_config, args):
             _log(f"batch contract: global_mbs={args.micro_batch_size}, {summary}")
 
-        _log("building Qwen3.5-VL MegatronMIMO provider")
-        model_provider = _build_mimo_provider(hf_config, parallelism_config, args)
-        _register_converted_checkpoint_pre_wrap_hook(model_provider, args.pretrained_checkpoint)
+        _log("building Qwen3.5-VL MegatronMIMO model config")
+        model_config = _build_mimo_model_config(hf_config, parallelism_config, args)
+        _register_converted_checkpoint_pre_wrap_hook(model_config, args.pretrained_checkpoint)
 
         _log(f"building HF conversation data provider: maker={args.dataset_maker}")
         data_provider = _build_data_provider(args)
@@ -1206,7 +1203,7 @@ def main() -> None:
         _log(f"pretrained checkpoint: {args.pretrained_checkpoint}")
         _log(f"checkpoint dir: {args.checkpoint_dir}")
         _log("building training config")
-        cfg = _build_config(model_provider=model_provider, data_provider=data_provider, args=args)
+        cfg = _build_config(model_config=model_config, data_provider=data_provider, args=args)
 
         _log("launching pretrain_megatron_mimo")
         pretrain_megatron_mimo(

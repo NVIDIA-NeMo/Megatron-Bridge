@@ -1809,8 +1809,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     """MegatronMIMO-equivalent of ``runtime_config_update``.
 
     The standard ``runtime_config_update`` cannot be used directly because it
-    accesses ``cfg.model`` attributes (``bf16``, ``tensor_model_parallel_size``,
-    ``cuda_graph_impl``, …) that do not exist on ``MegatronMIMOProvider``.
+    accesses global-model attributes (``tensor_model_parallel_size``,
+    ``cuda_graph_impl``, …) that do not apply to heterogeneous MegatronMIMO configs.
 
     This function cherry-picks the safe, model-agnostic parts:
 
@@ -1834,8 +1834,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     cfg.data_parallel_size = 1
 
     # Finalize sub-configs that don't depend on model construction order.
-    # NOTE: cfg.model.finalize() is NOT called here — it validates parallelism
-    # config and is called inside setup_megatron_mimo() right before build_infra().
+    # NOTE: cfg.model finalization is handled by the MegatronMIMO builder after
+    # runtime overrides have been applied.
     if hasattr(cfg.optimizer, "finalize"):
         cfg.optimizer.finalize()
     if hasattr(cfg.ddp, "finalize"):

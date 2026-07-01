@@ -20,6 +20,7 @@ import contextlib
 import copy
 import logging
 import types
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Optional, Union
@@ -337,7 +338,6 @@ class MegatronMIMOBridge(AutoBridge):
         self.parallelism_config = parallelism_config
         self._source_bridge_override = source_bridge
         self._mimo_provider: Optional["MegatronMIMOProvider"] = None
-        self._mimo_model_config: Optional["MegatronMIMOModelConfig"] = None
         self._routes: Optional[list[MIMOComponent]] = None
         self._infra: Optional["MegatronMIMOInfra"] = None
 
@@ -389,7 +389,7 @@ class MegatronMIMOBridge(AutoBridge):
     def routes(self) -> list[MIMOComponent]:
         """Return the route table resolved for this source bridge."""
         if self._routes is None:
-            self.to_megatron_model_config(load_weights=False)
+            self.get_model_config()
         assert self._routes is not None
         return self._routes
 
@@ -407,44 +407,131 @@ class MegatronMIMOBridge(AutoBridge):
         hf_path: str | Path | None = None,
     ) -> "MegatronMIMOProvider":
         """Build the deprecated compatibility provider for this HF source."""
+        warnings.warn(
+            "MegatronMIMOBridge.to_megatron_mimo_provider() is deprecated. Use get_model_config(), "
+            "apply overrides, and call get_megatron_model() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if hf_path is not None:
             raise NotImplementedError("MegatronMIMOBridge.to_megatron_mimo_provider does not support hf_path yet.")
         if load_weights:
-            raise NotImplementedError("Use to_megatron_model(load_weights=True) for MegatronMIMO weight loading.")
+            raise NotImplementedError("Use get_megatron_model(load_weights=True) for MegatronMIMO weight loading.")
 
         if self._mimo_provider is not None and self._routes is not None:
             return self._mimo_provider
 
         source_bridge = self._model_bridge
-        provider = _build_default_mimo_provider(source_bridge, self.hf_pretrained, self.parallelism_config)
+        provider = _build_default_mimo_provider(source_bridge, self._provider_bridge_input, self.parallelism_config)
         if self._routes is None:
-            self.to_megatron_model_config(load_weights=False)
+            current_config = self._model_config
+            self.get_model_config()
+            self._model_config = current_config
         self._mimo_provider = provider
+        self._model_config = provider
         return provider
+
+    def get_model_config(self) -> "MegatronMIMOModelConfig":
+        """Resolve and register the pure MIMO model config and conversion routes."""
+        source_bridge = self._model_bridge
+        conversion_spec = get_mimo_conversion_spec(type(source_bridge))
+        model_config, routes = conversion_spec(source_bridge, self._provider_bridge_input, self.parallelism_config)
+        validate_route_table(routes, parallelism_config=self.parallelism_config)
+        self._model_config = model_config
+        self._routes = routes
+        return model_config
 
     def to_megatron_model_config(
         self,
         load_weights: bool = False,
         hf_path: str | Path | None = None,
     ) -> "MegatronMIMOModelConfig":
-        """Resolve and cache the pure MIMO model config and conversion routes."""
+        """Deprecated alias for :meth:`get_model_config`."""
+        warnings.warn(
+            "MegatronMIMOBridge.to_megatron_model_config() is deprecated. Use get_model_config() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if hf_path is not None:
             raise NotImplementedError("MegatronMIMO model config does not support hf_path yet.")
         if load_weights:
             raise NotImplementedError("MIMO weights are loaded after heterogeneous model construction.")
-        if self._mimo_model_config is not None and self._routes is not None:
-            return self._mimo_model_config
-        source_bridge = self._model_bridge
-        conversion_spec = get_mimo_conversion_spec(type(source_bridge))
-        model_config, routes = conversion_spec(source_bridge, self.hf_pretrained, self.parallelism_config)
-        validate_route_table(routes, parallelism_config=self.parallelism_config)
-        self._mimo_model_config = model_config
-        self._routes = routes
-        return model_config
+        return self.get_model_config()
 
     def validate_mimo_conversion_support(self) -> None:
         """Validate MIMO conversion support by resolving its pure model config."""
-        self.to_megatron_model_config(load_weights=False)
+        self.get_model_config()
+
+    def get_megatron_model(
+        self,
+        model_config: Optional["MegatronMIMOModelConfig"] = None,
+        *,
+        load_weights: bool = True,
+        hf_path: str | Path | None = None,
+        **kwargs,
+    ) -> list[MegatronModule]:
+        """Build MIMO and load routed HF weights before distributed wrapping."""
+        from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
+
+        current_config = self._model_config
+        if model_config is None:
+            if isinstance(current_config, MegatronMIMOModelConfig):
+                model_config = current_config
+            else:
+                model_config = self.get_model_config()
+                self._model_config = current_config
+
+        if self._routes is None:
+            source_bridge = self._model_bridge
+            conversion_spec = get_mimo_conversion_spec(type(source_bridge))
+            _, routes = conversion_spec(source_bridge, self._provider_bridge_input, self.parallelism_config)
+            validate_route_table(routes, parallelism_config=self.parallelism_config)
+            self._routes = routes
+
+        builder = model_config.get_builder_cls()(model_config)
+        builder.finalize()
+        infra = builder.build_infra()
+        original_hooks = model_config.pre_wrap_hooks
+        original_hook_values = list(original_hooks)
+        source_transformer = getattr(model_config.source_model_config, "transformer", None)
+        original_perform_initialization = (
+            source_transformer.perform_initialization if source_transformer is not None else None
+        )
+
+        try:
+            if load_weights:
+                hf_pretrained = self._resolve_hf_pretrained(hf_path)
+                if source_transformer is not None:
+                    source_transformer.perform_initialization = False
+
+                def _load_weights(models: list[MegatronModule]) -> list[MegatronModule]:
+                    import_hf_to_megatron_mimo(
+                        source_bridge=self._model_bridge,
+                        hf_pretrained=hf_pretrained,
+                        mimo_model=self._coerce_mimo_model(models),
+                        routes=self.routes,
+                        pg_collections=infra.pg_collections,
+                    )
+                    return models
+
+                original_hooks[:] = [_load_weights, *original_hook_values]
+
+            kwargs.setdefault("fp16", model_config.fp16)
+            kwargs.setdefault("bf16", model_config.bf16)
+            mimo_model, built_infra = self._build_mimo_model(
+                model_config,
+                infra=infra,
+                **kwargs,
+            )
+        finally:
+            if source_transformer is not None and original_perform_initialization is not None:
+                source_transformer.perform_initialization = original_perform_initialization
+            original_hooks[:] = original_hook_values
+            model_config.pre_wrap_hooks = original_hooks
+
+        self._model_config = model_config
+        self._infra = built_infra
+        return [mimo_model]
 
     def to_megatron_model(
         self,
@@ -452,12 +539,13 @@ class MegatronMIMOBridge(AutoBridge):
         hf_path: str | Path | None = None,
         **kwargs,
     ) -> list[MegatronModule]:
-        """Build a distributed MIMO model and optionally import HF weights."""
-        model_config = self.to_megatron_model_config(load_weights=False)
-        mimo_model = self.build_mimo_model(model_config=model_config, **kwargs)
-        if load_weights:
-            self.load_hf_weights(mimo_model, hf_path=hf_path)
-        return [mimo_model]
+        """Deprecated alias for :meth:`get_megatron_model`."""
+        warnings.warn(
+            "MegatronMIMOBridge.to_megatron_model() is deprecated. Use get_megatron_model() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_megatron_model(load_weights=load_weights, hf_path=hf_path, **kwargs)
 
     def build_mimo_model(
         self,
@@ -465,8 +553,8 @@ class MegatronMIMOBridge(AutoBridge):
         model_config: Optional["MegatronMIMOModelConfig"] = None,
         mimo_provider: Optional["MegatronMIMOProvider"] = None,
         ddp_config: Optional["DistributedDataParallelConfig"] = None,
-        fp16: bool = False,
-        bf16: bool = True,
+        fp16: bool | None = None,
+        bf16: bool | None = None,
         seed: int = 0,
         wrap_with_ddp: bool = True,
         data_parallel_random_init: bool = True,
@@ -476,30 +564,84 @@ class MegatronMIMOBridge(AutoBridge):
         ``mimo_provider`` is a deprecated compatibility alias for callers that
         still construct the legacy provider directly.
         """
-        from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
+        from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 
         if model_config is not None and mimo_provider is not None:
             raise ValueError("model_config and mimo_provider are mutually exclusive.")
+        if mimo_provider is not None:
+            warnings.warn(
+                "build_mimo_model(mimo_provider=...) is deprecated. Pass model_config or call "
+                "get_megatron_model() instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         build_config = model_config if model_config is not None else mimo_provider
         if build_config is None:
-            model_config = self.to_megatron_model_config(load_weights=False)
+            current_config = self._model_config
+            if isinstance(current_config, MegatronMIMOModelConfig):
+                model_config = current_config
+            else:
+                model_config = self.get_model_config()
             build_config = model_config
-        mimo_model, infra = build_megatron_mimo_model(
-            build_config,
+        if mimo_provider is not None:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"^Passing MegatronMIMOProvider to build_megatron_mimo_model\(\) is deprecated\.",
+                    category=DeprecationWarning,
+                )
+                mimo_model, infra = self._build_mimo_model(
+                    build_config,
+                    ddp_config=ddp_config,
+                    fp16=fp16,
+                    bf16=bf16,
+                    seed=seed,
+                    wrap_with_ddp=wrap_with_ddp,
+                    data_parallel_random_init=data_parallel_random_init,
+                )
+        else:
+            mimo_model, infra = self._build_mimo_model(
+                build_config,
+                ddp_config=ddp_config,
+                fp16=fp16,
+                bf16=bf16,
+                seed=seed,
+                wrap_with_ddp=wrap_with_ddp,
+                data_parallel_random_init=data_parallel_random_init,
+            )
+        if mimo_provider is not None:
+            self._mimo_provider = mimo_provider
+            self._model_config = mimo_provider
+        else:
+            assert model_config is not None
+            self._model_config = model_config
+        self._infra = infra
+        return mimo_model
+
+    @staticmethod
+    def _build_mimo_model(
+        model_config: "MegatronMIMOModelConfig | MegatronMIMOProvider",
+        *,
+        ddp_config: Optional["DistributedDataParallelConfig"] = None,
+        fp16: bool | None = None,
+        bf16: bool | None = None,
+        seed: int = 0,
+        wrap_with_ddp: bool = True,
+        data_parallel_random_init: bool = True,
+        infra: Optional["MegatronMIMOInfra"] = None,
+    ) -> tuple["MimoModel", "MegatronMIMOInfra"]:
+        from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
+
+        return build_megatron_mimo_model(
+            model_config,
             ddp_config=ddp_config,
             fp16=fp16,
             bf16=bf16,
             seed=seed,
             wrap_with_ddp=wrap_with_ddp,
             data_parallel_random_init=data_parallel_random_init,
+            infra=infra,
         )
-        if mimo_provider is not None:
-            self._mimo_provider = mimo_provider
-        else:
-            assert model_config is not None
-            self._mimo_model_config = model_config
-        self._infra = infra
-        return mimo_model
 
     def load_hf_weights(
         self,
@@ -618,11 +760,23 @@ class MegatronMIMOBridge(AutoBridge):
             raise NotImplementedError("MegatronMIMO checkpoint save does not support low_memory_save.")
         if model_config is not None and mimo_provider is not None:
             raise ValueError("model_config and mimo_provider are mutually exclusive.")
+        if mimo_provider is not None:
+            warnings.warn(
+                "save_megatron_model(mimo_provider=...) is deprecated. Pass model_config or rely on the "
+                "bridge's current config instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         mimo_model = self._coerce_mimo_model(model)
         infra = self._require_infra(infra)
         checkpoint_config = model_config if model_config is not None else mimo_provider
         if checkpoint_config is None:
-            checkpoint_config = self._mimo_model_config or self._require_provider()
+            checkpoint_config = self._model_config
+        if checkpoint_config is None:
+            raise ValueError(
+                "No MegatronMIMO model config is registered. Call get_model_config(), get_megatron_model(), "
+                "or load_megatron_model() first, or pass model_config explicitly."
+            )
         save_megatron_mimo_model(
             mimo_model,
             infra,
@@ -638,8 +792,8 @@ class MegatronMIMOBridge(AutoBridge):
         *,
         parallelism_config: Optional["MegatronMIMOParallelismConfig"] = None,
         ddp_config: Optional["DistributedDataParallelConfig"] = None,
-        fp16: bool = False,
-        bf16: bool = True,
+        fp16: bool | None = None,
+        bf16: bool | None = None,
         wrap_with_ddp: bool = False,
         data_parallel_random_init: bool = False,
     ) -> "MimoModel":
@@ -655,7 +809,7 @@ class MegatronMIMOBridge(AutoBridge):
             wrap_with_ddp=wrap_with_ddp,
             data_parallel_random_init=data_parallel_random_init,
         )
-        self._mimo_model_config = model_config
+        self._model_config = model_config
         self._infra = infra
         return mimo_model
 
@@ -667,7 +821,7 @@ class MegatronMIMOBridge(AutoBridge):
         hf_tokenizer_kwargs: Optional[dict] = None,
     ) -> None:
         """Import HF weights and write a MegatronMIMO checkpoint."""
-        model = self.to_megatron_model(
+        model = self.get_megatron_model(
             load_weights=True,
             wrap_with_ddp=False,
             data_parallel_random_init=False,
@@ -729,9 +883,11 @@ class MegatronMIMOBridge(AutoBridge):
         return self._mimo_provider
 
     def _require_model_config(self) -> "MegatronMIMOModelConfig":
-        if self._mimo_model_config is None:
+        from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
+
+        if not isinstance(self._model_config, MegatronMIMOModelConfig):
             raise ValueError("MegatronMIMO model config is required. Build or resolve the model first.")
-        return self._mimo_model_config
+        return self._model_config
 
     @staticmethod
     def _coerce_mimo_model(model: "MimoModel" | list["MimoModel"]) -> "MimoModel":

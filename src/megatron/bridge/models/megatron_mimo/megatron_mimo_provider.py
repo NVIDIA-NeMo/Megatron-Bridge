@@ -1,5 +1,5 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
-"""MegatronMIMO Model Provider for heterogeneous multi-module training.
+"""Deprecated MegatronMIMO provider compatibility for heterogeneous training.
 
 This module provides MegatronMIMOProvider, which integrates with the standard
 ModelProviderMixin interface to enable multi-module models in the training loop.
@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import copy
 import inspect
+import warnings
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Union
 
 import torch
 import torch.distributed as dist
@@ -44,12 +46,24 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
+@contextmanager
+def _suppress_provider_build_deprecation_warnings() -> Iterator[None]:
+    """Suppress only nested warnings from legacy MIMO provider build methods."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"^MegatronMIMOProvider\.(build_infra|provide|provide_distributed_model)\(\) is deprecated\.",
+            category=DeprecationWarning,
+        )
+        yield
+
+
 @dataclass
 class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
-    """MegatronMIMO provider with heterogeneous parallelism support.
+    """Deprecated MegatronMIMO provider with heterogeneous parallelism support.
 
-    Integrates with the standard training loop via provide_distributed_model().
-    Use build_infra() to access MegatronMIMO-specific infrastructure (grids, topology, pg_collections).
+    New code should use ``MegatronMIMOModelConfig`` with
+    ``build_megatron_mimo_model()``. This class remains available for compatibility.
 
     This provider handles:
     - HyperCommGrid creation per module (heterogeneous parallelism)
@@ -74,9 +88,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         ...     modality_submodules_spec={"clip_encoder": clip_spec},
         ...     megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
         ... )
-        >>> # For training loop integration:
+        >>> # Deprecated compatibility path:
         >>> model = provider.provide_distributed_model(ddp_config=ddp_config)
-        >>> # Or for manual usage:
+        >>> # Direct construction is also deprecated:
         >>> model = provider.provide()
         >>> infra = provider.build_infra()
     """
@@ -200,7 +214,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         return build_language_model_spec(pp_rank=pp_rank)
 
     def build_infra(self) -> MegatronMIMOInfra:
-        """Build MegatronMIMO parallelism infrastructure.
+        """Build legacy MegatronMIMO provider infrastructure.
 
         This method builds HyperCommGrids, ProcessGroupCollections, and topology
         for MegatronMIMO's heterogeneous parallelism. It is idempotent and does not
@@ -213,6 +227,14 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             MegatronMIMOInfra containing grids, topology, pg_collections,
             and the list of modules this rank participates in.
         """
+        self._warn_deprecated_build_api("build_infra")
+        reused_infra = getattr(self, "_reused_infra", None)
+        if reused_infra is not None:
+            return reused_infra
+        return self._build_infra()
+
+    def _build_infra(self) -> MegatronMIMOInfra:
+        """Build provider infrastructure without emitting a compatibility warning."""
         if self.megatron_mimo_parallelism_config is not None:
             grids = build_hypercomm_grids(self.megatron_mimo_parallelism_config)
             pg_collections = self._get_pg_collections_from_grids(grids)
@@ -362,6 +384,18 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ValueError: If language_model_spec is not set, or if this rank
                 doesn't participate in any module.
         """
+        self._warn_deprecated_build_api("provide")
+        return self._provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+    def _provide(
+        self,
+        pre_process: Optional[bool] = None,
+        post_process: Optional[bool] = None,
+        vp_stage: Optional[int] = None,
+        *,
+        infra: Optional[MegatronMIMOInfra] = None,
+    ) -> MimoModel:
+        """Build from the provider without emitting a compatibility warning."""
         if self.language_model_spec is None:
             raise ValueError(
                 "language_model_spec must be set before calling provide(). "
@@ -369,7 +403,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             )
 
         # Build infrastructure
-        infra = self.build_infra()
+        if infra is None:
+            infra = getattr(self, "_reused_infra", None)
+            if infra is None:
+                with _suppress_provider_build_deprecation_warnings():
+                    infra = self.build_infra()
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
@@ -413,6 +451,30 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         self._apply_freezing(megatron_mimo_model)
 
         return megatron_mimo_model
+
+    @staticmethod
+    def _warn_deprecated_build_api(method_name: str) -> None:
+        """Warn that a legacy provider build entry point is deprecated."""
+        warnings.warn(
+            f"MegatronMIMOProvider.{method_name}() is deprecated. Pass a MegatronMIMOModelConfig "
+            "to build_megatron_mimo_model() instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    @contextmanager
+    def _reuse_infra(self, infra: MegatronMIMOInfra) -> Iterator[None]:
+        """Reuse one infra instance across a nested legacy provider build."""
+        sentinel = object()
+        previous = getattr(self, "_reused_infra", sentinel)
+        object.__setattr__(self, "_reused_infra", infra)
+        try:
+            yield
+        finally:
+            if previous is sentinel:
+                delattr(self, "_reused_infra")
+            else:
+                object.__setattr__(self, "_reused_infra", previous)
 
     def provide_distributed_model(
         self,
@@ -475,6 +537,13 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ValueError: If this rank doesn't participate in any module
                 (indicates invalid parallelism configuration).
         """
+        warnings.warn(
+            "MegatronMIMOProvider.provide_distributed_model() is deprecated. Pass a MegatronMIMOModelConfig "
+            "to build_megatron_mimo_model(), or use MegatronMIMOBridge.get_megatron_model() for conversion.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
         if wrap_with_ddp and ddp_config is None:
             raise ValueError("ddp_config is required when wrap_with_ddp is True")
 
@@ -487,10 +556,14 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         self.finalize()
 
         # Build infrastructure
-        infra = self.build_infra()
+        infra = getattr(self, "_reused_infra", None)
+        if infra is None:
+            with _suppress_provider_build_deprecation_warnings():
+                infra = self.build_infra()
 
         # Get the model
-        model = self.provide()
+        with self._reuse_infra(infra), _suppress_provider_build_deprecation_warnings():
+            model = self.provide()
         model_list = [model]
 
         # Resolve hooks

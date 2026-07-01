@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import inspect
+import types
+import warnings
 from collections import namedtuple
 from unittest.mock import Mock
 
@@ -520,8 +522,15 @@ def test_copy_hf_artifacts_forwards_additional_file_patterns(tmp_path):
 class _FakeSourceBridgeForMIMOBridge:
     export_weight_dtype = "bf16"
 
+    def __init__(self):
+        self.model_config_inputs = []
+
     def provider_bridge(self, hf_pretrained):
         return _FakeProviderForMIMOBridge()
+
+    def model_config_bridge(self, hf_pretrained):
+        self.model_config_inputs.append(hf_pretrained)
+        return _FakeModelConfigForMIMOBridge()
 
 
 class _FakeProviderForMIMOBridge:
@@ -568,7 +577,7 @@ def _ensure_fake_mimo_conversion_spec_registered() -> None:
 
     @register_mimo_conversion_spec(_FakeSourceBridgeForMIMOBridge)
     def _fake_mimo_conversion_spec(source_bridge, hf_pretrained, parallelism_config):
-        return _FakeModelConfigForMIMOBridge(), _bridge_routes()
+        return source_bridge.model_config_bridge(hf_pretrained), _bridge_routes()
 
 
 def _mimo_bridge() -> MegatronMIMOBridge:
@@ -588,19 +597,32 @@ class TestMegatronMIMOBridge:
     def test_to_megatron_model_config_resolves_conversion_spec_and_routes(self):
         bridge = _mimo_bridge()
 
-        model_config = bridge.to_megatron_model_config()
+        with pytest.warns(DeprecationWarning, match="to_megatron_model_config"):
+            model_config = bridge.to_megatron_model_config()
 
         assert isinstance(model_config, _FakeModelConfigForMIMOBridge)
+        assert bridge._model_config is model_config
         assert [route.name for route in bridge.routes] == ["language", "images"]
+
+    def test_get_model_config_wraps_config_only_source_for_bridge_contract(self):
+        bridge = _mimo_bridge()
+        source_bridge = bridge._model_bridge
+
+        model_config = bridge.get_model_config()
+
+        assert isinstance(model_config, _FakeModelConfigForMIMOBridge)
+        assert source_bridge.model_config_inputs[0].config is bridge.hf_pretrained
 
     def test_to_megatron_mimo_provider_builds_deprecated_compatibility_provider(self, monkeypatch):
         bridge = _mimo_bridge()
         provider = _FakeProviderForMIMOBridge()
         monkeypatch.setattr(orchestrator_module, "_build_default_mimo_provider", lambda *args: provider)
 
-        mimo_provider = bridge.to_megatron_mimo_provider()
+        with pytest.warns(DeprecationWarning, match="to_megatron_mimo_provider"):
+            mimo_provider = bridge.to_megatron_mimo_provider()
 
         assert mimo_provider is provider
+        assert bridge._model_config is provider
         assert [route.name for route in bridge.routes] == ["language", "images"]
 
     def test_standard_provider_method_points_to_mimo_specific_name(self):
@@ -617,9 +639,11 @@ class TestMegatronMIMOBridge:
         with pytest.raises(NotImplementedError, match="config-only checkpoint export"):
             MegatronMIMOBridge.from_auto_config("/ckpt", "hf")
         with pytest.raises(NotImplementedError, match="hf_path"):
-            bridge.to_megatron_mimo_provider(hf_path="/hf")
+            with pytest.warns(DeprecationWarning, match="to_megatron_mimo_provider"):
+                bridge.to_megatron_mimo_provider(hf_path="/hf")
         with pytest.raises(NotImplementedError, match="load_weights"):
-            bridge.to_megatron_mimo_provider(load_weights=True)
+            with pytest.warns(DeprecationWarning, match="to_megatron_mimo_provider"):
+                bridge.to_megatron_mimo_provider(load_weights=True)
 
     def test_to_megatron_mimo_provider_returns_cached_provider(self, monkeypatch):
         bridge = _mimo_bridge()
@@ -627,9 +651,11 @@ class TestMegatronMIMOBridge:
         build_provider = Mock(return_value=provider)
         monkeypatch.setattr(orchestrator_module, "_build_default_mimo_provider", build_provider)
 
-        first = bridge.to_megatron_mimo_provider()
+        with pytest.warns(DeprecationWarning, match="to_megatron_mimo_provider"):
+            first = bridge.to_megatron_mimo_provider()
 
-        assert bridge.to_megatron_mimo_provider() is first
+        with pytest.warns(DeprecationWarning, match="to_megatron_mimo_provider"):
+            assert bridge.to_megatron_mimo_provider() is first
         build_provider.assert_called_once()
         bridge.validate_mimo_conversion_support()
 
@@ -675,26 +701,86 @@ class TestMegatronMIMOBridge:
         assert calls[0]["pg_collections"] == bridge._infra.pg_collections
         assert calls[0]["allowed_mismatched_params"] == ["ignored.*"]
 
-    def test_to_megatron_model_builds_and_optionally_loads(self, monkeypatch):
+    def test_to_megatron_model_delegates_to_canonical_builder_api(self, monkeypatch):
         bridge = _mimo_bridge()
         model = _FakeMimoModel()
-        calls = []
+        canonical = Mock(return_value=[model])
+        monkeypatch.setattr(bridge, "get_megatron_model", canonical)
 
-        def fake_build_mimo_model(**kwargs):
-            calls.append(("build", kwargs))
-            return model
+        with pytest.warns(DeprecationWarning, match="to_megatron_model"):
+            assert bridge.to_megatron_model(load_weights=True, hf_path="/hf", wrap_with_ddp=False) == [model]
 
-        def fake_load_hf_weights(model_arg, **kwargs):
-            calls.append(("load", model_arg, kwargs))
-            return model_arg
+        canonical.assert_called_once_with(load_weights=True, hf_path="/hf", wrap_with_ddp=False)
 
-        monkeypatch.setattr(bridge, "build_mimo_model", fake_build_mimo_model)
-        monkeypatch.setattr(bridge, "load_hf_weights", fake_load_hf_weights)
+    def test_get_megatron_model_loads_weights_before_wrapping_and_registers_on_success(self, monkeypatch):
+        bridge = _mimo_bridge()
+        bridge._routes = _bridge_routes()
+        previous_config = object()
+        bridge._model_config = previous_config
+        model = _FakeMimoModel()
+        infra = _FakeInfraForMIMOBridge()
+        transformer = types.SimpleNamespace(perform_initialization=True)
+        original_hook = Mock(side_effect=lambda models: models)
+        model_config = Mock()
+        model_config.source_model_config = types.SimpleNamespace(transformer=transformer)
+        model_config.pre_wrap_hooks = [original_hook]
+        model_config.fp16 = True
+        model_config.bf16 = False
+        builder = Mock()
+        builder.build_infra.return_value = infra
+        model_config.get_builder_cls.return_value = lambda config: builder
+        imported = []
 
-        assert bridge.to_megatron_model(load_weights=True, hf_path="/hf", wrap_with_ddp=False) == [model]
-        assert calls[0][0] == "build"
-        assert calls[0][1]["wrap_with_ddp"] is False
-        assert calls[1] == ("load", model, {"hf_path": "/hf"})
+        monkeypatch.setattr(bridge, "_resolve_hf_pretrained", lambda hf_path: "hf")
+        monkeypatch.setattr(
+            orchestrator_module,
+            "import_hf_to_megatron_mimo",
+            lambda **kwargs: imported.append(kwargs),
+        )
+
+        def fake_build(config, **kwargs):
+            assert kwargs["infra"] is infra
+            assert kwargs["fp16"] is True
+            assert kwargs["bf16"] is False
+            assert transformer.perform_initialization is False
+            assert config.pre_wrap_hooks[0] is not original_hook
+            models = [model]
+            for hook in config.pre_wrap_hooks:
+                models = hook(models)
+            return models[0], infra
+
+        monkeypatch.setattr(bridge, "_build_mimo_model", fake_build)
+
+        assert bridge.get_megatron_model(model_config, hf_path="/hf", wrap_with_ddp=True) == [model]
+
+        assert imported[0]["mimo_model"] is model
+        assert imported[0]["pg_collections"] is infra.pg_collections
+        assert bridge._model_config is model_config
+        assert bridge._infra is infra
+        assert transformer.perform_initialization is True
+        assert model_config.pre_wrap_hooks == [original_hook]
+        original_hook.assert_called_once_with([model])
+
+    def test_get_megatron_model_failure_preserves_current_config(self, monkeypatch):
+        bridge = _mimo_bridge()
+        bridge._routes = _bridge_routes()
+        previous_config = object()
+        bridge._model_config = previous_config
+        transformer = types.SimpleNamespace(perform_initialization=True)
+        model_config = Mock()
+        model_config.source_model_config = types.SimpleNamespace(transformer=transformer)
+        model_config.pre_wrap_hooks = []
+        builder = Mock()
+        builder.build_infra.return_value = _FakeInfraForMIMOBridge()
+        model_config.get_builder_cls.return_value = lambda config: builder
+        monkeypatch.setattr(bridge, "_build_mimo_model", Mock(side_effect=RuntimeError("build failed")))
+
+        with pytest.raises(RuntimeError, match="build failed"):
+            bridge.get_megatron_model(model_config, load_weights=False, wrap_with_ddp=False)
+
+        assert bridge._model_config is previous_config
+        assert transformer.perform_initialization is True
+        assert model_config.pre_wrap_hooks == []
 
     def test_build_mimo_model_routes_deprecated_provider_alias_and_caches(self, monkeypatch):
         bridge = _mimo_bridge()
@@ -704,12 +790,19 @@ class TestMegatronMIMOBridge:
         calls = []
 
         def fake_build(config, **kwargs):
+            warnings.warn(
+                "Passing MegatronMIMOProvider to build_megatron_mimo_model() is deprecated. "
+                "Pass MegatronMIMOModelConfig instead.",
+                DeprecationWarning,
+            )
             calls.append((config, kwargs))
             return model, infra
 
         monkeypatch.setattr(megatron_mimo_module, "build_megatron_mimo_model", fake_build)
 
-        assert bridge.build_mimo_model(mimo_provider=provider, wrap_with_ddp=False) is model
+        with pytest.warns(DeprecationWarning, match="mimo_provider") as caught_warnings:
+            assert bridge.build_mimo_model(mimo_provider=provider, wrap_with_ddp=False) is model
+        assert len(caught_warnings) == 1
         assert calls[0][0] is provider
         assert bridge._mimo_provider is provider
         assert bridge._infra is infra
@@ -865,7 +958,8 @@ class TestMegatronMIMOBridge:
         )
 
         model = _FakeMimoModel()
-        bridge.save_megatron_model(model, "/ckpt", mimo_provider=provider)
+        with pytest.warns(DeprecationWarning, match="mimo_provider"):
+            bridge.save_megatron_model(model, "/ckpt", mimo_provider=provider)
 
         assert calls[0][0][:4] == (model, bridge._infra, provider, "/ckpt")
         with pytest.raises(ValueError, match="mutually exclusive"):
@@ -890,7 +984,7 @@ class TestMegatronMIMOBridge:
 
         assert returned is model
         assert bridge._infra is infra
-        assert bridge._mimo_model_config is model_config
+        assert bridge._model_config is model_config
         assert calls[0][0] == ("/ckpt",)
         assert calls[0][1]["parallelism_config"] == bridge.parallelism_config
         assert calls[0][1]["wrap_with_ddp"] is True
@@ -903,8 +997,8 @@ class TestMegatronMIMOBridge:
 
         monkeypatch.setattr(
             bridge,
-            "to_megatron_model",
-            lambda **kwargs: calls.append(("to_megatron_model", kwargs)) or [model],
+            "get_megatron_model",
+            lambda **kwargs: calls.append(("get_megatron_model", kwargs)) or [model],
         )
         monkeypatch.setattr(
             bridge,
@@ -915,7 +1009,7 @@ class TestMegatronMIMOBridge:
         bridge.import_ckpt("/ckpt", hf_tokenizer_path="hf", hf_tokenizer_kwargs={"trust_remote_code": True})
 
         assert calls[0] == (
-            "to_megatron_model",
+            "get_megatron_model",
             {"load_weights": True, "wrap_with_ddp": False, "data_parallel_random_init": False},
         )
         assert calls[1] == (

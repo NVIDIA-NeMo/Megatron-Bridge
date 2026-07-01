@@ -54,9 +54,11 @@ def pretrain_megatron_mimo(
     3. Call train_megatron_mimo() with all components
 
     Args:
-        cfg: ConfigContainer with training configuration.  ``cfg.model`` must be
-            an ``MegatronMIMOProvider``.  ``cfg.optimizer`` (a ``BridgeOptimizerConfig``)
-            is used to create the ``MimoOptimizer`` and per-module LR schedulers.
+        cfg: ConfigContainer with training configuration. ``cfg.model`` should be
+            a ``MegatronMIMOModelConfig``; legacy ``MegatronMIMOProvider`` values
+            remain supported with a deprecation warning. ``cfg.optimizer`` (a
+            ``BridgeOptimizerConfig``) creates the ``MimoOptimizer`` and per-module
+            learning-rate schedulers.
         forward_step_func: Forward step function for training.
         build_data_iterators_fn: Function to build data iterators.
             Signature: (cfg, megatron_mimo_infra) -> (train_iter, valid_iter)
