@@ -4,6 +4,9 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.ernie_vl.model_config import Ernie45VLModelConfig, _namespace
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import (
+    get_ernie45_vl_decoder_block_spec,
+)
 
 
 def test_namespace_preserves_nested_non_string_key_mappings():
@@ -28,4 +31,5 @@ def test_ernie_vl_config_roundtrip_preserves_exact_mcore_configs():
     assert type(restored.vision_transformer) is TransformerConfig
     assert restored.patch_size == 16
     assert restored.spatial_merge_size == 4
+    assert restored.transformer_layer_spec is get_ernie45_vl_decoder_block_spec
     assert restored.builder == "megatron.bridge.models.ernie_vl.model_config.Ernie45VLModelBuilder"

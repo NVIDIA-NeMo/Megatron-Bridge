@@ -17,10 +17,11 @@
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from types import SimpleNamespace
-from typing import ClassVar, cast
+from typing import Callable, ClassVar, cast
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.training.models.gpt import GPTModelBuilder
 from transformers import PretrainedConfig
 
@@ -44,7 +45,9 @@ class Ernie45VLModelConfig(BridgeGPTModelConfig):
     """Serializable ERNIE VL config with exact text and vision MCore configs."""
 
     builder: ClassVar[str] = "megatron.bridge.models.ernie_vl.model_config.Ernie45VLModelBuilder"
-    transformer_layer_spec = get_ernie45_vl_decoder_block_spec
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: get_ernie45_vl_decoder_block_spec
+    )
     vision_transformer: TransformerConfig
     vision_config: dict[str, object] = field(default_factory=dict)
     hf_config: dict[str, object] = field(default_factory=dict)
@@ -106,6 +109,11 @@ class Ernie45VLModelBuilder(GPTModelBuilder):
         ):
             setattr(runtime_config, name, getattr(config, name))
         runtime_config.sequence_parallel = config.transformer.sequence_parallel
+        # Conversion task global-name resolution reads the composite model's
+        # runtime config when translating EP-local expert indices. ERNIE owns
+        # two pools with this many experts each, so expose the per-pool count
+        # without polluting the serialized Hugging Face config.
+        runtime_config.num_moe_experts = config.transformer.num_moe_experts
         runtime_config.kv_channels = config.transformer.kv_channels
         runtime_config.rotary_interleaved = config.transformer.rotary_interleaved
         runtime_config.rotary_base = config.rotary_base
