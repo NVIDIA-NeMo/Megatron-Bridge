@@ -453,7 +453,9 @@ def megatron_generate_from_checkpoint(
         },
         skip_temp_dist_context=True,
     )
-    tokenizer = load_tokenizer(str(checkpoint_path))
+    # This example creates the checkpoint above with trust_remote_code=True, so
+    # explicitly preserve that trust decision when reconstructing its tokenizer.
+    tokenizer = load_tokenizer(str(checkpoint_path), trust_remote_code=True)
 
     generated = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
 
