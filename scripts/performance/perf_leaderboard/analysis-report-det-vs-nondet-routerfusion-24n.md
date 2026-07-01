@@ -67,7 +67,11 @@ shared_experts`), `TRITON_CACHE_AUTOTUNING=1`, container `nemo:26.04.01`, same 2
 
 ## 2. Perf Cost Decomposition (det+nsys vs non-det+nsys, 3-iter window)
 
-From `nsys-compare-24node-routerfusion-v2/leaderboard.txt`. Positive Δ = det slower.
+Traced from the nsys profiles of the pairing where **non-det is slightly faster** — the *expected*
+det-penalty direction — so the det cost reads as a clean positive signal (not the noise-flipped
+"det faster" pairing): **det+nsys job 3745946** (9,065 ms, the det median) vs **non-det+nsys job
+3712403** (8,981 ms, ~0.9% faster). Source: `nsys-trace-det-vs-nondet-expected/leaderboard.txt`
+(rank 0, 3-iter window). Positive Δ = det slower.
 
 > **Rank-0 caveat**: `leaderboard.txt` is rank 0 only. On `TP=2 PP=3`, rank 0 is the **first pipeline
 > stage** and never runs the CE / MTP-head backward (those live on the last stage), so §2 *understates*
@@ -77,38 +81,40 @@ From `nsys-compare-24node-routerfusion-v2/leaderboard.txt`. Positive Δ = det sl
 
 | Range | det ms | nondet ms | Δ ms | Δ % |
 |---|---|---|---|---|
-| `p2p_communication.recv_backward` | 2,007.6 | 1,616.8 | **+390.9** | +24.2 |
-| `p2p_communication.send_forward_recv_backward` | 6,224.5 | 5,921.3 | +303.2 | +5.1 |
-| `transformer_layer._forward_mlp.mlp` | 3,910.6 | 3,776.2 | +134.4 | +3.6 |
-| `mlp.forward.activation` | 471.2 | 490.5 | −19.3 | −3.9 |
-| `mlp.forward.linear_fc2` | 761.4 | 771.5 | −10.1 | −1.3 |
-| `attention.forward.self_attention` | 476.9 | 484.2 | −7.3 | −1.5 |
+| `p2p_communication.send_forward_recv_backward` | 6,202.9 | 5,791.1 | +411.8 | +7.1 |
+| `transformer_layer._forward_mlp.mlp` | 4,044.3 | 3,639.7 | **+404.6** | +11.1 |
+| `p2p_communication.recv_backward` | 2,313.4 | 1,945.6 | +367.8 | +18.9 |
+| `p2p_communication.send_forward` | 172.0 | 194.1 | −22.1 | −11.4 |
+| `mlp.forward.linear_fc2` | 752.3 | 746.8 | +5.5 | +0.7 |
+| `attention.forward.self_attention` | 472.5 | 467.1 | +5.4 | +1.2 |
 
 ### Backward — autograd engine ranges (top by |Δ|)
 
 | Range | det ms | nondet ms | Δ ms | Δ % |
 |---|---|---|---|---|
-| `MambaSplitConv1dScanCombinedFnBackward` | 2,552.4 | 2,201.8 | **+350.6** | +15.9 |
-| `CheckpointFunctionBackward` | 12,709.2 | 12,867.4 | −158.1 | −1.2 |
-| `RouterGatingLinearFunctionBackward` | 277.3 | 263.1 | +14.2 | +5.4 |
-| `_GroupedLinearBackward` | 1,186.8 | 1,183.6 | +3.2 | +0.3 |
-| `EmbeddingBackward0` | — | 14.3 | −14.3 | — |
+| `CheckpointFunctionBackward` | 12,591.4 | 12,251.9 | **+339.5** | +2.8 |
+| `MambaSplitConv1dScanCombinedFnBackward` | 2,490.1 | 2,198.7 | +291.3 | +13.3 |
+| `_GroupedLinearBackward` | 1,174.8 | 1,204.4 | −29.6 | −2.5 |
+| `_LinearBackward` | 941.7 | 959.2 | −17.5 | −1.8 |
+| `EmbeddingBackward0` | — | 14.7 | −14.7 | — |
 
 ### Op-level — aten / kernels (top by |Δ|)
 
 | Range | det ms | nondet ms | Δ ms | Note |
 |---|---|---|---|---|
-| `aten::zeros` | 203.6 | 80.6 | +123.0 | zero-init before deterministic scatter |
-| `aten::sum` | 681.6 | 560.3 | +121.3 | unfused-CE reduction |
-| `DaoAILab::_causal_conv1d_bwd_cpp` | 132.6 | 44.4 | +88.2 | Mamba deterministic conv1d bwd |
-| `aten::fill_` | 206.4 | 142.9 | +63.5 | det substitute zero-init |
-| `aten::item` / `_local_scalar_dense` | ~128 / 123 | ~81 / 77 | +47 / +47 | host syncs (wait-inclusive) |
+| `CheckpointFunction` | 5,584.5 | 5,170.0 | +414.5 | recompute wrapper (wait-inclusive) |
+| `aten::sum` | 668.5 | 546.6 | +121.9 | unfused-CE reduction |
+| `aten::zeros` | 199.8 | 78.1 | +121.6 | zero-init before deterministic scatter |
+| `DaoAILab::_causal_conv1d_bwd_cpp` | 130.0 | 44.7 | +85.2 | Mamba deterministic conv1d bwd |
 
-**Reading**: det's cost concentrates in **P2P comm** (`NCCL_ALGO=Ring` forces small P2P onto Ring —
-though P2P SendRecv bypasses algo selection, so this is largely wait-skew), the **Mamba selective-scan
-backward** + `causal_conv1d_bwd` (deterministic scan path), and the non-fused cross-entropy
-`zeros`/`fill_`/`sum` ops. Compute (GEMM/attention) and `mcore.fusions` are near-identical. This is the
-qualitative "where det differs" map; it does **not** net out to a step-time number (see §3).
+**Reading**: with non-det as the faster arm, det's cost is consistently positive in the hot buckets —
+**P2P comm** (`send_forward_recv_backward` +7%, `recv_backward` +19% — largely wait-skew, since P2P
+SendRecv bypasses `NCCL_ALGO`), **MLP forward** (+11%), the **Mamba selective-scan backward** +
+`causal_conv1d_bwd` (deterministic scan path, +13% / +191%), the recompute `CheckpointFunction` (+8%),
+and the non-fused cross-entropy `aten::sum` / `aten::zeros`. GEMM (`linear_fc1/fc2`,
+`_GroupedLinearBackward`) and `mcore.fusions` are near-identical or marginally det-faster. Mechanism
+matches the 3072-GPU §2. This is the *where-det-differs* map; the *net* step-time delta is still within
+noise (§3).
 
 ---
 
@@ -183,6 +189,7 @@ does **not** break determinism here.
 | | path |
 |---|---|
 | Processed (leaderboard.txt + bitwise_check.txt + submit logs) | `nsys-compare-24node-routerfusion-v2/` |
+| §2 trace pairing (det 3745946 vs nondet 3712403, rank-0 CSVs + leaderboard) | `nsys-trace-det-vs-nondet-expected/` |
 | det+nsys log (3706179) | `~/.nemo_run/experiments/nemotron-3-ultra-det-nsys15-18-1782886365/.../log-*_3706179_0.out` |
 | nondet+nsys log (3706214) | `~/.nemo_run/experiments/nemotron-3-ultra-nondet-nsys15-18-1782886365/.../log-*_3706214_0.out` |
 | Determinism (no-nsys) jobs | 3706236 / 3706255 / 3707706 / 3707730 |
