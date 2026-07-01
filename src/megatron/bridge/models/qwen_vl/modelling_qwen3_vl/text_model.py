@@ -18,6 +18,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 3e5a40f2ee42a2c74/mbridge/models/qwen3_vl/gpt_model.py
 """
 
+from copy import copy
 from typing import Literal, Optional
 
 import torch
@@ -60,8 +61,28 @@ class Qwen3VLGPTModel(GPTModel):
         vp_stage: Optional[int] = None,
         pg_collection: ProcessGroupCollection = None,
     ) -> None:
+        # Pass a deepcopy of config to GPTModel.__init__ so that MTP
+        # initialization cannot pollute the original config object.
+        #
+        # Bug: When mtp_block_spec is provided, MCore's GPTModel.__init__
+        # initializes the MTP block after the standard decoder. The MTP
+        # transformer layers have ub_names not registered in the
+        # tp_comm_overlap_cfg preset, which causes MCore/TE to set
+        # config.tp_comm_overlap = False (and tp_comm_overlap_cfg = None)
+        # back on the shared config object as a fallback. Without a copy,
+        # this pollution propagates to the original config, and the
+        # subsequent Qwen3VLTransformerBlock rebuild inherits the broken
+        # settings — silently disabling TP comm overlap for ALL decoder
+        # layers.
+        #
+        # Fix: Give super().__init__ a deepcopy so MTP writes land on the
+        # copy, then restore self.config to the original (unpolluted)
+        # object before rebuilding the decoder.
+        _original_config = config
+        _config_copy = copy(config)
+
         super().__init__(
-            config=config,
+            config=_config_copy,
             transformer_layer_spec=transformer_layer_spec,
             vocab_size=vocab_size,
             max_sequence_length=max_sequence_length,
@@ -81,6 +102,11 @@ class Qwen3VLGPTModel(GPTModel):
             vp_stage=vp_stage,
             pg_collection=pg_collection,
         )
+
+        # Restore self.config to the original (unpolluted) object so that
+        # the Qwen3VLTransformerBlock rebuild and all downstream code see
+        # the correct tp_comm_overlap settings.
+        self.config = _original_config
 
         # rebuild rope
         self.rotary_pos_emb = Qwen3VLMultimodalRotaryEmbedding(
