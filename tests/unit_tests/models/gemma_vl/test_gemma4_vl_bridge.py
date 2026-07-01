@@ -331,6 +331,7 @@ def test_gemma4_dense_model_config_falls_back_from_null_global_attention_fields(
     pretrained.config.text_config.num_global_key_value_heads = None
     pretrained.config.text_config = _serializable_text_config(pretrained.config.text_config)
     pretrained.config.audio_config = None
+    pretrained.config.audio_token_id = 258_881
 
     config = vl_bridge.model_config_bridge(pretrained)
 

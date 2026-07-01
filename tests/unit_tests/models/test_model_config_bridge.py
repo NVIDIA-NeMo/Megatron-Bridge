@@ -149,16 +149,16 @@ def test_flat_model_config_assignment_synchronizes_overlapping_fields() -> None:
     transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
     model_config = BridgeGPTModelConfig(
         transformer=transformer,
-        use_transformer_engine_op_fuser=True,
+        rotary_base=20_000,
     )
 
-    assert model_config.use_transformer_engine_op_fuser is True
-    assert transformer.use_transformer_engine_op_fuser is True
+    assert model_config.rotary_base == 20_000
+    assert transformer.rotary_base == 20_000
 
-    model_config.use_transformer_engine_op_fuser = False
+    model_config.rotary_base = 30_000
 
-    assert model_config.use_transformer_engine_op_fuser is False
-    assert transformer.use_transformer_engine_op_fuser is False
+    assert model_config.rotary_base == 30_000
+    assert transformer.rotary_base == 30_000
 
 
 def test_flat_model_config_assignment_rejects_phantom_fields() -> None:

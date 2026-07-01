@@ -582,6 +582,7 @@ class TestQwen3VLModel:
                 sequence_parallel=False,
                 spatial_merge_size=4,
             ),
+            vision_transformer_config=SimpleNamespace(spatial_merge_size=4),
             pg_collection=SimpleNamespace(
                 cp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),
                 tp=SimpleNamespace(rank=lambda: 0, size=lambda: 1),

@@ -847,10 +847,10 @@ class TestQwen35MoEBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.language_model.layers.*.mlp.gate.weight" in hf_params
         # shared_expert_gate is represented via ReplicatedMapping in bridge
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
-        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
+        assert "model.language_model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Check for fused expert mappings
         fused_gated_expert_mappings = [m for m in registry.mappings if type(m).__name__ == "FusedGatedExpertMapping"]
