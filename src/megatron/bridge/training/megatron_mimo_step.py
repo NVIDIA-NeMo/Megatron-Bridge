@@ -204,12 +204,11 @@ def forward_step(
             # slicing modality tensors whose leading dimension is not the language
             # sample batch.
             data_batch["modality_inputs"] = None
-        if scalable_dp:
-            # Scalable data parallelism already delivered this rank's shard (sampler disjoint
-            # read; the optional intra-microbatch reordering rebalances it via ReorderingBuffer
-            # over the module DP group), so there is nothing to slice here.
-            pass
-        else:
+        if not scalable_dp:
+            # Without scalable data parallelism, every rank read the same global micro-batch, so
+            # contiguously sub-shard it for this module's DP replica here. With scalable_dp on, the
+            # sampler already delivered this rank's disjoint shard (optionally rebalanced by the
+            # ReorderingBuffer over the module DP group), so there is nothing to slice.
             data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
         pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:

@@ -59,6 +59,7 @@ group-then-LPT pass.
 """
 
 import logging
+import math
 import os
 import queue
 import threading
@@ -80,6 +81,12 @@ logger = logging.getLogger(__name__)
 # the receiver can view-cast any dtype back from the received bytes without alignment
 # errors and compute exact offsets from metadata alone.
 _ALIGN = 8
+
+
+def _pad_to_align(nbytes: int) -> int:
+    """Zero-padding bytes to round ``nbytes`` up to the next :data:`_ALIGN` multiple."""
+    return (-nbytes) % _ALIGN
+
 
 # String -> (torch.dtype, byte width), for reconstructing tensors from metadata shared via
 # all_gather_object. The itemsize is precomputed once so the (de)serialize byte-size loops do not
@@ -339,7 +346,7 @@ def serialize_sample(flat: Dict[str, Any], keys: List[str]) -> torch.Tensor:
         if t is None:
             continue
         raw = t.contiguous().view(torch.uint8).reshape(-1)
-        pad = (_ALIGN - raw.numel() % _ALIGN) % _ALIGN
+        pad = _pad_to_align(raw.numel())
         if pad:
             raw = torch.cat([raw, torch.zeros(pad, dtype=torch.uint8, device=raw.device)])
         parts.append(raw)
@@ -354,11 +361,8 @@ def sample_byte_size(meta: Dict[str, Any], keys: List[str]) -> int:
         if info is None:
             continue
         _, elem = _dtype_info(info["dtype"])
-        numel = 1
-        for s in info["shape"]:
-            numel *= s
-        nbytes = numel * elem
-        nbytes += (_ALIGN - nbytes % _ALIGN) % _ALIGN
+        nbytes = math.prod(info["shape"]) * elem
+        nbytes += _pad_to_align(nbytes)
         total += nbytes
     return total
 
@@ -388,12 +392,9 @@ def deserialize_sample(
             flat[key] = None
             continue
         dtype, elem = _dtype_info(info["dtype"])
-        numel = 1
-        for s in info["shape"]:
-            numel *= s
-        nbytes = numel * elem
+        nbytes = math.prod(info["shape"]) * elem
         flat[key] = buf[cursor : cursor + nbytes].view(dtype).reshape(info["shape"]).clone()
-        cursor += nbytes + (_ALIGN - nbytes % _ALIGN) % _ALIGN
+        cursor += nbytes + _pad_to_align(nbytes)
     for key, info in meta.items():
         if key not in flat:
             flat[key] = info.get("non_tensor") if isinstance(info, dict) and "non_tensor" in info else None
@@ -551,7 +552,7 @@ def prepare_sample_exchange(
 # ``split_microbatch`` turns it into B per-sample **flat** dicts (nesting flattened to
 # dotted keys) so the Phase-0 serializer/all-to-all can move individual samples; after the
 # exchange ``merge_samples`` rebuilds the (rebalanced) micro-batch. Sample slicing/vision
-# attribution uses :func:`_gather_shard` (LM by batch dim, vision by image via
+# attribution uses :func:`_apply_sample_dispatch` (LM by batch dim, vision by image via
 # ``image_counts``).
 
 
@@ -716,7 +717,7 @@ def _apply_sample_dispatch(
 ) -> Dict[str, Any]:
     """Shared per-sample gather/permute visitor for tensors, vision sub-dicts, and lists.
 
-    Used by :func:`_gather_shard` (per-sample local-shard selection); ``n_samples`` is the
+    Used by :func:`split_microbatch` (per-sample local-shard selection); ``n_samples`` is the
     canonical global batch size ``B`` so list/vision per-sample detection is consistent. ``cu_img``
     (cumulative per-sample image offsets) is forwarded to :func:`_gather_vision_subdict` for the
     variable-images-per-sample reorder; ``None`` keeps the legacy one-image-per-sample path.
@@ -743,27 +744,10 @@ def _apply_sample_dispatch(
     return out
 
 
-def _gather_shard(
-    batch: Dict[str, Any],
-    indices: list[int],
-    *,
-    n_samples: int,
-    cu_img: "list[int] | None" = None,
-) -> Dict[str, Any]:
-    """Gather the sub-batch at ``indices`` (LM tensors by batch dim, vision by image, lists per sample).
-
-    ``n_samples`` is the **full** global batch size ``B``, not the local shard size, so per-sample
-    list/vision detection fires consistently. ``cu_img`` (cumulative per-sample image offsets) lets
-    the vision gather support a variable number of images per sample; ``None`` keeps the legacy
-    one-image-per-sample path.
-    """
-    return _apply_sample_dispatch(batch, indices, n_samples=n_samples, cu_img=cu_img)
-
-
 def split_microbatch(batch: Dict[str, Any], *, cu_img: "List[int] | None" = None) -> List[Dict[str, Any]]:
     """Split a micro-batch into ``B`` per-sample flat (dotted-key) dicts.
 
-    Each sample is gathered with :func:`_gather_shard` (so its image travels with it)
+    Each sample is gathered with :func:`_apply_sample_dispatch` (so its image travels with it)
     and then flattened to dotted keys for serialization. Leading batch dims are kept (size 1),
     so :func:`merge_samples` is a plain concat.
 
@@ -772,7 +756,7 @@ def split_microbatch(batch: Dict[str, Any], *, cu_img: "List[int] | None" = None
     one-image-per-sample path is used.
     """
     b = _batch_size(batch)
-    return [_flatten_nested(_gather_shard(batch, [i], n_samples=b, cu_img=cu_img)) for i in range(b)]
+    return [_flatten_nested(_apply_sample_dispatch(batch, [i], n_samples=b, cu_img=cu_img)) for i in range(b)]
 
 
 def merge_samples(flats: List[Dict[str, Any]]) -> Dict[str, Any]:
