@@ -147,22 +147,37 @@ def test_qwen25_builder_binds_mrope_before_language_model_construction(monkeypat
     )
     transformer_state = dict(transformer.__dict__)
     serialized_config = config.as_dict()
-    language_model = SimpleNamespace()
+    layer_spec = SimpleNamespace()
+    vision_config = SimpleNamespace()
+    captured = {}
 
-    def fake_build_language_model(self, pg_collection, pre_process, post_process, vp_stage):
-        assert self._model_config.transformer.mrope_section == [8, 4, 4]
-        return language_model
+    def fake_language_layer_spec(runtime_config, vp_stage):
+        assert runtime_config.transformer.mrope_section == [8, 4, 4]
+        assert vp_stage is None
+        return layer_spec
 
     built_model = SimpleNamespace()
-    monkeypatch.setattr("megatron.training.models.gpt.GPTModelBuilder.build_model", fake_build_language_model)
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.model_config._language_layer_spec", fake_language_layer_spec)
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.model_config.mtp_block_spec", lambda *args, **kwargs: None)
     monkeypatch.setattr(
-        "megatron.bridge.models.qwen_vl.model_config.Qwen25VLModel", lambda *args, **kwargs: built_model
+        "megatron.bridge.models.qwen_vl.model_config.Qwen2_5_VLVisionConfig", lambda **kwargs: vision_config
     )
-    monkeypatch.setattr("megatron.bridge.models.qwen_vl.model_config.Qwen2_5_VLVisionConfig", lambda **kwargs: kwargs)
+
+    def capture_model(**kwargs):
+        captured.update(kwargs)
+        return built_model
+
+    monkeypatch.setattr("megatron.bridge.models.qwen_vl.model_config.Qwen25VLModel", capture_model)
 
     result = Qwen25VLModelBuilder(config).build_model(SimpleNamespace(pp=None), pre_process=True, post_process=True)
 
     assert result is built_model
+    assert captured["language_transformer_config"].mrope_section == [8, 4, 4]
+    assert captured["language_transformer_layer_spec"] is layer_spec
+    assert captured["vision_transformer_config"] is vision_config
+    assert captured["model_config"] is config
+    assert captured["pg_collection"].pp is None
+    assert "language_model" not in captured
     assert type(config.transformer) is TransformerConfig
     assert config.transformer.__dict__ == transformer_state
     assert config.as_dict() == serialized_config

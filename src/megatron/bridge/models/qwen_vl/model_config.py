@@ -15,6 +15,7 @@
 """Serializable model configurations and standalone builders for Qwen VL."""
 
 import importlib
+import inspect
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
 
@@ -29,7 +30,11 @@ from megatron.core.pipeline_parallel.utils import (
     is_vp_last_stage,
 )
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.training.models.gpt import GPTModelBuilder, mtp_block_spec
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.training.models.gpt import GPTModelBuilder, default_layer_spec, mtp_block_spec
+from megatron.training.vocab_utils import calculate_padded_vocab_size
 from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLVisionConfig
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -58,6 +63,35 @@ def _vision_config_from_dict(data: dict[str, Any], target: str):
     module_name, class_name = target.rsplit(".", 1)
     config_class = getattr(importlib.import_module(module_name), class_name)
     return config_class(**data)
+
+
+def _language_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None) -> ModuleSpec:
+    """Resolve the language layer spec without constructing the language model."""
+    transformer_layer_spec = config.transformer_layer_spec
+    if transformer_layer_spec is None:
+        transformer_layer_spec = default_layer_spec(config, vp_stage)
+    elif not isinstance(transformer_layer_spec, ModuleSpec) and callable(transformer_layer_spec):
+        if "vp_stage" in inspect.signature(transformer_layer_spec).parameters:
+            transformer_layer_spec = transformer_layer_spec(config, vp_stage=vp_stage)
+        else:
+            transformer_layer_spec = transformer_layer_spec(config)
+
+    if config.attention_backend == AttnBackend.local and hasattr(transformer_layer_spec, "submodules"):
+        transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
+    return transformer_layer_spec
+
+
+def _language_vocab_size(config: BridgeGPTModelConfig) -> int:
+    """Return the vocabulary size used to construct the language model."""
+    if config.vocab_size is None:
+        raise ValueError("vocab_size must be configured before building Qwen2.5-VL")
+    if not config.should_pad_vocab:
+        return config.vocab_size
+    return calculate_padded_vocab_size(
+        config.vocab_size,
+        config.make_vocab_size_divisible_by,
+        config.transformer.tensor_model_parallel_size,
+    )
 
 
 @dataclass(kw_only=True)
@@ -105,17 +139,19 @@ class Qwen25VLModelBuilder(GPTModelBuilder):
         pre_process, post_process = _pipeline_flags(config, pg_collection, pre_process, post_process, vp_stage)
         transformer = _language_transformer(config)
         runtime_config = replace(config, transformer=transformer)
-        language_model = GPTModelBuilder(runtime_config).build_model(
-            pg_collection, pre_process, post_process, vp_stage
-        )
-        vision_config = Qwen2_5_VLVisionConfig(**config.vision_config)
+        layer_spec = _language_layer_spec(runtime_config, vp_stage)
         model = Qwen25VLModel(
-            config,
-            pre_process,
-            post_process,
-            vp_stage,
-            language_model=language_model,
-            vision_config=vision_config,
+            language_transformer_config=transformer,
+            language_transformer_layer_spec=layer_spec,
+            vision_transformer_config=Qwen2_5_VLVisionConfig(**config.vision_config),
+            model_config=config,
+            language_vocab_size=_language_vocab_size(config),
+            parallel_output=config.parallel_output,
+            pre_process=pre_process,
+            post_process=post_process,
+            pg_collection=pg_collection,
+            mtp_block_spec=mtp_block_spec(runtime_config, layer_spec, vp_stage=vp_stage),
+            vp_stage=vp_stage,
         )
         if config.freeze_language_model or config.freeze_vision_model or config.freeze_vision_projection:
             model.freeze(config.freeze_language_model, config.freeze_vision_model, config.freeze_vision_projection)
