@@ -531,11 +531,13 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         examples,
         processor,
         sequence_length=16,
+        pad_to_max_length=True,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
+    assert batch["input_ids"].shape[1] != 16
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
     assert batch["attention_mask"] is None
