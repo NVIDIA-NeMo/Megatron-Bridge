@@ -6,7 +6,7 @@
 `fp8_param_gather=True`, `reuse_grad_buf_for_mxfp8_param_ag=True`)
 **Config**: TP=2, PP=3, EP=32, ETP=1, CP=1, MBS=1, SeqLen=8192; **24n** = 96 GPUs / GBS=128,
 **3072** = 768 nodes / GBS=4096 (auto-scaled 128×32). Both arms: `moe_router_fusion=true`, alltoall
-dispatcher, selective recompute **without `mlp`** (§1/§5).
+dispatcher, selective recompute **without `mlp`** (§1, §7.4).
 
 > **MXFP8 counterpart** to the bf16 studies: [`analysis-report-det-vs-nondet-routerfusion-24n.md`](analysis-report-det-vs-nondet-routerfusion-24n.md)
 > (24n) and [`analysis_report_det_vs_nondet_3072gpu.md`](analysis_report_det_vs_nondet_3072gpu.md) (3072).
@@ -85,12 +85,12 @@ All jobs: `partition=batch`, account `nemotron_sw_pre`, container `nemo:26.04.01
 | `overlap_grad_reduce` / `overlap_param_gather` | `True` / `True` | DP overlap on (best recipe) |
 | `moe_router_fusion` | `True` | held constant both arms |
 | `recompute_granularity` | `selective` | |
-| `recompute_modules` (effective) | `[moe, layernorm, core_attn, moe_act, shared_experts]` | **`mlp` dropped** (§5) |
+| `recompute_modules` (effective) | `[moe, layernorm, core_attn, moe_act, shared_experts]` | **`mlp` dropped** (§7.4) |
 | `moe_token_dispatcher_type` | `alltoall` | HybridEP off |
 
 **Recipe parity:** knob-for-knob identical to the bf16 "best recipe"
 (`launch_nemotron_3_ultra_deterministic.sh`) **except** (a) `-c fp8_mx`, and (b) the forced `mlp` drop from
-`recompute_modules` (§5). Like the bf16 baseline it uses **no CUDA graphs and no EP-comm overlap** — so
+`recompute_modules` (§7.4). Like the bf16 baseline it uses **no CUDA graphs and no EP-comm overlap** — so
 these are *baseline-recipe* fp8 numbers, apples-to-apples with the bf16 study, **not** the tuned fp8
 ceiling (see §7.1).
 
@@ -151,7 +151,7 @@ Op-level (aten / NCCL):
 **Reading.** The det-cost signature is consistent at both scales in the *substitution* buckets: the
 **Mamba selective-scan backward** (+18–29%) and its **`causal_conv1d_bwd`** (+249–275%) run the
 deterministic scan path; the **non-fused cross-entropy** shows as `aten::sum` (+37–47%) and `aten::zeros`
-/ `aten::fill_` (+167–191%, zero-init before deterministic scatter). Some large buckets **flip sign
+(+167–191%, zero-init before deterministic scatter). Some large buckets **flip sign
 between scales** (e.g. `_CheckpointFunctionBackward` is +1,330 ms at 24n but −298 ms at 3072, and
 `_GroupedLinearBackward` flips negative at 3072): at 3072 the non-det arm was globally faster (9,572 vs
 10,532), so most buckets are det-heavy, but a few invert under nsys-overhead + node-placement skew — do
@@ -238,9 +238,8 @@ both). det+nsys vs det+no-nsys also matched exactly — nsys does not perturb th
 | nsys overhead (whole-run) | ~15–20% | ~15–20% |
 | bf16 counterpart determinism | bit-exact | diverges (companion §5) |
 
-Both precisions lose bit-exact determinism between 24n and 3072; MXFP8 offers no determinism advantage at
-scale. The bf16 companion also observed a 48n partial-divergence midpoint — an MXFP8 48n point would fill
-the curve (§7.3).
+Consolidated side-by-side (numbers sourced from §3/§4/§5). The bf16 companion saw a 48n partial-divergence
+midpoint; an MXFP8 48n point (§7.3) would fill the curve.
 
 ---
 
@@ -250,13 +249,13 @@ the curve (§7.3).
 This run uses `cuda_graph_impl=none` + no EP overlap (baseline recipe). A *tuned* MXFP8 recipe should add
 **TE-scoped CUDA graphs** (`mamba, attn, moe_router, moe_preprocess` — the biggest GB200 host-overhead
 lever) and **EP-comm overlap** (`moe_a2a_overlap` / `--overlap-moe-expert-parallel-comm`), mirroring the
-Nemotron Super NVFP4 config and dsv3's GB200 MXFP8 (1048 TFLOP/s). Expected to close much of the det
-penalty (which is partly host/launch overhead) and lift absolute throughput.
+Nemotron Super NVFP4 config and dsv3's GB200 MXFP8 (1048 TFLOP/s). Expected to lift absolute throughput
+(host/launch-overhead reduction). Note it would **not** directly shrink the determinism penalty — §2
+attributes that to the deterministic Mamba scan / non-fused CE / comm, not host overhead.
 
-### 7.2 Quantify + remove the nsys tax
-The ~15–20% whole-run nsys overhead (§4) is fp8-specific. For clean fp8 perf numbers, standardize on
-**no-nsys** runs; only use nsys for the relative det-vs-nondet decomposition. Worth confirming whether a
-lighter `--nsys_trace` (drop `cuda-sw`, keep `nvtx`) reduces the persistent tax.
+### 7.2 Reduce the nsys tax
+The fp8-specific whole-run nsys tax is characterized in §4 (headline throughput already uses no-nsys runs).
+Open experiment: confirm whether a lighter `--nsys_trace` (drop `cuda-sw`, keep `nvtx`) shrinks it.
 
 ### 7.3 Discriminating experiments
 - **MXFP8 at 48n** — fill the determinism scale curve between the bit-exact 24n and divergent 3072
@@ -266,7 +265,8 @@ lighter `--nsys_trace` (drop `cuda-sw`, keep `nvtx`) reduces the persistent tax.
 
 ### 7.4 `mlp` recompute alternative
 `mlp` was dropped from `recompute_modules` because fp8 + dense-MLP recompute crashes on the `padding_mask`
-kwarg (§5). If memory later gets tight at larger batch/seq, re-add via full-granularity recompute or
+kwarg (`transformer_layer._forward_mlp` → `te_checkpoint`, this container's `torch.utils.checkpoint`
+rejects it; bf16 is unaffected). If memory later gets tight at larger batch/seq, re-add via full-granularity recompute or
 fine-grained offloading rather than the `mlp` module under fp8.
 
 ---
@@ -276,14 +276,15 @@ fine-grained offloading rather than the `mlp` module under fp8.
 - Step time / throughput = iter-50 steady state. **For MXFP8, iter-50 under nsys is NOT clean** (§4) —
   no-nsys runs are used for true throughput; nsys runs only for the matched det-vs-nondet delta and §2.
 - Determinism = exact string match of printed lm loss (6 sig figs) across allocations.
-- Leaderboard tooling: `extract_nsys_csv.py` + `print_nsys_leaderboard.py` (rank-0 NVTX, top-20 by |Δ|).
+- Leaderboard tooling: `extract_nsys_csv.py` + `print_nsys_leaderboard.py` (rank-0 NVTX, ranked by |Δ|;
+  §2 excerpts the top rows).
 
 ## 9. Scope & limitations
 - **Rank-0, first-PP-stage** visibility only (§2 understates CE/MTP-head det cost).
 - **No-nsys throughput spread** at 3072 (416.5 vs 459.1) is partly **node-placement variance** across the
   two allocations, not a determinism signal — treat as a range.
 - **Single sweep at 3072**; 24n has two (v4/v5). Mock data + force-balanced routing.
-- Baseline recipe (no CUDA graphs / EP overlap) — not the tuned fp8 ceiling (§7.1).
+- Baseline recipe — not the tuned fp8 ceiling (see §1, §7.1).
 - 3072 no-nsys #2 needed a resubmit after a transient init failure (§ below).
 
 ### 3072 no-nsys #2 init failure (transient)
