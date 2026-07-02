@@ -4,11 +4,14 @@
 
 - Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
 
-## Configuration files
+## Performance recipe configs
 
-There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
+Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The performance
+launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
+and config variant.
 
-- You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
+- Prefer command-line overrides for one-off changes.
+- Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
 ## Setup Instructions
 
@@ -255,7 +258,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Defaults to `"v2"`, which maps to the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists; removed legacy variants such as `"v1"` fail instead of silently selecting another config. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments

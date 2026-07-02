@@ -905,7 +905,10 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant for workload base configs (used by setup_experiment.py only). Use --list_config_variants to see available options.",
+        help=(
+            "Flat perf recipe variant for setup_experiment.py. Defaults to v2, the suffix-less canonical recipe. "
+            "Named variants such as large_scale are supported when a matching recipe exists."
+        ),
         default="v2",
     )
     config_variant_args.add_argument(

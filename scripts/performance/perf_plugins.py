@@ -237,7 +237,8 @@ class PerfEnvPlugin(Plugin):
     gpu: str
     compute_dtype: str
     train_task: str
-    config_variant: str = "v1"
+    num_gpus: int | None = None
+    config_variant: str = "v2"
     deterministic: bool = False
 
     def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
@@ -504,6 +505,7 @@ class PerfEnvPlugin(Plugin):
             self.compute_dtype,
             self.train_task,
             self.config_variant,
+            num_gpus=self.num_gpus,
         )
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size

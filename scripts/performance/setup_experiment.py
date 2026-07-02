@@ -462,7 +462,7 @@ def main(
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
-    config_variant: str = "v1",
+    config_variant: str = "v2",
     gres: Optional[str] = None,
     packager: str = "git",
 ):
@@ -667,6 +667,7 @@ def main(
                 gpu=gpu,
                 compute_dtype=compute_dtype,
                 train_task=task,
+                num_gpus=num_gpus,
                 config_variant=config_variant,
                 deterministic=deterministic,
             )

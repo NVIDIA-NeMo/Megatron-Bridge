@@ -68,7 +68,7 @@ def _fresh_recipe():
         gpu="gb200",
         compute_dtype="nvfp4",
         mock=True,
-        config_variant="v1",
+        config_variant="v2",
     )
 
 
@@ -89,7 +89,7 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
             compute_dtype="nvfp4",
             task="pretrain",
             user_gbs=args.global_batch_size,
-            config_variant="v1",
+            config_variant="v2",
         )
     return recipe
 
@@ -190,10 +190,10 @@ class TestGbsPrecedence:
         the workload default, set_post_overrides should rescale. This is the
         existing intentional feature; verify it still works after the fix."""
         recipe = _fresh_recipe()
-        # Workload default for GB200 V1 is GBS=2048 at 256 GPUs. At 64 GPUs,
+        # Canonical flat workload default for GB200 is GBS=4096 at 256 GPUs. At 64 GPUs,
         # gbs_scaling_factor * 64 should be applied.
         recipe = _apply(recipe, num_gpus=64)
-        assert recipe.train.global_batch_size != 2048, "GBS auto-scale did not fire for num_gpus=64 (default=256)"
+        assert recipe.train.global_batch_size != 4096, "GBS auto-scale did not fire for num_gpus=64 (default=256)"
 
     def test_G_hydra_overrides_autoscale(self):
         """Hydra `train.global_batch_size=128` must survive set_post_overrides
