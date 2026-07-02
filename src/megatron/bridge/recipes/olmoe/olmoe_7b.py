@@ -16,27 +16,18 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.olmoe.h100 import olmoe_7b as _h100_module
 from megatron.bridge.recipes.olmoe.h100.olmoe_7b import (
     _get_olmoe_pipeline_layout,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-def olmoe_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``olmoe_7b_peft_1gpu_h100_bf16_config``."""
-    return _h100_module.olmoe_7b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def olmoe_7b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``olmoe_7b_pretrain_8gpu_h100_bf16_config``."""
-    return _h100_module.olmoe_7b_pretrain_8gpu_h100_bf16_config()
-
-
-def olmoe_7b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``olmoe_7b_sft_8gpu_h100_bf16_config``."""
-    return _h100_module.olmoe_7b_sft_8gpu_h100_bf16_config()
+from megatron.bridge.recipes.olmoe.h100.olmoe_7b import (
+    olmoe_7b_peft_1gpu_h100_bf16_config as olmoe_7b_peft_config,
+)
+from megatron.bridge.recipes.olmoe.h100.olmoe_7b import (
+    olmoe_7b_pretrain_8gpu_h100_bf16_config as olmoe_7b_pretrain_config,
+)
+from megatron.bridge.recipes.olmoe.h100.olmoe_7b import (
+    olmoe_7b_sft_8gpu_h100_bf16_config as olmoe_7b_sft_config,
+)
 
 
 __all__ = [

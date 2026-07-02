@@ -16,87 +16,40 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.qwen_vl.h100 import qwen3_vl as _h100_module
 from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
     QwenVLEnergonProvider,
     _make_energon_dataset,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-AutoTokenizer = _h100_module.AutoTokenizer
-
-
-def qwen3_vl_235b_a22b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_vl_235b_a22b_pretrain_mock_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config()
-
-
-def qwen3_vl_235b_a22b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config()
-
-
-def qwen3_vl_30b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_vl_30b_a3b_pretrain_mock_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config()
-
-
-def qwen3_vl_30b_a3b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config()
-
-
-def qwen3_vl_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_8b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_vl_8b_peft_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme=peft_scheme)
-
-
-def qwen3_vl_8b_pretrain_mock_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config()
-
-
-def qwen3_vl_8b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_vl_8b_sft_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    _h100_module.AutoTokenizer = AutoTokenizer
-    return _h100_module.qwen3_vl_8b_sft_2gpu_h100_bf16_config()
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_8b_peft_1gpu_h100_bf16_config as qwen3_vl_8b_peft_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config as qwen3_vl_8b_peft_energon_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config as qwen3_vl_8b_pretrain_mock_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_8b_sft_2gpu_h100_bf16_config as qwen3_vl_8b_sft_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config as qwen3_vl_30b_a3b_peft_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config as qwen3_vl_30b_a3b_pretrain_mock_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config as qwen3_vl_30b_a3b_sft_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config as qwen3_vl_235b_a22b_peft_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config as qwen3_vl_235b_a22b_pretrain_mock_config,
+)
+from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
+    qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config as qwen3_vl_235b_a22b_sft_config,
+)
 
 
 __all__ = [

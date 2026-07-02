@@ -16,48 +16,24 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.glm.h100 import glm45 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def glm45_355b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``glm45_355b_peft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_355b_peft_16gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def glm45_355b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``glm45_355b_pretrain_128gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_355b_pretrain_128gpu_h100_bf16_config()
-
-
-def glm45_355b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``glm45_355b_sft_128gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_355b_sft_128gpu_h100_bf16_config()
-
-
-def glm45_air_106b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``glm45_air_106b_peft_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_air_106b_peft_8gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def glm45_air_106b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``glm45_air_106b_pretrain_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_air_106b_pretrain_32gpu_h100_bf16_config()
-
-
-def glm45_air_106b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``glm45_air_106b_sft_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm45_air_106b_sft_32gpu_h100_bf16_config()
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_355b_peft_16gpu_h100_bf16_config as glm45_355b_peft_config,
+)
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_355b_pretrain_128gpu_h100_bf16_config as glm45_355b_pretrain_config,
+)
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_355b_sft_128gpu_h100_bf16_config as glm45_355b_sft_config,
+)
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_air_106b_peft_8gpu_h100_bf16_config as glm45_air_106b_peft_config,
+)
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_air_106b_pretrain_32gpu_h100_bf16_config as glm45_air_106b_pretrain_config,
+)
+from megatron.bridge.recipes.glm.h100.glm45 import (
+    glm45_air_106b_sft_32gpu_h100_bf16_config as glm45_air_106b_sft_config,
+)
 
 
 __all__ = [

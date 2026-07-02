@@ -16,21 +16,13 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.gemma.h100 import gemma4 as _h100_module
 from megatron.bridge.recipes.gemma.h100.gemma4 import (
     _GEMMA4_E4B_HF_PATH,
     _gemma4_text_conversion_mode,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def gemma4_e4b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma4_e4b_pretrain_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma4_e4b_pretrain_2gpu_h100_bf16_config()
+from megatron.bridge.recipes.gemma.h100.gemma4 import (
+    gemma4_e4b_pretrain_2gpu_h100_bf16_config as gemma4_e4b_pretrain_config,
+)
 
 
 __all__ = [

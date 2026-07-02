@@ -16,23 +16,12 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.deepseek.h100 import deepseek_v2 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def deepseek_v2_lite_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v2_lite_pretrain_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v2_lite_pretrain_8gpu_h100_bf16_config()
-
-
-def deepseek_v2_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v2_pretrain_128gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v2_pretrain_128gpu_h100_bf16_config()
+from megatron.bridge.recipes.deepseek.h100.deepseek_v2 import (
+    deepseek_v2_lite_pretrain_8gpu_h100_bf16_config as deepseek_v2_lite_pretrain_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v2 import (
+    deepseek_v2_pretrain_128gpu_h100_bf16_config as deepseek_v2_pretrain_config,
+)
 
 
 __all__ = [

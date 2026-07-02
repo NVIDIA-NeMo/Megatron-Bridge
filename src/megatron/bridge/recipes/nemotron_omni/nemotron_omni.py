@@ -16,36 +16,21 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.nemotron_omni.h100 import nemotron_omni as _h100_module
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import _DEFAULT_HF_PATH
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def nemotron_omni_cord_v2_peft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config()
-
-
-def nemotron_omni_cord_v2_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config()
-
-
-def nemotron_omni_valor32k_peft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_omni_valor32k_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.nemotron_omni_valor32k_peft_4gpu_h100_bf16_config()
-
-
-def nemotron_omni_valor32k_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_omni_valor32k_sft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.nemotron_omni_valor32k_sft_4gpu_h100_bf16_config()
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+    _DEFAULT_HF_PATH,
+)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+    nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config as nemotron_omni_cord_v2_peft_config,
+)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+    nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config as nemotron_omni_cord_v2_sft_config,
+)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+    nemotron_omni_valor32k_peft_4gpu_h100_bf16_config as nemotron_omni_valor32k_peft_config,
+)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
+    nemotron_omni_valor32k_sft_4gpu_h100_bf16_config as nemotron_omni_valor32k_sft_config,
+)
 
 
 __all__ = [

@@ -16,27 +16,16 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.deepseek.h100 import deepseek_v3 as _h100_module
 from megatron.bridge.recipes.deepseek.h100.deepseek_v3 import (
     _build_standalone_mtp_layout,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def deepseek_v3_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v3_pretrain_1024gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v3_pretrain_1024gpu_h100_bf16_config()
-
-
-def deepseek_v3_pretrain_config_32nodes() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config()
+from megatron.bridge.recipes.deepseek.h100.deepseek_v3 import (
+    deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config as deepseek_v3_pretrain_config_32nodes,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v3 import (
+    deepseek_v3_pretrain_1024gpu_h100_bf16_config as deepseek_v3_pretrain_config,
+)
 
 
 __all__ = [

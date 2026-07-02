@@ -16,20 +16,12 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.kimi_vl.h100 import kimi_k25_vl as _h100_module
 from megatron.bridge.recipes.kimi_vl.h100.kimi_k25_vl import (
     _get_kimi_k25_vl_pipeline_layout,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def kimi_k25_vl_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``kimi_k25_vl_sft_512gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.kimi_k25_vl_sft_512gpu_h100_bf16_config()
+from megatron.bridge.recipes.kimi_vl.h100.kimi_k25_vl import (
+    kimi_k25_vl_sft_512gpu_h100_bf16_config as kimi_k25_vl_sft_config,
+)
 
 
 __all__ = [

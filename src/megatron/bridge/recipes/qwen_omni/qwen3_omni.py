@@ -16,23 +16,12 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.qwen_omni.h100 import qwen3_omni as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def qwen3_omni_30b_a3b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config()
-
-
-def qwen3_omni_30b_a3b_sft_preloaded_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config()
+from megatron.bridge.recipes.qwen_omni.h100.qwen3_omni import (
+    qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config as qwen3_omni_30b_a3b_sft_config,
+)
+from megatron.bridge.recipes.qwen_omni.h100.qwen3_omni import (
+    qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config as qwen3_omni_30b_a3b_sft_preloaded_config,
+)
 
 
 __all__ = [

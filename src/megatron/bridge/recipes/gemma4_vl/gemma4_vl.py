@@ -16,28 +16,16 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.gemma4_vl.h100 import gemma4_vl as _h100_module
 from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
     _HF_PATH,
     _apply_gemma4_vl_common,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def gemma4_vl_26b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma4_vl_26b_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma4_vl_26b_peft_4gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma4_vl_26b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma4_vl_26b_sft_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma4_vl_26b_sft_8gpu_h100_bf16_config()
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    gemma4_vl_26b_peft_4gpu_h100_bf16_config as gemma4_vl_26b_peft_config,
+)
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    gemma4_vl_26b_sft_8gpu_h100_bf16_config as gemma4_vl_26b_sft_config,
+)
 
 
 __all__ = [

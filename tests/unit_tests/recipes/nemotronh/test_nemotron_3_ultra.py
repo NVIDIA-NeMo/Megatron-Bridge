@@ -22,6 +22,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 class _FakeUltraProvider:
@@ -49,7 +50,7 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch AutoBridge in the recipe module to avoid Hugging Face access."""
     mod = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
 
 
 @pytest.mark.unit

@@ -16,27 +16,15 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.glm_vl.h100 import glm_45v as _h100_module
+from megatron.bridge.recipes.glm_vl.h100.glm_45v import (
+    glm_45v_peft_32gpu_h100_bf16_config as glm_45v_peft_config,
+)
+from megatron.bridge.recipes.glm_vl.h100.glm_45v import (
+    glm_45v_sft_128gpu_h100_bf16_config as glm_45v_sft_config,
+)
 from megatron.bridge.recipes.glm_vl.h100.glm_45v import (
     set_glm_45v_pipeline_model_parallel_layout,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def glm_45v_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``glm_45v_peft_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm_45v_peft_32gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def glm_45v_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``glm_45v_sft_128gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.glm_45v_sft_128gpu_h100_bf16_config()
 
 
 __all__ = [

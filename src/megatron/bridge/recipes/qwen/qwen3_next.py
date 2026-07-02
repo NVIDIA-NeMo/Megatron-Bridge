@@ -16,30 +16,15 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.qwen.h100 import qwen3_next as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def qwen3_next_80b_a3b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_next_80b_a3b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config()
-
-
-def qwen3_next_80b_a3b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config()
+from megatron.bridge.recipes.qwen.h100.qwen3_next import (
+    qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config as qwen3_next_80b_a3b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3_next import (
+    qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config as qwen3_next_80b_a3b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3_next import (
+    qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config as qwen3_next_80b_a3b_sft_config,
+)
 
 
 __all__ = [

@@ -25,6 +25,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _nemotron_vl_module = importlib.import_module("megatron.bridge.recipes.nemotron_vl.nemotron_nano_v2_vl")
 
@@ -108,7 +110,7 @@ def _assert_basic_config(cfg):
 def test_each_nemotron_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Nemotron VL SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -135,7 +137,7 @@ def test_each_nemotron_vl_sft_recipe_builds_config(recipe_func: Callable, monkey
 def test_each_nemotron_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Nemotron VL PEFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()  # Default peft_scheme="lora"
 
@@ -161,7 +163,7 @@ def test_each_nemotron_vl_peft_recipe_builds_config(recipe_func: Callable, monke
 def test_nemotron_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 12B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -176,7 +178,7 @@ def test_nemotron_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 12B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
@@ -192,7 +194,7 @@ def test_nemotron_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_nemotron_vl_12b_sft_allows_post_recipe_finetune_overrides(monkeypatch: pytest.MonkeyPatch):
     """Test that finetune-specific paths are applied after constructing the recipe."""
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
     cfg.dataset.hf_processor_path = "test/nemotron-nano-v2-vl"
@@ -207,7 +209,7 @@ def test_nemotron_vl_12b_sft_allows_post_recipe_finetune_overrides(monkeypatch: 
 
 def test_nemotron_vl_12b_peft_allows_post_recipe_finetune_overrides(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT finetune-specific paths are applied after constructing the recipe."""
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
     cfg.dataset.hf_processor_path = "test/nemotron-nano-v2-vl"
@@ -222,7 +224,7 @@ def test_nemotron_vl_12b_peft_allows_post_recipe_finetune_overrides(monkeypatch:
 
 def test_nemotron_vl_12b_configs_keep_default_pretrained_checkpoint(monkeypatch: pytest.MonkeyPatch):
     """Test that default configs do not set a pretrained checkpoint."""
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     sft_cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
     peft_cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
@@ -233,7 +235,7 @@ def test_nemotron_vl_12b_configs_keep_default_pretrained_checkpoint(monkeypatch:
 
 def test_nemotron_vl_12b_peft_uses_all_component_lora(monkeypatch: pytest.MonkeyPatch):
     """Test that the fixed LoRA recipe targets all supported VLM components."""
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
@@ -243,7 +245,7 @@ def test_nemotron_vl_12b_peft_uses_all_component_lora(monkeypatch: pytest.Monkey
 def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs use HFConversationDatasetProvider by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -255,7 +257,7 @@ def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch
 def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs use HFConversationDatasetProvider by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
@@ -267,7 +269,7 @@ def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatc
 def test_nemotron_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -280,7 +282,7 @@ def test_nemotron_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
@@ -293,7 +295,7 @@ def test_nemotron_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -306,7 +308,7 @@ def test_nemotron_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set for VLMs."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -322,7 +324,7 @@ def test_nemotron_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_peft_uses_vlm_lora(monkeypatch: pytest.MonkeyPatch):
     """Test that Nemotron Nano V2 VL uses VLMLoRA for PEFT."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
@@ -339,7 +341,7 @@ def test_nemotron_vl_peft_uses_vlm_lora(monkeypatch: pytest.MonkeyPatch):
 
 def test_nemotron_vl_peft_dora_uses_dora_adapter(monkeypatch: pytest.MonkeyPatch):
     """Test that Nemotron Nano V2 VL uses DoRA when requested."""
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config(peft_scheme="dora")
 
@@ -354,7 +356,7 @@ def test_nemotron_vl_peft_dora_uses_dora_adapter(monkeypatch: pytest.MonkeyPatch
 def test_nemotron_vl_sft_training_params(monkeypatch: pytest.MonkeyPatch):
     """Test that training parameters are correctly set for SFT."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
@@ -368,7 +370,7 @@ def test_nemotron_vl_sft_training_params(monkeypatch: pytest.MonkeyPatch):
 def test_nemotron_vl_peft_training_params(monkeypatch: pytest.MonkeyPatch):
     """Test that training parameters are correctly set for PEFT."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 

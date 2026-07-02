@@ -16,48 +16,24 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.gemma3_vl.h100 import gemma3_vl as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def gemma3_vl_12b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_12b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma3_vl_12b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_12b_sft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_12b_sft_4gpu_h100_bf16_config()
-
-
-def gemma3_vl_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_27b_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma3_vl_27b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_27b_sft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_27b_sft_16gpu_h100_bf16_config()
-
-
-def gemma3_vl_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_4b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma3_vl_4b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma3_vl_4b_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma3_vl_4b_sft_1gpu_h100_bf16_config()
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_4b_peft_1gpu_h100_bf16_config as gemma3_vl_4b_peft_config,
+)
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_4b_sft_1gpu_h100_bf16_config as gemma3_vl_4b_sft_config,
+)
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_12b_peft_1gpu_h100_bf16_config as gemma3_vl_12b_peft_config,
+)
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_12b_sft_4gpu_h100_bf16_config as gemma3_vl_12b_sft_config,
+)
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_27b_peft_4gpu_h100_bf16_config as gemma3_vl_27b_peft_config,
+)
+from megatron.bridge.recipes.gemma3_vl.h100.gemma3_vl import (
+    gemma3_vl_27b_sft_16gpu_h100_bf16_config as gemma3_vl_27b_sft_config,
+)
 
 
 __all__ = [

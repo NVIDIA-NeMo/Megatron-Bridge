@@ -16,69 +16,36 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.gemma.h100 import gemma2 as _h100_module
 from megatron.bridge.recipes.gemma.h100.gemma2 import (
     _adjust_gemma2_vocab_size,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def gemma2_27b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma2_27b_peft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_27b_peft_4gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma2_27b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_27b_pretrain_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_27b_pretrain_16gpu_h100_bf16_config()
-
-
-def gemma2_27b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_27b_sft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_27b_sft_16gpu_h100_bf16_config()
-
-
-def gemma2_2b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma2_2b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_2b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma2_2b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_2b_pretrain_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_2b_pretrain_2gpu_h100_bf16_config()
-
-
-def gemma2_2b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_2b_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_2b_sft_1gpu_h100_bf16_config()
-
-
-def gemma2_9b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``gemma2_9b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_9b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def gemma2_9b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_9b_pretrain_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_9b_pretrain_8gpu_h100_bf16_config()
-
-
-def gemma2_9b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``gemma2_9b_sft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.gemma2_9b_sft_4gpu_h100_bf16_config()
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_2b_peft_1gpu_h100_bf16_config as gemma2_2b_peft_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_2b_pretrain_2gpu_h100_bf16_config as gemma2_2b_pretrain_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_2b_sft_1gpu_h100_bf16_config as gemma2_2b_sft_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_9b_peft_1gpu_h100_bf16_config as gemma2_9b_peft_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_9b_pretrain_8gpu_h100_bf16_config as gemma2_9b_pretrain_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_9b_sft_4gpu_h100_bf16_config as gemma2_9b_sft_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_27b_peft_4gpu_h100_bf16_config as gemma2_27b_peft_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_27b_pretrain_16gpu_h100_bf16_config as gemma2_27b_pretrain_config,
+)
+from megatron.bridge.recipes.gemma.h100.gemma2 import (
+    gemma2_27b_sft_16gpu_h100_bf16_config as gemma2_27b_sft_config,
+)
 
 
 __all__ = [

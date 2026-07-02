@@ -16,46 +16,28 @@
 
 from __future__ import annotations
 
-from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
-from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as _h100_module
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    set_deepseek_v4_pipeline_model_parallel_layout,
+)
 from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
     DEEPSEEK_V4_FLASH_HF_PATH,
     _deepseek_v4_mxfp8_quant_recipe,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def deepseek_v4_flash_no_mtp_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config()
-
-
-def deepseek_v4_flash_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v4_flash_pretrain_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v4_flash_pretrain_32gpu_h100_bf16_config()
-
-
-def deepseek_v4_flash_pretrain_muon_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config()
-
-
-def deepseek_v4_flash_pretrain_mxfp8_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config()
-
-
-def deepseek_v4_flash_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``deepseek_v4_flash_sft_32gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.deepseek_v4_flash_sft_32gpu_h100_bf16_config()
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config as deepseek_v4_flash_no_mtp_sft_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_bf16_config as deepseek_v4_flash_pretrain_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config as deepseek_v4_flash_pretrain_muon_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config as deepseek_v4_flash_pretrain_mxfp8_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_sft_32gpu_h100_bf16_config as deepseek_v4_flash_sft_config,
+)
 
 
 __all__ = [

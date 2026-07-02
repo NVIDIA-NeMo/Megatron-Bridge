@@ -16,17 +16,9 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.llama.h100 import llama2 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def llama2_7b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``llama2_7b_pretrain_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.llama2_7b_pretrain_2gpu_h100_bf16_config()
+from megatron.bridge.recipes.llama.h100.llama2 import (
+    llama2_7b_pretrain_2gpu_h100_bf16_config as llama2_7b_pretrain_config,
+)
 
 
 __all__ = [

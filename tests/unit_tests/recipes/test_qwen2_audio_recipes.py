@@ -26,6 +26,8 @@ import inspect
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _qwen2_audio_module = importlib.import_module("megatron.bridge.recipes.qwen2_audio.qwen2_audio")
 
@@ -72,7 +74,7 @@ class _FakeAutoBridge:
 @pytest.fixture(autouse=True)
 def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the qwen2_audio recipe module to avoid HF I/O."""
-    monkeypatch.setattr(_qwen2_audio_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen2_audio_module, "AutoBridge", _FakeAutoBridge)
 
 
 def _assert_basic_config(cfg):

@@ -16,21 +16,13 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.kimi.h100 import kimi_k2 as _h100_module
 from megatron.bridge.recipes.kimi.h100.kimi_k2 import (
     _apply_kimi_k2_optimizer,
     _get_kimi_k2_pipeline_layout,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def kimi_k2_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``kimi_k2_pretrain_512gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.kimi_k2_pretrain_512gpu_h100_bf16_config()
+from megatron.bridge.recipes.kimi.h100.kimi_k2 import (
+    kimi_k2_pretrain_512gpu_h100_bf16_config as kimi_k2_pretrain_config,
+)
 
 
 __all__ = [

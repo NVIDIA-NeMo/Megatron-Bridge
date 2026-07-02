@@ -24,6 +24,7 @@ from megatron.bridge.recipes.kimi.kimi_k2 import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 class _FakeKimiK2Provider:
@@ -54,7 +55,7 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the kimi_k2 recipe module to avoid HF Hub access."""
     mod = importlib.import_module("megatron.bridge.recipes.kimi.kimi_k2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
 
 
 class TestKimiK2PipelineLayout:

@@ -16,23 +16,12 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.stepfun.h100 import step37 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def step37_sft_flickr8k_config() -> ConfigContainer:
-    """Compatibility alias for ``step37_sft_64gpu_h100_bf16_flickr8k_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.step37_sft_64gpu_h100_bf16_flickr8k_config()
-
-
-def step37_sft_flickr8k_smoke_config() -> ConfigContainer:
-    """Compatibility alias for ``step37_sft_4gpu_h100_bf16_flickr8k_smoke_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.step37_sft_4gpu_h100_bf16_flickr8k_smoke_config()
+from megatron.bridge.recipes.stepfun.h100.step37 import (
+    step37_sft_4gpu_h100_bf16_flickr8k_smoke_config as step37_sft_flickr8k_smoke_config,
+)
+from megatron.bridge.recipes.stepfun.h100.step37 import (
+    step37_sft_64gpu_h100_bf16_flickr8k_config as step37_sft_flickr8k_config,
+)
 
 
 __all__ = [

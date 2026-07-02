@@ -27,6 +27,8 @@ from typing import Callable
 import pytest
 import torch
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _qwen35_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen35_vl")
 _qwen35_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen35_vl")
@@ -157,7 +159,7 @@ def _assert_basic_config(cfg):
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_SFT_FUNCS)
 def test_each_qwen35_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3.5-VL SFT recipe function builds a valid configuration."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -184,7 +186,7 @@ def test_each_qwen35_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypa
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PEFT_FUNCS)
 def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3.5-VL PEFT recipe function builds a valid configuration."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -238,7 +240,7 @@ def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
 
 def test_qwen35_vl_800m_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """800M SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -251,7 +253,7 @@ def test_qwen35_vl_800m_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_800m_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """800M PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
 
@@ -269,7 +271,7 @@ def test_qwen35_vl_800m_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_2b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """2B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_2b_sft_config()
 
@@ -282,7 +284,7 @@ def test_qwen35_vl_2b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_2b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """2B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_2b_peft_config()
 
@@ -300,7 +302,7 @@ def test_qwen35_vl_2b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_4b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """4B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_4b_sft_config()
 
@@ -313,7 +315,7 @@ def test_qwen35_vl_4b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_4b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """4B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_4b_peft_config()
 
@@ -331,7 +333,7 @@ def test_qwen35_vl_4b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_9b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """9B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_sft_config()
 
@@ -344,7 +346,7 @@ def test_qwen35_vl_9b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_9b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """9B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_peft_config()
 
@@ -362,7 +364,7 @@ def test_qwen35_vl_9b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_27b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """27B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_27b_sft_config()
 
@@ -376,7 +378,7 @@ def test_qwen35_vl_27b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """27B LoRA should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_27b_peft_config()
 
@@ -397,7 +399,7 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """35B-A3B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config()
 
@@ -416,7 +418,7 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """35B-A3B FSDP SFT should have FSDP-specific parallelism and settings."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_fsdp_sft_config()
 
@@ -439,7 +441,7 @@ def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """35B-A3B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_peft_config()
 
@@ -458,7 +460,7 @@ def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """122B-A10B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_sft_config()
 
@@ -481,7 +483,7 @@ def test_qwen35_vl_122b_a10b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """122B-A10B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_peft_config()
 
@@ -501,7 +503,7 @@ def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_397b_a17b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """397B-A17B SFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_sft_config()
 
@@ -517,7 +519,7 @@ def test_qwen35_vl_397b_a17b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """397B-A17B PEFT should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_peft_config()
 
@@ -537,7 +539,7 @@ def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs use HFConversationDatasetProvider by default."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -548,7 +550,7 @@ def test_qwen35_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs use HFConversationDatasetProvider by default."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
 
@@ -559,7 +561,7 @@ def test_qwen35_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch)
 
 def test_qwen35_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -570,7 +572,7 @@ def test_qwen35_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs have freeze options set to False by default."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
 
@@ -581,7 +583,7 @@ def test_qwen35_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -591,7 +593,7 @@ def test_qwen35_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set for VLMs."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -604,7 +606,7 @@ def test_qwen35_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_optimizer_precision_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that optimizer precision settings are correctly configured."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -618,7 +620,7 @@ def test_qwen35_vl_optimizer_precision_defaults(monkeypatch: pytest.MonkeyPatch)
 
 def test_qwen35_vl_training_config(monkeypatch: pytest.MonkeyPatch):
     """Test that training configuration is correctly set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -632,7 +634,7 @@ def test_qwen35_vl_training_config(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_validation_config(monkeypatch: pytest.MonkeyPatch):
     """Test that validation configuration is correctly set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -643,7 +645,7 @@ def test_qwen35_vl_validation_config(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_sft_learning_rate(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT has lower learning rate than PEFT."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     sft_cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
     peft_cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
@@ -653,7 +655,7 @@ def test_qwen35_vl_sft_learning_rate(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_kernel_settings(monkeypatch: pytest.MonkeyPatch):
     """Test that kernel settings are correctly configured."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -666,7 +668,7 @@ def test_qwen35_vl_kernel_settings(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_cuda_graph_settings(monkeypatch: pytest.MonkeyPatch):
     """Test that CUDA graph settings are correctly configured."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -678,7 +680,7 @@ def test_qwen35_vl_cuda_graph_settings(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_transformer_impl(monkeypatch: pytest.MonkeyPatch):
     """Test that transformer implementation is set correctly."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -688,7 +690,7 @@ def test_qwen35_vl_transformer_impl(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_memory_saving_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that memory saving settings are disabled by default."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
@@ -707,7 +709,7 @@ def test_qwen35_vl_memory_saving_defaults(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
 def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3.5-VL pretrain mock recipe builds a valid ConfigContainer."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -727,7 +729,7 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
 def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock configs use MockVLMConversationProvider."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -738,7 +740,7 @@ def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkey
 
 def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 9B pretrain mock has correct default parallelism."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -758,7 +760,7 @@ def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 27B pretrain mock has correct default parallelism."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config()
 
@@ -772,7 +774,7 @@ def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 35B-A3B pretrain mock has correct MoE parallelism."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config()
 
@@ -787,7 +789,7 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
 
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 122B-A10B pretrain mock has correct large MoE parallelism."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config()
 
@@ -803,7 +805,7 @@ def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
 
 def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 397B-A17B pretrain mock has correct large MoE parallelism."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config()
 
@@ -819,7 +821,7 @@ def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
 
 def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock DDP config is correctly set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -832,7 +834,7 @@ def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen35_vl_pretrain_mock_overrides_after_instantiation(monkeypatch: pytest.MonkeyPatch):
     """Test that callers can override fixed pretrain configs after instantiation."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
     cfg.train.train_iters = 500
@@ -850,7 +852,7 @@ def test_qwen35_vl_pretrain_mock_overrides_after_instantiation(monkeypatch: pyte
 
 def test_qwen35_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock checkpoint config is correctly set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -861,7 +863,7 @@ def test_qwen35_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPat
 
 def test_qwen35_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock RNG seed is set."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 

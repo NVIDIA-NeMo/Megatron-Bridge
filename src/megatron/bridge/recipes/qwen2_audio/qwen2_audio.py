@@ -16,27 +16,15 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.qwen2_audio.h100 import qwen2_audio as _h100_module
 from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
     _qwen2_audio_common,
 )
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def qwen2_audio_7b_finetune_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen2_audio_7b_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen2_audio_7b_sft_1gpu_h100_bf16_config()
-
-
-def qwen2_audio_7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen2_audio_7b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen2_audio_7b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
+from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
+    qwen2_audio_7b_peft_1gpu_h100_bf16_config as qwen2_audio_7b_peft_config,
+)
+from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
+    qwen2_audio_7b_sft_1gpu_h100_bf16_config as qwen2_audio_7b_finetune_config,
+)
 
 
 __all__ = [

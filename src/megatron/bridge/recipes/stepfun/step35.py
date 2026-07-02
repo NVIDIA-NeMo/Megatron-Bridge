@@ -16,17 +16,9 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.stepfun.h100 import step35 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def step35_196b_a11b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``step35_196b_a11b_pretrain_512gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.step35_196b_a11b_pretrain_512gpu_h100_bf16_config()
+from megatron.bridge.recipes.stepfun.h100.step35 import (
+    step35_196b_a11b_pretrain_512gpu_h100_bf16_config as step35_196b_a11b_pretrain_config,
+)
 
 
 __all__ = [

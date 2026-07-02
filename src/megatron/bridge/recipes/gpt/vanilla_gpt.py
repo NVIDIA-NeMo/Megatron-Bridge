@@ -16,13 +16,9 @@
 
 from __future__ import annotations
 
-from megatron.bridge.recipes.gpt.h100 import vanilla_gpt as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-def vanilla_gpt_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``vanilla_gpt_pretrain_1gpu_h100_bf16_config``."""
-    return _h100_module.vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+from megatron.bridge.recipes.gpt.h100.vanilla_gpt import (
+    vanilla_gpt_pretrain_1gpu_h100_bf16_config as vanilla_gpt_pretrain_config,
+)
 
 
 __all__ = [

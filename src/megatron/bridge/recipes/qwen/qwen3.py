@@ -16,132 +16,66 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.qwen.h100 import qwen3 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-AutoBridge = _h100_module.AutoBridge
-
-
-def qwen3_14b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_14b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_14b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_14b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_14b_pretrain_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_14b_pretrain_8gpu_h100_bf16_config()
-
-
-def qwen3_14b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_14b_sft_8gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_14b_sft_8gpu_h100_bf16_config()
-
-
-def qwen3_1p7b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_1p7b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_1p7b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_1p7b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_1p7b_pretrain_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_1p7b_pretrain_1gpu_h100_bf16_config()
-
-
-def qwen3_1p7b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_1p7b_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_1p7b_sft_1gpu_h100_bf16_config()
-
-
-def qwen3_32b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_32b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_32b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_32b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_32b_pretrain_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_32b_pretrain_16gpu_h100_bf16_config()
-
-
-def qwen3_32b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_32b_sft_16gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_32b_sft_16gpu_h100_bf16_config()
-
-
-def qwen3_4b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_4b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_4b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_4b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_4b_pretrain_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_4b_pretrain_2gpu_h100_bf16_config()
-
-
-def qwen3_4b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_4b_sft_2gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_4b_sft_2gpu_h100_bf16_config()
-
-
-def qwen3_600m_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_600m_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_600m_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_600m_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_600m_pretrain_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_600m_pretrain_1gpu_h100_bf16_config()
-
-
-def qwen3_600m_sft_128k_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_600m_sft_8gpu_h100_bf16_128k_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_600m_sft_8gpu_h100_bf16_128k_config()
-
-
-def qwen3_600m_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_600m_sft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_600m_sft_1gpu_h100_bf16_config()
-
-
-def qwen3_600m_sft_yarn_128k_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config()
-
-
-def qwen3_8b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``qwen3_8b_peft_1gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def qwen3_8b_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_8b_pretrain_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_8b_pretrain_4gpu_h100_bf16_config()
-
-
-def qwen3_8b_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``qwen3_8b_sft_4gpu_h100_bf16_config``."""
-    _h100_module.AutoBridge = AutoBridge
-    return _h100_module.qwen3_8b_sft_4gpu_h100_bf16_config()
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_1p7b_peft_1gpu_h100_bf16_config as qwen3_1p7b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_1p7b_pretrain_1gpu_h100_bf16_config as qwen3_1p7b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_1p7b_sft_1gpu_h100_bf16_config as qwen3_1p7b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_4b_peft_1gpu_h100_bf16_config as qwen3_4b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_4b_pretrain_2gpu_h100_bf16_config as qwen3_4b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_4b_sft_2gpu_h100_bf16_config as qwen3_4b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_8b_peft_1gpu_h100_bf16_config as qwen3_8b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_8b_pretrain_4gpu_h100_bf16_config as qwen3_8b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_8b_sft_4gpu_h100_bf16_config as qwen3_8b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_14b_peft_1gpu_h100_bf16_config as qwen3_14b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_14b_pretrain_8gpu_h100_bf16_config as qwen3_14b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_14b_sft_8gpu_h100_bf16_config as qwen3_14b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_32b_peft_1gpu_h100_bf16_config as qwen3_32b_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_32b_pretrain_16gpu_h100_bf16_config as qwen3_32b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_32b_sft_16gpu_h100_bf16_config as qwen3_32b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_peft_1gpu_h100_bf16_config as qwen3_600m_peft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_pretrain_1gpu_h100_bf16_config as qwen3_600m_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_sft_1gpu_h100_bf16_config as qwen3_600m_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_sft_8gpu_h100_bf16_128k_config as qwen3_600m_sft_128k_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config as qwen3_600m_sft_yarn_128k_config,
+)
 
 
 __all__ = [

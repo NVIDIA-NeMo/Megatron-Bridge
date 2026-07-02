@@ -16,39 +16,24 @@
 
 from __future__ import annotations
 
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.nemotronh.h100 import nemotron_nano_v2 as _h100_module
-from megatron.bridge.training.config import ConfigContainer
-
-
-def nemotron_nano_12b_v2_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def nemotron_nano_12b_v2_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config()
-
-
-def nemotron_nano_12b_v2_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config()
-
-
-def nemotron_nano_9b_v2_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-
-
-def nemotron_nano_9b_v2_pretrain_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config()
-
-
-def nemotron_nano_9b_v2_sft_config() -> ConfigContainer:
-    """Compatibility alias for ``nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config``."""
-    return _h100_module.nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config()
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config as nemotron_nano_9b_v2_peft_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config as nemotron_nano_9b_v2_pretrain_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config as nemotron_nano_9b_v2_sft_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config as nemotron_nano_12b_v2_peft_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config as nemotron_nano_12b_v2_pretrain_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import (
+    nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config as nemotron_nano_12b_v2_sft_config,
+)
 
 
 __all__ = [
