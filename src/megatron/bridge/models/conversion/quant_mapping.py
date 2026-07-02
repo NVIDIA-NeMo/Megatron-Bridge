@@ -232,6 +232,8 @@ def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -
 
 
 _QKV_PROJECTION_NAMES = {"q": "q_proj", "k": "k_proj", "v": "v_proj"}
+# Speculative-decoding draft models and MTP layers are not supported by the
+# KV-cache amax refit path yet, so do not derive mappings for their QKV blocks.
 _SKIPPED_QKV_PATH_SEGMENTS = frozenset(
     {
         "draft",
