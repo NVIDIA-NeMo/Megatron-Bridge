@@ -14,6 +14,7 @@
 
 import logging
 import os
+import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,62 @@ from nemo_run.core.execution.launcher import SlurmTemplate
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
+
+KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
+
+
+class _NumaTorchrun(run.Torchrun):
+    """Wrap every torchrun worker with GPU-local CPU and memory binding."""
+
+    def transform(self, cmd: List[str]) -> run.Script:
+        """Return a per-rank wrapper that resolves the GPU-local NUMA node."""
+        training_command = shlex.join(cmd)
+        return run.Script(
+            inline=f"""
+set -euo pipefail
+
+: "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
+command -v nvidia-smi >/dev/null || {{ echo "[numactl_local] nvidia-smi not found" >&2; exit 1; }}
+command -v numactl >/dev/null || {{ echo "[numactl_local] numactl not found" >&2; exit 1; }}
+
+PCI_BUS=$(nvidia-smi -i "$LOCAL_RANK" --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null \
+    | head -n1 | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' | sed -E 's/^00000000:/0000:/')
+NUMA_FILE="/sys/bus/pci/devices/$PCI_BUS/numa_node"
+
+if [[ -z "$PCI_BUS" || ! -r "$NUMA_FILE" ]]; then
+    echo "[numactl_local] cannot resolve NUMA file for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS" >&2
+    exit 1
+fi
+
+NUMA_NODE=$(<"$NUMA_FILE")
+if [[ ! "$NUMA_NODE" =~ ^[0-9]+$ ]]; then
+    echo "[numactl_local] invalid NUMA node for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE" >&2
+    exit 1
+fi
+
+echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
+exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
+"""
+        )
+
+
+class _TransformingKubeflowExecutor(run.KubeflowExecutor):
+    """Enable launcher command transforms for the opt-in NUMA wrapper."""
+
+    def supports_launcher_transform(self) -> bool:
+        """Allow the custom Torchrun launcher to wrap the worker command."""
+        return True
+
+
+def _kubeflow_numa_binding_enabled(env_vars: Dict[str, str]) -> bool:
+    """Return whether the opt-in Kubeflow NUMA wrapper is enabled."""
+    return str(env_vars.get(KUBEFLOW_NUMA_BINDING_ENV, "")).lower() in {
+        "1",
+        "on",
+        "true",
+        "yes",
+    }
+
 
 # NOTE: If you update this template,
 # PLEASE test it by submitting a job to GPU/node/cluster and verifying the sbatch and bash scripts.
@@ -272,13 +329,19 @@ def kubeflow_executor(
     }
     labels = {**ci_labels, **(labels or {})}
 
-    executor = run.KubeflowExecutor(
+    enable_numa_binding = _kubeflow_numa_binding_enabled(env_vars)
+    executor_cls = _TransformingKubeflowExecutor if enable_numa_binding else run.KubeflowExecutor
+    launcher = _NumaTorchrun() if enable_numa_binding else run.Torchrun()
+    if enable_numa_binding:
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+
+    executor = executor_cls(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
         # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
         # group is formed. Without this the entrypoint runs as a lone python
         # process per node (WORLD_SIZE=1), failing data-parallel sizing.
-        launcher=run.Torchrun(),
+        launcher=launcher,
         # Pin the Kubeflow Trainer runtime + per-replica CPU/memory requests to
         # the same values the verified standalone launch (real_trainjob.py) uses.
         runtime_ref="torch-distributed",

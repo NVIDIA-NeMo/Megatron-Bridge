@@ -34,7 +34,13 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
-    from utils.executors import PERF_ENV_VARS, slurm_executor
+    from utils.executors import (
+        KUBEFLOW_NUMA_BINDING_ENV,
+        PERF_ENV_VARS,
+        _kubeflow_numa_binding_enabled,
+        _NumaTorchrun,
+        slurm_executor,
+    )
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -66,3 +72,23 @@ def test_custom_env_vars_in_container_env(tmp_path):
         custom_env_vars={"MY_CUSTOM_VAR": "1"},
     )
     assert "MY_CUSTOM_VAR" in executor.container_env
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_kubeflow_numa_binding_wraps_each_torchrun_worker():
+    """The opt-in Kubeflow launcher must resolve and bind each worker's local GPU."""
+    assert _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "1"})
+    wrapper = _NumaTorchrun().transform(["python", "train.py", "--steps", "10"])
+    assert wrapper is not None
+    assert 'nvidia-smi -i "$LOCAL_RANK"' in wrapper.inline
+    assert 'NUMA_FILE="/sys/bus/pci/devices/$PCI_BUS/numa_node"' in wrapper.inline
+    assert (
+        'exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" python train.py --steps 10' in wrapper.inline
+    )
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_kubeflow_numa_binding_is_disabled_by_default():
+    """Normal Kubeflow jobs must retain the unmodified Torchrun launcher."""
+    assert not _kubeflow_numa_binding_enabled({})
+    assert not _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "0"})
