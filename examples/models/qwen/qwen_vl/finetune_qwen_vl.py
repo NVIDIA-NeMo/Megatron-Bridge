@@ -44,27 +44,27 @@ Examples:
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen25_vl_3b_sft_config \\
+                --recipe qwen25_vl_3b_sft_1gpu_h100_bf16_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25vl3b
 
         Qwen2.5-VL 7B:
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen25_vl_7b_sft_config \\
+                --recipe qwen25_vl_7b_sft_2gpu_h100_bf16_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
         Qwen3-VL 8B (dense):
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_8b_sft_config \\
+                --recipe qwen3_vl_8b_sft_2gpu_h100_bf16_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_8b
 
         Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_30b_a3b_sft_config \\
+                --recipe qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_30b_a3b
 
         Qwen3-VL 235B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_235b_a22b_sft_config \\
+                --recipe qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_235b_a22b
 
     Using a custom YAML config file:
@@ -77,13 +77,13 @@ Examples:
 
 Available Recipes:
     Qwen2.5-VL:
-        - qwen25_vl_3b_sft_config: 3B model
-        - qwen25_vl_7b_sft_config: 7B model
+        - qwen25_vl_3b_sft_1gpu_h100_bf16_config: 3B model
+        - qwen25_vl_7b_sft_2gpu_h100_bf16_config: 7B model
 
     Qwen3-VL:
-        - qwen3_vl_8b_sft_config: Dense 8B model
-        - qwen3_vl_30b_a3b_sft_config: MoE 30B model with expert parallelism
-        - qwen3_vl_235b_a22b_sft_config: MoE 235B model with expert parallelism
+        - qwen3_vl_8b_sft_2gpu_h100_bf16_config: Dense 8B model
+        - qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config: MoE 30B model with expert parallelism
+        - qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config: MoE 235B model with expert parallelism
 """
 
 import argparse
@@ -95,8 +95,8 @@ from typing import Tuple
 from omegaconf import OmegaConf
 
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.recipes.qwen_vl import qwen3_vl as qwen3_vl_recipes
-from megatron.bridge.recipes.qwen_vl import qwen25_vl as qwen25_vl_recipes
+from megatron.bridge.recipes.qwen_vl.h100 import qwen3_vl as qwen3_vl_recipes
+from megatron.bridge.recipes.qwen_vl.h100 import qwen25_vl as qwen25_vl_recipes
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import (
@@ -159,16 +159,16 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--recipe",
         type=str,
-        default="qwen25_vl_3b_sft_config",
+        default="qwen25_vl_3b_sft_1gpu_h100_bf16_config",
         help=(
             "Name of the recipe function to use:\n"
             "Qwen2.5-VL recipes:\n"
-            "  - qwen25_vl_3b_sft_config: 3B model (default)\n"
-            "  - qwen25_vl_7b_sft_config: 7B model\n"
+            "  - qwen25_vl_3b_sft_1gpu_h100_bf16_config: 3B model (default)\n"
+            "  - qwen25_vl_7b_sft_2gpu_h100_bf16_config: 7B model\n"
             "Qwen3-VL recipes:\n"
-            "  - qwen3_vl_8b_sft_config: Dense 8B model\n"
-            "  - qwen3_vl_30b_a3b_sft_config: MoE 30B model\n"
-            "  - qwen3_vl_235b_a22b_sft_config: MoE 235B model"
+            "  - qwen3_vl_8b_sft_2gpu_h100_bf16_config: Dense 8B model\n"
+            "  - qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config: MoE 30B model\n"
+            "  - qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config: MoE 235B model"
         ),
     )
     parser.add_argument(
@@ -228,7 +228,9 @@ def main() -> None:
 
     recipe_kwargs = {}
     if args.peft is not None and args.peft != "none" and "peft" not in recipe_name:
-        raise ValueError("--peft requires selecting a PEFT recipe, for example qwen3_vl_8b_peft_config.")
+        raise ValueError(
+            "--peft requires selecting a PEFT recipe, for example qwen3_vl_8b_peft_1gpu_h100_bf16_config."
+        )
     if args.peft == "none" and "peft" in recipe_name:
         raise ValueError("--peft none requires selecting an SFT recipe instead of a PEFT recipe.")
     if args.peft is not None and args.peft != "none":
