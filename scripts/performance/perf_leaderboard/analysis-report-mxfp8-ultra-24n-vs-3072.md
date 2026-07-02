@@ -298,8 +298,13 @@ rendezvous at 768-node scale → retry-on-different-nodes.
 ## 10. Artifacts
 - Launchers: `scripts/performance/launch_nemotron_3_ultra_mxfp8_compare.sh` (24n),
   `launch_nemotron_3_ultra_mxfp8_3072.sh` (3072).
-- OUT_DIRs: `mxfp8-compare-24node-v4/`, `-v5/`, `mxfp8-compare-3072gpu/` (each: `leaderboard.txt`,
-  `bitwise_check.txt`, `jobid-*.txt`, `wdj-*.txt`, `submit-*.log`).
+- Organized artifacts (standard `processed/` + `raw/` layout): `mxfp8-nsys-compare/24n/` (from the v4
+  sweep) and `mxfp8-nsys-compare/3072/`. Each has `processed/` (`jobid-*`, `wdj-*`, `leaderboard.txt`,
+  `bitwise_check.txt`, `nsys-{det,nondet}[-rank*].csv`, `submit-*.log`) and
+  `raw/{det,nondet,det-bitwise,det-bitwise2}/` (run log per arm + `nsys-rep`/`sqlite` for the two nsys
+  arms, captured at ranks 0 / mid / last — 0/48/95 at 24n, 0/1536/3071 at 3072). `raw/` entries are
+  symlinks into the per-run `~/.nemo_run/experiments/` dirs.
+- Source OUT_DIRs (pre-organization): `mxfp8-compare-24node-v4/`, `-v5/`, `mxfp8-compare-3072gpu/`.
 - Jobs — 24n v4: 3785758/3785807/3785847/3785920; v5: 3802447/3802509/3802706/3802928.
   3072: 3805747/3806186/3806542/3807782 (3806800 failed, replaced by 3807782).
 - wandb project `nvidia/mbridge-dev` (3072 run IDs in the Runs Compared table).
