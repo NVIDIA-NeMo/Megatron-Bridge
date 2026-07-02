@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
+
 import torch
 
-from megatron.bridge.diffusion.models.wan.wan_model import sinusoidal_embedding_1d
+from megatron.bridge.diffusion.models.flux.flux_model import Flux
+from megatron.bridge.diffusion.models.wan.wan_model import WanModel, _build_wan_layer_spec, sinusoidal_embedding_1d
 
 
 def test_sinusoidal_embedding_1d_shape_and_dtype():
@@ -23,3 +26,27 @@ def test_sinusoidal_embedding_1d_shape_and_dtype():
     emb = sinusoidal_embedding_1d(dim, pos)
     assert emb.shape == (pos.shape[0], dim)
     assert emb.dtype == torch.float32
+
+
+def test_diffusion_model_constructor_positional_prefix_is_compatible():
+    config = object()
+
+    flux_bound = inspect.signature(Flux).bind(config, False, False, True, False)
+    wan_bound = inspect.signature(WanModel).bind(config, False, False, True, False)
+
+    assert flux_bound.arguments["pre_process"] is False
+    assert flux_bound.arguments["post_process"] is False
+    assert wan_bound.arguments["pre_process"] is False
+    assert wan_bound.arguments["post_process"] is False
+
+
+def test_wan_custom_layer_spec_factory_remains_zero_argument():
+    sentinel = object()
+    calls = []
+
+    def custom_factory():
+        calls.append(True)
+        return sentinel
+
+    assert _build_wan_layer_spec(custom_factory, layernorm_across_heads=True) is sentinel
+    assert calls == [True]

@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 import torch
 from diffusers import WanTransformer3DModel
 
 from megatron.bridge.diffusion.conversion.wan.wan_hf_pretrained import PreTrainedWAN
+from megatron.bridge.diffusion.models.wan.model_config import WanModelConfig
 from megatron.bridge.diffusion.models.wan.wan_model import WanModel
-from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -27,6 +29,10 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 
 
 @MegatronModelBridge.register_bridge(source=WanTransformer3DModel, target=WanModel)
@@ -39,10 +45,49 @@ class WanBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("WAN-3D-1.3B-v1")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedWAN) -> WanModelProvider:
+    MODEL_CONFIG_CLASS = WanModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map diffusers Wan settings to pure model-config fields."""
+        hidden_size = hf_config.num_attention_heads * hf_config.attention_head_dim
+        return {
+            "num_layers": hf_config.num_layers,
+            "hidden_size": hidden_size,
+            "kv_channels": hf_config.attention_head_dim,
+            "num_query_groups": hf_config.num_attention_heads,
+            "crossattn_emb_size": hidden_size,
+            "ffn_hidden_size": hf_config.ffn_dim,
+            "num_attention_heads": hf_config.num_attention_heads,
+            "in_channels": hf_config.in_channels,
+            "out_channels": hf_config.out_channels,
+            "text_dim": hf_config.text_dim,
+            "patch_spatial": hf_config.patch_size[1],
+            "patch_temporal": hf_config.patch_size[0],
+            "layernorm_epsilon": hf_config.eps,
+            "hidden_dropout": 0.0,
+            "attention_dropout": 0.0,
+            "use_cpu_initialization": True,
+            "freq_dim": hf_config.freq_dim,
+            "params_dtype": torch.float32,
+            "qk_layernorm": True,
+            "add_bias_linear": True,
+            "gated_linear_unit": False,
+            "normalization": "RMSNorm",
+            "layernorm_across_heads": True,
+            "add_qkv_bias": True,
+            "rotary_interleaved": True,
+            "qkv_format": "thd",
+            "apply_rope_fusion": True,
+            "bias_activation_fusion": True,
+            "position_embedding_type": "none",
+        }
+
+    def provider_bridge(self, hf_pretrained: PreTrainedWAN) -> "WanModelProvider":
+        from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
+
         hf_config = hf_pretrained.config
 
         cls = WanModelProvider

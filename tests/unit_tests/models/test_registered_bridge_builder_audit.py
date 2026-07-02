@@ -25,7 +25,7 @@ from megatron.training.models.base import ModelBuilder, ModelConfig
 pytestmark = pytest.mark.unit
 
 SRC_ROOT = Path(__file__).parents[3] / "src"
-BRIDGE_ROOT = SRC_ROOT / "megatron" / "bridge" / "models"
+BRIDGE_ROOT = SRC_ROOT / "megatron" / "bridge"
 
 # Every registered bridge must be named here. Adding a registration without
 # adding its builder/config contract to the audit is intentionally a test failure.
@@ -38,6 +38,7 @@ REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
     "Ernie45VLBridge": ("megatron.bridge.models.ernie_vl.model_config.Ernie45VLModelConfig",),
     "Exaone4Bridge": ("megatron.bridge.models.exaone.model_config.Exaone4ModelConfig",),
     "FalconH1Bridge": ("megatron.bridge.models.falcon_h1.model_config.FalconH1ModelConfig",),
+    "FluxBridge": ("megatron.bridge.diffusion.models.flux.model_config.FluxModelConfig",),
     "GLM45Bridge": ("megatron.bridge.models.glm.model_config.GLM45ModelConfig",),
     "GLM45VBridge": ("megatron.bridge.models.glm_vl.model_config.GLM45VModelConfig",),
     "GLM47FlashBridge": ("megatron.bridge.models.glm.model_config.GLM47FlashModelConfig",),
@@ -57,6 +58,7 @@ REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
     "GemmaBridge": ("megatron.bridge.models.gemma.model_config.GemmaModelConfig",),
     "KimiK2Bridge": ("megatron.bridge.models.kimi.model_config.KimiK2ModelConfig",),
     "KimiK25VLBridge": ("megatron.bridge.models.kimi_vl.model_config.KimiK25VLModelConfig",),
+    "LLaDA15Bridge": ("megatron.bridge.diffusion.models.llada15.model_config.LLaDA15ModelConfig",),
     "LlamaBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "LlamaNemotronBridge": ("megatron.bridge.models.llama_nemotron.model_config.LlamaNemotronModelConfig",),
     "MiMoV2FlashBridge": ("megatron.bridge.models.mimo_v2_flash.model_config.MiMoV2FlashModelConfig",),
@@ -66,6 +68,9 @@ REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
     "MistralBridge": ("megatron.bridge.models.mistral.model_config.MistralModelConfig",),
     "NemotronBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "NemotronHBridge": ("megatron.bridge.models.nemotronh.model_config.NemotronHModelConfig",),
+    "NemotronLabsDiffusionBridge": (
+        "megatron.bridge.diffusion.models.nemotron_labs_diffusion.model_config.NemotronLabsDiffusionModelConfig",
+    ),
     "NemotronOmniBridge": ("megatron.bridge.models.nemotron_omni.model_config.NemotronOmniModelConfig",),
     "NemotronVLBridge": ("megatron.bridge.models.nemotron_vl.model_config.NemotronVLModelConfig",),
     "OlMoEBridge": ("megatron.bridge.models.olmoe.model_config.OlMoEModelConfig",),
@@ -88,6 +93,7 @@ REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
     "SarvamMoEBridge": ("megatron.bridge.models.sarvam.model_config.SarvamMoEModelConfig",),
     "Step35Bridge": ("megatron.bridge.models.stepfun.step35_bridge.Step35ModelConfig",),
     "Step37Bridge": ("megatron.bridge.models.stepfun.step37_model_config.Step37ModelConfig",),
+    "WanBridge": ("megatron.bridge.diffusion.models.wan.model_config.WanModelConfig",),
 }
 
 # Keep the registration source expression explicit as part of the manifest. This
@@ -102,6 +108,7 @@ REGISTERED_BRIDGE_ARCHITECTURES: dict[str, str] = {
     "Ernie45VLBridge": "_ERNIE45_VL_MOE_HF_CLASS_NAME",
     "Exaone4Bridge": "'Exaone4ForCausalLM'",
     "FalconH1Bridge": "'FalconH1ForCausalLM'",
+    "FluxBridge": "FluxTransformer2DModel",
     "GLM45Bridge": "Glm4MoeForCausalLM",
     "GLM45VBridge": "Glm4vMoeForConditionalGeneration",
     "GLM47FlashBridge": "'Glm4MoeLiteForCausalLM'",
@@ -115,6 +122,7 @@ REGISTERED_BRIDGE_ARCHITECTURES: dict[str, str] = {
     "GemmaBridge": "GemmaForCausalLM",
     "KimiK25VLBridge": "'KimiK25ForConditionalGeneration'",
     "KimiK2Bridge": "'KimiK2ForCausalLM'",
+    "LLaDA15Bridge": "'LLaDAModelLM'",
     "LlamaBridge": "LlamaForCausalLM",
     "LlamaNemotronBridge": "'DeciLMForCausalLM'",
     "MiMoV2FlashBridge": "'MiMoV2FlashForCausalLM'",
@@ -124,6 +132,7 @@ REGISTERED_BRIDGE_ARCHITECTURES: dict[str, str] = {
     "MistralBridge": "MistralForCausalLM",
     "NemotronBridge": "NemotronForCausalLM",
     "NemotronHBridge": "'NemotronHForCausalLM'",
+    "NemotronLabsDiffusionBridge": "'NemotronLabsDiffusionModel'",
     "NemotronOmniBridge": "'NemotronH_Nano_Omni_Reasoning_V3'",
     "NemotronVLBridge": "'NemotronH_Nano_VL_V2'",
     "OlMoEBridge": "OlmoeForCausalLM",
@@ -146,6 +155,7 @@ REGISTERED_BRIDGE_ARCHITECTURES: dict[str, str] = {
     "SarvamMoEBridge": "'SarvamMoEForCausalLM'",
     "Step35Bridge": "'Step3p5ForCausalLM'",
     "Step37Bridge": "'Step3p7ForConditionalGeneration'",
+    "WanBridge": "WanTransformer3DModel",
 }
 
 REGISTRATION_SOURCE_ALIASES: dict[str, str] = {

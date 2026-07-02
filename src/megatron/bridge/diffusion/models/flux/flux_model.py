@@ -79,9 +79,35 @@ class Flux(VisionModule):
         post_process: bool = True,
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
+        *,
+        num_joint_layers: int | None = None,
+        num_single_layers: int | None = None,
+        in_channels: int | None = None,
+        context_dim: int | None = None,
+        model_channels: int | None = None,
+        axes_dims_rope: list[int] | tuple[int, ...] | None = None,
+        patch_size: int | None = None,
+        guidance_embed: bool | None = None,
+        vec_in_dim: int | None = None,
         **kwargs,
     ):
         super(Flux, self).__init__(config=config)
+
+        num_joint_layers = (
+            num_joint_layers if num_joint_layers is not None else getattr(config, "num_joint_layers", 19)
+        )
+        num_single_layers = (
+            num_single_layers if num_single_layers is not None else getattr(config, "num_single_layers", 38)
+        )
+        in_channels = in_channels if in_channels is not None else getattr(config, "in_channels", 64)
+        context_dim = context_dim if context_dim is not None else getattr(config, "context_dim", 4096)
+        model_channels = model_channels if model_channels is not None else getattr(config, "model_channels", 256)
+        axes_dims_rope = (
+            axes_dims_rope if axes_dims_rope is not None else getattr(config, "axes_dims_rope", [16, 56, 56])
+        )
+        patch_size = patch_size if patch_size is not None else getattr(config, "patch_size", 1)
+        guidance_embed = guidance_embed if guidance_embed is not None else getattr(config, "guidance_embed", False)
+        vec_in_dim = vec_in_dim if vec_in_dim is not None else getattr(config, "vec_in_dim", 768)
 
         self.config: TransformerConfig = config
         self.pre_process = pre_process
@@ -93,27 +119,27 @@ class Flux(VisionModule):
         # TODO: remove this dependency ?
         self.model_type = ModelType.encoder_or_decoder
 
-        self.out_channels = config.in_channels
+        self.out_channels = in_channels
         self.hidden_size = config.hidden_size
         self.num_attention_heads = config.num_attention_heads
-        self.patch_size = config.patch_size
-        self.in_channels = config.in_channels
-        self.guidance_embed = config.guidance_embed
+        self.patch_size = patch_size
+        self.in_channels = in_channels
+        self.guidance_embed = guidance_embed
 
         # Position embedding for rotary embeddings
-        self.pos_embed = EmbedND(dim=self.hidden_size, theta=10000, axes_dim=config.axes_dims_rope)
+        self.pos_embed = EmbedND(dim=self.hidden_size, theta=10000, axes_dim=axes_dims_rope)
 
         # Input embeddings
-        self.img_embed = nn.Linear(config.in_channels, self.hidden_size)
-        self.txt_embed = nn.Linear(config.context_dim, self.hidden_size)
+        self.img_embed = nn.Linear(in_channels, self.hidden_size)
+        self.txt_embed = nn.Linear(context_dim, self.hidden_size)
 
         # Timestep and conditioning embeddings
-        self.timestep_embedding = TimeStepEmbedder(config.model_channels, self.hidden_size)
-        self.vector_embedding = MLPEmbedder(in_dim=config.vec_in_dim, hidden_dim=self.hidden_size)
+        self.timestep_embedding = TimeStepEmbedder(model_channels, self.hidden_size)
+        self.vector_embedding = MLPEmbedder(in_dim=vec_in_dim, hidden_dim=self.hidden_size)
 
         # Optional guidance embedding (for FLUX-dev)
-        if config.guidance_embed:
-            self.guidance_embedding = MLPEmbedder(in_dim=config.model_channels, hidden_dim=self.hidden_size)
+        if guidance_embed:
+            self.guidance_embedding = MLPEmbedder(in_dim=model_channels, hidden_dim=self.hidden_size)
 
         # Double blocks (MMDiT-style joint attention)
         self.double_blocks = nn.ModuleList(
@@ -124,7 +150,7 @@ class Flux(VisionModule):
                     layer_number=i,
                     context_pre_only=False,
                 )
-                for i in range(config.num_joint_layers)
+                for i in range(num_joint_layers)
             ]
         )
 
@@ -136,7 +162,7 @@ class Flux(VisionModule):
                     submodules=get_flux_single_transformer_engine_spec().submodules,
                     layer_number=i,
                 )
-                for i in range(config.num_single_layers)
+                for i in range(num_single_layers)
             ]
         )
 

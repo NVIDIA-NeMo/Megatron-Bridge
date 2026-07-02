@@ -20,7 +20,7 @@ from typing import Iterable
 import torch
 from megatron.core.models.common.vision_module.vision_module import VisionModule
 from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.utils import get_model_config
+from megatron.core.utils import get_model_config, unwrap_model
 
 from megatron.bridge.diffusion.models.wan.flow_matching.flow_matching_pipeline_wan import (
     WanAdapter,
@@ -31,6 +31,17 @@ from megatron.bridge.training.state import GlobalState
 
 
 logger = logging.getLogger(__name__)
+
+
+def _get_qkv_format(model: VisionModule) -> str:
+    """Read the Wan sequence layout from the unwrapped runtime model."""
+    runtime_model = unwrap_model(model)
+    if isinstance(runtime_model, list):
+        if len(runtime_model) != 1:
+            raise ValueError(f"Wan expects one model chunk, got {len(runtime_model)}.")
+        runtime_model = runtime_model[0]
+    config = get_model_config(runtime_model)
+    return getattr(runtime_model, "qkv_format", getattr(config, "qkv_format", "sbhd"))
 
 
 def wan_data_step(qkv_format, dataloader_iter):  # noqa: D103
@@ -140,11 +151,9 @@ class WanForwardStep:  # noqa: D101
         timers = state.timers
         straggler_timer = state.straggler_timer
 
-        config = get_model_config(model)
-
         timers("batch-generator", log_level=2).start()
 
-        qkv_format = getattr(config, "qkv_format", "sbhd")
+        qkv_format = _get_qkv_format(model)
         with straggler_timer(bdata=True):
             batch = wan_data_step(qkv_format, data_iterator)
         timers("batch-generator").stop()

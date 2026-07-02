@@ -24,6 +24,7 @@ the GPU round-trip script).
 import types
 
 import pytest
+import torch
 
 from megatron.bridge.diffusion.conversion.llada15.llada15_bridge import LLaDA15Bridge
 from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
@@ -115,6 +116,19 @@ class TestProviderBridge:
     def test_qk_layernorm_follows_config(self):
         assert self._provider(attention_layer_norm=False).qk_layernorm is False
         assert self._provider(attention_layer_norm=True).qk_layernorm is True
+
+
+class TestModelConfigBridge:
+    def test_preserves_builder_dtype_and_architecture_fields(self):
+        config = LLaDA15Bridge().model_config_bridge(DummyHFPretrained(_make_hf_config()))
+
+        assert config.transformer.params_dtype is torch.bfloat16
+        assert config.transformer.autocast_dtype is torch.bfloat16
+        assert config.transformer.bf16 is True
+        assert config.transformer.hidden_size == 4096
+        assert config.transformer.num_layers == 32
+        assert config.transformer.num_query_groups == 32
+        assert config.vocab_size == 126464
 
 
 class TestMappingRegistry:

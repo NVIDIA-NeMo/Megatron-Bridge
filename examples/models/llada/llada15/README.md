@@ -41,7 +41,7 @@ resolves the trust_remote_code class.
 ## Workflow
 
 ```
-HF safetensors  →  AutoBridge.to_megatron_model() (temporary diffusion fallback)  →  save_megatron_model()
+HF safetensors  →  AutoBridge.get_model_config() + get_megatron_model()  →  save_megatron_model()
                                                               ↓
                                                     iter_0000000/*.distcp
                                                               ↓

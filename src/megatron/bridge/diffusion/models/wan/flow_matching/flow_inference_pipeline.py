@@ -142,7 +142,7 @@ class FlowInferencePipeline:  # noqa: D101
         self.model = self.setup_model_from_checkpoint(wan_checkpoint_dir)
 
         # if we use context parallelism, we need to set qkv_format to "thd" for context parallelism
-        self.model.config.qkv_format = "thd"  # "sbhd"
+        self.model.qkv_format = "thd"  # "sbhd"
 
         # set self.sp_size=1 for later use, just to respect the original Wan inference code
         self.sp_size = 1
@@ -441,19 +441,20 @@ class FlowInferencePipeline:  # noqa: D101
             cu_kv_self = cu_q
             cu_kv_cross = torch.cat([torch.tensor([0]), torch.cumsum(torch.tensor(context_lens), dim=0)])
             cu_kv_cross = cu_kv_cross.to(torch.int32).to(self.device)
+            qkv_format = getattr(self.model, "qkv_format", "thd")
             packed_seq_params = {
                 "self_attention": PackedSeqParams(
                     cu_seqlens_q=cu_q,
                     cu_seqlens_q_padded=cu_q,
                     cu_seqlens_kv=cu_kv_self,
                     cu_seqlens_kv_padded=cu_kv_self,
-                    qkv_format=self.model.config.qkv_format,
+                    qkv_format=qkv_format,
                 ),
                 "cross_attention": PackedSeqParams(
                     cu_seqlens_q=cu_q,
                     cu_seqlens_q_padded=cu_q,
                     cu_seqlens_kv=cu_kv_cross,
-                    qkv_format=self.model.config.qkv_format,
+                    qkv_format=qkv_format,
                 ),
             }
 

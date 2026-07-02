@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import os
 from functools import partial
 from typing import Optional
@@ -22,8 +23,8 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.bridge.diffusion.conversion.nemotron_labs_diffusion.nemotron_labs_diffusion_bridge import (
     NemotronLabsDiffusionBridge,
 )
-from megatron.bridge.diffusion.models.nemotron_labs_diffusion.nemotron_labs_diffusion_provider import (
-    NemotronLabsDiffusionModelProvider,
+from megatron.bridge.diffusion.models.nemotron_labs_diffusion.model_config import (
+    NemotronLabsDiffusionModelConfig,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.recipes.utils.dataset_utils import get_blend_fields_from_data_paths
@@ -41,6 +42,24 @@ from megatron.bridge.training.config import (
     TrainingConfig,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+def _apply_model_overrides(defaults: dict, user_kwargs: dict) -> dict:
+    """Apply model selection overrides to a model-size recipe.
+
+    A supplied ``model_config`` replaces the recipe's implicit HF source. An
+    explicitly non-null ``hf_path`` is mutually exclusive with it.
+    """
+    overrides = dict(user_kwargs)
+    if overrides.get("model_config") is not None:
+        if overrides.get("hf_path") is not None:
+            raise ValueError("model_config and hf_path are mutually exclusive.")
+        defaults["hf_path"] = None
+        overrides.pop("hf_path", None)
+    elif overrides.get("hf_path") is None:
+        overrides.pop("hf_path", None)
+    defaults.update(overrides)
+    return defaults
 
 
 def nemotron_labs_diffusion_pretrain_config(**user_kwargs) -> ConfigContainer:
@@ -67,9 +86,9 @@ def nemotron_labs_diffusion_3b_pretrain_config(**user_kwargs) -> ConfigContainer
         eval_interval=5000,
         save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-3B-Base-2512",
+        hf_path="mistralai/Ministral-3-3B-Base-2512",
     )
-    defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion_common(**defaults)
+    return _nemotron_labs_diffusion_common(**_apply_model_overrides(defaults, user_kwargs))
 
 
 def nemotron_labs_diffusion_8b_pretrain_config(**user_kwargs) -> ConfigContainer:
@@ -87,9 +106,9 @@ def nemotron_labs_diffusion_8b_pretrain_config(**user_kwargs) -> ConfigContainer
         eval_interval=5000,
         save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-8B-Base-2512",
+        hf_path="mistralai/Ministral-3-8B-Base-2512",
     )
-    defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion_common(**defaults)
+    return _nemotron_labs_diffusion_common(**_apply_model_overrides(defaults, user_kwargs))
 
 
 def nemotron_labs_diffusion_14b_pretrain_config(**user_kwargs) -> ConfigContainer:
@@ -107,13 +126,13 @@ def nemotron_labs_diffusion_14b_pretrain_config(**user_kwargs) -> ConfigContaine
         eval_interval=5000,
         save_interval=5000,
         tokenizer_model="mistralai/Ministral-3-14B-Base-2512",
+        hf_path="mistralai/Ministral-3-14B-Base-2512",
     )
-    defaults.update(user_kwargs)
-    return _nemotron_labs_diffusion_common(**defaults)
+    return _nemotron_labs_diffusion_common(**_apply_model_overrides(defaults, user_kwargs))
 
 
 def _nemotron_labs_diffusion_common(
-    model_provider: NemotronLabsDiffusionModelProvider | None = None,
+    model_config: NemotronLabsDiffusionModelConfig | None = None,
     hf_path: str | None = None,
     dir: str | None = None,
     name: str = "default",
@@ -155,11 +174,12 @@ def _nemotron_labs_diffusion_common(
     comm_overlap_config: CommOverlapConfig | None = None,
 ) -> ConfigContainer:
     """
-    Create a pre-training configuration for NemotronLabsDiffusion models using a given model provider.
+    Create a pre-training configuration for NemotronLabsDiffusion models using a builder-backed config.
 
     Args:
         hf_path (Optional[str]): HuggingFace model path (e.g., "Qwen/Qwen3-1.7B").
-        model_provider (NemotronLabsDiffusionModelProvider): Model provider for the model.
+        model_config: Optional pre-built serializable model config. Required when
+            ``hf_path`` is not provided.
         dir (Optional[str]): Base directory for saving logs and checkpoints.
         name (str): Name of the pre-training run.
         data_paths (Optional[List[str]]): List of paths to dataset files. If None, mock data will be used.
@@ -203,16 +223,20 @@ def _nemotron_labs_diffusion_common(
     blend, blend_per_split, split = get_blend_fields_from_data_paths(
         data_paths, data_args_path, train_data_path, valid_data_path, test_data_path, per_split_data_args_path, mock
     )
+    if hf_path is not None and model_config is not None:
+        raise ValueError("model_config and hf_path are mutually exclusive.")
     if hf_path is not None:
         hf_pretrained = PreTrainedCausalLM.from_pretrained(hf_path)
         bridge = NemotronLabsDiffusionBridge()
-        model_cfg = bridge.provider_bridge(hf_pretrained)
+        model_cfg = bridge.model_config_bridge(hf_pretrained)
         model_cfg.share_embeddings_and_output_weights = False  # dLLM needs separate diffusion_head
         model_cfg.perform_initialization = False
         if load_hf_checkpoint:
-            model_cfg.register_pre_wrap_hook(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
+            model_cfg.pre_wrap_hooks.append(partial(bridge.load_weights_hf_to_megatron, hf_pretrained))
+    elif model_config is not None:
+        model_cfg = copy.deepcopy(model_config)
     else:
-        model_cfg = model_provider()
+        raise ValueError("Either hf_path or model_config must be provided for NemotronLabsDiffusion pretraining.")
 
     model_cfg.tensor_model_parallel_size = tensor_parallelism
     model_cfg.pipeline_model_parallel_size = pipeline_parallelism

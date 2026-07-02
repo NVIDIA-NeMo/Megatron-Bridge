@@ -273,8 +273,9 @@ class WanLayerWithAdaLN(TransformerLayer):
         return output, context
 
 
-def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
+def get_wan_block_with_transformer_engine_spec(*, layernorm_across_heads: bool = False) -> ModuleSpec:  # noqa: D103
     params = {"attn_mask_type": AttnMaskType.padding}
+    attention_params = {**params, "layernorm_across_heads": layernorm_across_heads}
     return ModuleSpec(
         module=WanLayerWithAdaLN,
         submodules=WanWithAdaLNSubmodules(
@@ -283,7 +284,7 @@ def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
             norm2=nn.LayerNorm,
             full_self_attention=ModuleSpec(
                 module=DiTSelfAttention,
-                params=params,
+                params=attention_params,
                 submodules=SelfAttentionSubmodules(
                     linear_qkv=TEColumnParallelLinear,
                     core_attention=TEDotProductAttention,
@@ -294,7 +295,7 @@ def get_wan_block_with_transformer_engine_spec() -> ModuleSpec:  # noqa: D103
             ),
             cross_attention=ModuleSpec(
                 module=DiTCrossAttention,
-                params=params,
+                params=attention_params,
                 submodules=DiTCrossAttentionSubmodules(
                     linear_q=TEColumnParallelLinear,
                     linear_kv=TEColumnParallelLinear,

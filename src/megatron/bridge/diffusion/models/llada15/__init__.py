@@ -14,7 +14,15 @@
 
 from megatron.bridge.diffusion.models.llada15.inference_llada15 import generate_block_diffusion
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
-from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy LLaDA1.5 provider export."""
+    if name == "LLaDA15ModelProvider":
+        from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+
+        return LLaDA15ModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

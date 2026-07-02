@@ -16,6 +16,7 @@ import types
 
 import pytest
 import torch
+from megatron.core.transformer.utils import openai_gelu
 
 from megatron.bridge.diffusion.conversion.flux import flux_bridge as flux_bridge_module
 
@@ -88,6 +89,20 @@ def test_provider_bridge_constructs_provider_with_expected_fields():
 
     # hidden_size stored on bridge instance
     assert bridge.hidden_size == provider.hidden_size
+
+
+def test_model_config_bridge_preserves_flux_transformer_defaults():
+    class DummyHF:
+        def __init__(self, cfg):
+            self.config = cfg
+
+    config = flux_bridge_module.FluxBridge().model_config_bridge(DummyHF(_make_cfg()))
+    transformer = config.transformer
+
+    assert transformer.hidden_dropout == 0.0
+    assert transformer.attention_dropout == 0.0
+    assert transformer.layernorm_epsilon == 1e-6
+    assert transformer.activation_func is openai_gelu
 
 
 def test_mapping_registry_registers_module_types_and_builds_mappings(monkeypatch):

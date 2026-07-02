@@ -55,6 +55,7 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
         cp_comm_type: str = None,
         pg_collection=None,
         name: str | None = None,
+        layernorm_across_heads: bool | None = None,
     ):
         super().__init__(
             config,
@@ -66,7 +67,11 @@ class DiTSelfAttention(SelfAttention):  # noqa: D101
             name=name,
         )
 
-        self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)
+        self.layernorm_across_heads = (
+            layernorm_across_heads
+            if layernorm_across_heads is not None
+            else getattr(self.config, "layernorm_across_heads", False)
+        )
 
         # override q_layernorm
         if submodules.q_layernorm is not None:
@@ -195,6 +200,7 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
         cp_comm_type: str = None,
         pg_collection=None,
         name: str | None = None,
+        layernorm_across_heads: bool | None = None,
     ):
         super().__init__(
             config,
@@ -206,7 +212,11 @@ class DiTCrossAttention(CrossAttention):  # noqa: D101
             name=name,
         )
 
-        self.layernorm_across_heads = getattr(self.config, "layernorm_across_heads", False)
+        self.layernorm_across_heads = (
+            layernorm_across_heads
+            if layernorm_across_heads is not None
+            else getattr(self.config, "layernorm_across_heads", False)
+        )
 
         # override q_layernorm
         if submodules.q_layernorm is not None:

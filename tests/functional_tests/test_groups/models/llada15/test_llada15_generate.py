@@ -21,7 +21,7 @@ initialized** LLaDA1.5 Megatron model on GPU and exercises the *real*
 ``generate_block_diffusion`` loop end-to-end.
 
 No checkpoint and no HuggingFace download — the model is constructed directly
-from a toy ``LLaDA15ModelProvider`` config with random weights. Single GPU.
+from a toy ``LLaDA15ModelConfig`` with random weights. Single GPU.
 """
 
 import os
@@ -30,11 +30,13 @@ import pytest
 import torch
 import torch.nn.functional as F
 from megatron.core import parallel_state
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.diffusion.models.llada15.inference_llada15 import _unwrap, generate_block_diffusion
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
-from megatron.bridge.diffusion.models.llada15.llada15_provider import LLaDA15ModelProvider
+from megatron.bridge.diffusion.models.llada15.model_config import LLaDA15ModelConfig
 
 
 # Tiny toy dims — small enough to build and run quickly on a single GPU.
@@ -71,22 +73,38 @@ def _init_distributed():
 
 
 def _build_toy_model():
-    provider = LLaDA15ModelProvider(
+    vocab_size = TOY["vocab_size"]
+    transformer = TransformerConfig(
         normalization="RMSNorm",
         gated_linear_unit=True,
         activation_func=F.silu,
         add_bias_linear=False,
         add_qkv_bias=False,
         qk_layernorm=False,
-        rotary_base=500000.0,
         bf16=True,
         params_dtype=torch.bfloat16,
-        **TOY,
+        num_layers=TOY["num_layers"],
+        hidden_size=TOY["hidden_size"],
+        num_attention_heads=TOY["num_attention_heads"],
+        num_query_groups=TOY["num_query_groups"],
+        kv_channels=TOY["kv_channels"],
+        ffn_hidden_size=TOY["ffn_hidden_size"],
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=1,
     )
-    provider.tensor_model_parallel_size = 1
-    provider.pipeline_model_parallel_size = 1
-    provider.finalize()
-    model = provider.provide_distributed_model(wrap_with_ddp=False, bf16=True)
+    config = LLaDA15ModelConfig(
+        transformer=transformer,
+        rotary_base=500000.0,
+        vocab_size=vocab_size,
+        seq_length=TOY["seq_length"],
+    )
+    config.finalize()
+    builder = config.get_builder_cls()(config)
+    model = builder.build_distributed_models(
+        pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+        wrap_with_ddp=False,
+        data_parallel_random_init=False,
+    )
     return model[0].eval() if isinstance(model, list) else model.eval()
 
 
@@ -98,7 +116,7 @@ class TestLLaDA15ToyGenerate:
         _init_distributed()
         model = _build_toy_model()
         # Every layer's core attention must be the TE-backed LLaDA1.5 attention.
-        # _unwrap drops the Float16Module/DDP wrapper added by provide_distributed_model.
+        # _unwrap drops any mixed-precision or distributed wrapper added by the builder.
         for layer in _unwrap(model).decoder.layers:
             assert isinstance(layer.self_attention.core_attention, LLaDA15TEDotProductAttention)
 
