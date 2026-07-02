@@ -270,12 +270,32 @@ submit_run() {
 #                                            AND against det-bitwise2 for no-nsys reproducibility)
 #   det-bitwise2: det ON  + NO nsys        (reproducibility check #2 — second independent
 #                                            allocation; diffed against det-bitwise)
-submit_run det
-submit_run nondet
-submit_run det-bitwise
-# det-bitwise2 (2nd no-nsys det run): two independent no-nsys deterministic allocations
-# diffed bit-wise against each other — the MXFP8 determinism-trust check.
-submit_run det-bitwise2
+# Submission strategy:
+#   SERIALIZE=1 -> submit arms one at a time (REQUIRED: each needs the previous
+#                  run's jobid for its afterany dependency, so it must be serial).
+#   SERIALIZE=0 -> background the 4 setup_experiment builds so all 4 sbatch
+#                  near-simultaneously (~one build-time instead of ~4x). Safe:
+#                  each arm writes its own submit-/jobid- files and, with no
+#                  afterany chaining, needs nothing from the others. Jobs still
+#                  run independently once queued.
+if [ "$SERIALIZE" = "1" ]; then
+    submit_run det
+    submit_run nondet
+    submit_run det-bitwise
+    # det-bitwise2 (2nd no-nsys det run): two independent no-nsys deterministic
+    # allocations diffed bit-wise against each other — the determinism-trust check.
+    submit_run det-bitwise2
+else
+    _submit_pids=()
+    submit_run det          & _submit_pids+=($!)
+    submit_run nondet       & _submit_pids+=($!)
+    submit_run det-bitwise  & _submit_pids+=($!)
+    submit_run det-bitwise2 & _submit_pids+=($!)
+    # Wait for all builds; warn (don't abort) if one submit failed so the others' jobs stand.
+    for _p in "${_submit_pids[@]}"; do
+        wait "$_p" || echo "WARNING: a submit_run (pid $_p) exited non-zero — check submit-*.log" >&2
+    done
+fi
 JOB_DET=$(cat "$OUT_DIR/jobid-det.txt")
 JOB_NONDET=$(cat "$OUT_DIR/jobid-nondet.txt")
 JOB_BITWISE=$(cat "$OUT_DIR/jobid-det-bitwise.txt")
