@@ -17,6 +17,7 @@ from __future__ import annotations
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
+
 PackedMetadataValue = torch.Tensor | int | None
 
 
