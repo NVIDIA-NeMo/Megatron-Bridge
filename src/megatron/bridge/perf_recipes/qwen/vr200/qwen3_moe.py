@@ -48,3 +48,21 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
 def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     return qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config()
+
+
+def qwen3_30b_a3b_pretrain_4gpu_vr200_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 4× VR200, BF16, EP=4."""
+    cfg = qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config()
+    cfg.model.expert_model_parallel_size = 4
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_4gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 4× VR200, FP8-MX, EP=4."""
+    cfg = qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config()
+    cfg.model.expert_model_parallel_size = 4
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 4
+    return cfg

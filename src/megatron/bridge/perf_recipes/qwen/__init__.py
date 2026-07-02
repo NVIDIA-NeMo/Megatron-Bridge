@@ -80,6 +80,8 @@ from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
     qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config,
 )
 from megatron.bridge.perf_recipes.qwen.vr200.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_4gpu_vr200_bf16_config,
+    qwen3_30b_a3b_pretrain_4gpu_vr200_fp8mx_config,
     qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config,
