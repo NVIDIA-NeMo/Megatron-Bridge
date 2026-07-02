@@ -184,37 +184,11 @@ For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/w
 
 LongLiveWan adds a WAN training step for paired clean/noisy teacher forcing. It uses the same offline WAN WebDataset format as the standard recipe: `pth` files contain precomputed video latents and `pickle` files contain text embeddings. This MVP does not run raw-video VAE encoding or online T5 text encoding inside training.
 
-The LongLive step expands each temporal chunk into a clean copy and a noisy copy. Loss is computed only on the noisy copy, and the dense teacher-forcing mask lets noisy chunks see previous clean chunks plus their own noisy chunk. The 1.3B recipe is internally configured for the supported `qkv_format=sbhd` and `context_parallel_size=1` path, but the full text-to-video sequence is still larger than the dense-mask limit. Treat the full-size recipe as a configuration template until block-sparse/flex attention support is available; use the reduced-resolution command below for exact validation.
-
-For a small exact smoke test, reduce the latent resolution so the paired clean/noisy sequence stays below the dense-mask limit:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-  --recipe longlive_wan_1_3b_pretrain_config \
-  --step_func longlive_wan_step \
-  model.num_layers=2 \
-  model.hidden_size=512 \
-  model.ffn_hidden_size=1408 \
-  model.num_attention_heads=8 \
-  model.crossattn_emb_size=512 \
-  model.context_parallel_size=1 \
-  model.tensor_model_parallel_size=1 \
-  model.pipeline_model_parallel_size=1 \
-  model.qkv_format=sbhd \
-  model.seq_length=96 \
-  dataset.seq_length=96 \
-  dataset.F_latents=4 \
-  dataset.H_latents=8 \
-  dataset.W_latents=6 \
-  dataset.context_embeddings_dim=4096 \
-  train.train_iters=5 \
-  train.eval_iters=0 \
-  train.global_batch_size=1 \
-  train.micro_batch_size=1 \
-  dataset.global_batch_size=1 \
-  dataset.micro_batch_size=1 \
-  logger.log_interval=1
-```
+The LongLive step expands each temporal chunk into a clean copy and a noisy copy. Loss is computed only on the
+noisy copy, and the dense teacher-forcing mask lets noisy chunks see previous clean chunks plus their own noisy
+chunk. The 1.3B recipe is kept as a configuration template for the supported `qkv_format=sbhd` and
+`context_parallel_size=1` semantics, but its full text-to-video sequence is larger than the dense-mask limit.
+The primary runnable example below follows the LongLive 2.0 5B TP/SP long-video development path.
 
 For LongLive-style long-video development with sequence parallelism, the 5B SP recipe records the intended
 LongLive AR latent shape `[B, F, C, H, W] = [1, 320, 48, 44, 80]` and uses mock random WAN latents when
