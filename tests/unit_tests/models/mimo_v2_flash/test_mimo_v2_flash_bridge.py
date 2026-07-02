@@ -263,6 +263,17 @@ class TestMiMoV2FlashMegatronToHfConfig:
         # Layernorm epsilon
         assert result["layernorm_epsilon"] == original.layernorm_epsilon
 
+    def test_builder_config_roundtrip_preserves_dual_rope_and_window(self):
+        pretrained = _make_mock_pretrained()
+        original = pretrained.config
+        model_config = MiMoV2FlashBridge().model_config_bridge(pretrained)
+
+        result = MiMoV2FlashBridge.megatron_to_hf_config(model_config)
+
+        assert result["rope_theta"] == original.rope_theta
+        assert result["swa_rope_theta"] == original.swa_rope_theta
+        assert result["sliding_window_size"] == original.sliding_window_size
+
 
 class TestMiMoV2FlashBridgeMappingRegistry:
     @pytest.fixture
@@ -342,13 +353,17 @@ class TestMiMoV2FlashQKVMapping:
     V_CH = 128
     HIDDEN = 4096
 
+    @pytest.mark.parametrize("v_rows", [0, NUM_QG * V_CH + 1])
+    def test_rejects_invalid_v_shape(self, v_rows):
+        with pytest.raises(ValueError, match="Cannot infer MiMo V head dim"):
+            MiMoV2FlashQKVMapping._infer_v_head_dim(v_rows, self.NUM_QG)
+
     @pytest.fixture
     def config(self):
         cfg = Mock()
         cfg.num_attention_heads = self.NUM_HEADS
         cfg.num_query_groups = self.NUM_QG
         cfg.kv_channels = self.QK_CH
-        cfg.v_head_dim = self.V_CH
         cfg.hidden_size = self.HIDDEN
         return cfg
 

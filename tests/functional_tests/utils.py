@@ -245,7 +245,11 @@ def compare_provider_configs(converted_provider, predefined_provider, model_id, 
 
 
 def autoconfig_roundtrip(
-    local_model_path: str, tmp_path: Path, trust_remote_code: bool = False, atol: float = 2e-2
+    local_model_path: str,
+    tmp_path: Path,
+    trust_remote_code: bool = False,
+    atol: float = 2e-2,
+    compare_forward: bool = True,
 ) -> None:
     """Run a full HF → Megatron → HF auto-config roundtrip and assert correctness.
 
@@ -265,6 +269,7 @@ def autoconfig_roundtrip(
             When True, also copies ``*.py`` from *local_model_path* into the
             export directory so that custom modeling code is available.
         atol: Absolute tolerance for the forward-pass logit comparison.
+        compare_forward: Whether to compare logits after verifying exported weights.
     """
     import json
     import shutil
@@ -375,7 +380,8 @@ def autoconfig_roundtrip(
         exported = exported.to("cuda:0")
 
     assert_weights_equal(original, exported)
-    assert_forward_pass_equal(original, exported, atol=atol)
+    if compare_forward:
+        assert_forward_pass_equal(original, exported, atol=atol)
 
 
 def print_config_diff(original_config: dict, exported_config: dict) -> None:

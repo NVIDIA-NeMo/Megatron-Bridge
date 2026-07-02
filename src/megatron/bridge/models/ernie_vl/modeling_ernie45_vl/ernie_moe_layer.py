@@ -110,8 +110,8 @@ class ErnieMultiTypeMoE(MegatronModule):
     supporting TP and EP parallelism natively.
 
     Args:
-        config: TransformerConfig with moe_intermediate_size as a tuple/list
-                of [text_ffn_size, vision_ffn_size].
+        config: Transformer configuration shared by both expert pools.
+        moe_intermediate_size: Text and vision expert FFN sizes.
         submodules: MultiTypeMoeSubmodules containing specs for both pools.
         layer_number: Layer index in the transformer stack.
         pg_collection: Process group collection for parallelism.
@@ -122,6 +122,7 @@ class ErnieMultiTypeMoE(MegatronModule):
     def __init__(
         self,
         config: TransformerConfig,
+        moe_intermediate_size: tuple[int, int],
         submodules: Optional[MultiTypeMoeSubmodules] = None,
         layer_number: Optional[int] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
@@ -141,8 +142,8 @@ class ErnieMultiTypeMoE(MegatronModule):
         # Create separate configs for each pool with different FFN sizes
         self.text_config = deepcopy(config)
         self.vision_config = deepcopy(config)
-        self.text_config.moe_ffn_hidden_size = config.moe_intermediate_size[0]
-        self.vision_config.moe_ffn_hidden_size = config.moe_intermediate_size[1]
+        self.text_config.moe_ffn_hidden_size = moe_intermediate_size[0]
+        self.vision_config.moe_ffn_hidden_size = moe_intermediate_size[1]
 
         # Disable shared experts within each MoELayer since ErnieMultiTypeMoE
         # manages its own shared_experts externally (not inside the per-pool MoELayer).

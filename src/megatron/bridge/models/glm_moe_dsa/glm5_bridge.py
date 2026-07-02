@@ -160,6 +160,14 @@ class GLM5Bridge(MegatronModelBridge):
         )
         return config_kwargs
 
+    @classmethod
+    def megatron_to_hf_config(cls, model_config: Any) -> dict[str, Any]:
+        """Normalize disabled MTP to the integer representation expected by HF."""
+        hf_config = super().megatron_to_hf_config(model_config)
+        if hf_config.get("num_nextn_predict_layers") is None:
+            hf_config["num_nextn_predict_layers"] = 0
+        return hf_config
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
             # Embed

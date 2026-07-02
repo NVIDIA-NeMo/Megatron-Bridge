@@ -51,6 +51,7 @@ class Ernie45VLModelConfig(BridgeGPTModelConfig):
     vision_transformer: TransformerConfig
     vision_config: dict[str, object] = field(default_factory=dict)
     hf_config: dict[str, object] = field(default_factory=dict)
+    return_dict: bool = True
     patch_size: int = 14
     in_channels: int = 3
     spatial_merge_size: int = 2
@@ -91,11 +92,14 @@ class Ernie45VLModelBuilder(GPTModelBuilder):
             activation_func=_quick_gelu,
             tensor_model_parallel_size=config.transformer.tensor_model_parallel_size,
         )
-        runtime_config = PretrainedConfig.from_dict(config.hf_config)
-        if isinstance(getattr(runtime_config, "text_config", None), dict):
-            runtime_config.text_config = _namespace(runtime_config.text_config)
-        runtime_config.hf_config = runtime_config
-        runtime_config.vision_config = PretrainedConfig.from_dict(config.vision_config)
+        hf_runtime_config = PretrainedConfig.from_dict(config.hf_config)
+        if isinstance(getattr(hf_runtime_config, "text_config", None), dict):
+            hf_runtime_config.text_config = _namespace(hf_runtime_config.text_config)
+        vision_runtime_config = PretrainedConfig.from_dict(config.vision_config)
+        hf_runtime_config.vision_config = vision_runtime_config
+        runtime_config = replace(config, transformer=replace(config.transformer))
+        runtime_config.hf_config = hf_runtime_config
+        runtime_config.vision_config = vision_runtime_config
         runtime_config.return_dict = True
         for name in (
             "mrope_section",
@@ -108,15 +112,11 @@ class Ernie45VLModelBuilder(GPTModelBuilder):
             "use_mg_vit",
         ):
             setattr(runtime_config, name, getattr(config, name))
-        runtime_config.sequence_parallel = config.transformer.sequence_parallel
         # Conversion task global-name resolution reads the composite model's
         # runtime config when translating EP-local expert indices. ERNIE owns
         # two pools with this many experts each, so expose the per-pool count
         # without polluting the serialized Hugging Face config.
         runtime_config.num_moe_experts = config.transformer.num_moe_experts
-        runtime_config.kv_channels = config.transformer.kv_channels
-        runtime_config.rotary_interleaved = config.transformer.rotary_interleaved
-        runtime_config.rotary_base = config.rotary_base
         runtime_config.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         model = Ernie45VLModel(
             config=runtime_config,

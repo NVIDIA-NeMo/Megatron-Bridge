@@ -14,11 +14,11 @@
 
 """Unit tests for ERNIE 4.5 VL (Vision-Language) MoE bridge."""
 
-from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -29,6 +29,7 @@ from megatron.bridge.models.ernie_vl.ernie45_vl_bridge import (
     _OffsetRowParallelMapping,
 )
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spec import _get_mlp_module_spec
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import (
     ErnieMultiTypeMoE,
     MultiTypeMoeSubmodules,
@@ -44,6 +45,7 @@ def _make_vision_config():
     vision_config.patch_size = 14
     vision_config.image_size = 384
     vision_config.intermediate_size = 5120
+    vision_config.to_dict = Mock(return_value={})
     return vision_config
 
 
@@ -89,6 +91,7 @@ def _make_flat_vl_config():
     config.auto_map = {
         "AutoModelForCausalLM": "modeling_ernie4_5_vl.Ernie4_5_VLMoeForConditionalGeneration",
     }
+    config.to_dict = Mock(return_value={})
     return config
 
 
@@ -129,6 +132,7 @@ def _make_nested_vl_config():
     config.image_end_token_id = 101305
     config.video_start_token_id = 101306
     config.video_end_token_id = 101307
+    config.to_dict = Mock(return_value={})
     return config
 
 
@@ -229,6 +233,13 @@ class TestErnie45VLBridgeProviderBridge:
         bridge = Ernie45VLBridge()
         provider = bridge.provider_bridge(mock_pretrained_flat)
         assert provider.moe_intermediate_size == (1536, 512)
+
+    @pytest.mark.parametrize("fixture_name", ["mock_pretrained_flat", "mock_pretrained_nested"])
+    def test_model_config_places_dual_pool_sizes_on_outer_config(self, fixture_name, request):
+        model_config = Ernie45VLBridge().model_config_bridge(request.getfixturevalue(fixture_name))
+
+        assert type(model_config.transformer) is TransformerConfig
+        assert model_config.moe_intermediate_size == (1536, 512)
 
     def test_shared_experts_flat(self, mock_pretrained_flat):
         bridge = Ernie45VLBridge()
@@ -487,8 +498,18 @@ class TestErnie45VLModelProvider:
 class TestErnieMultiTypeMoE:
     """Test ERNIE VL dual-pool MoE construction."""
 
+    def test_moe_spec_passes_dual_pool_sizes_explicitly(self):
+        spec = _get_mlp_module_spec(num_experts=4, moe_intermediate_size=(64, 32))
+
+        assert spec.params["moe_intermediate_size"] == (64, 32)
+
     def test_accepts_transformer_layer_kwargs(self):
-        config = SimpleNamespace(moe_intermediate_size=(64, 32), moe_shared_expert_intermediate_size=128)
+        config = TransformerConfig(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            moe_shared_expert_intermediate_size=128,
+        )
         submodules = MultiTypeMoeSubmodules(
             text_moe_layer=object(),
             vision_moe_layer=object(),
@@ -500,6 +521,7 @@ class TestErnieMultiTypeMoE:
             build_module.side_effect = [Mock(), Mock(), Mock()]
             layer = ErnieMultiTypeMoE(
                 config=config,
+                moe_intermediate_size=(64, 32),
                 submodules=submodules,
                 layer_number=2,
                 pg_collection=pg_collection,

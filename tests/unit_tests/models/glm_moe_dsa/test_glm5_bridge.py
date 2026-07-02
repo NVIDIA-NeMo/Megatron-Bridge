@@ -89,6 +89,7 @@ def test_model_config_bridge_maps_mla_dsa_config() -> None:
     assert model_config.transformer.mscale == 1.0
     assert model_config.transformer.mscale_all_dim == 1.0
     assert model_config.transformer.mtp_num_layers is None
+    assert GLM5Bridge.megatron_to_hf_config(model_config)["num_nextn_predict_layers"] == 0
     assert type(restored.transformer) is MLATransformerConfig
     assert restored.as_dict() == model_config.as_dict()
 
