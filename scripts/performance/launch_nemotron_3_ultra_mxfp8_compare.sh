@@ -22,10 +22,16 @@
 #                        and vs job 4 for no-nsys cross-allocation reproducibility)
 #   4. det + NO nsys   (bit-wise check #2 — second independent allocation, no nsys)
 #
-# MXFP8 MoE note: ``model.moe_router_padding_for_quantization=true`` is added below
-# (pads per-expert token counts to the FP8 block alignment) — mirroring what the
-# Nemotron 3 Super perf recipe does for fp8_mx/nvfp4. It is a positional Hydra
-# override so this launcher stays self-contained (no shared perf-recipe edit).
+# MXFP8 MoE note: ``model.moe_router_padding_for_quantization`` is intentionally
+# left at its default (False). Enabling it activates the MoE ``padding_mask`` code
+# path, which — combined with this recipe's MLP selective-recompute (``mlp`` in
+# recompute_modules) — leaks ``padding_mask`` as a kwarg into the ``_forward_mlp``
+# ``te_checkpoint`` wrapper and crashes at iter-1 forward with
+# ``ValueError: Unexpected keyword arguments: padding_mask`` (observed at 24n,
+# jobs 3774666/3774680/3774803/3774844, all FAILED before iter 1). The Super perf
+# recipe sets it True, but Super does not hit this because of its recompute layout.
+# If FP8 grouped-GEMM token alignment later proves necessary, the fix is to drop
+# ``mlp`` from recompute_modules (a memory trade-off), not to re-enable padding here.
 #
 # Output layout (OUT_DIR defaults to ./mxfp8-compare):
 #   nsys-det.csv      -- NVTX nvtx_sum CSV for det-ON run (rank 0)
@@ -194,10 +200,9 @@ submit_run() {
     [ -n "$_extra" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$_extra")
 
     # --- Positional override block ---
-    # Mirrors launch_nemotron_3_ultra_nsys_compare.sh, with two MXFP8 changes:
+    # Mirrors launch_nemotron_3_ultra_nsys_compare.sh, with one MXFP8 change:
     #   * ``-c fp8_mx`` (was ``-c bf16``): selects bf16_with_mxfp8_mixed().
-    #   * ``model.moe_router_padding_for_quantization=true``: pads per-expert token
-    #     counts to the FP8 block alignment for the MoE GEMM (mirrors Super's fp8_mx).
+    # (moe_router_padding_for_quantization is left OFF — see the MXFP8 MoE note above.)
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
@@ -226,7 +231,6 @@ submit_run() {
         model.deterministic_mode="$DET_MODE" \
         model.cross_entropy_loss_fusion="$CE_FUSION" \
         model.moe_router_fusion=true \
-        model.moe_router_padding_for_quantization=true \
         model.moe_token_dispatcher_type=alltoall \
         model.moe_flex_dispatcher_backend=null \
         ddp.overlap_grad_reduce=false \
