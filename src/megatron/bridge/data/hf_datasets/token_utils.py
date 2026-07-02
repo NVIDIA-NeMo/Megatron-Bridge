@@ -22,9 +22,11 @@ from megatron.bridge.data.vlm_processing import get_processor_tokenizer
 
 
 # Common special tokens across VLM models
+# Assistant turn terminators are intentionally not included here. Supervision
+# for those tokens is controlled by assistant-span masking, because models need
+# to learn when to stop.
 QWEN_TOKENS = [
     "<|im_start|>",
-    "<|im_end|>",
     "<|vision_start|>",
     "<|vision_end|>",
     "<|vision_pad|>",
@@ -37,13 +39,10 @@ QWEN_TOKENS = [
 LLAVA_TOKENS = ["<image>", "<pad>"]
 LLAMA_TOKENS = [
     "<|begin_of_text|>",
-    "<|end_of_text|>",
     "<|finetune_right_pad_id|>",
     "<|step_id|>",
     "<|start_header_id|>",
     "<|end_header_id|>",
-    "<|eom_id|>",
-    "<|eot_id|>",
     "<|python_tag|>",
     "<|image|>",
 ]

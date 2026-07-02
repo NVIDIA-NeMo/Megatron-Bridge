@@ -49,8 +49,22 @@ uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe
 uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
 
 # GPT
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe vanilla_gpt_pretrain_config
 ```
+
+## Loading a HuggingFace Model Directly (`--hf_path`)
+
+Some recipes accept `--hf_path` to initialize from a HuggingFace model ID (or local
+path) without a separate offline checkpoint conversion step:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
+    --recipe vanilla_gpt_pretrain_config \
+    --hf_path meta-llama/Llama-3.1-8B
+```
+
+`--hf_path` is optional and model-specific: `run_recipe.py` only forwards it to recipes
+that accept an `hf_path` argument, and ignores it otherwise.
 
 ## CLI Overrides
 
@@ -83,7 +97,7 @@ Use `--step_func` to control the step function used during training. Available o
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
-    --recipe qwen25_vl_pretrain_config \
+    --recipe qwen25_vl_7b_sft_config \
     --step_func vlm_step
 ```
 
