@@ -23,26 +23,19 @@ from megatron.bridge.training.config import ConfigContainer
 
 NEMOTRON_3_ULTRA_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
 NEMOTRON_3_ULTRA_TOKENIZER_NAME = "nvidia--NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16"
+NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH = 8192
+NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH = 4096
 
 
-def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config(
-    *,
-    hf_path: str | None = None,
-    seq_length: int = 8192,
-) -> ConfigContainer:
+def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Ultra.
-
-    Args:
-        hf_path: Optional Hugging Face model ID or local snapshot path.
-        seq_length: Sequence length for model and dataset settings.
 
     Returns:
         Pre-training configuration for Nemotron 3 Ultra.
     """
     cfg = _pretrain_common()
-    model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 3
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -52,7 +45,7 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config(
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.seq_length = seq_length
+    cfg.model.seq_length = NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "fused"
     cfg.model.gradient_accumulation_fusion = True
@@ -70,8 +63,8 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config(
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.use_te_rng_tracker = True
 
-    cfg.tokenizer.tokenizer_model = model_source
-    cfg.dataset.seq_length = seq_length
+    cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
+    cfg.dataset.seq_length = NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH
     cfg.dataset.blend = None
     cfg.dataset.num_workers = 1
     cfg.dataset.mmap_bin_files = False
@@ -113,24 +106,15 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config(
     return cfg
 
 
-def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config(
-    *,
-    hf_path: str | None = None,
-    seq_length: int = 4096,
-) -> ConfigContainer:
+def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
     """Return a packed OpenMathInstruct-2 full SFT config for Nemotron 3 Ultra.
-
-    Args:
-        hf_path: Optional Hugging Face model ID or local snapshot path.
-        seq_length: Packed sequence length.
 
     Returns:
         Full-parameter SFT configuration for OpenMathInstruct-2.
     """
     cfg = _sft_common()
-    model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 6
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -140,7 +124,7 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.seq_length = seq_length
+    cfg.model.seq_length = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "fused"
     cfg.model.gradient_accumulation_fusion = True
@@ -162,10 +146,13 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
 
-    cfg.tokenizer.tokenizer_model = model_source
-    cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, packed_sequence=True)
+    cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
+    cfg.dataset = default_openmathinstruct2_config(
+        seq_length=NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH,
+        packed_sequence=True,
+    )
     if cfg.dataset.offline_packing_specs is not None:
-        cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+        cfg.dataset.offline_packing_specs.packed_sequence_size = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
         cfg.dataset.offline_packing_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
 
     cfg.train.train_iters = 1000
@@ -206,25 +193,19 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config(
 
 
 def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
-    *,
-    peft: str | PEFT | None = "lora",
-    hf_path: str | None = None,
-    seq_length: int = 4096,
+    peft_scheme: str | PEFT | None = "lora",
 ) -> ConfigContainer:
     """Return a packed OpenMathInstruct-2 PEFT config for Nemotron 3 Ultra.
 
     Args:
-        peft: PEFT scheme, PEFT instance, or "none".
-        hf_path: Optional Hugging Face model ID or local snapshot path.
-        seq_length: Packed sequence length.
+        peft_scheme: PEFT scheme, PEFT instance, or "none".
 
     Returns:
         PEFT configuration for OpenMathInstruct-2.
     """
     cfg = _peft_common()
-    model_source = hf_path or NEMOTRON_3_ULTRA_HF_MODEL_ID
 
-    cfg.model = AutoBridge.from_hf_pretrained(model_source).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_ULTRA_HF_MODEL_ID).to_megatron_provider(load_weights=False)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -234,7 +215,7 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.seq_length = seq_length
+    cfg.model.seq_length = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
     cfg.model.apply_rope_fusion = False
     cfg.model.attention_backend = "fused"
     cfg.model.gradient_accumulation_fusion = True
@@ -264,12 +245,15 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
         "in_proj",
         "out_proj",
     ]
-    cfg.peft = default_peft_config(peft, target_modules=target_modules)
+    cfg.peft = default_peft_config(peft_scheme, target_modules=target_modules)
 
-    cfg.tokenizer.tokenizer_model = model_source
-    cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, packed_sequence=True)
+    cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
+    cfg.dataset = default_openmathinstruct2_config(
+        seq_length=NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH,
+        packed_sequence=True,
+    )
     if cfg.dataset.offline_packing_specs is not None:
-        cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+        cfg.dataset.offline_packing_specs.packed_sequence_size = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
         cfg.dataset.offline_packing_specs.tokenizer_model_name = NEMOTRON_3_ULTRA_TOKENIZER_NAME
 
     cfg.train.train_iters = 1000

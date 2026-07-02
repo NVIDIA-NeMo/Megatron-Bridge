@@ -17,10 +17,7 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.nemotron_omni.h100 import nemotron_omni as _h100_module
-from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import (
-    _DEFAULT_HF_PATH,
-    _nemotron_omni_base_config,
-)
+from megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni import _DEFAULT_HF_PATH
 from megatron.bridge.training.config import ConfigContainer
 
 

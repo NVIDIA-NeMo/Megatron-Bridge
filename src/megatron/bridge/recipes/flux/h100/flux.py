@@ -147,12 +147,11 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def flux_12b_sft_2gpu_h100_bf16_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return an SFT (supervised fine-tuning) configuration for FLUX 12B model.
 
-    Uses the same defaults as flux_12b_pretrain_config() and overrides checkpoint to load from
-    pretrained_checkpoint when provided.
+    Uses the same defaults as flux_12b_pretrain_config().
     """
     cfg = flux_12b_pretrain_2gpu_h100_bf16_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
@@ -163,7 +162,6 @@ def flux_12b_sft_2gpu_h100_bf16_config(pretrained_checkpoint: str | None = None)
         save_interval=20,
         save=checkpoint_dir,
         load=checkpoint_dir,
-        pretrained_checkpoint=pretrained_checkpoint,
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )

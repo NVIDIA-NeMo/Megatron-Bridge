@@ -80,14 +80,9 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         help="Path to a Megatron-Bridge checkpoint directory or HuggingFace model name to load weights from.",
     )
     parser.add_argument(
-        "--lora-on-language-model",
+        "--peft",
         action="store_true",
-        help="Use PEFT for finetuning on the language model.",
-    )
-    parser.add_argument(
-        "--lora-on-vision-model",
-        action="store_true",
-        help="Use PEFT for finetuning on the vision model.",
+        help="Use the default PEFT recipe for finetuning.",
     )
 
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
@@ -109,20 +104,16 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    config_kwargs = {
-        "hf_model_path": args.hf_model_path,
-        "pretrained_checkpoint": args.pretrained_checkpoint,
-    }
-    if args.lora_on_language_model or args.lora_on_vision_model:
-        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
-            **config_kwargs,
-            lora_on_language_model=args.lora_on_language_model,
-            lora_on_vision_model=args.lora_on_vision_model,
-        )
+    if args.peft:
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config()
         logger.info("Loaded base configuration for PEFT")
+        logger.info("The fixed PEFT recipe applies adapters to all default VLM target modules.")
     else:
-        cfg = nemotron_nano_v2_vl_12b_sft_config(**config_kwargs)
+        cfg = nemotron_nano_v2_vl_12b_sft_config()
         logger.info("Loaded base configuration for SFT")
+
+    cfg.dataset.hf_processor_path = args.hf_model_path
+    cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
     if get_rank_safe() == 0:
         cfg.print_yaml()

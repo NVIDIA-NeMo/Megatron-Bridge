@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import set_deepseek_v4_pipeline_model_parallel_layout
 from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as _h100_module
 from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
     DEEPSEEK_V4_FLASH_HF_PATH,
@@ -64,4 +65,5 @@ __all__ = [
     "deepseek_v4_flash_pretrain_mxfp8_config",
     "deepseek_v4_flash_sft_config",
     "DEEPSEEK_V4_FLASH_HF_PATH",
+    "set_deepseek_v4_pipeline_model_parallel_layout",
 ]

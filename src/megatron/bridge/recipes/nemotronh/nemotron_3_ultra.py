@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_ultra as _h100_module
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import (
     NEMOTRON_3_ULTRA_HF_MODEL_ID,
@@ -27,10 +28,14 @@ from megatron.bridge.training.config import ConfigContainer
 AutoBridge = _h100_module.AutoBridge
 
 
-def nemotron_3_ultra_peft_openmathinstruct2_packed_config() -> ConfigContainer:
+def nemotron_3_ultra_peft_openmathinstruct2_packed_config(
+    peft_scheme: str | PEFT | None = "lora",
+) -> ConfigContainer:
     """Compatibility alias for ``nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config``."""
     _h100_module.AutoBridge = AutoBridge
-    return _h100_module.nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config()
+    return _h100_module.nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
+        peft_scheme=peft_scheme,
+    )
 
 
 def nemotron_3_ultra_pretrain_config() -> ConfigContainer:

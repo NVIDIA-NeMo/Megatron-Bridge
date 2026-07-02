@@ -30,14 +30,15 @@ if TYPE_CHECKING:
     from megatron.bridge.training.config import ConfigContainer
 
 
-def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config(
-    hf_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-) -> "ConfigContainer":
+_QWEN3_OMNI_HF_PATH = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+
+
+def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     """Return a minimal thinker-only SFT config for Qwen3-Omni 30B-A3B."""
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_QWEN3_OMNI_HF_PATH).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -73,7 +74,7 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config(
     cfg.scheduler = scheduler_cfg
 
     cfg.dataset.seq_length = 4096
-    cfg.dataset.hf_processor_path = hf_path
+    cfg.dataset.hf_processor_path = _QWEN3_OMNI_HF_PATH
     cfg.dataset.enable_in_batch_packing = False
 
     cfg.ddp.overlap_grad_reduce = False
@@ -88,14 +89,12 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config(
     return cfg
 
 
-def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config(
-    hf_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-) -> "ConfigContainer":
+def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer":
     """Return a thinker-only SFT config backed by preloaded local JSON/JSONL data."""
 
     cfg = _sft_common_vlm()
 
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_QWEN3_OMNI_HF_PATH).to_megatron_provider(load_weights=False)
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -132,7 +131,7 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config(
 
     cfg.dataset = PreloadedVLMConversationProvider(
         seq_length=cfg.model.seq_length,
-        hf_processor_path=hf_path,
+        hf_processor_path=_QWEN3_OMNI_HF_PATH,
         train_data_path=None,
         valid_data_path=None,
         test_data_path=None,

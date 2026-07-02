@@ -134,7 +134,7 @@ def test_openmath_peft_uses_validated_parallelism_values() -> None:
 
 @pytest.mark.unit
 def test_openmath_peft_none_disables_adapter() -> None:
-    cfg = nemotron_3_ultra_peft_openmathinstruct2_packed_config(peft="none")
+    cfg = nemotron_3_ultra_peft_openmathinstruct2_packed_config(peft_scheme="none")
     assert cfg.peft is None
 
 

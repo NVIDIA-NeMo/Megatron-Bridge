@@ -18,28 +18,16 @@ from __future__ import annotations
 
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.llama.h100 import llama3 as _h100_module
-from megatron.bridge.recipes.llama.h100.llama3 import (
-    _llama3_8b_pretrain_2gpu_h100_low_precision_config,
-)
 from megatron.bridge.training.config import ConfigContainer
 
 
 AutoBridge = _h100_module.AutoBridge
 
-_LLAMA3_8B_LOW_PRECISION_PRETRAIN_CONFIGS = {
-    "bf16_with_mxfp8_mixed": _h100_module.llama3_8b_pretrain_2gpu_h100_fp8mx_config,
-    "bf16_with_fp8_current_scaling_mixed": _h100_module.llama3_8b_pretrain_2gpu_h100_fp8cs_config,
-    "bf16_with_nvfp4_mixed": _h100_module.llama3_8b_pretrain_2gpu_h100_nvfp4_config,
-}
 
-
-def llama3_8b_low_precision_pretrain_config(mixed_precision_recipe: str) -> ConfigContainer:
-    """Return the legacy low-precision Llama 3 8B pre-training config."""
-    assert mixed_precision_recipe in _LLAMA3_8B_LOW_PRECISION_PRETRAIN_CONFIGS, (
-        f"Invalid low precision recipe: {mixed_precision_recipe}. This recipe has not been tested yet."
-    )
+def llama3_8b_low_precision_pretrain_config() -> ConfigContainer:
+    """Compatibility alias for ``llama3_8b_pretrain_2gpu_h100_fp8cs_config``."""
     _h100_module.AutoBridge = AutoBridge
-    return _LLAMA3_8B_LOW_PRECISION_PRETRAIN_CONFIGS[mixed_precision_recipe]()
+    return _h100_module.llama3_8b_pretrain_2gpu_h100_fp8cs_config()
 
 
 def llama31_405b_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:

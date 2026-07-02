@@ -70,12 +70,13 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
     import transformers
 
     monkeypatch.setattr(_recipe_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_recipe_module._h100_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *_, **__: processor)
     return processor
 
 
 def _build_config(recipe_func: Callable, fake_processor) -> ConfigContainer:
-    return recipe_func(hf_path=_TEST_HF_ID)
+    return recipe_func()
 
 
 def _assert_common_config(cfg: ConfigContainer):

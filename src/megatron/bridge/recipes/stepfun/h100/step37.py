@@ -18,16 +18,11 @@ Only the Flickr8k SFT path is supported. ``Step37Model.forward`` takes
 ``list[ImageForInsert]`` directly, and the data path is the
 self-contained ``Step37Flickr8kSFTDataProvider`` (HF datasets / processor
 not involved).
-
-``hf_path`` defaults to ``stepfun-ai/Step-3.7-Flash``. Override it with the
-``hf_path`` recipe argument (e.g. ``run_recipe.py --hf_path /path/to/ckpt``)
-to load from a local checkpoint instead.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Optional
 
 import torch
 
@@ -46,22 +41,26 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
+_STEP37_HF_PATH = "stepfun-ai/Step-3.7-Flash"
+_STEP37_FLICKR8K_SAMPLE_COUNT = 8
+_STEP37_FLICKR8K_MAX_PACKING_SEQLEN = 2048
+_STEP37_FLICKR8K_SEQLEN_DIVISIBLE_BY = 64
+_STEP37_FLICKR8K_OVERSIZE_POLICY = "drop"
+_STEP37_FLICKR8K_DATASET_SAMPLING = "random"
+_STEP37_FLICKR8K_CACHE_DIR = ".cache/step37_flickr8k"
+_STEP37_FLICKR8K_PROMPT = "Describe this image in one sentence."
+_STEP37_FLICKR8K_SMOKE_CACHE_DIR = ".cache/step37_flickr8k_smoke"
+_STEP37_FLICKR8K_SMOKE_FIXED_PACK_IDX = 0
+_STEP37_FLICKR8K_SMOKE_TRAIN_ITERS = 100
+_STEP37_FLICKR8K_SMOKE_MAX_LR = 5e-3
+
+
 # =============================================================================
 # Step3.7 SFT Configuration — Flickr8k packed pipeline
 # =============================================================================
 
 
-def step37_sft_64gpu_h100_bf16_flickr8k_config(
-    hf_path: str = "stepfun-ai/Step-3.7-Flash",
-    *,
-    sample_count: Optional[int] = 8,
-    max_packing_seqlen: int = 2048,
-    seqlen_divisible_by: int = 64,
-    oversize_policy: str = "drop",
-    dataset_sampling: str = "random",
-    cache_dir: str = ".cache/step37_flickr8k",
-    prompt: str = "Describe this image in one sentence.",
-) -> ConfigContainer:
+def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
     """Step3.7 SFT recipe — the only supported Step3.7 path.
 
     Uses the Flickr8k packed pipeline:
@@ -75,22 +74,8 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config(
     - Tokenizer loaded with ``trust_remote_code=False``; **no HF custom
       Python code** runs in the data path.
 
-    Kwargs:
-        hf_path: HF model id or local path to the Step3.7 checkpoint
-            (default ``stepfun-ai/Step-3.7-Flash``).
-        sample_count: limit the train split to the first N samples.
-            Default is ``8`` (smoke). Pass ``None`` to use the full
-            Flickr8k train CSV (~6000 rows, ~1 GB jpgs, 10+ min cold
-            download — use via CLI ``dataset.sample_count=null`` only
-            when you intend a real run).
-        max_packing_seqlen: max NTP-length tokens per pack (default 2048).
-        seqlen_divisible_by: pad total NTP length up to this multiple
-            (default 64).
-        oversize_policy: "drop" or "extend" — what to do with a single
-            sample whose NTP length already exceeds ``max_packing_seqlen``.
-        dataset_sampling: "sequential" or "random" — in-domain order.
-        cache_dir: local cache for the Flickr8k download.
-        prompt: user prompt prefixed to every assistant-caption pair.
+    The default train split is limited to 8 samples for smoke coverage. Use CLI
+    overrides such as ``dataset.sample_count=null`` for a full Flickr8k run.
     """
     # Start from the generic SFT baseline (gives us cfg.train / cfg.optimizer
     # / cfg.scheduler / cfg.ddp / cfg.checkpoint / cfg.logger placeholders),
@@ -100,8 +85,8 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config(
     cfg = _sft_common()
 
     # ── Model: AutoBridge load from HF id or local snapshot ──────────────
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    cfg.model.seq_length = max_packing_seqlen
+    cfg.model = AutoBridge.from_hf_pretrained(_STEP37_HF_PATH).to_megatron_provider(load_weights=False)
+    cfg.model.seq_length = _STEP37_FLICKR8K_MAX_PACKING_SEQLEN
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -209,17 +194,17 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config(
 
     # ── Dataset: Flickr8k packed provider ─────────────────────────────────
     cfg.dataset = Step37Flickr8kSFTDataProvider(
-        tokenizer_path=hf_path,
+        tokenizer_path=_STEP37_HF_PATH,
         repo_id="intro/flickr8k",
         split="train",
-        sample_count=sample_count,
-        cache_dir=cache_dir,
-        prompt=prompt,
-        max_packing_seqlen=max_packing_seqlen,
-        seqlen_divisible_by=seqlen_divisible_by,
-        oversize_policy=oversize_policy,  # type: ignore[arg-type]
-        dataset_sampling=dataset_sampling,  # type: ignore[arg-type]
-        seq_length=max_packing_seqlen,
+        sample_count=_STEP37_FLICKR8K_SAMPLE_COUNT,
+        cache_dir=_STEP37_FLICKR8K_CACHE_DIR,
+        prompt=_STEP37_FLICKR8K_PROMPT,
+        max_packing_seqlen=_STEP37_FLICKR8K_MAX_PACKING_SEQLEN,
+        seqlen_divisible_by=_STEP37_FLICKR8K_SEQLEN_DIVISIBLE_BY,
+        oversize_policy=_STEP37_FLICKR8K_OVERSIZE_POLICY,  # type: ignore[arg-type]
+        dataset_sampling=_STEP37_FLICKR8K_DATASET_SAMPLING,  # type: ignore[arg-type]
+        seq_length=_STEP37_FLICKR8K_MAX_PACKING_SEQLEN,
         num_workers=0,  # sync — no async prefetch (per user requirement)
         persistent_workers=False,
         pin_memory=True,
@@ -234,16 +219,7 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config(
 # =============================================================================
 
 
-def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config(
-    hf_path: str = "stepfun-ai/Step-3.7-Flash",
-    *,
-    sample_count: int = 8,
-    max_packing_seqlen: int = 2048,
-    fixed_pack_idx: int = 0,
-    train_iters: int = 100,
-    max_lr: float = 5e-3,
-    cache_dir: str = ".cache/step37_flickr8k_smoke",
-) -> ConfigContainer:
+def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     """Smoke variant of :func:`step37_flickr8k_sft_config` — the same packed
     sample on every DP rank, every step. Deterministic and tiny: it repeats
     pack[``fixed_pack_idx``] indefinitely so the loss curve visibly drops as
@@ -261,27 +237,15 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config(
       the PE-G/14 backward cost).
     - ``log_interval=1``, eval disabled, no mid-run checkpoint save.
 
-    Kwargs:
-        hf_path: HF model id or local path to the Step3.7 checkpoint
-            (default ``stepfun-ai/Step-3.7-Flash``).
-        sample_count: tiny train slice (default ``8``); raise only if pack 0
-            is unrepresentative.
-        max_packing_seqlen: max NTP-length tokens per pack.
-        fixed_pack_idx: which pack to repeat (default ``0``).
-        train_iters: number of smoke iterations (default ``100``).
-        max_lr: peak LR for the cosine schedule (default ``5e-3``).
-        cache_dir: separate cache so the smoke download doesn't shadow
-            the full-Flickr8k cache.
+    The smoke recipe repeats pack 0 for 100 iterations with a high learning
+    rate so loss can drop quickly.
     """
-    cfg = step37_sft_64gpu_h100_bf16_flickr8k_config(
-        hf_path=hf_path,
-        sample_count=sample_count,
-        max_packing_seqlen=max_packing_seqlen,
-        dataset_sampling="sequential",
-        cache_dir=cache_dir,
-    )
-    cfg.dataset.fixed_pack_idx = fixed_pack_idx
-    cfg.train.train_iters = train_iters
+    cfg = step37_sft_64gpu_h100_bf16_flickr8k_config()
+    cfg.dataset.sample_count = _STEP37_FLICKR8K_SAMPLE_COUNT
+    cfg.dataset.cache_dir = _STEP37_FLICKR8K_SMOKE_CACHE_DIR
+    cfg.dataset.dataset_sampling = "sequential"
+    cfg.dataset.fixed_pack_idx = _STEP37_FLICKR8K_SMOKE_FIXED_PACK_IDX
+    cfg.train.train_iters = _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS
 
     cfg.model.mtp_num_layers = 0
     cfg.model.freeze_language_model = True
@@ -449,10 +413,10 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config(
     cfg.train.global_batch_size = 16
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
-        lr_warmup_iters=max(1, min(10, train_iters // 5)),
-        lr_decay_iters=train_iters,
-        max_lr=max_lr,
-        min_lr=max_lr / 10.0,
+        lr_warmup_iters=max(1, min(10, _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS // 5)),
+        lr_decay_iters=_STEP37_FLICKR8K_SMOKE_TRAIN_ITERS,
+        max_lr=_STEP37_FLICKR8K_SMOKE_MAX_LR,
+        min_lr=_STEP37_FLICKR8K_SMOKE_MAX_LR / 10.0,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -463,9 +427,9 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config(
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     cfg.logger.log_interval = 1
-    cfg.validation.eval_interval = train_iters + 1
+    cfg.validation.eval_interval = _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS + 1
     cfg.validation.eval_iters = 0
-    cfg.checkpoint.save_interval = train_iters + 1
+    cfg.checkpoint.save_interval = _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS + 1
 
     return cfg
 

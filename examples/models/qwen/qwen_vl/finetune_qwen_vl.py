@@ -44,27 +44,27 @@ Examples:
     Finetune using the imported checkpoint:
         Qwen2.5-VL 3B:
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen25_vl_3b_finetune_config \\
+                --recipe qwen25_vl_3b_sft_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25vl3b
 
         Qwen2.5-VL 7B:
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen25_vl_7b_finetune_config \\
+                --recipe qwen25_vl_7b_sft_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen25_vl_7b
 
         Qwen3-VL 8B (dense):
             $ uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_8b_finetune_config \\
+                --recipe qwen3_vl_8b_sft_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_8b
 
         Qwen3-VL 30B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_30b_a3b_finetune_config \\
+                --recipe qwen3_vl_30b_a3b_sft_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_30b_a3b
 
         Qwen3-VL 235B (MoE):
             $  uv run python -m torch.distributed.run --nproc_per_node=8 examples/models/qwen/qwen_vl/finetune_qwen_vl.py \\
-                --recipe qwen3_vl_235b_a22b_finetune_config \\
+                --recipe qwen3_vl_235b_a22b_sft_config \\
                 --pretrained-checkpoint ./logs/checkpoints/qwen3_vl_235b_a22b
 
     Using a custom YAML config file:
@@ -77,13 +77,13 @@ Examples:
 
 Available Recipes:
     Qwen2.5-VL:
-        - qwen25_vl_3b_finetune_config: 3B model
-        - qwen25_vl_7b_finetune_config: 7B model
+        - qwen25_vl_3b_sft_config: 3B model
+        - qwen25_vl_7b_sft_config: 7B model
 
     Qwen3-VL:
-        - qwen3_vl_8b_finetune_config: Dense 8B model
-        - qwen3_vl_30b_a3b_finetune_config: MoE 30B model with expert parallelism
-        - qwen3_vl_235b_a22b_finetune_config: MoE 235B model with expert parallelism
+        - qwen3_vl_8b_sft_config: Dense 8B model
+        - qwen3_vl_30b_a3b_sft_config: MoE 30B model with expert parallelism
+        - qwen3_vl_235b_a22b_sft_config: MoE 235B model with expert parallelism
 """
 
 import argparse
@@ -159,16 +159,16 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     parser.add_argument(
         "--recipe",
         type=str,
-        default="qwen25_vl_3b_finetune_config",
+        default="qwen25_vl_3b_sft_config",
         help=(
             "Name of the recipe function to use:\n"
             "Qwen2.5-VL recipes:\n"
-            "  - qwen25_vl_3b_finetune_config: 3B model (default)\n"
-            "  - qwen25_vl_7b_finetune_config: 7B model\n"
+            "  - qwen25_vl_3b_sft_config: 3B model (default)\n"
+            "  - qwen25_vl_7b_sft_config: 7B model\n"
             "Qwen3-VL recipes:\n"
-            "  - qwen3_vl_8b_finetune_config: Dense 8B model\n"
-            "  - qwen3_vl_30b_a3b_finetune_config: MoE 30B model\n"
-            "  - qwen3_vl_235b_a22b_finetune_config: MoE 235B model"
+            "  - qwen3_vl_8b_sft_config: Dense 8B model\n"
+            "  - qwen3_vl_30b_a3b_sft_config: MoE 30B model\n"
+            "  - qwen3_vl_235b_a22b_sft_config: MoE 235B model"
         ),
     )
     parser.add_argument(
@@ -226,21 +226,29 @@ def main() -> None:
     use_preloaded_flag = bool(args.data_path) or bool(getattr(args, "use_preloaded", False))
     dataset_type = args.dataset_type or ("preloaded" if use_preloaded_flag else "mock")
 
-    # Build recipe kwargs
-    recipe_kwargs = {
-        "dataset_type": dataset_type,
-        "train_data_path": args.data_path,
-        "valid_data_path": None,
-        "test_data_path": None,
-        "image_folder": args.image_folder,
-        "pretrained_checkpoint": args.pretrained_checkpoint,
-    }
-
-    # Add peft parameter if specified via --peft flag
-    if args.peft is not None:
-        recipe_kwargs["peft"] = args.peft
+    recipe_kwargs = {}
+    if args.peft is not None and args.peft != "none" and "peft" not in recipe_name:
+        raise ValueError("--peft requires selecting a PEFT recipe, for example qwen3_vl_8b_peft_config.")
+    if args.peft == "none" and "peft" in recipe_name:
+        raise ValueError("--peft none requires selecting an SFT recipe instead of a PEFT recipe.")
+    if args.peft is not None and args.peft != "none":
+        recipe_kwargs["peft_scheme"] = args.peft
 
     cfg: ConfigContainer = pretrain_config(**recipe_kwargs)
+    if args.pretrained_checkpoint is not None:
+        cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
+    if args.data_path is not None:
+        if dataset_type == "energon" and hasattr(cfg.dataset, "path"):
+            cfg.dataset.path = args.data_path
+        elif dataset_type == "preloaded" and hasattr(cfg.dataset, "train_data_path"):
+            cfg.dataset.train_data_path = args.data_path
+        else:
+            raise ValueError(f"Recipe '{recipe_name}' does not support dataset type '{dataset_type}'.")
+    if args.image_folder is not None:
+        if hasattr(cfg.dataset, "image_folder"):
+            cfg.dataset.image_folder = args.image_folder
+        else:
+            raise ValueError(f"Recipe '{recipe_name}' dataset does not support image_folder.")
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:

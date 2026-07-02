@@ -30,21 +30,18 @@ from megatron.bridge.training.config import ConfigContainer
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 
 
-def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigContainer:
+def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a VL SFT config for Nemotron Omni on CORD v2.
 
     Vision-language finetuning on the CORD v2 receipt parsing dataset.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
-
-    Args:
-        hf_path: HuggingFace model ID or local path to the Nemotron Omni model.
     """
-    cfg = _nemotron_omni_base_config(hf_path=hf_path)
+    cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
     cfg.dataset = HFConversationDatasetProvider(
         seq_length=4096,
-        hf_processor_path=hf_path,
+        hf_processor_path=_DEFAULT_HF_PATH,
         maker_name="cord_v2",
         collate_impl=nemotron_omni_collate_fn,
         num_workers=2,
@@ -58,20 +55,17 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config(hf_path: str = _DEFAULT_HF_P
     return cfg
 
 
-def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config(hf_path: str = _DEFAULT_HF_PATH) -> ConfigContainer:
+def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
     LoRA adapters are applied to language-model attention + Mamba projections.
     Vision encoder/projection and sound encoder/projection are frozen.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
-
-    Args:
-        hf_path: HuggingFace model ID or local path to the Nemotron Omni model.
     """
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base_config(hf_path=hf_path)
+    cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
     cfg.peft = LoRA(
         target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj"],
@@ -96,7 +90,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config(hf_path: str = _DEFAULT_HF_
 
     cfg.dataset = HFConversationDatasetProvider(
         seq_length=4096,
-        hf_processor_path=hf_path,
+        hf_processor_path=_DEFAULT_HF_PATH,
         maker_name="cord_v2",
         collate_impl=nemotron_omni_collate_fn,
         num_workers=2,
@@ -110,12 +104,12 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config(hf_path: str = _DEFAULT_HF_
     return cfg
 
 
-def _nemotron_omni_base_config(
-    hf_path: str = _DEFAULT_HF_PATH,
-) -> ConfigContainer:
+def _nemotron_omni_base() -> ConfigContainer:
     """Shared model/training config for all Nemotron Omni recipes."""
     cfg = _sft_common_vlm()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
     cfg.model.seq_length = 4096
     # Dynamic-resolution is the native behavior for the Nemotron-3 Omni
     # Reasoning HF processor (variable per-image H×W within [min, max] patches).
@@ -180,9 +174,7 @@ def _nemotron_omni_base_config(
     return cfg
 
 
-def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config(
-    hf_path: str = _DEFAULT_HF_PATH,
-) -> ConfigContainer:
+def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return an Energon SFT config with temporal video embedder enabled.
 
     Uses RADIO's ``separate_video_embedder`` to fuse temporal frame pairs
@@ -191,16 +183,13 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config(
     The shard path must be set via CLI override: ``dataset.path=<path>``.
 
     Uses ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``).
-
-    Args:
-        hf_path: HuggingFace model ID or local path to the Nemotron Omni model.
     """
     from transformers import AutoProcessor
 
     from megatron.bridge.data.energon.energon_provider import EnergonProvider
     from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
 
-    cfg = _nemotron_omni_base_config(hf_path=hf_path)
+    cfg = _nemotron_omni_base()
 
     # Enable temporal video embedder on the model side
     cfg.model.dynamic_resolution = True
@@ -208,7 +197,7 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config(
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
-    processor = AutoProcessor.from_pretrained(hf_path, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True)
     task_encoder = NemotronOmniTaskEncoder(
         processor=processor,
         seq_length=4096,
@@ -235,9 +224,7 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config(
     return cfg
 
 
-def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config(
-    hf_path: str = _DEFAULT_HF_PATH,
-) -> ConfigContainer:
+def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """LoRA PEFT recipe on temporal-video Energon path (temporal_patch_dim=2)."""
     from transformers import AutoProcessor
 
@@ -245,7 +232,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config(
     from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
     from megatron.bridge.peft.lora import LoRA
 
-    cfg = _nemotron_omni_base_config(hf_path=hf_path)
+    cfg = _nemotron_omni_base()
 
     cfg.model.dynamic_resolution = True
     cfg.model.temporal_patch_dim = 2
@@ -273,7 +260,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config(
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    processor = AutoProcessor.from_pretrained(hf_path, trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True)
     task_encoder = NemotronOmniTaskEncoder(
         processor=processor,
         seq_length=4096,

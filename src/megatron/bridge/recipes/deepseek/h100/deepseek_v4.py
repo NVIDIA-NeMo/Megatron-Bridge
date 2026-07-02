@@ -31,6 +31,9 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
 
 
+DEEPSEEK_V4_FLASH_HF_PATH = "deepseek-ai/DeepSeek-V4-Flash"
+
+
 def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
     """Use MXFP8 for training and BF16 for DSv4 validation/evaluation paths."""
     return RecipeConfig.from_config_dict(
@@ -61,9 +64,9 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     use_fused_mhc = deepseek_v4_supports_blackwell_fused_kernels()
     cfg = _pretrain_common()
-    cfg.model = AutoBridge.from_hf_pretrained(
-        "deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True
-    ).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 4
@@ -281,21 +284,18 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
 # Supervised fine-tuning (SFT)
 # ---------------------------------------------------------------------------
 
-DEEPSEEK_V4_FLASH_HF_PATH = "deepseek-ai/DeepSeek-V4-Flash"
 
-
-def deepseek_v4_flash_sft_32gpu_h100_bf16_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> ConfigContainer:
+def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek-V4-Flash full SFT, MTP enabled, Hopper-safe.
 
     Runs unchanged on Hopper (H100/H200) and Blackwell (B200/GB200). Fused mHC
     is enabled only on Blackwell. Full parameter training on unpacked (SBHD)
-    sequences with Adam/bf16. Set
-    ``checkpoint.pretrained_checkpoint`` to the imported Megatron checkpoint to
-    fine-tune real weights; ``hf_path`` overrides the HF model id (e.g. a toy
-    model in tests).
+    sequences with Adam/bf16.
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -339,7 +339,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config(hf_path: str = DEEPSEEK_V4_FLAS
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
 
     # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
-    cfg.tokenizer.tokenizer_model = hf_path
+    cfg.tokenizer.tokenizer_model = DEEPSEEK_V4_FLASH_HF_PATH
     cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
 
     # --- robustness defaults ---
@@ -352,14 +352,16 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config(hf_path: str = DEEPSEEK_V4_FLAS
     return cfg
 
 
-def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH) -> ConfigContainer:
+def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek-V4-Flash full SFT with the MTP layer disabled, Hopper-safe.
 
     Same as :func:`deepseek_v4_flash_sft_config` but drops the Multi-Token
     Prediction layer (fused mHC only on Blackwell, bf16, SBHD).
     """
     cfg = _sft_common()
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path, trust_remote_code=True).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(DEEPSEEK_V4_FLASH_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
 
     # --- parallelism (DSv4 hybrid attention requires TP=1) ---
     cfg.model.tensor_model_parallel_size = 1
@@ -410,7 +412,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config(hf_path: str = DEEPSEEK_
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
 
     # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
-    cfg.tokenizer.tokenizer_model = hf_path
+    cfg.tokenizer.tokenizer_model = DEEPSEEK_V4_FLASH_HF_PATH
     cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
 
     # --- robustness defaults ---

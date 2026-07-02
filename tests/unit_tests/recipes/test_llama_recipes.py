@@ -69,14 +69,7 @@ def _safe_overrides_for(name: str) -> dict:
 
     Pretrain configs use the new parameterless API (return empty dict).
     SFT/PEFT configs also use parameterless API now.
-    Special case: low_precision pretrain configs still require mixed_precision_recipe.
     """
-    lname = name.lower()
-
-    # Exception: low_precision recipes still require mixed_precision_recipe argument
-    if "low_precision" in lname:
-        return {"mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed"}
-
     return {}
 
 
@@ -491,9 +484,7 @@ def test_llama3_8b_low_precision_defaults(monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
-
-    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+    cfg = llama3_8b_low_precision_pretrain_config()
 
     _assert_basic_config(cfg)
 
@@ -507,16 +498,12 @@ def test_llama3_8b_low_precision_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B low precision NVFP4 has correct default BF16 layer configuration."""
-    from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
+    from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp4_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
     monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
-    # change the mixed precision recipe to NVFP4
-    overrides["mixed_precision_recipe"] = "bf16_with_nvfp4_mixed"
-
-    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+    cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
 
     _assert_basic_config(cfg)
 

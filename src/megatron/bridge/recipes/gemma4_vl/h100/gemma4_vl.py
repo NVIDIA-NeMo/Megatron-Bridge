@@ -105,7 +105,7 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
 # =============================================================================
 # Gemma 4 VL 26B-A4B SFT Configuration
 # =============================================================================
-def gemma4_vl_26b_sft_8gpu_h100_bf16_config(hf_path: str = _HF_PATH) -> ConfigContainer:
+def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
     Default configuration: 8 GPUs
@@ -116,7 +116,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config(hf_path: str = _HF_PATH) -> ConfigCo
     """
     cfg = _sft_common_vlm()
 
-    _apply_gemma4_vl_common(cfg, hf_path)
+    _apply_gemma4_vl_common(cfg, _HF_PATH)
 
     # Parallel settings — TP=2, PP=1, EP=8 on 2×8 GPUs
     # DP = 16/(TP*PP) = 8; EP=8 shards experts across all DP ranks (1 expert replica)
@@ -161,7 +161,6 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config(hf_path: str = _HF_PATH) -> ConfigCo
 # =============================================================================
 def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
-    hf_path: str = _HF_PATH,
 ) -> ConfigContainer:
     """Return a PEFT (LoRA/DoRA) config for Gemma 4 VL 26B-A4B (MoE VLM).
 
@@ -172,7 +171,6 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 
     Args:
         peft_scheme: PEFT scheme — "lora", "dora", or a custom PEFT instance.
-        hf_path: HuggingFace model ID or local path.
     """
     cfg = _peft_common_vlm()
 
@@ -182,7 +180,7 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     else:
         cfg.peft = peft_scheme
 
-    _apply_gemma4_vl_common(cfg, hf_path)
+    _apply_gemma4_vl_common(cfg, _HF_PATH)
 
     # Parallel settings — TP=2, PP=1, EP=4 (splits MoE experts across EP ranks,
     # avoiding duplicate LoRA adapter _extra_state shard keys during checkpoint save)

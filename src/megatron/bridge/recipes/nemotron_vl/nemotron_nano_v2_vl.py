@@ -21,9 +21,6 @@ from megatron.bridge.recipes.nemotron_vl.h100 import nemotron_nano_v2_vl as _h10
 from megatron.bridge.recipes.nemotron_vl.h100.nemotron_nano_v2_vl import (
     _ALL_COMPONENT_LORA_TARGET_MODULES,
     _DEFAULT_HF_MODEL_PATH,
-    _LANGUAGE_LORA_TARGET_MODULES,
-    _VISION_LORA_TARGET_MODULES,
-    _nemotron_vl_peft_config,
     _nemotron_vl_target_modules,
 )
 from megatron.bridge.training.config import ConfigContainer

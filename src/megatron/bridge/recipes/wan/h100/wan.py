@@ -245,12 +245,11 @@ def wan_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def wan_1_3b_sft_8gpu_h100_bf16_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_1_3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 1.3B model.
 
-    Uses the same defaults as wan_1_3b_pretrain_config() and overrides checkpoint to load from
-    pretrained_checkpoint when provided.
+    Uses the same defaults as wan_1_3b_pretrain_config().
     """
     cfg = wan_1_3b_pretrain_8gpu_h100_bf16_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
@@ -261,19 +260,17 @@ def wan_1_3b_sft_8gpu_h100_bf16_config(pretrained_checkpoint: str | None = None)
         save_interval=2000,
         save=checkpoint_dir,
         load=checkpoint_dir,
-        pretrained_checkpoint=pretrained_checkpoint,
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )
     return cfg
 
 
-def wan_14b_sft_8gpu_h100_bf16_config(pretrained_checkpoint: str | None = None) -> ConfigContainer:
+def wan_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 14B model.
 
-    Uses the same defaults as wan_14b_pretrain_config() and overrides checkpoint to load from
-    pretrained_checkpoint when provided.
+    Uses the same defaults as wan_14b_pretrain_config().
     """
     cfg = wan_14b_pretrain_8gpu_h100_bf16_config()
     base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
@@ -284,7 +281,6 @@ def wan_14b_sft_8gpu_h100_bf16_config(pretrained_checkpoint: str | None = None) 
         save_interval=2000,
         save=checkpoint_dir,
         load=checkpoint_dir,
-        pretrained_checkpoint=pretrained_checkpoint,
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )

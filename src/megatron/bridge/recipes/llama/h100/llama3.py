@@ -547,7 +547,7 @@ def llama3_8b_pretrain_64gpu_h100_bf16_128k_config() -> ConfigContainer:
     return cfg
 
 
-def _llama3_8b_pretrain_2gpu_h100_low_precision_config(mixed_precision_recipe: str) -> ConfigContainer:
+def _llama3_8b_pretrain_2gpu_h100_low_precision(mixed_precision_recipe: str) -> ConfigContainer:
     """Return a low precision (FP8 Current Scaling/MXFP8/NVFP4) pre-training config for Llama 3 8B.
 
     Args:
@@ -653,17 +653,17 @@ def _llama3_8b_pretrain_2gpu_h100_low_precision_config(mixed_precision_recipe: s
 
 def llama3_8b_pretrain_2gpu_h100_fp8mx_config() -> ConfigContainer:
     """Return a MXFP8 pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision_config("bf16_with_mxfp8_mixed")
+    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_mxfp8_mixed")
 
 
 def llama3_8b_pretrain_2gpu_h100_fp8cs_config() -> ConfigContainer:
     """Return a FP8 current-scaling pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision_config("bf16_with_fp8_current_scaling_mixed")
+    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_fp8_current_scaling_mixed")
 
 
 def llama3_8b_pretrain_2gpu_h100_nvfp4_config() -> ConfigContainer:
     """Return a NVFP4 pre-training config for Llama 3 8B on H100."""
-    return _llama3_8b_pretrain_2gpu_h100_low_precision_config("bf16_with_nvfp4_mixed")
+    return _llama3_8b_pretrain_2gpu_h100_low_precision("bf16_with_nvfp4_mixed")
 
 
 # =============================================================================
