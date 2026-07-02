@@ -326,15 +326,6 @@ export size-specific provider subclasses for recipes; either call
 derive the provider from HF config, or instantiate the base provider class with
 explicit architecture fields inside the recipe function.
 
-Recipe functions must be flattened and parameterless. Do not accept `*args`,
-`**kwargs`, `hf_path`, `seq_length`, parallelism, freeze flags, dataset paths,
-tokenizer paths, or other knobs in a `*_config` recipe. The only exception is
-`peft_scheme` on PEFT recipes. If a recipe needs a different HF checkpoint,
-sequence length, dataset/packing behavior, precision, hardware target, or freeze
-policy, create a separate explicitly named recipe and set those values directly
-inside that function. Avoid conditional branches in recipes; use runtime config
-overrides for local paths and experiment-only changes.
-
 ### Export checklist
 
 1. Family `__init__.py` — import and add to `__all__`

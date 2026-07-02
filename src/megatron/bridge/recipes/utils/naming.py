@@ -16,9 +16,9 @@
 
 from __future__ import annotations
 
-import re
 
-
+# Precision shorthand used in flat recipe names:
+# cs = FP8 current scaling, mx = MXFP8, sc = FP8 subchannel.
 PRECISION_NAME_MAP = {
     "bf16": "bf16",
     "fp8_cs": "fp8cs",
@@ -26,10 +26,6 @@ PRECISION_NAME_MAP = {
     "fp8_sc": "fp8sc",
     "nvfp4": "nvfp4",
 }
-
-_HARDWARE_RECIPE_PATTERN = re.compile(
-    r"^.+_(pretrain|sft|lora)_\d+gpu_[a-z0-9]+_(bf16|fp8cs|fp8mx|fp8sc|nvfp4)(_.+)?_config$"
-)
 
 
 def normalize_precision_name(precision: str) -> str:
@@ -56,8 +52,3 @@ def recipe_function_name(
         f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{normalize_precision_name(precision)}"
         f"{recipe_variant_suffix(config_variant)}_config"
     )
-
-
-def is_hardware_recipe_name(recipe_name: str) -> bool:
-    """Return whether ``recipe_name`` follows the flat hardware recipe naming pattern."""
-    return bool(_HARDWARE_RECIPE_PATTERN.match(recipe_name))

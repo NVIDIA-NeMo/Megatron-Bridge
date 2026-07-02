@@ -30,7 +30,7 @@ __all__ = [
     "qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config",
     "qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config",
     "qwen35_vl_27b_peft_2gpu_h100_bf16_config",
-    "qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config",
+    "qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen35_vl_27b_sft_16gpu_h100_bf16_config",
     "qwen35_vl_2b_peft_1gpu_h100_bf16_config",
     "qwen35_vl_2b_sft_1gpu_h100_bf16_config",

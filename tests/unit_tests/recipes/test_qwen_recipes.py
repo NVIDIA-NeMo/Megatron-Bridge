@@ -111,8 +111,11 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
-    # qwen3_next PEFT is intentionally not implemented
-    if recipe_func.__name__ == "qwen3_next_80b_a3b_peft_config":
+    # qwen3_next PEFT is intentionally not implemented.
+    if recipe_func.__name__ in {
+        "qwen3_next_80b_a3b_peft_config",
+        "qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config",
+    }:
         with pytest.raises(NotImplementedError):
             recipe_func(**overrides)
         return
