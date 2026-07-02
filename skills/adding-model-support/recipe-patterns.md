@@ -29,6 +29,10 @@ training mode, hardware class, dtype, and named variant.
   conditions. If a setting differs, create a separate explicitly named recipe.
 - Encode stable variants in the function name, for example sequence length,
   precision, hardware, GPU count, dataset/packing variant, or freeze policy.
+- Use canonical hardware-specific recipe names in the form
+  `<model>_<task>_<num>gpu_<gpu>_<dtype>[_<variant>]_config`, where `<model>`
+  includes size/capacity tokens when needed and `<variant>` captures stable
+  suffixes such as dataset, packing, long-context, or precision-scaling modes.
 - Use runtime config overrides in `scripts/training/run_recipe.py` for user paths
   and local experiment changes; do not make recipes accept those values.
 - Keep private helpers invariant. A helper can apply common fixed defaults, but

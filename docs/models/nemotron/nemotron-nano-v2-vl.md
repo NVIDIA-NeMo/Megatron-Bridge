@@ -104,13 +104,33 @@ Note:
 
 ### Parameter-Efficient Finetuning (PEFT)
 Parameter-efficient finetuning (PEFT) using LoRA is supported.
-The PEFT recipe applies adapters to the default VLM target modules.
+LoRA can be independently applied to the vision model, vision projection, and language model. We support two commonly used
+settings out of the box in the example script:
+1. Apply LoRA to the language model, and fully finetune the vision model and projection (used when the visual
+   distribution is substantially different from pretrained.)
 
 ```bash
 uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
---peft \
+--lora-on-language-model \
+dataset.maker_name=make_raven_dataset \
+logger.wandb_project=<optional wandb project name> \
+logger.wandb_save_dir=$SAVE_DIR \
+checkpoint.save=$SAVE_DIR/<experiment name> \
+model.freeze_language_model=True \
+model.freeze_vision_model=False \
+model.freeze_vision_projection=False
+```
+
+2. Apply LoRA to all linear layers in attention and MLP modules of the vision model, vision projection, and the language model.
+
+```bash
+uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
+--hf-model-path $HF_MODEL_PATH \
+--pretrained-checkpoint $MEGATRON_MODEL_PATH \
+--lora-on-language-model \
+--lora-on-vision-model \
 dataset.maker_name=make_raven_dataset \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
