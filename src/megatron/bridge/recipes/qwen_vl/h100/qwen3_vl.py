@@ -19,7 +19,6 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 
 import torch
@@ -31,19 +30,11 @@ from megatron.bridge.data.utils import DatasetBuildContext
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-)
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
@@ -54,32 +45,29 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 
 def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 8B Instruct."""
-    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, "default")
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    model_cfg = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = 4
-    model_cfg.pipeline_model_parallel_size = 1
-    model_cfg.pipeline_dtype = None
-    model_cfg.virtual_pipeline_model_parallel_size = None
-    model_cfg.context_parallel_size = 1
-    model_cfg.sequence_parallel = False
-    model_cfg.freeze_language_model = True
-    model_cfg.freeze_vision_model = True
-    model_cfg.freeze_vision_projection = False
-    model_cfg.seq_length = 4096
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.freeze_language_model = True
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = False
+    cfg.model.seq_length = 4096
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=3e-4,
         min_lr=3e-5,
     )
 
-    dataset_cfg = MockVLMConversationProvider(
+    cfg.dataset = MockVLMConversationProvider(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -91,75 +79,42 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         create_attention_mask=True,
         pad_to_max_length=True,
     )
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.train.eval_interval = 500
+    cfg.train.eval_iters = 32
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
 
-    return ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=300000,
-            eval_interval=500,
-            eval_iters=32,
-            global_batch_size=32,
-            micro_batch_size=2,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=False,
-            overlap_param_gather=False,
-            average_in_collective=True,
-            data_parallel_sharding_strategy="optim_grads_params",
-            use_distributed_optimizer=True,
-        ),
-        dataset=dataset_cfg,
-        logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
-        checkpoint=CheckpointConfig(
-            save_interval=500,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=None,
-        mixed_precision="bf16_mixed",
-    )
+    return cfg
 
 
 def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 30B-A3B (MoE)."""
-    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, "default")
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    model_cfg = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = 4
-    model_cfg.pipeline_model_parallel_size = 2
-    model_cfg.pipeline_dtype = torch.bfloat16
-    model_cfg.virtual_pipeline_model_parallel_size = None
-    model_cfg.context_parallel_size = 1
-    model_cfg.sequence_parallel = True
-    model_cfg.freeze_language_model = True
-    model_cfg.freeze_vision_model = True
-    model_cfg.freeze_vision_projection = False
-    model_cfg.seq_length = 4096
-    model_cfg.expert_model_parallel_size = 4
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = True
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = False
+    cfg.model.seq_length = 4096
+    cfg.model.expert_model_parallel_size = 4
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=3e-4,
         min_lr=3e-5,
     )
 
-    dataset_cfg = MockVLMConversationProvider(
+    cfg.dataset = MockVLMConversationProvider(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -171,75 +126,42 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         create_attention_mask=True,
         pad_to_max_length=True,
     )
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.train.eval_interval = 500
+    cfg.train.eval_iters = 32
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
 
-    return ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=300000,
-            eval_interval=500,
-            eval_iters=32,
-            global_batch_size=32,
-            micro_batch_size=2,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=False,
-            overlap_param_gather=False,
-            average_in_collective=True,
-            data_parallel_sharding_strategy="optim_grads_params",
-            use_distributed_optimizer=True,
-        ),
-        dataset=dataset_cfg,
-        logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
-        checkpoint=CheckpointConfig(
-            save_interval=500,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=None,
-        mixed_precision="bf16_mixed",
-    )
+    return cfg
 
 
 def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 235B-A22B (MoE)."""
-    base_output_dir = os.path.join(os.getcwd(), "nemo_experiments")
-    run_output_dir = os.path.join(base_output_dir, "default")
-    checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
-    tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
+    cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    model_cfg = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    model_cfg.tensor_model_parallel_size = 4
-    model_cfg.pipeline_model_parallel_size = 16
-    model_cfg.pipeline_dtype = torch.bfloat16
-    model_cfg.virtual_pipeline_model_parallel_size = None
-    model_cfg.context_parallel_size = 2
-    model_cfg.sequence_parallel = True
-    model_cfg.freeze_language_model = True
-    model_cfg.freeze_vision_model = True
-    model_cfg.freeze_vision_projection = False
-    model_cfg.seq_length = 4096
-    model_cfg.expert_model_parallel_size = 8
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    cfg.model.freeze_language_model = True
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = False
+    cfg.model.seq_length = 4096
+    cfg.model.expert_model_parallel_size = 8
 
-    opt_config, scheduler = distributed_fused_adam_with_cosine_annealing(
+    cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
         lr_decay_iters=300000,
         max_lr=3e-4,
         min_lr=3e-5,
     )
 
-    dataset_cfg = MockVLMConversationProvider(
+    cfg.dataset = MockVLMConversationProvider(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -251,44 +173,14 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         create_attention_mask=True,
         pad_to_max_length=True,
     )
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.train.eval_interval = 500
+    cfg.train.eval_iters = 32
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
 
-    return ConfigContainer(
-        model=model_cfg,
-        train=TrainingConfig(
-            train_iters=300000,
-            eval_interval=500,
-            eval_iters=32,
-            global_batch_size=32,
-            micro_batch_size=2,
-            manual_gc=True,
-            manual_gc_interval=100,
-            manual_gc_eval=100,
-        ),
-        optimizer=opt_config,
-        scheduler=scheduler,
-        ddp=DistributedDataParallelConfig(
-            check_for_nan_in_grad=True,
-            grad_reduce_in_fp32=True,
-            overlap_grad_reduce=False,
-            overlap_param_gather=False,
-            average_in_collective=True,
-            data_parallel_sharding_strategy="optim_grads_params",
-            use_distributed_optimizer=True,
-        ),
-        dataset=dataset_cfg,
-        logger=LoggerConfig(log_interval=10, tensorboard_dir=tensorboard_dir, log_timers_to_tensorboard=True),
-        tokenizer=TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE),
-        checkpoint=CheckpointConfig(
-            save_interval=500,
-            save=checkpoint_dir,
-            load=checkpoint_dir,
-            ckpt_format="torch_dist",
-            fully_parallel_save=True,
-        ),
-        rng=RNGConfig(seed=1234),
-        comm_overlap=None,
-        mixed_precision="bf16_mixed",
-    )
+    return cfg
 
 
 @dataclass(kw_only=True)
