@@ -33,12 +33,22 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import kubeflow_executor, slurm_executor
+    from utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import kubeflow_executor, slurm_executor
+    from .utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -705,6 +715,9 @@ def main(
         env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
         args=_filter_run_script_args(sys.argv[1:]),
     )
+    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+        nemorun_script = _kubeflow_numa_binding_script(nemorun_script.to_command(with_entrypoint=True))
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
 

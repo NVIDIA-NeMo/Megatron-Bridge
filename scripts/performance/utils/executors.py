@@ -30,14 +30,11 @@ logger = logging.getLogger(__name__)
 KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
 
 
-class _NumaTorchrun(run.Torchrun):
-    """Wrap every torchrun worker with GPU-local CPU and memory binding."""
-
-    def transform(self, cmd: List[str]) -> run.Script:
-        """Return a per-rank wrapper that resolves the GPU-local NUMA node."""
-        training_command = shlex.join(cmd)
-        return run.Script(
-            inline=f"""
+def _kubeflow_numa_binding_script(cmd: List[str]) -> run.Script:
+    """Return a per-rank wrapper that resolves and binds the GPU-local NUMA node."""
+    training_command = shlex.join(cmd)
+    return run.Script(
+        inline=f"""
 set -euo pipefail
 
 : "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
@@ -62,15 +59,7 @@ fi
 echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
 exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
 """
-        )
-
-
-class _TransformingKubeflowExecutor(run.KubeflowExecutor):
-    """Enable launcher command transforms for the opt-in NUMA wrapper."""
-
-    def supports_launcher_transform(self) -> bool:
-        """Allow the custom Torchrun launcher to wrap the worker command."""
-        return True
+    )
 
 
 def _kubeflow_numa_binding_enabled(env_vars: Dict[str, str]) -> bool:
@@ -329,19 +318,13 @@ def kubeflow_executor(
     }
     labels = {**ci_labels, **(labels or {})}
 
-    enable_numa_binding = _kubeflow_numa_binding_enabled(env_vars)
-    executor_cls = _TransformingKubeflowExecutor if enable_numa_binding else run.KubeflowExecutor
-    launcher = _NumaTorchrun() if enable_numa_binding else run.Torchrun()
-    if enable_numa_binding:
-        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
-
-    executor = executor_cls(
+    executor = run.KubeflowExecutor(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
         # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
         # group is formed. Without this the entrypoint runs as a lone python
         # process per node (WORLD_SIZE=1), failing data-parallel sizing.
-        launcher=launcher,
+        launcher=run.Torchrun(),
         # Pin the Kubeflow Trainer runtime + per-replica CPU/memory requests to
         # the same values the verified standalone launch (real_trainjob.py) uses.
         runtime_ref="torch-distributed",

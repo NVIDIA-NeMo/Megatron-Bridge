@@ -38,7 +38,7 @@ if HAS_NEMO_RUN:
         KUBEFLOW_NUMA_BINDING_ENV,
         PERF_ENV_VARS,
         _kubeflow_numa_binding_enabled,
-        _NumaTorchrun,
+        _kubeflow_numa_binding_script,
         slurm_executor,
     )
 
@@ -78,8 +78,7 @@ def test_custom_env_vars_in_container_env(tmp_path):
 def test_kubeflow_numa_binding_wraps_each_torchrun_worker():
     """The opt-in Kubeflow launcher must resolve and bind each worker's local GPU."""
     assert _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "1"})
-    wrapper = _NumaTorchrun().transform(["python", "train.py", "--steps", "10"])
-    assert wrapper is not None
+    wrapper = _kubeflow_numa_binding_script(["python", "train.py", "--steps", "10"])
     assert 'nvidia-smi -i "$LOCAL_RANK"' in wrapper.inline
     assert 'NUMA_FILE="/sys/bus/pci/devices/$PCI_BUS/numa_node"' in wrapper.inline
     assert (
