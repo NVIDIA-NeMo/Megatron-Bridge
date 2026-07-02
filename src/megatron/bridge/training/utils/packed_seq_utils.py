@@ -23,6 +23,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.utils import get_batch_on_this_cp_rank
 from packaging.version import Version as PkgVersion
 
+
 PackedMetadataValue = torch.Tensor | int | None
 _MIN_MCORE_THD_CP_VERSION = PkgVersion("0.18.0")
 
