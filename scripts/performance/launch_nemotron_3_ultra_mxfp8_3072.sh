@@ -33,6 +33,10 @@ set -euo pipefail
 # 3072 GPUs by default; still overridable (e.g. NGPUS=1536) for a scaling sweep.
 export NGPUS="${NGPUS:-3072}"
 export OUT_DIR="${OUT_DIR:-./mxfp8-compare-3072gpu}"
+# The inner script defaults WAIT_TIMEOUT_SEC=3600 (1h) — too short for a 768-node
+# queue, where scheduling alone can exceed an hour and the driver would give up
+# while the jobs are still valid. Default to 12h here; still overridable.
+export WAIT_TIMEOUT_SEC="${WAIT_TIMEOUT_SEC:-43200}"
 
 _here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 exec "${_here}/launch_nemotron_3_ultra_mxfp8_compare.sh" "$@"
