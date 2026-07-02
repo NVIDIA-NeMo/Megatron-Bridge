@@ -22,16 +22,20 @@
 #                        and vs job 4 for no-nsys cross-allocation reproducibility)
 #   4. det + NO nsys   (bit-wise check #2 — second independent allocation, no nsys)
 #
-# MXFP8 MoE note: ``model.moe_router_padding_for_quantization`` is intentionally
-# left at its default (False). Enabling it activates the MoE ``padding_mask`` code
-# path, which — combined with this recipe's MLP selective-recompute (``mlp`` in
-# recompute_modules) — leaks ``padding_mask`` as a kwarg into the ``_forward_mlp``
-# ``te_checkpoint`` wrapper and crashes at iter-1 forward with
-# ``ValueError: Unexpected keyword arguments: padding_mask`` (observed at 24n,
-# jobs 3774666/3774680/3774803/3774844, all FAILED before iter 1). The Super perf
-# recipe sets it True, but Super does not hit this because of its recompute layout.
-# If FP8 grouped-GEMM token alignment later proves necessary, the fix is to drop
-# ``mlp`` from recompute_modules (a memory trade-off), not to re-enable padding here.
+# MXFP8 recompute note: ``model.recompute_modules`` drops ``mlp`` (the base
+# nemotron_3_ultra config uses [moe, layernorm, core_attn, moe_act, mlp,
+# shared_experts]). Reason: under FP8/FP4, the dense-layer MLP recompute path
+# (transformer_layer.py: ``if "mlp" in recompute_modules and not is_moe_layer``)
+# calls ``te_checkpoint(apply_module(self.mlp), ..., padding_mask=padding_mask)``,
+# and this container's (nemo:26.04.01) ``torch.utils.checkpoint`` rejects the
+# ``padding_mask`` kwarg → ``ValueError: Unexpected keyword arguments: padding_mask``
+# at the iter-1 forward. BF16 avoids it (it binds padding_mask via functools.partial
+# to ``tensor_parallel.checkpoint`` instead). Observed at 24n: with ``mlp`` present,
+# jobs 3774666/3774680 (run 1) and 3780523/3780565 (run 2) all FAILED before iter 1.
+# Dropping ``mlp`` skips that path entirely; the MoE experts still recompute via
+# ``moe``/``moe_act``. The MoE router-padding flag was NOT the cause (it is at its
+# default False here). If memory then gets tight, re-add recompute via full
+# granularity or offloading rather than the ``mlp`` module under FP8.
 #
 # Output layout (OUT_DIR defaults to ./mxfp8-compare):
 #   nsys-det.csv      -- NVTX nvtx_sum CSV for det-ON run (rank 0)
@@ -200,9 +204,9 @@ submit_run() {
     [ -n "$_extra" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$_extra")
 
     # --- Positional override block ---
-    # Mirrors launch_nemotron_3_ultra_nsys_compare.sh, with one MXFP8 change:
+    # Mirrors launch_nemotron_3_ultra_nsys_compare.sh, with two MXFP8 changes:
     #   * ``-c fp8_mx`` (was ``-c bf16``): selects bf16_with_mxfp8_mixed().
-    # (moe_router_padding_for_quantization is left OFF — see the MXFP8 MoE note above.)
+    #   * ``model.recompute_modules`` drops ``mlp`` — see the MXFP8 recompute note above.
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
@@ -233,6 +237,7 @@ submit_run() {
         model.moe_router_fusion=true \
         model.moe_token_dispatcher_type=alltoall \
         model.moe_flex_dispatcher_backend=null \
+        'model.recompute_modules=[moe,layernorm,core_attn,moe_act,shared_experts]' \
         ddp.overlap_grad_reduce=false \
         ddp.overlap_param_gather=false \
         logger.tensorboard_dir=/nemo_run/tensorboard \
