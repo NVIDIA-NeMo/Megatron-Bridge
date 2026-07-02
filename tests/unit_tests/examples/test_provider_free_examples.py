@@ -35,7 +35,6 @@ TEMPORARY_FALLBACKS = {
     },
     "to_megatron_provider": {
         Path("distillation/llama/distill_llama32_3b-1b.py"),
-        Path("megatron_mimo/qwen35_vl/finetune_qwen35_vl.py"),
         Path("models/diffusion/inference_dllm.py"),
     },
     "provider_bridge": {
@@ -50,7 +49,6 @@ TEMPORARY_FALLBACKS = {
     "direct_model_provider_import": {
         Path("megatron_mimo/llava/megatron_mimo_training_llava.py"),
         Path("megatron_mimo/llava/megatron_mimo_training_llava_audio.py"),
-        Path("megatron_mimo/qwen35_vl/finetune_qwen35_vl.py"),
     },
 }
 

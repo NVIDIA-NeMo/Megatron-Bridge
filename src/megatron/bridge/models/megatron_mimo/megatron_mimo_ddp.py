@@ -1,7 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """DDP wrapping utilities for MegatronMIMO models.
 
-Called from the training layer after MegatronMIMOProvider.provide().
+Called by the MegatronMIMO model builder before training.
 
 Note: This module only supports DDP wrapping. FSDP is not yet implemented.
 """

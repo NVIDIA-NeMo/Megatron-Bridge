@@ -307,12 +307,12 @@ def report_theoretical_memory(
         verbose (bool, optional): If True, passes verbosity flag to helper functions.
                                 Defaults to False.
     """
-    # Skip for MegatronMIMO: MegatronMIMOProvider is not a TransformerConfig, so it lacks
+    # Skip for MegatronMIMO: heterogeneous configs do not have one global set of
     # kv_channels/num_attention_heads/etc. needed for the calculation.
-    # (Other providers like GPTModelProvider inherit TransformerConfig and work fine.)
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 
-    if isinstance(config.model, MegatronMIMOProvider):
+    if isinstance(config.model, (MegatronMIMOModelConfig, MegatronMIMOProvider)):
         return
 
     should_report_activation = config.model.sequence_parallel and config.model.recompute_granularity == "selective"

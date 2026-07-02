@@ -2,14 +2,16 @@
 """Shared model-construction entry point for MegatronMIMO.
 
 Used by both ``setup_megatron_mimo`` (training) and the conversion CLI.
-Composes ``provider.finalize`` + ``build_infra`` + per-module RNG init +
-distributed-model build + ``parallel_state`` global bridge.
+Composes config finalization, infrastructure construction, per-module RNG
+initialization, distributed model construction, and the ``parallel_state`` bridge.
+Legacy providers remain supported as a deprecated compatibility path.
 """
 
 from __future__ import annotations
 
 import logging
 import random
+import warnings
 from typing import TYPE_CHECKING, Optional
 
 import numpy as np
@@ -22,37 +24,54 @@ if TYPE_CHECKING:
     from megatron.core.distributed import DistributedDataParallelConfig
     from megatron.core.models.mimo import MimoModel
 
-    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
-        MegatronMIMOInfra,
-        MegatronMIMOProvider,
-    )
+    from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
+    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 
 
 logger = logging.getLogger(__name__)
 
 
 def build_megatron_mimo_model(
-    provider: "MegatronMIMOProvider",
+    model_config: "MegatronMIMOModelConfig | MegatronMIMOProvider",
     *,
     ddp_config: Optional["DistributedDataParallelConfig"] = None,
-    fp16: bool = False,
-    bf16: bool = True,
+    fp16: bool | None = None,
+    bf16: bool | None = None,
     seed: int = 0,
     wrap_with_ddp: bool = True,
     data_parallel_random_init: bool = True,
+    infra: Optional["MegatronMIMOInfra"] = None,
 ) -> tuple["MimoModel", "MegatronMIMOInfra"]:
     """Build a distributed MegatronMIMO model and return ``(model, infra)``.
 
     Side effects: initialises Python/NumPy/torch/Megatron-Core RNG and sets
     ``parallel_state._*_GROUP`` globals from the rank-local pg_collection.
     """
+    from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
     from megatron.bridge.training.megatron_mimo_parallel_utils import (
         get_active_module_pg,
         validate_no_stub_ranks,
     )
 
-    if provider.megatron_mimo_parallelism_config is None:
-        raise ValueError("build_megatron_mimo_model requires provider.megatron_mimo_parallelism_config to be set.")
+    if isinstance(model_config, MegatronMIMOModelConfig):
+        builder = model_config.get_builder_cls()(model_config)
+        parallelism_config = model_config.megatron_mimo_parallelism_config
+    else:
+        from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import (
+            _suppress_provider_build_deprecation_warnings,
+        )
+
+        builder = None
+        parallelism_config = model_config.megatron_mimo_parallelism_config
+        warnings.warn(
+            "Passing MegatronMIMOProvider to build_megatron_mimo_model() is deprecated. "
+            "Pass MegatronMIMOModelConfig instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    if parallelism_config is None:
+        raise ValueError("build_megatron_mimo_model requires heterogeneous parallelism config.")
 
     if not dist.is_initialized():
         raise RuntimeError(
@@ -61,8 +80,20 @@ def build_megatron_mimo_model(
         )
 
     logger.info("Rank %d: Building MIMO infra", dist.get_rank())
-    provider.finalize()
-    infra = provider.build_infra()
+    if builder is not None:
+        if infra is None:
+            builder.finalize()
+            infra = builder.build_infra()
+        else:
+            builder.infra = infra
+    else:
+        if infra is not None:
+            raise ValueError("Explicit infra is only supported with MegatronMIMOModelConfig.")
+        model_config.finalize()
+        with _suppress_provider_build_deprecation_warnings():
+            infra = model_config.build_infra()
+
+    assert infra is not None
 
     world_size = dist.get_world_size()
     validate_no_stub_ranks(infra.module_to_grid_map, world_size)
@@ -70,13 +101,24 @@ def build_megatron_mimo_model(
     _set_per_module_random_seeds(infra, seed=seed)
 
     logger.info("Rank %d: Building distributed MIMO model", dist.get_rank())
-    model_list = provider.provide_distributed_model(
-        ddp_config=ddp_config,
-        fp16=fp16,
-        bf16=bf16,
-        wrap_with_ddp=wrap_with_ddp,
-        data_parallel_random_init=data_parallel_random_init,
-    )
+    if builder is not None:
+        model_list = builder.build_distributed_models(
+            ddp_config=ddp_config,
+            fp16=fp16,
+            bf16=bf16,
+            wrap_with_ddp=wrap_with_ddp,
+            data_parallel_random_init=data_parallel_random_init,
+            infra=infra,
+        )
+    else:
+        with model_config._reuse_infra(infra), _suppress_provider_build_deprecation_warnings():
+            model_list = model_config.provide_distributed_model(
+                ddp_config=ddp_config,
+                fp16=fp16,
+                bf16=bf16,
+                wrap_with_ddp=wrap_with_ddp,
+                data_parallel_random_init=data_parallel_random_init,
+            )
     mimo_model = model_list[0]
 
     active_module_name, local_pg_collection = get_active_module_pg(infra)

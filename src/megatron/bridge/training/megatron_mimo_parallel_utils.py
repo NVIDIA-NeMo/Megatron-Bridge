@@ -25,7 +25,7 @@ from megatron.core.distributed.finalize_model_grads import finalize_model_grads 
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
+from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
 
 
 if TYPE_CHECKING:

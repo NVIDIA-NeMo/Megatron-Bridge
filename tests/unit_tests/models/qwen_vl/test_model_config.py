@@ -24,6 +24,7 @@ from megatron.bridge.models.qwen_vl.model_config import (
     Qwen25VLModelConfig,
     Qwen35VLModelBuilder,
     Qwen35VLModelConfig,
+    build_qwen35_mimo_modality_specs,
 )
 from megatron.bridge.models.qwen_vl.qwen25_vl_bridge import Qwen25VLBridge
 
@@ -302,6 +303,49 @@ def test_qwen2_audio_builder_passes_outer_config_without_transformer_copy(monkey
     assert type(config.transformer) is TransformerConfig
     assert "audio_token_id" not in config.transformer.__dict__
     assert "pad_token_id" not in config.transformer.__dict__
+
+
+@pytest.mark.unit
+def test_qwen35_mimo_modality_spec_uses_exact_mcore_transformer(monkeypatch):
+    vision_config = SimpleNamespace(
+        depth=2,
+        hidden_size=16,
+        num_heads=2,
+        intermediate_size=32,
+        patch_size=2,
+        temporal_patch_size=2,
+        in_channels=3,
+        spatial_merge_size=2,
+        num_position_embeddings=16,
+        out_hidden_size=16,
+        deepstack_visual_indexes=[],
+    )
+    config = Qwen35VLModelConfig(
+        transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+        vocab_size=32,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.qwen_vl.model_config._vision_config_from_dict",
+        lambda *args: vision_config,
+    )
+
+    specs = build_qwen35_mimo_modality_specs(config)
+    encoder_spec = specs["images"].submodules["encoders"]["qwen_visual"]
+    transformer = encoder_spec.params["transformer_config"]
+
+    assert type(transformer) is TransformerConfig
+    assert encoder_spec.params["vision_config"] is vision_config
+    for family_field in (
+        "patch_size",
+        "temporal_patch_size",
+        "in_channels",
+        "spatial_merge_size",
+        "num_position_embeddings",
+        "out_hidden_size",
+        "deepstack_visual_indexes",
+        "apply_rotary_pos_emb_in_fp32",
+    ):
+        assert family_field not in transformer.__dict__
 
 
 @pytest.mark.unit

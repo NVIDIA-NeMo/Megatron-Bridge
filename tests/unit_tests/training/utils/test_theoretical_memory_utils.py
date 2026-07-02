@@ -68,10 +68,16 @@ def _make_config(**model_overrides):
 
 
 def _mock_megatron_mimo_provider(monkeypatch):
+    model_config_module_name = "megatron.bridge.models.megatron_mimo.model_config"
+    model_config_module = ModuleType(model_config_module_name)
+    model_config_module.MegatronMIMOModelConfig = type("MegatronMIMOModelConfig", (), {})
+    monkeypatch.setitem(sys.modules, model_config_module_name, model_config_module)
+
     module_name = "megatron.bridge.models.megatron_mimo.megatron_mimo_provider"
     module = ModuleType(module_name)
     module.MegatronMIMOProvider = type("MegatronMIMOProvider", (), {})
     monkeypatch.setitem(sys.modules, module_name, module)
+    return model_config_module.MegatronMIMOModelConfig, module.MegatronMIMOProvider
 
 
 @pytest.mark.unit
@@ -189,3 +195,14 @@ def test_report_theoretical_memory_uses_structured_estimate(monkeypatch, capsys)
     assert "Theoretical memory footprints: weight and optimizer=0.03 MB" in captured.out
     assert "activation=0.02 MB" in captured.out
     assert "total=0.05 MB" in captured.out
+
+
+@pytest.mark.unit
+def test_report_theoretical_memory_skips_builder_backed_mimo(monkeypatch, capsys):
+    model_config_class, _ = _mock_megatron_mimo_provider(monkeypatch)
+    config = _make_config()
+    config.model = model_config_class()
+
+    report_theoretical_memory(config, num_microbatches=4)
+
+    assert capsys.readouterr().out == ""

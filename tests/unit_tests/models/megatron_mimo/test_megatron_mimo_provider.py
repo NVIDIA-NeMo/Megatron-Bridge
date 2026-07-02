@@ -3,6 +3,7 @@
 
 from unittest.mock import MagicMock, Mock, patch
 
+import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.megatron_mimo import (
@@ -178,7 +179,10 @@ class TestMegatronMIMOProvider:
         mock_model_instance = MagicMock()
         mock_mimo_model.return_value = mock_model_instance
 
-        result = provider.provide()
+        with pytest.warns(DeprecationWarning, match=r"provide\(\) is deprecated") as warnings:
+            result = provider.provide()
+
+        assert len(warnings) == 1
 
         assert result == mock_model_instance
 
@@ -208,7 +212,10 @@ class TestMegatronMIMOProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         provider = MegatronMIMOProvider(language_model_spec=language_spec)
 
-        infra = provider.build_infra()
+        with pytest.warns(DeprecationWarning, match=r"build_infra\(\) is deprecated") as warnings:
+            infra = provider.build_infra()
+
+        assert len(warnings) == 1
 
         # Should return infrastructure with auto-derived topology
         assert isinstance(infra, MegatronMIMOInfra)
@@ -488,8 +495,6 @@ class TestMegatronMIMOProvider:
         language_spec = ModuleSpec(module=Mock, params={"config": Mock()})
         provider = MegatronMIMOProvider(language_model_spec=language_spec)
 
-        import pytest
-
         with pytest.raises(NotImplementedError, match="MegatronMIMO does not use global model parallelism"):
             provider.initialize_model_parallel(seed=42)
         with pytest.raises(NotImplementedError, match="MegatronMIMO does not use global model parallelism"):
@@ -522,10 +527,40 @@ class TestMegatronMIMOProvider:
         mock_get_config.return_value = mock_config
 
         # No parallelism config means no DDP wrapping needed
-        provider.provide_distributed_model(wrap_with_ddp=False)
+        with pytest.warns(DeprecationWarning, match=r"provide_distributed_model\(\) is deprecated") as warnings:
+            provider.provide_distributed_model(wrap_with_ddp=False)
+
+        assert len(warnings) == 1
 
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
+
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.MimoModel")
+    @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.get_model_config")
+    def test_distributed_build_preserves_and_reuses_infra_override(self, mock_get_config, mock_mimo_model):
+        """Deprecated distributed builds call a subclass infra override only once."""
+        infra = MagicMock()
+        model = MagicMock()
+        calls = []
+
+        class OverrideProvider(MegatronMIMOProvider):
+            def build_infra(self):
+                calls.append("build_infra")
+                return infra
+
+        provider = OverrideProvider(
+            language_model_spec=ModuleSpec(module=Mock, params={"config": Mock()}),
+            bf16=False,
+        )
+        mock_mimo_model.return_value = model
+        mock_get_config.return_value = MagicMock(variable_seq_lengths=False)
+
+        with pytest.warns(DeprecationWarning, match=r"provide_distributed_model\(\) is deprecated") as warnings:
+            result = provider.provide_distributed_model(wrap_with_ddp=False)
+
+        assert len(warnings) == 1
+        assert result == [model]
+        assert calls == ["build_infra"]
 
 
 class TestMegatronMIMOInfra:

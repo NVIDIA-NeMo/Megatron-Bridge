@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 """MegatronMIMO-specific setup for heterogeneous multi-module training.
 
 This module provides the setup logic for MegatronMIMO training, mirroring the standard
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from megatron.core.optimizer.optimizer_param_scheduler import OptimizerParamScheduler
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection, ProcessGroupCollection
 
-    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
+    from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
 
 
 logger = logging.getLogger(__name__)
@@ -115,7 +115,7 @@ def _update_megatron_mimo_model_config_funcs(
 
     assert model_config.variable_seq_lengths, (
         "variable_seq_lengths must be True for MegatronMIMO training. "
-        "This should be set by MegatronMIMOProvider.provide_distributed_model()."
+        "This should be set by the MegatronMIMO model builder."
     )
 
 
@@ -126,7 +126,7 @@ def setup_megatron_mimo(
     """MegatronMIMO-specific setup helper.
 
     This function sets up all components needed for MegatronMIMO training:
-    - Builds distributed model via ``cfg.model`` (an ``MegatronMIMOProvider``)
+    - Builds a distributed model from ``cfg.model`` (normally a ``MegatronMIMOModelConfig``)
     - Builds MegatronMIMO infrastructure (grids, topology, pg_collections)
     - Creates MultiModulePipelineCommunicator
     - Creates MimoOptimizer and per-module LR schedulers
@@ -135,9 +135,10 @@ def setup_megatron_mimo(
     - Validates configuration
 
     Args:
-        state: GlobalState with ``state.cfg`` already set.  ``state.cfg.model``
-            must be an ``MegatronMIMOProvider``.  ``state.cfg.optimizer`` is used to
-            create the optimizer.
+        state: GlobalState with ``state.cfg`` already set. ``state.cfg.model`` should
+            be a ``MegatronMIMOModelConfig``; legacy ``MegatronMIMOProvider`` values
+            remain supported with a deprecation warning. ``state.cfg.optimizer`` is
+            used to create the optimizer.
         build_data_iterators_fn: Optional function to build data iterators.
             Should have signature: (cfg, megatron_mimo_infra) -> (train_iter, valid_iter)
 
@@ -164,15 +165,15 @@ def setup_megatron_mimo(
 
     # Build the distributed MIMO model + infra. This single call replaces
     # the previously-inlined finalize / build_infra / validate-no-stub /
-    # set-per-module-seeds / provide_distributed_model / parallel_state-bridge
+    # set-per-module-seeds / distributed model build / parallel_state-bridge
     # sequence. The same helper is the entry point for the conversion CLI,
     # which is why it lives under ``models/megatron_mimo`` rather than
     # inside this training-setup module.
     from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
 
-    megatron_mimo_provider = cfg.model
+    model_config = cfg.model
     model, megatron_mimo_infra = build_megatron_mimo_model(
-        megatron_mimo_provider,
+        model_config,
         ddp_config=cfg.ddp,
         fp16=getattr(cfg.model, "fp16", False),
         bf16=getattr(cfg.model, "bf16", True),
@@ -217,7 +218,7 @@ def setup_megatron_mimo(
     if megatron_mimo_infra.module_to_grid_map:
         assert unwrapped_model.mimo_config.module_to_grid_map is not None, (
             "MimoModelConfig.module_to_grid_map must be set at model construction time. "
-            "Ensure MegatronMIMOProvider.provide() passes module_to_grid_map for MegatronMIMO parallelism."
+            "Ensure the MegatronMIMO model builder passes module_to_grid_map for heterogeneous parallelism."
         )
 
     logger.info(f"Rank {dist.get_rank()}: Creating MimoOptimizer")

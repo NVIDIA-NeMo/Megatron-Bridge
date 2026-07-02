@@ -38,11 +38,12 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.data.megatron_mimo.mock_provider import MockMegatronMIMOProvider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
 )
-from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.megatron_mimo.model_config import MegatronMIMOModelConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -153,6 +154,43 @@ def _build_model_specs(deterministic: bool = False):
     return language_model_spec, {"vision": vision_submodule_spec}, {"vision": _SPECIAL_TOKEN_ID}
 
 
+def _test_language_spec_builder(config: BridgeGPTModelConfig, *, pp_rank: int = 0) -> ModuleSpec:
+    """Build the tiny language spec from a serializable source config."""
+    del pp_rank
+    language_spec, _, _ = _build_model_specs(deterministic=not config.transformer.bf16)
+    language_spec.params = dict(language_spec.params or {})
+    language_spec.params["config"] = config.transformer
+    return language_spec
+
+
+def _test_modality_spec_builder(config: BridgeGPTModelConfig) -> dict[str, ModuleSpec]:
+    """Build the tiny vision specs from a serializable source config."""
+    _, modality_specs, _ = _build_model_specs(deterministic=not config.transformer.bf16)
+    return modality_specs
+
+
+def _build_mimo_model_config(
+    parallelism_config: MegatronMIMOParallelismConfig,
+    *,
+    deterministic: bool,
+) -> MegatronMIMOModelConfig:
+    source_config = BridgeGPTModelConfig(
+        transformer=_make_language_config(deterministic=deterministic),
+        vocab_size=_VOCAB_SIZE,
+        seq_length=_SEQ_LENGTH,
+    )
+    return MegatronMIMOModelConfig(
+        source_model_config=source_config,
+        megatron_mimo_parallelism_config=parallelism_config,
+        language_spec_builder=f"{__name__}._test_language_spec_builder",
+        modality_spec_builder=f"{__name__}._test_modality_spec_builder",
+        modality_keys={"vision": "vision"},
+        special_token_ids={"vision": _SPECIAL_TOKEN_ID},
+        topology={"vision": ["language"], "language": []},
+        bf16=not deterministic,
+    )
+
+
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
 
@@ -245,13 +283,11 @@ def _build_data_iterators(cfg, megatron_mimo_infra, *, train_state=None):
         train_samples=max(train_samples, 100),
         valid_samples=0,
         test_samples=0,
+        grids=megatron_mimo_infra.module_to_grid_map,
     )
 
     # Match the vision encoder's compute dtype (fp32 under --deterministic, bf16 otherwise).
-    vision_cfg = (
-        cfg.model.modality_submodules_spec["vision"].submodules["encoders"]["clip"].params["transformer_config"]
-    )
-    vision_dtype = torch.bfloat16 if vision_cfg.bf16 else torch.float32
+    vision_dtype = torch.bfloat16 if cfg.model.source_model_config.transformer.bf16 else torch.float32
     train_iter = _wrap_iter(train_loader, vision_dtype=vision_dtype) if train_loader is not None else None
     return train_iter, None
 
@@ -264,21 +300,7 @@ def _build_config(
     train_iters: int = _TRAIN_ITERS,
     deterministic: bool = False,
 ) -> ConfigContainer:
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(deterministic=deterministic)
-
-    megatron_mimo_provider = MegatronMIMOProvider(
-        language_model_spec=language_model_spec,
-        modality_submodules_spec=modality_submodules_spec,
-        special_token_ids=special_token_ids,
-        megatron_mimo_parallelism_config=parallelism_config,
-        topology={"vision": ["language"], "language": []},
-        # MegatronMIMOProvider casts the whole model via .bfloat16() after build,
-        # overriding per-submodule TransformerConfig dtypes — flip it off in
-        # deterministic mode so the model stays fp32.
-        bf16=not deterministic,
-    )
-    if not hasattr(megatron_mimo_provider, "num_moe_experts"):
-        megatron_mimo_provider.num_moe_experts = None
+    model_config = _build_mimo_model_config(parallelism_config, deterministic=deterministic)
 
     train_cfg = TrainingConfig(
         micro_batch_size=1,
@@ -295,7 +317,7 @@ def _build_config(
 
     cfg = ConfigContainer(
         train=train_cfg,
-        model=megatron_mimo_provider,
+        model=model_config,
         optimizer=opt_config,
         scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
         dataset=_build_mock_data_provider(),
@@ -382,6 +404,7 @@ def _build_tracing_data_iterators(cfg, megatron_mimo_infra, *, train_state=None)
         train_samples=max(train_samples, 100),
         valid_samples=0,
         test_samples=0,
+        grids=megatron_mimo_infra.module_to_grid_map,
     )
     train_iter = _tracing_wrap_iter(train_loader) if train_loader is not None else None
     return train_iter, None
@@ -417,17 +440,7 @@ def _build_resume_config(
     Mirrors ``_build_config`` but wires the save/load directory into
     ``CheckpointConfig`` and uses the traceable mock data provider.
     """
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs()
-
-    megatron_mimo_provider = MegatronMIMOProvider(
-        language_model_spec=language_model_spec,
-        modality_submodules_spec=modality_submodules_spec,
-        special_token_ids=special_token_ids,
-        megatron_mimo_parallelism_config=parallelism_config,
-        topology={"vision": ["language"], "language": []},
-    )
-    if not hasattr(megatron_mimo_provider, "num_moe_experts"):
-        megatron_mimo_provider.num_moe_experts = None
+    model_config = _build_mimo_model_config(parallelism_config, deterministic=False)
 
     train_cfg = TrainingConfig(
         micro_batch_size=1,
@@ -456,7 +469,7 @@ def _build_resume_config(
 
     return ConfigContainer(
         train=train_cfg,
-        model=megatron_mimo_provider,
+        model=model_config,
         optimizer=opt_config,
         scheduler=SchedulerConfig(start_weight_decay=0.0, end_weight_decay=0.0),
         dataset=_build_traceable_mock_provider(),
@@ -498,7 +511,7 @@ class TestMegatronMIMOTraining:
             pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
 
         # Monkey-patch: report_theoretical_memory crashes on MegatronMIMO models
-        # because cfg.model is MegatronMIMOProvider (no kv_channels).
+        # because heterogeneous MIMO configs do not have one global kv_channels value.
         import megatron.bridge.training.utils.train_utils as _tu
 
         _tu.report_theoretical_memory = lambda *a, **kw: None

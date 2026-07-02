@@ -56,7 +56,7 @@ if TYPE_CHECKING:
     from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
-    from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
+    from megatron.bridge.models.megatron_mimo.infra import MegatronMIMOInfra
 
 
 logger = logging.getLogger(__name__)
