@@ -22,18 +22,26 @@
 #
 
 import importlib
+import inspect
 from typing import Callable
 
 import pytest
 
 
 _qwen3_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen3_vl")
+_qwen3_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen3_vl")
 
-# Pretrain mock configs (accept **user_kwargs)
+# Pretrain mock configs (parameterless fixed configs)
 _QWEN3_VL_PRETRAIN_MOCK_FUNCS = [
     _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config,
     _qwen3_vl_module.qwen3_vl_30b_a3b_pretrain_mock_config,
     _qwen3_vl_module.qwen3_vl_235b_a22b_pretrain_mock_config,
+]
+
+_QWEN3_VL_H100_PRETRAIN_MOCK_FUNCS = [
+    _qwen3_vl_h100_module.qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config,
+    _qwen3_vl_h100_module.qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config,
+    _qwen3_vl_h100_module.qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config,
 ]
 
 # SFT configs (parameterless)
@@ -93,6 +101,15 @@ class _FakeAutoBridge:
     def to_megatron_provider(self, load_weights: bool = False):
         """Return a fake model config."""
         return _FakeModelCfg()
+
+
+@pytest.mark.parametrize(
+    "recipe_func",
+    _QWEN3_VL_PRETRAIN_MOCK_FUNCS + _QWEN3_VL_H100_PRETRAIN_MOCK_FUNCS + _QWEN3_VL_SFT_FUNCS,
+)
+def test_qwen3_vl_fixed_recipe_entry_points_are_parameterless(recipe_func: Callable):
+    """Qwen3-VL fixed recipe entry points should not accept overrides."""
+    assert not inspect.signature(recipe_func).parameters
 
 
 def _assert_basic_config(cfg):
@@ -689,17 +706,16 @@ def test_qwen3_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     assert cfg.ddp.use_distributed_optimizer is True
 
 
-def test_qwen3_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyPatch):
-    """Test that user kwargs properly override recommended defaults."""
+def test_qwen3_vl_pretrain_mock_overrides_after_instantiation(monkeypatch: pytest.MonkeyPatch):
+    """Test that callers can override fixed pretrain configs after instantiation."""
     monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config(
-        train_iters=1000,
-        global_batch_size=16,
-        micro_batch_size=1,
-        lr=1e-4,
-        seq_length=2048,
-    )
+    cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 1
+    cfg.optimizer.lr = 1e-4
+    cfg.model.seq_length = 2048
 
     _assert_basic_config(cfg)
 
@@ -708,14 +724,6 @@ def test_qwen3_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyP
     assert cfg.train.micro_batch_size == 1
     assert cfg.optimizer.lr == 1e-4
     assert cfg.model.seq_length == 2048
-
-
-def test_qwen3_vl_pretrain_mock_non_mock_raises(monkeypatch: pytest.MonkeyPatch):
-    """Test that mock=False raises ValueError since real datasets are not yet supported."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    with pytest.raises(ValueError, match="Non-mock dataset not yet supported"):
-        _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config(mock=False)
 
 
 def test_qwen3_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatch):

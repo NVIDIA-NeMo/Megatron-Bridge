@@ -101,6 +101,19 @@ class _FakeBridge:
         return _FakeBridge()
 
 
+@pytest.fixture(autouse=True)
+def _patch_llama_autobridge(monkeypatch: pytest.MonkeyPatch):
+    for module_name in [
+        "megatron.bridge.recipes.llama.llama2",
+        "megatron.bridge.recipes.llama.llama3",
+        "megatron.bridge.recipes.llama.h100.llama2",
+        "megatron.bridge.recipes.llama.h100.llama3",
+    ]:
+        mod = importlib.import_module(module_name)
+        if hasattr(mod, "AutoBridge"):
+            monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+
+
 def _apply_test_overrides(cfg, name: str):
     """Apply test-friendly overrides to a config after creation."""
     lname = name.lower()
@@ -511,6 +524,28 @@ def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch)
     assert cfg.mixed_precision.first_last_layers_bf16 is True
     assert cfg.mixed_precision.num_layers_at_start_in_bf16 == 0
     assert cfg.mixed_precision.num_layers_at_end_in_bf16 == 4
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "llama3_8b_pretrain_2gpu_h100_fp8cs_config",
+        "llama3_8b_pretrain_2gpu_h100_fp8mx_config",
+        "llama3_8b_pretrain_2gpu_h100_nvfp4_config",
+    ],
+)
+def test_llama3_8b_h100_low_precision_defaults(recipe_name: str):
+    h100_module = importlib.import_module("megatron.bridge.recipes.llama.h100")
+    recipe_func = getattr(h100_module, recipe_name)
+
+    assert recipe_name in h100_module.__all__
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 768
 
 
 @pytest.mark.parametrize(

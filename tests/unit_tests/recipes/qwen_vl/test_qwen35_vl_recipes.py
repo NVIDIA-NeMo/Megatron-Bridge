@@ -21,6 +21,7 @@
 #
 
 import importlib
+import inspect
 from typing import Callable
 
 import pytest
@@ -28,14 +29,23 @@ import torch
 
 
 _qwen35_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen35_vl")
-_qwen3_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen3_vl")
+_qwen35_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen35_vl")
 
-# Pretrain mock configs (accept **user_kwargs, delegate to _qwen3_vl_common)
+# Pretrain mock configs (parameterless fixed configs)
 _QWEN35_VL_PRETRAIN_MOCK_FUNCS = [
     _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config,
+    _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config,
+]
+
+_QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS = [
+    _qwen35_vl_h100_module.qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config,
+    _qwen35_vl_h100_module.qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config,
+    _qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config,
+    _qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config,
 ]
 
 # SFT configs (parameterless)
@@ -51,7 +61,19 @@ _QWEN35_VL_SFT_FUNCS = [
     _qwen35_vl_module.qwen35_vl_397b_a17b_sft_config,
 ]
 
-# PEFT configs (take peft_scheme parameter)
+_QWEN35_VL_H100_SFT_FUNCS = [
+    _qwen35_vl_h100_module.qwen35_vl_800m_sft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_2b_sft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_4b_sft_2gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_9b_sft_4gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_27b_sft_16gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config,
+    _qwen35_vl_h100_module.qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config,
+]
+
+# PEFT configs (fixed LoRA recipes)
 _QWEN35_VL_PEFT_FUNCS = [
     _qwen35_vl_module.qwen35_vl_800m_peft_config,
     _qwen35_vl_module.qwen35_vl_2b_peft_config,
@@ -61,6 +83,17 @@ _QWEN35_VL_PEFT_FUNCS = [
     _qwen35_vl_module.qwen35_vl_35b_a3b_peft_config,
     _qwen35_vl_module.qwen35_vl_122b_a10b_peft_config,
     _qwen35_vl_module.qwen35_vl_397b_a17b_peft_config,
+]
+
+_QWEN35_VL_H100_PEFT_FUNCS = [
+    _qwen35_vl_h100_module.qwen35_vl_800m_peft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_2b_peft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_4b_peft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_9b_peft_1gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_27b_peft_2gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config,
+    _qwen35_vl_h100_module.qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config,
 ]
 
 
@@ -173,23 +206,29 @@ def test_each_qwen35_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
 
 
 # ---------------------------------------------------------------------------
-# PEFT schemes
+# Recipe API shape
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("recipe_func", _QWEN35_VL_PEFT_FUNCS)
-@pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
-def test_qwen35_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
-    """Test that different PEFT schemes are correctly applied for Qwen3.5-VL models."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+@pytest.mark.parametrize(
+    "recipe_func",
+    _QWEN35_VL_PRETRAIN_MOCK_FUNCS
+    + _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS
+    + _QWEN35_VL_SFT_FUNCS
+    + _QWEN35_VL_H100_SFT_FUNCS
+    + _QWEN35_VL_PEFT_FUNCS
+    + _QWEN35_VL_H100_PEFT_FUNCS,
+)
+def test_qwen35_vl_recipe_entry_points_are_parameterless(recipe_func: Callable):
+    """Qwen3.5-VL public recipe entry points should be fixed configs."""
+    assert not inspect.signature(recipe_func).parameters
 
-    cfg = recipe_func(peft_scheme=peft_scheme)
 
-    _assert_basic_config(cfg)
-
-    assert cfg.peft is not None
-    assert hasattr(cfg.peft, "dim")
-    assert hasattr(cfg.peft, "alpha")
+def test_qwen35_vl_h100_module_has_no_parameterized_recipe_helpers():
+    """Qwen3.5-VL H100 recipes should be flattened rather than built through private templates."""
+    assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_apply_common")
+    assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_apply_moe")
+    assert not hasattr(_qwen35_vl_h100_module, "_qwen35_vl_enable_recompute")
 
 
 # ---------------------------------------------------------------------------
@@ -339,30 +378,16 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """27B LoRA should have correct default parallelism and learning rate."""
     monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen35_vl_module.qwen35_vl_27b_peft_config(peft_scheme="lora")
+    cfg = _qwen35_vl_module.qwen35_vl_27b_peft_config()
 
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.pipeline_dtype is None
     assert cfg.peft is not None
     assert cfg.peft.dim == 32
     assert cfg.peft.alpha == 32
     assert cfg.optimizer.lr == 1e-4
-
-
-def test_qwen35_vl_27b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
-    """27B DoRA should have correct default parallelism and learning rate."""
-    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _qwen35_vl_module.qwen35_vl_27b_peft_config(peft_scheme="dora")
-
-    _assert_basic_config(cfg)
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 64
 
 
 # ---------------------------------------------------------------------------
@@ -380,7 +405,7 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 16
-    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.pipeline_dtype is None
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.moe_grouped_gemm is True
@@ -464,7 +489,7 @@ def test_qwen35_vl_122b_a10b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.pipeline_dtype is None
     assert cfg.peft is not None
     assert cfg.optimizer.lr == 2e-4
 
@@ -502,7 +527,7 @@ def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.expert_model_parallel_size == 32
     assert cfg.peft is not None
     assert cfg.optimizer.lr == 2e-4
-    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.pipeline_dtype is None
 
 
 # ---------------------------------------------------------------------------
@@ -677,14 +702,12 @@ def test_qwen35_vl_memory_saving_defaults(monkeypatch: pytest.MonkeyPatch):
 # =============================================================================
 # Qwen3.5-VL Pretrain Mock Config Tests
 # =============================================================================
-# Pretrain configs delegate to _qwen3_vl_common (from qwen3_vl module), so
-# AutoBridge must be patched in the qwen3_vl module where it's called.
 
 
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
 def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3.5-VL pretrain mock recipe builds a valid ConfigContainer."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -704,7 +727,7 @@ def test_each_qwen35_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable
 @pytest.mark.parametrize("recipe_func", _QWEN35_VL_PRETRAIN_MOCK_FUNCS)
 def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock configs use MockVLMConversationProvider."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -715,7 +738,7 @@ def test_qwen35_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkey
 
 def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 9B pretrain mock has correct default parallelism."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -733,9 +756,23 @@ def test_qwen35_vl_9b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.mixed_precision == "bf16_mixed"
 
 
+def test_qwen35_vl_27b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that 27B pretrain mock has correct default parallelism."""
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config()
+
+    _assert_basic_config(cfg)
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 4
+    assert cfg.model.pipeline_dtype is not None
+    assert cfg.model.expert_model_parallel_size == 1
+
+
 def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 35B-A3B pretrain mock has correct MoE parallelism."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config()
 
@@ -750,7 +787,7 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
 
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 122B-A10B pretrain mock has correct large MoE parallelism."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config()
 
@@ -766,7 +803,7 @@ def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
 
 def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 397B-A17B pretrain mock has correct large MoE parallelism."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config()
 
@@ -782,7 +819,7 @@ def test_qwen35_vl_397b_a17b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPa
 
 def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock DDP config is correctly set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -793,16 +830,15 @@ def test_qwen35_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     assert cfg.ddp.use_distributed_optimizer is True
 
 
-def test_qwen35_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyPatch):
-    """Test that user kwargs properly override recommended defaults."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_qwen35_vl_pretrain_mock_overrides_after_instantiation(monkeypatch: pytest.MonkeyPatch):
+    """Test that callers can override fixed pretrain configs after instantiation."""
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config(
-        train_iters=500,
-        global_batch_size=8,
-        micro_batch_size=1,
-        lr=1e-5,
-    )
+    cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
+    cfg.train.train_iters = 500
+    cfg.train.global_batch_size = 8
+    cfg.train.micro_batch_size = 1
+    cfg.optimizer.lr = 1e-5
 
     _assert_basic_config(cfg)
 
@@ -814,7 +850,7 @@ def test_qwen35_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.Monkey
 
 def test_qwen35_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock checkpoint config is correctly set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 
@@ -825,7 +861,7 @@ def test_qwen35_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPat
 
 def test_qwen35_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock RNG seed is set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config()
 

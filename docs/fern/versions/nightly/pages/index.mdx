@@ -132,14 +132,14 @@ Training quickstart using pre-configured recipes:
 
 ```python
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama32_1b_pretrain_1gpu_h100_bf16_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
     # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
     # This is random-init pretraining and does not require a converted Megatron checkpoint.
-    cfg = llama32_1b_pretrain_config()
+    cfg = llama32_1b_pretrain_1gpu_h100_bf16_config()
 
     # The recipe already sets cfg.model internally using this pattern.
     # Override cfg.model to choose a different Hugging Face model ID as the architecture source.
