@@ -25,9 +25,9 @@ index details:
 
 1. **Library recipes** under `src/megatron/bridge/recipes/` are for functional
    training and use `scripts/training/run_recipe.py`.
-2. **Performance recipes** under `scripts/performance/` are for upper-bound
-   throughput benchmarks. They use mock data and should not be presented as
-   production training recipes.
+2. **Performance recipes** under `src/megatron/bridge/perf_recipes/` are for
+   upper-bound throughput benchmarks. They use mock data and should not be
+   presented as production training recipes.
 3. For a first-time Bridge smoke test, recommend `llama3_8b_sft_config` with
    mock data via `--dataset llm-pretrain-mock`. Do not use `llm-finetune` for
    the setup-only tryout unless the user specifically asks for an SFT data path.
@@ -66,10 +66,12 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ### Performance recipes (throughput benchmarks)
 
 ```bash
-python scripts/performance/run_script.py \
-    --recipe <model_family> \
-    --gpu_type h100 \
+uv run python scripts/performance/setup_experiment.py \
+    --model_family_name <model_family> \
+    --model_recipe_name <model_recipe_name> \
     --num_gpus 64 \
+    --gpu h100 \
+    --compute_dtype bf16 \
     --data mock
 ```
 
@@ -77,26 +79,51 @@ See the Performance Recipe Index for important caveats before using these for an
 
 ---
 
-## Recipe Unification (Coming Soon — PR #2803)
+## Recipe Authoring Contract
 
-PR [#2803](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2803) is
-unifying performance recipes into the same **Python function** format used by
-library recipes. Key changes:
+When creating, reviewing, or refactoring recipes, enforce the same flattened
+contract for library and performance recipe functions:
 
-- Perf recipes move from `scripts/performance/configs/` → `src/megatron/bridge/recipes/<family>/<model>_perf.py`
-- Each perf recipe becomes a **self-contained Python function** (e.g. `llama3_8b_h100_bf16_pretrain_config()`)
-- The old `WorkloadBaseConfig` → `set_workload_base_configs` → `get_perf_optimized_recipe` pipeline is removed
-- Shared helpers: `_benchmark_common()` (50 iters, timing, TE RNG), `_perf_precision()` (bf16 / fp8_cs / fp8_mx / nvfp4)
+- A `*_config` recipe returns one concrete `ConfigContainer` preset and should
+  behave like a checked-in YAML config.
+- Recipe functions take no arguments. The only exception is `peft_scheme` on
+  PEFT recipes.
+- Do not add `*args`, `**kwargs`, `hf_path`, `seq_length`, tokenizer path,
+  dataset path, freeze flags, parallelism, precision, packing, or profiling
+  knobs to recipe signatures.
+- Do not branch inside a recipe based on optional args or environment state.
+  Create separately named variants instead.
+- Encode stable variants in the recipe name, such as hardware, GPU count, dtype,
+  sequence length, dataset/packing variant, or freeze policy.
+- Use `scripts/training/run_recipe.py` config overrides for user-specific paths
+  and local experiment changes.
+
+For MoE recipe sizing, assume `DP=1` when deriving the minimum GPU count:
+`max(TP * PP * CP, EP * PP * CP)`.
+
+---
+
+## Performance Recipe Format
+
+Performance recipes use the same flattened Python function contract as library
+recipes. Key points:
+
+- Perf recipes live under
+  `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`.
+- Each perf recipe is a self-contained Python function, for example
+  `deepseek_v3_pretrain_64gpu_h100_bf16_config()`.
+- The function name encodes model recipe, task, GPU count, hardware, precision,
+  and optional variant.
+- The legacy performance-config pipeline is deprecated and should not be
+  reintroduced.
+- Shared helpers such as `_benchmark_common()` and precision helpers may set
+  fixed common defaults, but recipe variant differences must remain visible in
+  the flattened recipe function.
 
 **Why Python, not YAML?** Previous YAML-based approaches had problems:
 recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
-
-After #2803 lands, both library and perf recipes will be invocable through the
-same `run_recipe.py` entry point.
-
----
 
 ## Library Recipe Index
 
@@ -230,8 +257,9 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ## Performance Recipe Index
 
-All perf recipes live under `scripts/performance/`. They are invoked via
-`run_script.py` and use `WorkloadBaseConfig` presets per GPU type.
+All perf recipes live under `src/megatron/bridge/perf_recipes/`. The Slurm/Kubeflow
+launcher is `scripts/performance/setup_experiment.py`; the in-container entry
+point is `scripts/performance/run_recipe.py`.
 
 > **Important:** Perf recipes are designed for **upper-bound throughput
 > benchmarks**, not production training. They run **50 iterations** on **mock
@@ -246,7 +274,7 @@ All perf recipes live under `scripts/performance/`. They are invoked via
 | Llama 3 70B | 64 | H100, B200, B300, GB200, GB300 | TP comm overlap (userbuffers), FSDP, CUDA graphs |
 | Llama 3.1 405B | 128–1024 | H100, B200, B300, GB200, GB300 | TP+CP comm overlap (userbuffers), FSDP, heavy PP/VP |
 
-SFT/LoRA variants also exist (e.g. 8B SFT with packed sequences, 70B SFT on 32 GPUs).
+SFT/PEFT variants also exist (e.g. 8B SFT with packed sequences, 70B SFT on 32 GPUs).
 
 ### DeepSeek V3
 
@@ -314,7 +342,7 @@ User wants to train a model
 │   └─ 128+ GPUs → 405B+, large MoE (DeepSeek V3, Kimi K2)
 │
 ├─ Want throughput benchmarks?
-│   ├─ Yes → Use perf recipes (scripts/performance/)
+│   ├─ Yes → Use perf recipes (`src/megatron/bridge/perf_recipes/`) through the performance launcher
 │   │   └─ ⚠️ These run on mock data for upper-bound perf only
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
 │
@@ -344,8 +372,9 @@ When the user's GPU count differs from the recipe default:
    copies and is essentially free.
 6. **CP requires all-to-all or ring attention.** Check `cp_comm_type`. For
    GQA models, `a2a+p2p` hierarchical CP allows CP > num_kv_heads.
-7. **world_size = DP × TP × PP × CP × EP.** DP is implicit. Make sure the
-   product of explicit parallelisms divides your total GPU count.
+7. **minimum model-parallel GPUs = max(TP × PP × CP, EP × PP × CP).**
+   DP uses any remaining ranks. Make sure this value divides your total GPU
+   count.
 
 ### Batch Size Tuning
 
@@ -409,11 +438,11 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 |---|---|---|
 | Try Bridge for the first time | `llama3_8b_sft_config` + mock data | 2 |
 | Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–8 |
-| LoRA on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
+| PEFT on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
-| Benchmark throughput | Perf recipes via `run_script.py` | Varies |
+| Benchmark throughput | Perf recipes via `scripts/performance/setup_experiment.py` | Varies |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |
 | VLM fine-tuning | `qwen3_vl_8b_sft_config` or `gemma3_vl_*_sft_config` | 4–8 |
 | Diffusion training | `wan_1_3B_pretrain_config` or `flux_12b_pretrain_config` | 8 |
@@ -428,7 +457,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Recipe `__init__.py` (all exports) | `src/megatron/bridge/recipes/__init__.py` |
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
-| Perf recipes root | `scripts/performance/` |
-| Perf entry point | `scripts/performance/run_script.py` |
-| Perf workload configs | `scripts/performance/configs/<family>/` |
+| Perf recipes root | `src/megatron/bridge/perf_recipes/` |
+| Perf launcher | `scripts/performance/setup_experiment.py` |
+| Perf in-container entry point | `scripts/performance/run_recipe.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |

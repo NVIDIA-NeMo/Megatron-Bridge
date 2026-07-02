@@ -16,7 +16,27 @@ src/megatron/bridge/recipes/<family>/
 
 ## Recipe Function Pattern
 
-Each model size gets dedicated functions for SFT, PEFT, and optionally pretrain:
+Recipes are declarative presets, similar in spirit to checked-in YAML configs.
+Each recipe function must construct one concrete config for one model, size,
+training mode, hardware class, dtype, and named variant.
+
+**Recipe contract:**
+- Do not add `*args`, `**kwargs`, or recipe constructor arguments such as
+  `hf_path`, `seq_length`, `tokenizer_path`, dataset path, parallelism, freeze
+  flags, precision, or packing controls.
+- The only allowed recipe function argument is `peft_scheme` on PEFT recipes.
+- Do not branch inside a recipe based on optional arguments or environment
+  conditions. If a setting differs, create a separate explicitly named recipe.
+- Encode stable variants in the function name, for example sequence length,
+  precision, hardware, GPU count, dataset/packing variant, or freeze policy.
+- Use runtime config overrides in `scripts/training/run_recipe.py` for user paths
+  and local experiment changes; do not make recipes accept those values.
+- Keep private helpers invariant. A helper can apply common fixed defaults, but
+  it should not accept variant-defining kwargs that hide differences between
+  recipes.
+
+Each model size gets dedicated flattened functions for SFT, PEFT, and optionally
+pretrain:
 
 ```python
 def <model>_<size>_sft_config() -> ConfigContainer:
@@ -84,9 +104,15 @@ VLM variants additionally set:
 - `NullTokenizer` (tokenization handled by processor)
 - DDP without overlap (for vision model compatibility)
 
+Do not implement VLM size or freeze-mode variants by passing values into a
+shared `_apply_common(...)` helper. Write each recipe body explicitly enough
+that the HF model, parallelism, freeze flags, sequence length, packing, and
+dataset defaults are visible in that function.
+
 ## Parallelism Guidelines
 
-**Constraint:** `max(TP*CP, EP) * PP` = minimum GPUs, with 8 GPUs per node.
+**Constraint:** assuming `DP=1`, minimum GPUs =
+`max(TP * PP * CP, EP * PP * CP)`, with 8 GPUs per node.
 
 | Model Size | TP | PP | EP | CP | Notes |
 |-----------|----|----|----|----|-------|
@@ -156,7 +182,7 @@ RECIPES = [
 ]
 
 PEFT_RECIPES = [
-    (partial(model_size_peft_config, peft="lora"), "model_size_peft", {}, {}),
+    (model_size_peft_config, "model_size_peft", {}, {}),
 ]
 ```
 
