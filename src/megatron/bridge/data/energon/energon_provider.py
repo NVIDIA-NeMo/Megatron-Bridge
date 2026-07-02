@@ -46,6 +46,8 @@ class EnergonProvider(DatasetProvider):
     def _sync_task_encoder_sequence_batching(self) -> None:
         if self.task_encoder is None:
             return
+        if hasattr(self.task_encoder, "seq_length"):
+            self.task_encoder.seq_length = self.seq_length
         self.task_encoder.pad_to_max_length = self.pad_to_max_length
         self.task_encoder.pad_to_multiple_of = self.pad_to_multiple_of
         self.task_encoder.enable_in_batch_packing = (
