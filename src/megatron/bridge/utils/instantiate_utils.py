@@ -103,6 +103,13 @@ _DISALLOWED_TARGETS: set[str] = {
     },
 }
 
+_DISALLOWED_CALLABLE_FIELD_NAMES: set[str] = {
+    "collate_impl",
+    "hf_filter_lambda",
+    "preprocess_fn",
+    "process_example_fn",
+}
+
 
 # Mirror Bridge's allowlist into the MLM `target_allowlist` singleton, which is
 # the source of truth consulted by `_validate_target_prefix` below. MLM's
@@ -136,8 +143,14 @@ def register_allowed_target_prefix(prefix: str) -> None:
     target_allowlist.add_prefix(_as_module_prefix(prefix))
 
 
-def _validate_target_prefix(*, target: str, full_key: str) -> None:
+def _validate_target_prefix(*, target: str, full_key: str | int) -> None:
     """Validate that a _target_ string is permitted by Bridge hardening rules."""
+    field_name = full_key.rsplit(".", 1)[-1] if isinstance(full_key, str) else ""
+    if field_name in _DISALLOWED_CALLABLE_FIELD_NAMES:
+        raise InstantiationException(
+            f"Instantiation of '{target}' is not allowed for callable config field '{full_key}'. "
+            "Use a registered symbolic option or pass a Python callable from trusted application code."
+        )
     if target in _DISALLOWED_TARGETS:
         raise InstantiationException(
             f"Instantiation of '{target}' is not allowed because it can bypass target validation."
@@ -161,7 +174,7 @@ def _validate_target_prefix(*, target: str, full_key: str) -> None:
 
 def _resolve_target(
     target: str | type | Callable[..., Any],
-    full_key: str,
+    full_key: str | int,
     check_callable: bool = True,
 ) -> type | Callable[..., Any] | object:
     """Resolve target string, type, or callable after Bridge validation."""

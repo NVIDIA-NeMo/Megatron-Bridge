@@ -59,11 +59,12 @@ class HFEnergonBatch(Batch):
     position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     visual_inputs: GenericVisualInputs | None = None
     attention_mask: torch.Tensor | None = None
-    cu_seqlens: torch.Tensor | None = None
-    cu_seqlens_unpadded: torch.Tensor | None = None
-    cu_seqlens_argmin: torch.Tensor | None = None
-    cu_seqlens_unpadded_argmin: torch.Tensor | None = None
-    max_seqlen: torch.Tensor | None = None
+    cu_seqlens_q: torch.Tensor | None = None
+    cu_seqlens_kv: torch.Tensor | None = None
+    cu_seqlens_q_padded: torch.Tensor | None = None
+    cu_seqlens_kv_padded: torch.Tensor | None = None
+    max_seqlen_q: torch.Tensor | None = None
+    max_seqlen_kv: torch.Tensor | None = None
 
 
 class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
@@ -181,8 +182,8 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
         collated_seq_len = (
-            int(collated["max_seqlen"].max().item())
-            if collated.get("max_seqlen") is not None
+            int(collated["max_seqlen_q"].max().item())
+            if collated.get("max_seqlen_q") is not None
             else collated["input_ids"].shape[1]
         )
         if collated_seq_len > self.seq_length:
@@ -202,11 +203,12 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             attention_mask=collated.get("attention_mask"),
             position_ids=collated["position_ids"],
             visual_inputs=collated.get("visual_inputs"),
-            cu_seqlens=collated.get("cu_seqlens"),
-            cu_seqlens_unpadded=collated.get("cu_seqlens_unpadded"),
-            cu_seqlens_argmin=collated.get("cu_seqlens_argmin"),
-            cu_seqlens_unpadded_argmin=collated.get("cu_seqlens_unpadded_argmin"),
-            max_seqlen=collated.get("max_seqlen"),
+            cu_seqlens_q=collated.get("cu_seqlens_q"),
+            cu_seqlens_kv=collated.get("cu_seqlens_kv"),
+            cu_seqlens_q_padded=collated.get("cu_seqlens_q_padded"),
+            cu_seqlens_kv_padded=collated.get("cu_seqlens_kv_padded"),
+            max_seqlen_q=collated.get("max_seqlen_q"),
+            max_seqlen_kv=collated.get("max_seqlen_kv"),
         )
 
         return HFEnergonBatch(**batch_kwargs)

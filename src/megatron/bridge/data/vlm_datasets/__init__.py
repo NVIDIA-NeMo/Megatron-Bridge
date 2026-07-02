@@ -16,33 +16,16 @@
 VLM dataset utilities.
 
 Public API re-exports:
-- Collate fns: model-specific batch builders
 - Providers: VLM-specific mock and preloaded dataset providers
 """
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.vlm_datasets.collate import (
-    COLLATE_FNS,
-    gemma3_vl_collate_fn,
-    nemotron_nano_v2_vl_collate_fn,
-    nemotron_omni_collate_fn,
-    qwen2_5_collate_fn,
-    qwen2_audio_collate_fn,
-)
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 
 
 __all__ = [
-    # Providers
     "PreloadedVLMConversationProvider",
     "MockVLMConversationProvider",
     "EnergonProvider",
-    # Collation utilities
-    "COLLATE_FNS",
-    "gemma3_vl_collate_fn",
-    "qwen2_5_collate_fn",
-    "qwen2_audio_collate_fn",
-    "nemotron_nano_v2_vl_collate_fn",
-    "nemotron_omni_collate_fn",
 ]

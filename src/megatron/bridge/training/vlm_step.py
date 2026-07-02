@@ -27,8 +27,14 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
+
+
+_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS, "total_tokens")
 
 
 def _unwrap_forward_module(model: Any) -> Any:
@@ -105,14 +111,9 @@ def get_batch_from_iterator(
     # Instead of raw tensors, expect a single 'visual_inputs' object in batch
     required_device_keys.add("visual_inputs")
 
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        if "cu_seqlens_unpadded" in batch:
-            required_device_keys.add("cu_seqlens_unpadded")
-        required_host_keys.add("cu_seqlens_argmin")
-        if "cu_seqlens_unpadded_argmin" in batch:
-            required_host_keys.add("cu_seqlens_unpadded_argmin")
-        required_host_keys.add("max_seqlen")
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
@@ -148,9 +149,8 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         use_mtp: Whether Multi-Token Prediction layers are enabled
 
     Returns:
-        tuple of tensors containing tokens, labels, loss_mask, attention_mask, position_ids,
-        cu_seqlens, cu_seqlens_argmin, max_seqlen, cu_seqlens_unpadded,
-        cu_seqlens_unpadded_argmin, and visual_inputs.
+        tuple of tensors containing tokens, labels, loss_mask, attention_mask,
+        position_ids, packed sequence metadata, and visual_inputs.
     """
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
@@ -171,11 +171,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
         batch.get("loss_mask"),  # Full packed loss_mask, will be CP-sliced by model
         batch.get("attention_mask"),
         batch.get("position_ids"),
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
-        batch.get("cu_seqlens_unpadded"),
-        batch.get("cu_seqlens_unpadded_argmin"),
+        {key: batch[key] for key in _PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+        if batch.get("cu_seqlens_q") is not None
+        else None,
         visual_inputs,
     )
 
@@ -209,30 +207,49 @@ def forward_step(
             loss_mask,
             attention_mask,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_argmin,
-            max_seqlen,
-            cu_seqlens_unpadded,
-            cu_seqlens_unpadded_argmin,
+            packed_seq_params,
             visual_inputs,
         ) = get_batch(data_iterator, state.cfg, use_mtp, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # Accumulate FLOPS metadata across micro-batches.
-    # Each micro-batch contributes its actual padded seq_length (not cfg.model.seq_length).
-    # train.py resets these before each step and reads accumulated values afterwards.
-    if tokens is not None:
-        mbs = tokens.shape[0]
-        seq_len = tokens.shape[1]
-        state._flops_seqlen_sum = getattr(state, "_flops_seqlen_sum", 0) + mbs * seq_len
-        state._flops_seqlen_sq_sum = getattr(state, "_flops_seqlen_sq_sum", 0) + mbs * seq_len**2
+    # Accumulate FLOPS metadata across micro-batches. Passing ``cu_seqlens`` gives
+    # the THD-correct Σᵢ sᵢ² for the attention term instead of the pack-length²
+    # BSHD approximation. At CP=1 (and no SP) VLM in-batch packing leaves
+    # ``cu_seqlens`` equal to the real sub-sequence boundaries, so this counts
+    # meaningful tokens only.
+    # NOTE: under CP>1 (or SP), sub-sequences are padded to ``pad_multiple`` (see
+    # get_batch above), so ``cu_seqlens`` carries that per-sub-seq padding and the
+    # attention-FLOPS estimate currently includes it (a small over-count). The
+    # real pre-pad boundaries are not surfaced here yet — tracked as a CP
+    # follow-up (the linear term also needs a *cp_size correction there, since
+    # gpt_step CP-shards tokens). train.py resets these before each step and reads
+    # accumulated values afterwards.
+    # Vision-patch count is model-specific (Qwen-VL reports it as grid_thw =
+    # t*h*w per image/video), so compute it here and hand a plain scalar to the
+    # model-agnostic FLOPS helper. Kept as a device tensor to avoid a host sync.
+    num_vision_patches = None
     if visual_inputs is not None:
-        for attr in ("image_grid_thw", "video_grid_thw"):
-            grid = getattr(visual_inputs, attr, None)
+        for grid in (
+            getattr(visual_inputs, "image_grid_thw", None),
+            getattr(visual_inputs, "video_grid_thw", None),
+        ):
             if grid is not None and grid.numel() > 0:
-                state._flops_vision_patches = getattr(state, "_flops_vision_patches", 0) + int(
-                    grid.prod(dim=-1).sum().item()
-                )
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    cu_seqlens = None
+    cu_seqlens_unpadded = None
+    if packed_seq_params is not None:
+        cu_seqlens_q = packed_seq_params.get("cu_seqlens_q")
+        cu_seqlens_q_padded = packed_seq_params.get("cu_seqlens_q_padded")
+        cu_seqlens = cu_seqlens_q_padded if cu_seqlens_q_padded is not None else cu_seqlens_q
+        cu_seqlens_unpadded = cu_seqlens_q if cu_seqlens_q_padded is not None else None
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=cu_seqlens,
+        cu_seqlens_unpadded=cu_seqlens_unpadded,
+        num_vision_patches=num_vision_patches,
+    )
 
     forward_args = {
         "input_ids": tokens,
@@ -247,17 +264,7 @@ def forward_step(
         forward_args.update(_filter_visual_kwargs_for_model(model, visual_kwargs))
 
     # Add packed sequence support
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-        }
-        if max_seqlen is not None:
-            packed_seq_params["max_seqlen"] = max_seqlen
-        if cu_seqlens_unpadded is not None:
-            packed_seq_params["cu_seqlens_unpadded"] = cu_seqlens_unpadded
-        if cu_seqlens_unpadded_argmin is not None:
-            packed_seq_params["cu_seqlens_unpadded_argmin"] = cu_seqlens_unpadded_argmin
+    if packed_seq_params is not None:
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
