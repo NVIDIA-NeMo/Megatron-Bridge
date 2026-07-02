@@ -30,6 +30,9 @@ NIGHTLY_DOCS_ROOT = DOCS_ROOT / "fern" / "versions" / "nightly" / "pages"
 # Remove entries as these integrations gain standalone ModelConfig/ModelBuilder
 # support or no longer require a persistent provider-based HF loading hook.
 TEMPORARY_FALLBACKS = {
+    "to_megatron_model": {
+        Path("models/llada/llada15/convert_llada15_hf_to_megatron.py"),
+    },
     "to_megatron_provider": {
         Path("distillation/llama/distill_llama32_3b-1b.py"),
         Path("megatron_mimo/qwen35_vl/finetune_qwen35_vl.py"),
@@ -80,6 +83,8 @@ def test_examples_do_not_use_removed_model_construction_aliases() -> None:
                 continue
             if node.func.attr in forbidden_calls:
                 relative_path = path.relative_to(EXAMPLES_ROOT)
+                if relative_path in TEMPORARY_FALLBACKS.get(node.func.attr, set()):
+                    continue
                 violations.append(f"{relative_path}:{node.lineno}:{node.func.attr}")
 
     assert not violations, "Deprecated model construction aliases remain: " + ", ".join(violations)

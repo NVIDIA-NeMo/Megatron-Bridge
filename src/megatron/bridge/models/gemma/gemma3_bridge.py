@@ -143,7 +143,7 @@ class Gemma3ModelBridge(MegatronModelBridge):
             hf_config["rope_theta"] = rope_theta
 
         window_size = provider.window_size
-        hf_config["sliding_window"] = window_size[0] + 1 if isinstance(window_size, tuple) else window_size
+        hf_config["sliding_window"] = window_size[0] + 1 if isinstance(window_size, (list, tuple)) else window_size
 
         if provider.softmax_scale:
             query_pre_attn_scalar = 1.0 / (provider.softmax_scale**2)

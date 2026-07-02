@@ -151,6 +151,26 @@ def test_gemma3_model_config_serialization_restores_family_defaults() -> None:
     assert restored.rotary_base_local == 10_000
 
 
+def test_gemma3_model_config_restores_tuple_runtime_fields() -> None:
+    original = Gemma3ModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            window_size=(511, 0),
+        ),
+        vocab_size=128,
+    )
+    serialized = original.as_dict()
+    serialized["transformer"]["window_size"] = [511, 0]
+    serialized["interleaved_attn_pattern"] = [5, 1]
+
+    restored = ModelConfig.from_dict(serialized)
+
+    assert restored.transformer.window_size == (511, 0)
+    assert restored.interleaved_attn_pattern == (5, 1)
+
+
 def test_gemma_and_gemma2_builders_install_stage_customizations() -> None:
     gemma_config = GemmaBridge().model_config_bridge(SimpleNamespace(config=_common_hf_config()))
     gemma2_config = Gemma2Bridge().model_config_bridge(

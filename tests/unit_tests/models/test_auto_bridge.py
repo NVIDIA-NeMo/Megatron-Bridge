@@ -17,6 +17,7 @@ Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
 import json
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,6 +41,7 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _override_embedded_transformer_configs,
     _saved_config_disables_mtp,
 )
+from megatron.bridge.models.conversion.model_bridge import ModelConfigNotSupportedError
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
@@ -908,6 +910,43 @@ class TestAutoBridge:
             pg_collection=pg_collection,
             wrap_with_ddp=False,
             data_parallel_random_init=False,
+        )
+
+    def test_to_megatron_model_falls_back_for_provider_only_bridge(self):
+        """Provider-only integrations remain usable until their builder migration lands."""
+        hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = AutoBridge(hf_model)
+        model_bridge = Mock()
+        provider = Mock(spec=GPTModelProvider)
+        models = [Mock()]
+        provider.provide_distributed_model.return_value = models
+        pg_collection = Mock(spec=ProcessGroupCollection)
+
+        model_bridge.provider_bridge.return_value = provider
+
+        with (
+            patch.object(bridge, "get_model_config", side_effect=ModelConfigNotSupportedError),
+            patch.object(AutoBridge, "_model_bridge", model_bridge),
+            warnings.catch_warnings(record=True) as caught_warnings,
+        ):
+            warnings.simplefilter("always")
+            result = bridge.to_megatron_model(
+                load_weights=False,
+                pg_collection=pg_collection,
+                wrap_with_ddp=False,
+                use_cpu_initialization=True,
+            )
+
+        assert result is models
+        assert [warning.category for warning in caught_warnings] == [DeprecationWarning]
+        assert "to_megatron_model()" in str(caught_warnings[0].message)
+        assert bridge._model_config is provider
+        model_bridge.provider_bridge.assert_called_once_with(hf_model)
+        provider.finalize.assert_called_once_with()
+        provider.provide_distributed_model.assert_called_once_with(
+            pg_collection=pg_collection,
+            wrap_with_ddp=False,
+            use_cpu_initialization=True,
         )
 
     def test_get_megatron_model_uses_explicit_config_without_finalizing_it(self):

@@ -22,11 +22,11 @@ from unittest.mock import patch
 import pytest
 import torch
 import torch.nn.functional as F
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, ModelConfigNotSupportedError
 from megatron.bridge.models.gpt.model_config import ACTIVATION_FUNC_METADATA_KEY, BridgeGPTModelConfig
 from megatron.bridge.training.model_load_save import load_model_config
 
@@ -146,7 +146,7 @@ def test_flat_model_config_assignment_routes_to_declared_owner() -> None:
 
 
 def test_flat_model_config_assignment_synchronizes_overlapping_fields() -> None:
-    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    transformer = MLATransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
     model_config = BridgeGPTModelConfig(
         transformer=transformer,
         rotary_base=20_000,
@@ -182,7 +182,7 @@ def test_partition_model_config_kwargs_rejects_non_init_fields() -> None:
 
 
 def test_model_config_bridge_rejects_legacy_only_bridge() -> None:
-    with pytest.raises(NotImplementedError, match="without a builder-backed config path"):
+    with pytest.raises(ModelConfigNotSupportedError, match="without a builder-backed config path"):
         _LegacyOnlyBridge().model_config_bridge(_hf_pretrained())
 
 

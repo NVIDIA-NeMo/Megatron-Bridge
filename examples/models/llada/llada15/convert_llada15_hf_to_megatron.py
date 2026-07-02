@@ -77,9 +77,8 @@ def main():
     bridge = AutoBridge.from_hf_pretrained(args.hf_path, trust_remote_code=True)
 
     print("Building Megatron GPTModel and loading weights via the bridge...")
-    model_config = bridge.get_model_config()
-    model_config.finalize()
-    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
+    # Temporary compatibility path until the diffusion builder migration lands.
+    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
     if not isinstance(megatron_model, list):
         megatron_model = [megatron_model]
 
@@ -91,7 +90,6 @@ def main():
         args.out_path,
         hf_tokenizer_path=args.hf_path,
         hf_tokenizer_kwargs={"trust_remote_code": True},
-        model_config=model_config,
     )
     print("Done.")
 

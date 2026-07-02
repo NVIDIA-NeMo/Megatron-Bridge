@@ -158,6 +158,13 @@ class Gemma3ModelConfig(BridgeGPTModelConfig):
     interleaved_attn_pattern: tuple[int, int] = (5, 1)
     is_vision_language: bool = False
 
+    def __post_init__(self) -> None:
+        """Restore tuple-valued runtime fields after JSON/YAML deserialization."""
+        if isinstance(self.transformer.window_size, list):
+            self.transformer.window_size = tuple(self.transformer.window_size)
+        if isinstance(self.interleaved_attn_pattern, list):
+            self.interleaved_attn_pattern = tuple(self.interleaved_attn_pattern)
+
 
 class Gemma3ModelBuilder(GPTModelBuilder):
     """Build a Gemma3 text model and install its custom embedding and RoPE."""

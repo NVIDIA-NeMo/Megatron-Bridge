@@ -79,6 +79,11 @@ from megatron.bridge.utils.common_utils import print_rank_0
 
 logger = logging.getLogger(__name__)
 
+
+class ModelConfigNotSupportedError(NotImplementedError):
+    """Raised when a legacy bridge has no builder-backed model config path."""
+
+
 MappingT = TypeVar("MappingT", bound=MegatronParamMapping)
 HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
@@ -779,7 +784,7 @@ class MegatronModelBridge(
         )
         model_config_override = bridge_type.model_config_bridge is not MegatronModelBridge.model_config_bridge
         if legacy_provider_override and not (config_mapping_override or model_config_override):
-            raise NotImplementedError(
+            raise ModelConfigNotSupportedError(
                 f"{bridge_type.__name__} overrides provider_bridge() without a builder-backed config path. "
                 "Override hf_config_to_model_config_kwargs() or model_config_bridge() with the matching "
                 "ModelConfig and ModelBuilder implementation."

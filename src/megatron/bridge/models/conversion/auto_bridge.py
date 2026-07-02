@@ -46,6 +46,7 @@ from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
     MegatronModelBridge,
+    ModelConfigNotSupportedError,
     WeightConversionTask,
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
@@ -1802,7 +1803,23 @@ class AutoBridge(Generic[MegatronModelT]):
             DeprecationWarning,
             stacklevel=2,
         )
-        model_config = self.get_model_config()
+        try:
+            model_config = self.get_model_config()
+        except ModelConfigNotSupportedError:
+            # Temporary compatibility path for provider-only integrations. New
+            # and migrated bridges always take the builder-backed path above.
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message=r"AutoBridge\.to_megatron_provider\(\).*",
+                    category=DeprecationWarning,
+                )
+                provider = self.to_megatron_provider(load_weights=load_weights, hf_path=hf_path)
+            if hasattr(provider, "finalize"):
+                provider.finalize()
+            if pg_collection is not None:
+                kwargs["pg_collection"] = pg_collection
+            return provider.provide_distributed_model(**kwargs)
         builder_kwargs = dict(kwargs)
         transformer_overrides: dict[str, Any] = {}
         fp16_override = builder_kwargs.pop("fp16", None)

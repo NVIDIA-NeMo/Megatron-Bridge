@@ -472,6 +472,11 @@ class TestMegatronGemma3Bridge:
         assert hf_config["query_pre_attn_scalar"] == gemma3_4b_config.query_pre_attn_scalar
         assert hf_config["rope_scaling"] == {"factor": 8.0, "type": "linear"}
 
+        # Serialized MCore configs restore tuples as lists.
+        provider.window_size = [gemma3_4b_config.sliding_window - 1, 0]
+        restored_hf_config = bridge.megatron_to_hf_config(provider)
+        assert restored_hf_config["sliding_window"] == gemma3_4b_config.sliding_window
+
     @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
     def test_megatron_to_hf_config_omits_rope_scaling_when_disabled(
         self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config
