@@ -142,6 +142,9 @@ class Qwen3VLGPTModel(GPTModel):
         # `_preprocess` can optionally return an extra fused cos/sin buffer (for
         # flash decode). Match the upstream GPTModel handling to avoid unpack
         # errors when six values are returned.
+        # Standalone LM forwards (e.g. language-model distillation) embed internally; the VLM
+        # outer model otherwise supplies pre-scattered merged embeddings via decoder_input.
+        _embeddings_provided = decoder_input is not None
         preproc_output = self._preprocess(
             input_ids=input_ids,
             position_ids=position_ids,
@@ -157,6 +160,15 @@ class Qwen3VLGPTModel(GPTModel):
             rotary_pos_sin,
             sequence_len_offset,
         ) = preproc_output[:5]
+
+        # The embedding is built with scatter_embedding_sequence_parallel=False (the VLM outer
+        # model scatters the merged vision+text embeddings for SP). For a standalone LM forward
+        # under sequence parallelism, scatter the internally-embedded sequence here so the
+        # decoder/output shapes are correct (otherwise the output-side gather doubles the seq).
+        if not _embeddings_provided and self.pre_process and self.config.sequence_parallel:
+            decoder_input = tensor_parallel.scatter_to_sequence_parallel_region(
+                decoder_input, group=self.pg_collection.tp
+            )
 
         # Run decoder.
         hidden_states = self.decoder(
