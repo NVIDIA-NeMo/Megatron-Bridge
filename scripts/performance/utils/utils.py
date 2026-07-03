@@ -43,10 +43,10 @@ _PRECISION_NAME_MAP = {
     "nvfp4": "nvfp4",
 }
 
-# Most legacy workload presets used the largest matching flat recipe as the
-# default. These overrides cover workloads whose legacy default was the smaller
-# GPU-count recipe.
-_LEGACY_DEFAULT_GPU_COUNT_OVERRIDES = {
+# Most workloads use the largest matching suffix-less flat recipe by default.
+# These overrides cover workloads whose default recipe is the smaller GPU-count
+# recipe.
+_DEFAULT_GPU_COUNT_OVERRIDES = {
     ("llama3_8b", "pretrain", "b200", "bf16", "default"): 8,
     ("llama3_8b", "pretrain", "b200", "fp8cs", "default"): 8,
     ("llama3_8b", "pretrain", "gb200", "bf16", "default"): 8,
@@ -169,7 +169,7 @@ def _select_default_recipe_name(
     config_variant: str | None,
     matches: list[tuple[int, str]],
 ) -> str:
-    override = _LEGACY_DEFAULT_GPU_COUNT_OVERRIDES.get(
+    override = _DEFAULT_GPU_COUNT_OVERRIDES.get(
         (model_recipe_name, task, gpu, _normalize_precision_name(precision), _recipe_variant_name(config_variant))
     )
     if override is not None:
@@ -178,7 +178,7 @@ def _select_default_recipe_name(
                 return name
         available_gpu_counts = [str(gpu_count) for gpu_count, _ in matches]
         raise ValueError(
-            f"Legacy default GPU count {override} for {model_recipe_name}/{task}/{gpu}/"
+            f"Default GPU count {override} for {model_recipe_name}/{task}/{gpu}/"
             f"{_normalize_precision_name(precision)}/{_recipe_variant_name(config_variant)} did not match "
             f"available flat perf recipes: {', '.join(available_gpu_counts)}."
         )

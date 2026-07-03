@@ -393,7 +393,7 @@ COMBOS = [
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 64, "b200", "fp8_mx"),
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 256, "h100", "bf16"),
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 256, "h100", "fp8_cs"),
-    # Additional flattened legacy coverage
+    # Additional flattened coverage
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "bf16"),
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "fp8_mx"),

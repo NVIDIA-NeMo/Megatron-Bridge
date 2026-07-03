@@ -151,7 +151,7 @@ def main():
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
 
-    # Preserve legacy BF16 Adam precision-aware behavior. Parallelism-dependent
+    # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
     # optimizer-step overlap is encoded directly in the flat perf recipes.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True

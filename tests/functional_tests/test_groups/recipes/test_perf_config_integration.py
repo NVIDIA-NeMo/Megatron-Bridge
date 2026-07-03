@@ -102,8 +102,8 @@ class TestPerfConfigIntegration:
         assert cfg_bf16.mixed_precision is not None
         assert cfg_fp8.mixed_precision is not None
 
-    def test_workload_base_config_uses_legacy_default_recipe(self):
-        """Test that workload defaults use the legacy default flat recipe."""
+    def test_workload_base_config_uses_default_flat_recipe(self):
+        """Test that workload defaults use the default flat recipe."""
         from utils.utils import get_workload_base_config
 
         cfg = get_workload_base_config(
@@ -119,7 +119,7 @@ class TestPerfConfigIntegration:
         assert cfg.gbs_scaling_factor == cfg.global_batch_size / 8
 
     def test_workload_base_config_default_is_not_nearest_gpu_count(self):
-        """Test that default selection keeps legacy behavior, not nearest GPU count."""
+        """Test that default selection keeps explicit flat-recipe defaults, not nearest GPU count."""
         from utils.utils import get_workload_base_config
 
         cfg = get_workload_base_config(
@@ -159,7 +159,7 @@ class TestPerfConfigIntegration:
         assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
 
     def test_generated_workload_metadata_is_not_required(self):
-        """Test that removed legacy perf configs do not leave a generated metadata mirror."""
+        """Test that removed perf configs do not leave a generated metadata mirror."""
         assert not (SCRIPTS_PERF_PATH / "utils" / "workload_metadata.py").exists()
 
     def test_unsupported_config_variant_errors(self):
@@ -177,7 +177,7 @@ class TestPerfConfigIntegration:
             )
 
     def test_list_available_config_variants_accepts_named_parameters(self):
-        """Test that config variant discovery accepts the legacy named parameters."""
+        """Test that config variant discovery accepts named parameters."""
         from utils.utils import list_available_config_variants
 
         variants = list_available_config_variants(
@@ -205,7 +205,7 @@ class TestPerfConfigIntegration:
         assert variants == ["default", "large_scale"]
 
     def test_get_library_recipe_llama_sets_paths(self):
-        """Test that the legacy library recipe helper sets expected /nemo_run paths."""
+        """Test that the library recipe helper sets expected /nemo_run paths."""
         from utils.utils import get_library_recipe
 
         cfg = get_library_recipe(
