@@ -157,6 +157,29 @@ class TestPerfConfigIntegration:
         assert cfg.num_gpus == 1024
         assert cfg.global_batch_size == 16384
 
+    def test_workload_base_config_requires_lightweight_metadata(self, monkeypatch):
+        """Test that launcher-side workload lookup never falls through to recipe imports."""
+        import utils.utils as perf_utils
+
+        recipe_name = "llama3_8b_pretrain_8gpu_h100_bf16_config"
+
+        def _raise_if_recipe_imported(*args, **kwargs):
+            raise AssertionError("get_workload_base_config should not import full recipes")
+
+        monkeypatch.delitem(perf_utils.WORKLOAD_BASE_CONFIGS, recipe_name)
+        monkeypatch.setattr(perf_utils, "get_perf_recipe_by_name", _raise_if_recipe_imported)
+
+        with pytest.raises(ValueError, match="Missing lightweight metadata"):
+            perf_utils.get_workload_base_config(
+                model_family_name="llama",
+                model_recipe_name="llama3_8b",
+                gpu="h100",
+                compute_dtype="bf16",
+                task="pretrain",
+                config_variant="v2",
+                num_gpus=8,
+            )
+
     def test_unsupported_legacy_config_variant_errors(self):
         """Test that removed v1 workload variants are not silently collapsed to v2."""
         from utils.utils import get_workload_base_config
@@ -225,9 +248,26 @@ class TestPerfConfigIntegration:
 
         assert cfg.train.global_batch_size == 16384
 
+    def test_get_perf_optimized_recipe_kimi_adam_optimizer(self):
+        """Test that the Kimi Adam override path applies without import errors."""
+        from utils.utils import get_perf_optimized_recipe
+
+        cfg = get_perf_optimized_recipe(
+            model_family_name="kimi",
+            model_recipe_name="kimi_k2",
+            train_task="pretrain",
+            gpu="h100",
+            compute_dtype="bf16",
+            config_variant="v2",
+            optimizer_type="adam",
+        )
+
+        assert cfg.ddp.use_distributed_optimizer is True
+        assert cfg.ddp.overlap_param_gather is True
+
     def test_kimi_flat_perf_recipes_are_parameterless(self):
         """Test that Kimi flat recipes expose fixed recipe entry points."""
-        from megatron.bridge.perf_recipes.kimi.h100 import kimi_k2_pretrain_1024gpu_h100_bf16_config
+        from megatron.bridge.perf_recipes.kimi.h100.kimi_k2 import kimi_k2_pretrain_1024gpu_h100_bf16_config
 
         assert not inspect.signature(kimi_k2_pretrain_1024gpu_h100_bf16_config).parameters
 

@@ -468,20 +468,14 @@ def get_workload_base_config(
     gpu_match = re.search(r"_(\d+)gpu_", recipe_name)
     if gpu_match is None:
         raise ValueError(f"Unable to infer GPU count from perf recipe name {recipe_name!r}.")
-    inferred_num_gpus = int(gpu_match.group(1))
     metadata_config = _workload_base_config_from_metadata(recipe_name)
     if metadata_config is not None:
         return metadata_config
 
-    recipe = get_perf_recipe_by_name(
-        model_recipe_name=model_recipe_name,
-        task=task,
-        num_gpus=inferred_num_gpus,
-        gpu=gpu,
-        precision=compute_dtype,
-        config_variant=config_variant,
+    raise ValueError(
+        f"Missing lightweight metadata for perf recipe {recipe_name!r}. "
+        "Regenerate scripts/performance/utils/workload_metadata.py before using this recipe from the launcher."
     )
-    return _workload_base_config_from_recipe(recipe, num_gpus=inferred_num_gpus)
 
 
 def get_exp_name_config(

@@ -32,12 +32,10 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.evaluate import calc_convergence_and_performance
     from utils.executors import kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
@@ -52,12 +50,6 @@ try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-
-try:
-    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-except (ImportError, ModuleNotFoundError):
-    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script.py"
@@ -103,6 +95,30 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _build_csp_plugin(csp: str) -> Any:
+    """Build a CSP plugin lazily so Slurm/login-node launch does not import Kubeflow helpers."""
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
+
+
+def _calc_convergence_and_performance(**kwargs: Any) -> Any:
+    """Load the evaluator only after training finishes and validation is requested."""
+    try:
+        from utils.evaluate import calc_convergence_and_performance
+    except (ImportError, ModuleNotFoundError):
+        from .utils.evaluate import calc_convergence_and_performance
+
+    return calc_convergence_and_performance(**kwargs)
 
 
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
@@ -647,10 +663,8 @@ def main(
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
-    if csp == "aws":
-        plugins.append(EKSEnvPlugin())
-    elif csp == "gcp":
-        plugins.append(GKEEnvPlugin())
+    if csp is not None:
+        plugins.append(_build_csp_plugin(csp))
 
     if not use_recipes:
         plugins.append(
@@ -837,7 +851,7 @@ def main(
                     else None
                 )
 
-                is_testing_passed, error_msg, merged_values = calc_convergence_and_performance(
+                is_testing_passed, error_msg, merged_values = _calc_convergence_and_performance(
                     model_family_name=model_family_name,
                     model_recipe_name=model_recipe_name,
                     assets_dir=os.path.join(job_dir, exp_name),
