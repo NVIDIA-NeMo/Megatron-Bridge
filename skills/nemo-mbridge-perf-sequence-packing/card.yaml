@@ -30,8 +30,8 @@ feature_meaning:
     Pre-tokenized packed finetuning datasets built through PackedSequenceSpecs
     and consumed through THD packed-sequence metadata.
   vlm_in_batch_packing: >
-    Runtime batch concatenation path for some VLM training flows controlled by
-    enable_in_batch_packing=True.
+    Collate-time batch concatenation path for supported VLM training flows,
+    controlled by enable_in_batch_packing=True and emitted in MCore THD form.
   long_context_training: >
     Training at longer sequence lengths, primarily enabled through context
     parallelism plus recipe-specific long-context presets and memory tuning
@@ -73,7 +73,7 @@ evidence:
   - src/megatron/bridge/data/datasets/sft.py
   - src/megatron/bridge/training/utils/packed_seq_utils.py
   - src/megatron/bridge/training/gpt_step.py
-  - src/megatron/bridge/training/vlm_step.py
+  - src/megatron/bridge/data/sequence_batching.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/recipes/utils/finetune_utils.py
   - src/megatron/bridge/recipes/common.py
