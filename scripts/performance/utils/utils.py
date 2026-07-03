@@ -43,73 +43,6 @@ _PRECISION_NAME_MAP = {
     "nvfp4": "nvfp4",
 }
 
-_LEGACY_DEFAULT_GPU_COUNTS = {
-    # Defaults preserved from the removed legacy workload presets.
-    ("deepseek_v3", "pretrain", "h100", "bf16", "v2"): 1024,
-    ("deepseek_v3", "pretrain", "h100", "fp8cs", "v2"): 1024,
-    ("deepseek_v3", "pretrain", "vr200", "bf16", "v2"): 256,
-    ("deepseek_v3", "pretrain", "vr200", "fp8cs", "v2"): 256,
-    ("deepseek_v3", "pretrain", "vr200", "fp8mx", "v2"): 256,
-    ("deepseek_v3", "pretrain", "vr200", "nvfp4", "v2"): 256,
-    ("gpt_oss_20b", "pretrain", "b300", "fp8mx", "v2"): 64,
-    ("gpt_oss_20b", "pretrain", "b300", "nvfp4", "v2"): 64,
-    ("gpt_oss_20b", "pretrain", "gb200", "nvfp4", "v2"): 72,
-    ("gpt_oss_20b", "pretrain", "gb300", "nvfp4", "v2"): 72,
-    ("gpt_oss_20b", "pretrain", "vr200", "nvfp4", "v2"): 64,
-    ("llama31_405b", "pretrain", "b200", "nvfp4", "v2"): 256,
-    ("llama31_405b", "pretrain", "b300", "bf16", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb200", "bf16", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb200", "fp8cs", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb200", "fp8mx", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb200", "nvfp4", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb300", "bf16", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb300", "fp8cs", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb300", "fp8mx", "v2"): 256,
-    ("llama31_405b", "pretrain", "gb300", "nvfp4", "v2"): 256,
-    ("llama31_405b", "pretrain", "h100", "bf16", "v2"): 1024,
-    ("llama31_405b", "pretrain", "h100", "fp8cs", "v2"): 1024,
-    ("llama3_70b", "pretrain", "gb200", "bf16", "v2"): 64,
-    ("llama3_70b", "pretrain", "gb200", "fp8cs", "v2"): 64,
-    ("llama3_70b", "pretrain", "gb300", "bf16", "v2"): 64,
-    ("llama3_70b", "pretrain", "gb300", "fp8cs", "v2"): 64,
-    ("llama3_8b", "pretrain", "b200", "bf16", "v2"): 8,
-    ("llama3_8b", "pretrain", "b200", "fp8cs", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb200", "bf16", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb200", "fp8cs", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb300", "bf16", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb300", "fp8cs", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb300", "fp8mx", "v2"): 8,
-    ("llama3_8b", "pretrain", "gb300", "nvfp4", "v2"): 8,
-    ("llama3_8b", "pretrain", "h100", "bf16", "v2"): 8,
-    ("llama3_8b", "pretrain", "h100", "fp8cs", "v2"): 8,
-    ("nemotronh_56b", "pretrain", "b200", "fp8cs", "v2"): 64,
-    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", "v2"): 64,
-    ("qwen3_235b_a22b", "pretrain", "b200", "bf16", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b200", "fp8cs", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b200", "fp8mx", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b200", "nvfp4", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b300", "bf16", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b300", "fp8cs", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b300", "fp8mx", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "b300", "nvfp4", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb200", "bf16", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb200", "fp8cs", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb200", "fp8mx", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb200", "nvfp4", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb300", "bf16", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb300", "fp8cs", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb300", "fp8mx", "v2"): 256,
-    ("qwen3_235b_a22b", "pretrain", "gb300", "nvfp4", "v2"): 256,
-    ("qwen3_30b_a3b", "pretrain", "b200", "bf16", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb200", "fp8cs", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb300", "bf16", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb300", "fp8cs", "v2"): 8,
-    ("qwen3_30b_a3b", "pretrain", "h100", "bf16", "v2"): 16,
-    ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", "v2"): 16,
-}
-
 
 @dataclass
 class WorkloadBaseConfig:
@@ -171,10 +104,6 @@ def _recipe_variant_suffix(config_variant: str | None) -> str:
     return f"_{config_variant.lower()}"
 
 
-def _recipe_variant_name(config_variant: str | None) -> str:
-    return "v2" if config_variant is None else config_variant.lower()
-
-
 def _recipe_function_name(
     *,
     model_recipe_name: str,
@@ -189,40 +118,12 @@ def _recipe_function_name(
     return f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{precision_name}{variant_suffix}_config"
 
 
-def _legacy_default_gpu_count(
-    *,
-    model_recipe_name: str,
-    task: str,
-    gpu: str,
-    precision: str,
-    config_variant: str | None,
-) -> int | None:
-    return _LEGACY_DEFAULT_GPU_COUNTS.get(
-        (model_recipe_name, task, gpu, _normalize_precision_name(precision), _recipe_variant_name(config_variant))
-    )
-
-
-def _select_default_recipe_name(
-    matches: list[tuple[int, str]],
-    *,
-    model_recipe_name: str,
-    task: str,
-    gpu: str,
-    precision: str,
-    config_variant: str | None,
-) -> str:
-    default_gpu_count = _legacy_default_gpu_count(
-        model_recipe_name=model_recipe_name,
-        task=task,
-        gpu=gpu,
-        precision=precision,
-        config_variant=config_variant,
-    )
-    if default_gpu_count is not None:
-        for gpu_count, name in matches:
-            if gpu_count == default_gpu_count:
-                return name
+def _select_default_recipe_name(matches: list[tuple[int, str]]) -> str:
     return matches[0][1]
+
+
+def _select_nearest_recipe_name(matches: list[tuple[int, str]], *, num_gpus: int) -> str:
+    return min(matches, key=lambda match: (abs(match[0] - num_gpus), match[0]))[1]
 
 
 def _emit(message: str = "", *, end: str = "\n", flush: bool = False) -> None:
@@ -359,14 +260,7 @@ def _first_matching_perf_recipe_name(
             config_variant=config_variant,
         )
         if matches:
-            fallback_name = _select_default_recipe_name(
-                matches,
-                model_recipe_name=model_recipe_name,
-                task=task,
-                gpu=gpu,
-                precision=precision,
-                config_variant=config_variant,
-            )
+            fallback_name = _select_nearest_recipe_name(matches, num_gpus=num_gpus)
             logger.warning(
                 "No exact %s GPU flat perf recipe found for %s/%s/%s/%s; falling back to %s for scaling.",
                 num_gpus,
@@ -384,14 +278,7 @@ def _first_matching_perf_recipe_name(
             f"/{config_variant or 'default'}. Available variants: {available_variants}"
         )
     if num_gpus is None:
-        return _select_default_recipe_name(
-            matches,
-            model_recipe_name=model_recipe_name,
-            task=task,
-            gpu=gpu,
-            precision=precision,
-            config_variant=config_variant,
-        )
+        return _select_default_recipe_name(matches)
     return matches[0][1]
 
 
@@ -634,6 +521,7 @@ def _display_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
+    num_gpus: int | None,
     variants: list[str],
     timeout: int,
 ) -> None:
@@ -655,7 +543,15 @@ def _display_config_variants(
         _emit(f"  {c.DIM}{'-' * 76}{c.RESET}")
 
         try:
-            config = get_workload_base_config(model_family_name, model_recipe_name, gpu, compute_dtype, task, variant)
+            config = get_workload_base_config(
+                model_family_name,
+                model_recipe_name,
+                gpu,
+                compute_dtype,
+                task,
+                variant,
+                num_gpus=num_gpus,
+            )
             for field in fields(config):
                 value = getattr(config, field.name)
                 if value is not None:
@@ -701,6 +597,7 @@ def select_config_variant_interactive(
     gpu: str,
     compute_dtype: str,
     task: str,
+    num_gpus: int | None = None,
     timeout: int = CONFIG_VARIANT_SELECTION_TIMEOUT,
     force_interactive: bool = False,
 ) -> str:
@@ -721,7 +618,9 @@ def select_config_variant_interactive(
         logger.info("Only one config variant available: %s", variants[0])
         return variants[0]
 
-    _display_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task, variants, timeout)
+    _display_config_variants(
+        model_family_name, model_recipe_name, gpu, compute_dtype, task, num_gpus, variants, timeout
+    )
     selection = _get_user_selection_with_timeout(len(variants), timeout)
     selected_variant = variants[selection - 1]
     logger.info("Selected config variant: %s", selected_variant)

@@ -119,8 +119,8 @@ class TestPerfConfigIntegration:
         assert cfg.num_gpus == 8
         assert cfg.gbs_scaling_factor == cfg.global_batch_size / 8
 
-    def test_workload_base_config_fallback_uses_legacy_default_gpu_count(self):
-        """Test that fallback selection prefers legacy defaults over the smallest recipe."""
+    def test_workload_base_config_fallback_uses_nearest_gpu_count(self):
+        """Test that fallback selection uses the nearest available flat recipe."""
         from utils.utils import get_workload_base_config
 
         cfg = get_workload_base_config(
@@ -133,7 +133,7 @@ class TestPerfConfigIntegration:
             num_gpus=256,
         )
 
-        assert cfg.num_gpus == 1024
+        assert cfg.num_gpus == 512
 
     def test_workload_base_config_derives_from_flat_recipe(self):
         """Test that workload defaults use flat perf recipes as the source of truth."""
@@ -226,8 +226,8 @@ class TestPerfConfigIntegration:
         assert cfg.logger.wandb_exp_name == "deepseek_test"
         assert cfg.checkpoint.save == "/nemo_run/deepseek_test/checkpoints"
 
-    def test_get_perf_optimized_recipe_uses_legacy_default_gpu_count(self):
-        """Test that omitted GPU count keeps the old DeepSeek H100 v2 default."""
+    def test_get_perf_optimized_recipe_uses_requested_gpu_count(self):
+        """Test that flat perf recipe selection uses the requested GPU count."""
         from utils.utils import get_perf_optimized_recipe
 
         cfg = get_perf_optimized_recipe(
@@ -237,6 +237,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             config_variant="v2",
+            num_gpus=1024,
         )
 
         assert cfg.train.global_batch_size == 16384
