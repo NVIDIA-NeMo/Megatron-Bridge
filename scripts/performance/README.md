@@ -318,15 +318,15 @@ python scripts/performance/setup_experiment.py \
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 
 ```python
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config
 
-cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config()
 
 # Or, apply overrides to any existing recipe:
 from megatron.bridge.recipes.utils import apply_determinism_overrides
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_config
 
-cfg = llama3_70b_pretrain_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 

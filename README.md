@@ -13,7 +13,7 @@
 ## 📣 News
 - [06/22/2026] **Megatron Bridge 0.5.0 released!** Highlights include expanded LLM and multimodal support (Qwen3.5, DeepSeek V4, Ernie 4.5, GLM-5/4.7, StepFun Step-3.5/3.7, MiMo-V2, Gemma 4, Falcon H1, Ling MoE V2, Nemotron-3 Nano Omni, Qwen3-Omni, Qwen3-ASR, and Nemotron Diffusion), MegatronMIMO and Energon v7 training updates, evaluator backend integration, eval-time context parallelism, deterministic recipes, quantized FP8/MXFP4 export, CUDA graph/performance improvements, and Megatron Inference/tokenizer unification with Megatron-LM. Huge thanks to our community contributors: [@HowardZorn](https://github.com/HowardZorn), [@hy2826](https://github.com/hy2826), [@bo-ke](https://github.com/bo-ke), [@beccohov](https://github.com/beccohov), [@dhiaEddineRhaiem](https://github.com/dhiaEddineRhaiem), [@pavelgein](https://github.com/pavelgein), [@ccclyu](https://github.com/ccclyu), [@hbhflw2000](https://github.com/hbhflw2000), and [@HollowMan6](https://github.com/HollowMan6)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.5.0).
 
-- [06/16/2026] NVIDIA topped [MLPerf Training v6.0](https://developer.nvidia.com/blog/nvidia-blackwell-tops-mlperf-training-6-0-with-industry-leading-scale-and-performance/) across every benchmark, including the new DeepSeek-V3 and GPT-OSS MoE training workloads. Megatron Bridge serves as the packaging layer for the NeMo 26.06 training stack that integrates full-iteration CUDA graphs, HybridEP/router optimizations, all-to-all overlap, MXFP8 attention, and pipeline-layout balancing; the blog highlights [DeepSeek-V3 training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance/configs/deepseek) at **1,648 TFLOPS/GPU** (**6,338 tokens/sec/GPU**) on GB300. To try related runs, start from the [performance recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance); the corresponding container is expected with the NeMo 26.06 release soon.
+- [06/16/2026] NVIDIA topped [MLPerf Training v6.0](https://developer.nvidia.com/blog/nvidia-blackwell-tops-mlperf-training-6-0-with-industry-leading-scale-and-performance/) across every benchmark, including the new DeepSeek-V3 and GPT-OSS MoE training workloads. Megatron Bridge serves as the packaging layer for the NeMo 26.06 training stack that integrates full-iteration CUDA graphs, HybridEP/router optimizations, all-to-all overlap, MXFP8 attention, and pipeline-layout balancing; the blog highlights [DeepSeek-V3 training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/perf_recipes/deepseek) at **1,648 TFLOPS/GPU** (**6,338 tokens/sec/GPU**) on GB300. To try related runs, start from the [performance recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance); the corresponding container is expected with the NeMo 26.06 release soon.
 
 - [06/04/2026] [**NVIDIA Nemotron 3 Ultra**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) is now public! Day-0 support for the 550B-A55B hybrid Mamba-Transformer MoE model is available on the [`nemotron_3_ultra`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_ultra) branch, including checkpoint conversion, inference, SFT, PEFT (LoRA), and pretraining examples. Read the [NVIDIA Technical Blog](https://developer.nvidia.com/blog/nvidia-nemotron-3-ultra-powers-faster-more-efficient-reasoning-for-long-running-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_ultra/examples/models/nemotron/nemotron_3/ultra/README.md) for the full walkthrough.
 
@@ -141,14 +141,14 @@ Training quickstart using pre-configured recipes:
 
 ```python
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama32_1b_pretrain_1gpu_h100_bf16_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
     # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
     # This is random-init pretraining and does not require a converted Megatron checkpoint.
-    cfg = llama32_1b_pretrain_config()
+    cfg = llama32_1b_pretrain_1gpu_h100_bf16_config()
 
     # The recipe already sets cfg.model internally using this pattern.
     # Override cfg.model to choose a different Hugging Face model ID as the architecture source.

@@ -168,7 +168,9 @@ CLI_OVERRIDES="\
     model.sequence_parallel=${SP} \
     model.context_parallel_size=${CP} \
     model.seq_length=${SEQ_LENGTH} \
-    dataset.packed_sequence_specs.pad_seq_to_mult=${PAD_SEQ_TO_MULT} \
+    dataset.seq_length=${SEQ_LENGTH} \
+    dataset.offline_packing_specs.packed_sequence_size=${SEQ_LENGTH} \
+    dataset.offline_packing_specs.pad_seq_to_mult=${PAD_SEQ_TO_MULT} \
     model.recompute_granularity=${RECOMPUTE_GRANULARITY} \
     dist.distributed_timeout_minutes=90"
 
@@ -186,7 +188,7 @@ CLI_OVERRIDES="${CLI_OVERRIDES} ${EXTRA_OVERRIDES}"
 CMD="cd ${WORKDIR} && mkdir -p ${WORKSPACE}/results ${SAVE_DIR}/wandb ${SAVE_DIR}/tb_logs && \
 export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/Megatron-LM:\${PYTHONPATH:-} && \
 uv run --no-sync python scripts/training/run_recipe.py \
---recipe ${RECIPE_NAME} --seq_length ${SEQ_LENGTH} --hf_path ${HF_MODEL_PATH} \
+--recipe ${RECIPE_NAME} \
 ${CLI_OVERRIDES}"
 
 SRUN_CMD="srun --mpi=pmix --no-kill --container-image=${CONTAINER_IMAGE} --no-container-mount-home"
