@@ -118,9 +118,11 @@ class TestRecipeDefault:
 
 class TestRecomputePrecedence:
     def test_A_workload_default_survives_when_nothing_else_set(self):
-        """Workload base for GB200 NVFP4 V1 has recompute_modules=['mlp']. With
-        no Hydra and no argparse override, that value must reach the final
-        recipe."""
+        """Canonical GB200 NVFP4 flat workload has recompute_modules=['mlp'].
+
+        With no Hydra and no argparse override, that value must reach the final
+        recipe.
+        """
         recipe = _fresh_recipe()
         recipe = _apply(recipe, run_post=False)
         assert recipe.model.recompute_modules == ["mlp"]

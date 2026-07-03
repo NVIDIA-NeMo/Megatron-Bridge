@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Helpers for flat performance recipes and experiment naming."""
-
 from __future__ import annotations
 
 import functools
@@ -30,6 +28,8 @@ from pathlib import Path
 
 
 logger = logging.getLogger(__name__)
+
+# Default timeout for interactive config variant selection (in seconds)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _PERF_RECIPES_ROOT = _REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
@@ -46,8 +46,15 @@ _PRECISION_NAME_MAP = {
 
 @dataclass
 class WorkloadBaseConfig:
-    """Compatibility view over flat performance recipe defaults."""
+    """Container for workload base configs. This object exists because we cannot import MBridge on the headnode but need a place to store recipe overrides."""
 
+    # NOTE: `num_gpus` is for representation purposes only. It is only meant to
+    # communicate number of GPUs to be used for a specific workload. In this
+    # refactored path, the value is derived from the selected flat perf recipe.
+
+    # NOTE: You can specify number of GPUs to use for a SLURM job from command
+    # line like `-ng/--num_gpus <num_gpus>` ("scripts/performance/README.md")
+    # or update your sbatch script.
     num_gpus: int = 1
 
     tensor_model_parallel_size: int = 1
@@ -68,19 +75,24 @@ class WorkloadBaseConfig:
     recompute_num_layers: int | None = None
     recompute_modules: list[str] | None = None
 
+    # Fine-grained activation offloading
     fine_grained_activation_offloading: bool | None = None
     offload_modules: list[str] | None = None
 
     outer_dp_sharding_strategy: str | None = None
     num_distributed_optimizer_instances: int | None = None
 
+    # MoE configuration
     moe_flex_dispatcher_backend: str | None = None
     moe_a2a_overlap: bool | None = False
     cutedsl_fused_grouped_mlp: bool | None = False
     fp8_dot_product_attention: bool | None = None
     peft: str | None = None
 
+    # Pipeline parallelism layout
     pp_layout: str | None = None
+
+    # TransformerEngine per-module precision overrides
     te_precision_config_file: str | None = None
 
     @property
@@ -478,7 +490,17 @@ def get_perf_optimized_recipe(
 
 
 def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
-    """Get the library recipe and configure default output directories."""
+    """Get the library recipe.
+
+    Note: Library pretrain recipes no longer accept kwargs. This function calls the recipe
+    without arguments and then configures the output directories on the returned config.
+
+    The old API was: recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
+    This set:
+        - run_output_dir = "/nemo_run/{name}"
+        - checkpoint_dir = "/nemo_run/{name}/checkpoints"
+        - tensorboard_dir = "/nemo_run/{name}/tb_logs"
+    """
     family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
@@ -490,11 +512,19 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
         model_recipe_name = f"{model_recipe_name}_{train_task}_config"
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
+
+    # Library pretrain recipes no longer accept kwargs - call without args
+    # and configure the returned ConfigContainer
     cfg = recipe_builder()
 
+    # Set output directories that were previously configured via dir="/nemo_run/" and name=wandb_experiment_name
     run_output_dir = os.path.join("/nemo_run", wandb_experiment_name)
+
+    # Checkpoint paths
     cfg.checkpoint.save = os.path.join(run_output_dir, "checkpoints")
     cfg.checkpoint.load = os.path.join(run_output_dir, "checkpoints")
+
+    # Logger paths
     cfg.logger.tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
     cfg.logger.wandb_exp_name = wandb_experiment_name
     cfg.logger.wandb_save_dir = os.path.join(run_output_dir, "wandb")
@@ -567,7 +597,15 @@ def _display_config_variants(
 
 
 def _get_user_selection_with_timeout(num_variants: int, timeout: int) -> int:
-    """Get user selection with timeout, returning 1-based choice index."""
+    """Get user selection with timeout, returning 1-based choice index.
+
+    Args:
+        num_variants: Number of available variants to choose from
+        timeout: Timeout in seconds for user input
+
+    Returns:
+        1-based index of the selected variant (defaults to 1 on timeout/invalid input)
+    """
     try:
         ready, _, _ = select.select([sys.stdin], [], [], float(timeout))
         if ready:
@@ -587,6 +625,7 @@ def _get_user_selection_with_timeout(num_variants: int, timeout: int) -> int:
             _emit("\nTimeout - proceeding with default (1)")
             return 1
     except (OSError, AttributeError):
+        # select.select doesn't work on Windows, fall back to default
         logger.warning("Interactive selection not available on this platform. Using default variant.")
         return 1
 
