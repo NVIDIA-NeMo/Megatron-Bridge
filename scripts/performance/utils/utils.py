@@ -310,7 +310,12 @@ def _first_matching_perf_recipe_name(
         num_gpus=num_gpus,
     )
     if not matches:
-        available_variants = list_available_config_variants(model_recipe_name, gpu, precision, task)
+        available_variants = _list_available_config_variants(
+            model_recipe_name=model_recipe_name,
+            gpu=gpu,
+            compute_dtype=precision,
+            task=task,
+        )
         raise ValueError(
             f"No flat perf recipe found for {model_recipe_name}/{task}/{gpu}/{precision}"
             f"/{config_variant or 'default'}. Available variants: {available_variants}"
@@ -452,23 +457,30 @@ def get_exp_name_config(
 
 
 def list_available_config_variants(
-    model_family_name_or_recipe_name: str,
-    model_recipe_name_or_gpu: str,
-    gpu_or_compute_dtype: str,
-    compute_dtype_or_task: str,
-    task: str | None = None,
+    *,
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
 ) -> list[str]:
     """List all available config variants for a model/task/gpu/dtype combination."""
-    if task is None:
-        model_recipe_name = model_family_name_or_recipe_name
-        gpu = model_recipe_name_or_gpu
-        compute_dtype = gpu_or_compute_dtype
-        task = compute_dtype_or_task
-    else:
-        model_recipe_name = model_recipe_name_or_gpu
-        gpu = gpu_or_compute_dtype
-        compute_dtype = compute_dtype_or_task
+    del model_family_name
+    return _list_available_config_variants(
+        model_recipe_name=model_recipe_name,
+        gpu=gpu,
+        compute_dtype=compute_dtype,
+        task=task,
+    )
 
+
+def _list_available_config_variants(
+    *,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+) -> list[str]:
     precision_name = _normalize_precision_name(compute_dtype)
     prefix = f"{model_recipe_name}_{task}_"
     suffix = f"gpu_{gpu}_{precision_name}"
@@ -666,7 +678,13 @@ def select_config_variant_interactive(
     force_interactive: bool = False,
 ) -> str:
     """Interactively select a config variant if multiple variants are available."""
-    variants = list_available_config_variants(model_recipe_name, gpu, compute_dtype, task)
+    variants = list_available_config_variants(
+        model_family_name=model_family_name,
+        model_recipe_name=model_recipe_name,
+        gpu=gpu,
+        compute_dtype=compute_dtype,
+        task=task,
+    )
 
     if not variants:
         logger.warning(

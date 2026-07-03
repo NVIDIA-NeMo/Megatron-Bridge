@@ -176,11 +176,17 @@ class TestPerfConfigIntegration:
                 config_variant="v1",
             )
 
-    def test_list_available_config_variants_accepts_legacy_signature(self):
-        """Test that callers can still pass the unused model family argument."""
+    def test_list_available_config_variants_accepts_named_parameters(self):
+        """Test that config variant discovery accepts the legacy named parameters."""
         from utils.utils import list_available_config_variants
 
-        variants = list_available_config_variants("llama", "llama3_8b", "h100", "bf16", "pretrain")
+        variants = list_available_config_variants(
+            model_family_name="llama",
+            model_recipe_name="llama3_8b",
+            gpu="h100",
+            compute_dtype="bf16",
+            task="pretrain",
+        )
 
         assert variants == ["v2"]
 
@@ -188,7 +194,13 @@ class TestPerfConfigIntegration:
         """Test that interactive selection defaults to the canonical v2 recipe."""
         from utils.utils import list_available_config_variants
 
-        variants = list_available_config_variants("deepseek_v3", "h100", "fp8_sc", "pretrain")
+        variants = list_available_config_variants(
+            model_family_name="deepseek",
+            model_recipe_name="deepseek_v3",
+            gpu="h100",
+            compute_dtype="fp8_sc",
+            task="pretrain",
+        )
 
         assert variants == ["v2", "large_scale"]
 
