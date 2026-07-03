@@ -68,7 +68,7 @@ def _fresh_recipe():
         gpu="gb200",
         compute_dtype="nvfp4",
         mock=True,
-        config_variant="v2",
+        config_variant="default",
     )
 
 
@@ -89,7 +89,7 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
             compute_dtype="nvfp4",
             task="pretrain",
             user_gbs=args.global_batch_size,
-            config_variant="v2",
+            config_variant="default",
         )
     return recipe
 

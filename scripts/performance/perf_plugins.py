@@ -238,7 +238,7 @@ class PerfEnvPlugin(Plugin):
     compute_dtype: str
     train_task: str
     num_gpus: int | None = None
-    config_variant: str = "v2"
+    config_variant: str = "default"
     deterministic: bool = False
 
     def _set_determinism_env_vars(self, executor: "run.Executor") -> None:

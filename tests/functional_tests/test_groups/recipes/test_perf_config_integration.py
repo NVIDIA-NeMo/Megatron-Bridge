@@ -38,7 +38,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.model is not None
@@ -56,7 +56,7 @@ class TestPerfConfigIntegration:
             num_gpus=1024,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.model is not None
@@ -72,7 +72,7 @@ class TestPerfConfigIntegration:
             num_gpus=16,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.model is not None
@@ -88,7 +88,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
         cfg_fp8 = get_perf_recipe_by_name(
             model_recipe_name="llama3_8b",
@@ -96,7 +96,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="fp8_cs",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg_bf16.mixed_precision is not None
@@ -112,7 +112,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.num_gpus == 8
@@ -128,7 +128,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.num_gpus == 1024
@@ -143,7 +143,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="v2",
+            config_variant="default",
         )
         recipe = get_perf_recipe_by_name(
             model_recipe_name="deepseek_v3",
@@ -151,7 +151,7 @@ class TestPerfConfigIntegration:
             num_gpus=1024,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
 
         assert cfg.num_gpus == 1024
@@ -162,18 +162,18 @@ class TestPerfConfigIntegration:
         """Test that removed legacy perf configs do not leave a generated metadata mirror."""
         assert not (SCRIPTS_PERF_PATH / "utils" / "workload_metadata.py").exists()
 
-    def test_unsupported_legacy_config_variant_errors(self):
-        """Test that removed v1 workload variants are not silently collapsed to v2."""
+    def test_unsupported_config_variant_errors(self):
+        """Test that unknown workload variants are not silently collapsed to default."""
         from utils.utils import get_workload_base_config
 
-        with pytest.raises(ValueError, match="v1"):
+        with pytest.raises(ValueError, match="unknown"):
             get_workload_base_config(
                 model_family_name="llama",
                 model_recipe_name="llama3_8b",
                 gpu="h100",
                 compute_dtype="bf16",
                 task="pretrain",
-                config_variant="v1",
+                config_variant="unknown",
             )
 
     def test_list_available_config_variants_accepts_named_parameters(self):
@@ -188,10 +188,10 @@ class TestPerfConfigIntegration:
             task="pretrain",
         )
 
-        assert variants == ["v2"]
+        assert variants == ["default"]
 
-    def test_list_available_config_variants_keeps_v2_first(self):
-        """Test that interactive selection defaults to the canonical v2 recipe."""
+    def test_list_available_config_variants_keeps_default_first(self):
+        """Test that interactive selection defaults to the canonical default recipe."""
         from utils.utils import list_available_config_variants
 
         variants = list_available_config_variants(
@@ -202,7 +202,7 @@ class TestPerfConfigIntegration:
             task="pretrain",
         )
 
-        assert variants == ["v2", "large_scale"]
+        assert variants == ["default", "large_scale"]
 
     def test_get_library_recipe_llama_sets_paths(self):
         """Test that the legacy library recipe helper sets expected /nemo_run paths."""
@@ -245,7 +245,7 @@ class TestPerfConfigIntegration:
             train_task="pretrain",
             gpu="h100",
             compute_dtype="bf16",
-            config_variant="v2",
+            config_variant="default",
             num_gpus=1024,
         )
 
@@ -261,7 +261,7 @@ class TestPerfConfigIntegration:
             train_task="pretrain",
             gpu="h100",
             compute_dtype="bf16",
-            config_variant="v2",
+            config_variant="default",
             optimizer_type="adam",
         )
 
@@ -284,7 +284,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="v2",
+            config_variant="default",
         )
 
         cfg.train.train_iters = 100

@@ -27,8 +27,7 @@ Usage (run from project root, with uv run):
   diff -ru /tmp/configs_main/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml \
             /tmp/configs_pr/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml
 
-Old mode uses config variant ``v2`` by default, matching the performance CLI
-default. Both modes serialize the ConfigContainer via its to_dict() /
+Both modes use the suffix-less flat recipe by default. They serialize the ConfigContainer via its to_dict() /
 dataclasses.asdict path (same as save_config_filepath in production), so the
 YAML is directly comparable.
 """
@@ -298,21 +297,19 @@ COMBOS = [
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 64, "h100", "fp8_cs"),
     # GPT-OSS 20B
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "nvfp4", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "fp8_mx", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4", "v2"),
-    # GPT-OSS 20B GB200/GB300 FP8-MX v3 supersedes the older v1/v2 presets.
-    # Keep "v3" here for legacy lookup; flat recipe names omit the suffix.
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx", "v3"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb300", "fp8_mx", "v3"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "fp8_mx", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "vr200", "nvfp4", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "vr200", "nvfp4"),
     # GPT-OSS 120B
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "bf16"),
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "fp8_mx"),
@@ -516,13 +513,14 @@ def load_old_recipe(
     from utils.overrides import set_post_overrides
     from utils.utils import get_perf_optimized_recipe
 
+    variant_kwargs = {} if config_variant == "default" else {"config_variant": config_variant}
     cfg = get_perf_optimized_recipe(
         model_family_name=family,
         model_recipe_name=recipe,
         train_task=task,
         gpu=gpu,
         compute_dtype=precision,
-        config_variant=config_variant,
+        **variant_kwargs,
     )
     return set_post_overrides(
         cfg,
@@ -532,13 +530,13 @@ def load_old_recipe(
         num_gpus,
         precision,
         task,
-        config_variant=config_variant,
+        **variant_kwargs,
     )
 
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    return f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2", "v3"} else ""
+    return "" if config_variant is None or config_variant == "default" else f"_{config_variant}"
 
 
 def load_new_recipe(
@@ -621,8 +619,8 @@ def main():
     parser.add_argument("--family", help="Only dump recipes for this model family")
     parser.add_argument(
         "--config-variant",
-        default="v2",
-        help="Old-path config variant to compare against. Defaults to v2, matching the performance CLI.",
+        default="default",
+        help="Config variant to compare against. Defaults to the suffix-less flat recipe.",
     )
     args = parser.parse_args()
 
