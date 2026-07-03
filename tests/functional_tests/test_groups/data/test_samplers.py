@@ -54,7 +54,7 @@ class TestDataSamplers:
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -98,7 +98,7 @@ class TestDataSamplers:
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -151,7 +151,7 @@ class TestDataSamplers:
         # Mock AutoBridge to avoid HF downloads
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -575,7 +575,7 @@ class TestBatchDataloaderIntegration:
         """Test building a dataloader with dataloader_type='batch'."""
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -613,7 +613,7 @@ class TestBatchDataloaderIntegration:
 
         import pytest
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
