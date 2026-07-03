@@ -202,6 +202,14 @@ class TestPerfConfigIntegration:
 
         assert variants == ["v2"]
 
+    def test_list_available_config_variants_keeps_v2_first(self):
+        """Test that interactive selection defaults to the canonical v2 recipe."""
+        from utils.utils import list_available_config_variants
+
+        variants = list_available_config_variants("deepseek_v3", "h100", "fp8_sc", "pretrain")
+
+        assert variants == ["v2", "large_scale"]
+
     def test_get_library_recipe_llama_sets_paths(self):
         """Test that the legacy library recipe helper sets expected /nemo_run paths."""
         from utils.utils import get_library_recipe

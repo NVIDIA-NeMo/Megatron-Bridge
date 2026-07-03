@@ -568,7 +568,7 @@ def list_available_config_variants(
             continue
         middle = name.removesuffix("_config").split(suffix, maxsplit=1)[1]
         variants.add(middle.removeprefix("_") or "v2")
-    return sorted(variants)
+    return sorted(variants, key=lambda variant: (variant != "v2", variant))
 
 
 def get_perf_optimized_recipe(
