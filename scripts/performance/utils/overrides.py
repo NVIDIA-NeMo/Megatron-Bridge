@@ -522,7 +522,6 @@ def set_post_overrides(
         compute_dtype,
         task,
         config_variant,
-        num_gpus=num_gpus,
     )
 
     if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":

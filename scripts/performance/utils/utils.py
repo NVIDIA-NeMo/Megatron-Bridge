@@ -43,6 +43,32 @@ _PRECISION_NAME_MAP = {
     "nvfp4": "nvfp4",
 }
 
+# Most legacy workload presets used the largest matching flat recipe as the
+# default. These overrides cover workloads whose legacy default was the smaller
+# GPU-count recipe.
+_LEGACY_DEFAULT_GPU_COUNT_OVERRIDES = {
+    ("llama3_8b", "pretrain", "b200", "bf16", "v2"): 8,
+    ("llama3_8b", "pretrain", "b200", "fp8cs", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb200", "bf16", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb200", "fp8cs", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb300", "bf16", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb300", "fp8cs", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb300", "fp8mx", "v2"): 8,
+    ("llama3_8b", "pretrain", "gb300", "nvfp4", "v2"): 8,
+    ("llama3_8b", "pretrain", "h100", "bf16", "v2"): 8,
+    ("llama3_8b", "pretrain", "h100", "fp8cs", "v2"): 8,
+    ("nemotronh_56b", "pretrain", "b200", "fp8cs", "v2"): 64,
+    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", "v2"): 64,
+    ("qwen3_30b_a3b", "pretrain", "b200", "bf16", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb200", "fp8cs", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb300", "bf16", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb300", "fp8cs", "v2"): 8,
+    ("qwen3_30b_a3b", "pretrain", "h100", "bf16", "v2"): 16,
+    ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", "v2"): 16,
+}
+
 
 @dataclass
 class WorkloadBaseConfig:
@@ -116,6 +142,10 @@ def _recipe_variant_suffix(config_variant: str | None) -> str:
     return f"_{config_variant.lower()}"
 
 
+def _recipe_variant_name(config_variant: str | None) -> str:
+    return "v2" if config_variant is None else config_variant.lower()
+
+
 def _recipe_function_name(
     *,
     model_recipe_name: str,
@@ -130,12 +160,29 @@ def _recipe_function_name(
     return f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{precision_name}{variant_suffix}_config"
 
 
-def _select_default_recipe_name(matches: list[tuple[int, str]]) -> str:
-    return matches[0][1]
-
-
-def _select_nearest_recipe_name(matches: list[tuple[int, str]], *, num_gpus: int) -> str:
-    return min(matches, key=lambda match: (abs(match[0] - num_gpus), match[0]))[1]
+def _select_default_recipe_name(
+    *,
+    model_recipe_name: str,
+    task: str,
+    gpu: str,
+    precision: str,
+    config_variant: str | None,
+    matches: list[tuple[int, str]],
+) -> str:
+    override = _LEGACY_DEFAULT_GPU_COUNT_OVERRIDES.get(
+        (model_recipe_name, task, gpu, _normalize_precision_name(precision), _recipe_variant_name(config_variant))
+    )
+    if override is not None:
+        for gpu_count, name in matches:
+            if gpu_count == override:
+                return name
+        available_gpu_counts = [str(gpu_count) for gpu_count, _ in matches]
+        raise ValueError(
+            f"Legacy default GPU count {override} for {model_recipe_name}/{task}/{gpu}/"
+            f"{_normalize_precision_name(precision)}/{_recipe_variant_name(config_variant)} did not match "
+            f"available flat perf recipes: {', '.join(available_gpu_counts)}."
+        )
+    return matches[-1][1]
 
 
 def _emit(message: str = "", *, end: str = "\n", flush: bool = False) -> None:
@@ -253,7 +300,6 @@ def _first_matching_perf_recipe_name(
     precision: str,
     config_variant: str | None,
     num_gpus: int | None = None,
-    allow_gpu_count_fallback: bool = False,
 ) -> str:
     matches = _matching_perf_recipe_names(
         model_recipe_name=model_recipe_name,
@@ -263,26 +309,6 @@ def _first_matching_perf_recipe_name(
         config_variant=config_variant,
         num_gpus=num_gpus,
     )
-    if not matches and num_gpus is not None and allow_gpu_count_fallback:
-        matches = _matching_perf_recipe_names(
-            model_recipe_name=model_recipe_name,
-            task=task,
-            gpu=gpu,
-            precision=precision,
-            config_variant=config_variant,
-        )
-        if matches:
-            fallback_name = _select_nearest_recipe_name(matches, num_gpus=num_gpus)
-            logger.warning(
-                "No exact %s GPU flat perf recipe found for %s/%s/%s/%s; falling back to %s for scaling.",
-                num_gpus,
-                model_recipe_name,
-                task,
-                gpu,
-                precision,
-                fallback_name,
-            )
-            return fallback_name
     if not matches:
         available_variants = list_available_config_variants(model_recipe_name, gpu, precision, task)
         raise ValueError(
@@ -290,7 +316,14 @@ def _first_matching_perf_recipe_name(
             f"/{config_variant or 'default'}. Available variants: {available_variants}"
         )
     if num_gpus is None:
-        return _select_default_recipe_name(matches)
+        return _select_default_recipe_name(
+            model_recipe_name=model_recipe_name,
+            task=task,
+            gpu=gpu,
+            precision=precision,
+            config_variant=config_variant,
+            matches=matches,
+        )
     return matches[0][1]
 
 
@@ -337,8 +370,6 @@ def get_workload_base_config(
     compute_dtype: str,
     task: str,
     config_variant: str = "v2",
-    *,
-    num_gpus: int | None = None,
 ) -> WorkloadBaseConfig:
     """Return a compatibility workload config derived from flat perf recipes."""
     del model_family_name
@@ -348,8 +379,6 @@ def get_workload_base_config(
         gpu=gpu,
         precision=compute_dtype,
         config_variant=config_variant,
-        num_gpus=num_gpus,
-        allow_gpu_count_fallback=True,
     )
     gpu_match = re.search(r"_(\d+)gpu_", recipe_name)
     if gpu_match is None:
@@ -377,7 +406,6 @@ def get_exp_name_config(
         compute_dtype,
         task,
         config_variant,
-        num_gpus=args.num_gpus,
     )
     num_gpus = args.num_gpus if args.num_gpus is not None else base_config.num_gpus
     tp_size = (
@@ -551,7 +579,6 @@ def _display_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-    num_gpus: int | None,
     variants: list[str],
     timeout: int,
 ) -> None:
@@ -580,7 +607,6 @@ def _display_config_variants(
                 compute_dtype,
                 task,
                 variant,
-                num_gpus=num_gpus,
             )
             for field in fields(config):
                 value = getattr(config, field.name)
@@ -636,7 +662,6 @@ def select_config_variant_interactive(
     gpu: str,
     compute_dtype: str,
     task: str,
-    num_gpus: int | None = None,
     timeout: int = CONFIG_VARIANT_SELECTION_TIMEOUT,
     force_interactive: bool = False,
 ) -> str:
@@ -657,9 +682,7 @@ def select_config_variant_interactive(
         logger.info("Only one config variant available: %s", variants[0])
         return variants[0]
 
-    _display_config_variants(
-        model_family_name, model_recipe_name, gpu, compute_dtype, task, num_gpus, variants, timeout
-    )
+    _display_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task, variants, timeout)
     selection = _get_user_selection_with_timeout(len(variants), timeout)
     selected_variant = variants[selection - 1]
     logger.info("Selected config variant: %s", selected_variant)

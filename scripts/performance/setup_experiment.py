@@ -952,7 +952,6 @@ if __name__ == "__main__":
             gpu=args.gpu,
             compute_dtype=args.compute_dtype,
             task=args.task,
-            num_gpus=args.num_gpus,
         )
 
     main(

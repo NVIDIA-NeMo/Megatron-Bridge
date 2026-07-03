@@ -102,8 +102,8 @@ class TestPerfConfigIntegration:
         assert cfg_bf16.mixed_precision is not None
         assert cfg_fp8.mixed_precision is not None
 
-    def test_workload_base_config_falls_back_for_gpu_scaling(self):
-        """Test that non-exact GPU counts still use a flat recipe base for scaling."""
+    def test_workload_base_config_uses_legacy_default_recipe(self):
+        """Test that workload defaults use the legacy default flat recipe."""
         from utils.utils import get_workload_base_config
 
         cfg = get_workload_base_config(
@@ -113,14 +113,13 @@ class TestPerfConfigIntegration:
             compute_dtype="bf16",
             task="pretrain",
             config_variant="v2",
-            num_gpus=16,
         )
 
         assert cfg.num_gpus == 8
         assert cfg.gbs_scaling_factor == cfg.global_batch_size / 8
 
-    def test_workload_base_config_fallback_uses_nearest_gpu_count(self):
-        """Test that fallback selection uses the nearest available flat recipe."""
+    def test_workload_base_config_default_is_not_nearest_gpu_count(self):
+        """Test that default selection keeps legacy behavior, not nearest GPU count."""
         from utils.utils import get_workload_base_config
 
         cfg = get_workload_base_config(
@@ -130,10 +129,9 @@ class TestPerfConfigIntegration:
             compute_dtype="bf16",
             task="pretrain",
             config_variant="v2",
-            num_gpus=256,
         )
 
-        assert cfg.num_gpus == 512
+        assert cfg.num_gpus == 1024
 
     def test_workload_base_config_derives_from_flat_recipe(self):
         """Test that workload defaults use flat perf recipes as the source of truth."""
@@ -146,7 +144,6 @@ class TestPerfConfigIntegration:
             compute_dtype="bf16",
             task="pretrain",
             config_variant="v2",
-            num_gpus=1024,
         )
         recipe = get_perf_recipe_by_name(
             model_recipe_name="deepseek_v3",
