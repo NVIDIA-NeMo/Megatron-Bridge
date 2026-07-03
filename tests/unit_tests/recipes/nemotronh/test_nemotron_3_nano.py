@@ -109,10 +109,13 @@ class TestNemotron3NanoPretrain:
         config = nemotron_3_nano_pretrain_config()
 
         # Verify optimizer configuration
-        assert config.optimizer.lr == 1.6e-3
+        assert config.optimizer.lr == 1e-3
         assert config.optimizer.weight_decay == 0.1
-        assert config.optimizer.min_lr == 1.6e-5
+        assert config.optimizer.min_lr == 1e-5
+        assert config.scheduler.lr_decay_style == "WSD"
+        assert config.scheduler.lr_wsd_decay_style == "minus_sqrt"
         assert config.scheduler.lr_warmup_iters == 333
+        assert config.scheduler.lr_wsd_decay_iters == 7947
 
         # Verify precision settings
         assert config.optimizer.use_precision_aware_optimizer is False
