@@ -135,16 +135,11 @@ class TestPerfConfigIntegration:
 
         assert cfg.num_gpus == 1024
 
-    def test_workload_base_config_uses_lightweight_metadata(self, monkeypatch):
-        """Test that launcher-side workload lookup does not import full Bridge recipes."""
-        import utils.utils as perf_utils
+    def test_workload_base_config_derives_from_flat_recipe(self):
+        """Test that workload defaults use flat perf recipes as the source of truth."""
+        from utils.utils import get_perf_recipe_by_name, get_workload_base_config
 
-        def _raise_if_recipe_imported(*args, **kwargs):
-            raise AssertionError("get_workload_base_config should use lightweight metadata")
-
-        monkeypatch.setattr(perf_utils, "get_perf_recipe_by_name", _raise_if_recipe_imported)
-
-        cfg = perf_utils.get_workload_base_config(
+        cfg = get_workload_base_config(
             model_family_name="deepseek",
             model_recipe_name="deepseek_v3",
             gpu="h100",
@@ -153,32 +148,22 @@ class TestPerfConfigIntegration:
             config_variant="v2",
             num_gpus=1024,
         )
+        recipe = get_perf_recipe_by_name(
+            model_recipe_name="deepseek_v3",
+            task="pretrain",
+            num_gpus=1024,
+            gpu="h100",
+            precision="bf16",
+            config_variant="v2",
+        )
 
         assert cfg.num_gpus == 1024
-        assert cfg.global_batch_size == 16384
+        assert cfg.global_batch_size == recipe.train.global_batch_size
+        assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
 
-    def test_workload_base_config_requires_lightweight_metadata(self, monkeypatch):
-        """Test that launcher-side workload lookup never falls through to recipe imports."""
-        import utils.utils as perf_utils
-
-        recipe_name = "llama3_8b_pretrain_8gpu_h100_bf16_config"
-
-        def _raise_if_recipe_imported(*args, **kwargs):
-            raise AssertionError("get_workload_base_config should not import full recipes")
-
-        monkeypatch.delitem(perf_utils.WORKLOAD_BASE_CONFIGS, recipe_name)
-        monkeypatch.setattr(perf_utils, "get_perf_recipe_by_name", _raise_if_recipe_imported)
-
-        with pytest.raises(ValueError, match="Missing lightweight metadata"):
-            perf_utils.get_workload_base_config(
-                model_family_name="llama",
-                model_recipe_name="llama3_8b",
-                gpu="h100",
-                compute_dtype="bf16",
-                task="pretrain",
-                config_variant="v2",
-                num_gpus=8,
-            )
+    def test_generated_workload_metadata_is_not_required(self):
+        """Test that removed legacy perf configs do not leave a generated metadata mirror."""
+        assert not (SCRIPTS_PERF_PATH / "utils" / "workload_metadata.py").exists()
 
     def test_unsupported_legacy_config_variant_errors(self):
         """Test that removed v1 workload variants are not silently collapsed to v2."""

@@ -29,12 +29,6 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 
-try:
-    from utils.workload_metadata import WORKLOAD_BASE_CONFIGS
-except ImportError:
-    from .workload_metadata import WORKLOAD_BASE_CONFIGS
-
-
 logger = logging.getLogger(__name__)
 CONFIG_VARIANT_SELECTION_TIMEOUT = 15
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -262,7 +256,7 @@ def find_perf_recipe(recipe_name: str) -> Callable | None:
 @functools.lru_cache(maxsize=1)
 def flat_perf_recipe_names() -> tuple[str, ...]:
     """Return flat perf recipe names without importing recipe family modules."""
-    names = set(WORKLOAD_BASE_CONFIGS)
+    names = set()
     if _PERF_RECIPES_ROOT.exists():
         for path in _PERF_RECIPES_ROOT.rglob("*.py"):
             names.update(_PERF_RECIPE_DEF_PATTERN.findall(path.read_text()))
@@ -437,13 +431,6 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
     )
 
 
-def _workload_base_config_from_metadata(recipe_name: str) -> WorkloadBaseConfig | None:
-    metadata = WORKLOAD_BASE_CONFIGS.get(recipe_name)
-    if metadata is None:
-        return None
-    return WorkloadBaseConfig(**metadata)
-
-
 def get_workload_base_config(
     model_family_name: str,
     model_recipe_name: str,
@@ -468,14 +455,10 @@ def get_workload_base_config(
     gpu_match = re.search(r"_(\d+)gpu_", recipe_name)
     if gpu_match is None:
         raise ValueError(f"Unable to infer GPU count from perf recipe name {recipe_name!r}.")
-    metadata_config = _workload_base_config_from_metadata(recipe_name)
-    if metadata_config is not None:
-        return metadata_config
-
-    raise ValueError(
-        f"Missing lightweight metadata for perf recipe {recipe_name!r}. "
-        "Regenerate scripts/performance/utils/workload_metadata.py before using this recipe from the launcher."
-    )
+    recipe_fn = find_perf_recipe(recipe_name)
+    if recipe_fn is None:
+        raise ValueError(f"No perf recipe {recipe_name!r} found.")
+    return _workload_base_config_from_recipe(recipe_fn(), num_gpus=int(gpu_match.group(1)))
 
 
 def get_exp_name_config(

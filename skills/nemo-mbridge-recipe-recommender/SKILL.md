@@ -85,7 +85,7 @@ but live in a dedicated namespace for throughput benchmarking:
 - Perf recipes live in `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`
 - Each perf recipe is a **self-contained Python function** (e.g. `llama3_8b_pretrain_8gpu_h100_bf16_config()`)
 - Recipe names encode model, task, GPU count, hardware, precision, and optional variant
-- `scripts/performance/utils/workload_metadata.py` keeps launcher-side `WorkloadBaseConfig` metadata lightweight
+- `scripts/performance/utils/utils.py` derives compatibility `WorkloadBaseConfig` views from the flat recipe itself
 - Shared helpers: `_benchmark_common()` (50 iters, timing, TE RNG), `_perf_precision()` (bf16 / fp8_cs / fp8_mx / nvfp4)
 
 **Why Python, not YAML?** Previous YAML-based approaches had problems:
@@ -232,8 +232,8 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 Perf recipe source lives under `src/megatron/bridge/perf_recipes/`. The
 performance launcher in `scripts/performance/` resolves those flat recipe names
-and uses lightweight `WorkloadBaseConfig` metadata for launcher-side naming and
-plugin setup.
+and derives compatibility workload views from the selected flat recipe when
+legacy helper paths still need them.
 
 > **Important:** Perf recipes are designed for **upper-bound throughput
 > benchmarks**, not production training. They run **50 iterations** on **mock
@@ -432,5 +432,5 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Training entry point | `scripts/training/run_recipe.py` |
 | Perf recipes root | `src/megatron/bridge/perf_recipes/` |
 | Perf entry point | `scripts/performance/run_script.py` |
-| Perf workload metadata | `scripts/performance/utils/workload_metadata.py` |
+| Perf recipe helpers | `scripts/performance/utils/utils.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |
