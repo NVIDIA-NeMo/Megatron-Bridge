@@ -251,3 +251,24 @@ class TestParseValBlendEntries:
         )
         with pytest.raises(ValueError, match="No splits.val.blend"):
             _parse_val_blend_entries(meta)
+
+    def test_delta_versioned_path_uses_parent_name(self, tmp_path: Path) -> None:
+        """Kaiko gold-layer webdatasets end in ``<asset>/delta<N>_v<hex>``; the val-loss name
+        should be the asset directory, not the delta-version segment."""
+        meta = self._write(
+            tmp_path,
+            """
+            splits:
+              val:
+                blend:
+                  - path: /abs/gold/some_WD_name/delta0_v123
+                  - path: /abs/gold/another_WD_name/delta0_v456
+                  - path: ./qa_blend.yaml
+            """,
+        )
+        entries = _parse_val_blend_entries(meta)
+        assert [name for name, _ in entries] == [
+            "some_WD_name",
+            "another_WD_name",
+            "qa_blend",
+        ]

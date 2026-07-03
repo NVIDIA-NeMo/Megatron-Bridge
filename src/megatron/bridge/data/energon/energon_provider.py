@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -23,12 +24,28 @@ from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiMod
 from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
+# Kaiko gold-layer webdatasets sit under ``<asset_name>/delta<N>_v<hex>/``. Using the
+# terminal segment as the val-loss name yields ``delta0_v72030cff`` — the asset name is
+# in the parent directory.
+_DELTA_STEM = re.compile(r"^delta\d+_v[0-9a-f]+$")
+
+
+def _name_from_path(raw_path: str) -> str:
+    p = Path(raw_path)
+    if _DELTA_STEM.fullmatch(p.stem):
+        return p.parent.name
+    return p.stem
+
+
 def _parse_val_blend_entries(metadataset_path: str) -> list[tuple[str, str]]:
     """Extract validation sub-blend ``(name, absolute_path)`` pairs from a MetadatasetV2 YAML.
 
     Returns one entry per ``splits.val.blend[]`` item. Names are the sub-blend path stems
     (e.g. ``qa_blend`` from ``./qa_blend.yaml``); relative paths are resolved against the
-    metadataset's directory, absolute paths kept as-is.
+    metadataset's directory, absolute paths kept as-is. Paths whose terminal segment matches
+    ``delta<N>_v<hex>`` (Kaiko's delta-versioned gold-layer layout) use the parent directory
+    name instead, so ``.../pmc_full_publications_wd/delta0_v72030cff`` becomes
+    ``pmc_full_publications_wd``.
 
     Raises:
         ValueError: if the metadataset has no ``splits.val.blend`` entries.
@@ -45,7 +62,7 @@ def _parse_val_blend_entries(metadataset_path: str) -> list[tuple[str, str]]:
     for entry in val_blend:
         raw_path = entry["path"]
         resolved = str(base_dir / raw_path) if not Path(raw_path).is_absolute() else raw_path
-        entries.append((Path(raw_path).stem, resolved))
+        entries.append((_name_from_path(raw_path), resolved))
     return entries
 
 
