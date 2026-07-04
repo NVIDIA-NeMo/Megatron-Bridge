@@ -7,12 +7,18 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache 2.0 <br>
+Apache-2.0 <br>
 ## Use Case: <br>
-Developers and ML engineers enabling MoE expert-parallel communication overlap to hide dispatch/combine latency and improve training throughput on multi-GPU systems with Megatron-Bridge. <br>
+Developers and engineers enabling MoE expert-parallel communication overlap to optimize training throughput, or diagnosing EP overlap configuration issues in Megatron-Bridge workloads. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
@@ -21,11 +27,11 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron-Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -37,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task with 2 attempts per task using NVSkills-Eval external profile in a local environment. <br>
+Evaluated against 1 internal skill task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -61,14 +67,19 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 100% (+0%) | 91% (+3%) |
-| Discoverability | 2 | 100% (+0%) | 66% (+3%) |
-| Effectiveness | 2 | 95% (-1%) | 84% (+1%) |
-| Efficiency | 2 | 92% (-0%) | 58% (-2%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+75%) | 97% (+22%) |
+| Discoverability | 1 | 100% (+75%) | 97% (+72%) |
+| Effectiveness | 1 | 93% (+93%) | 91% (+0%) |
+| Efficiency | 1 | 94% (+69%) | 96% (+69%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-b0f64d72 (source: git SHA, committed 2026-06-02) <br>
+1.0.0+9edee0c (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
