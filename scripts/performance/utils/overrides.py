@@ -494,7 +494,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
-    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+    if args.task == "peft" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
         recipe.dist.use_tp_pp_dp_mapping = True
 
     if args.deterministic:

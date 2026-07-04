@@ -551,7 +551,7 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
     if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
         model_recipe_name = "deepseek_v3_pretrain_config_32nodes"
-    elif train_task in ("lora", "peft"):
+    elif train_task == "peft":
         model_recipe_name = f"{model_recipe_name}_peft_config"
     else:
         model_recipe_name = f"{model_recipe_name}_{train_task}_config"

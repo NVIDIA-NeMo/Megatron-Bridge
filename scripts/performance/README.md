@@ -99,7 +99,7 @@ uv run python scripts/performance/setup_experiment.py \
 
 ##### Training arguments
 
-- `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
+- `--task`: Workflow to run (`pretrain`, `sft`, `peft`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
