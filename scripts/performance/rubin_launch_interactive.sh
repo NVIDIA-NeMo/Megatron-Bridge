@@ -39,7 +39,7 @@ MODEL_FAMILY="${MODEL_FAMILY:-llama}"
 MODEL_RECIPE="${MODEL_RECIPE:-llama3_8b}"
 GPU_TYPE="${GPU_TYPE:-r100}"              # recipe to load (h100/b200/gb200/gb300/b300/r100)
 COMPUTE_DTYPE="${COMPUTE_DTYPE:-bf16}"    # bf16, fp8_cs, fp8_mx, nvfp4
-CONFIG_VARIANT="${CONFIG_VARIANT:-default}"
+CONFIG_VARIANT="${CONFIG_VARIANT:-}"
 DATA="${DATA:-mock}"                      # mock | rp2 | squad
 MAX_STEPS="${MAX_STEPS:-10}"
 NUM_GPUS="${NUM_GPUS:-1}"
@@ -134,7 +134,6 @@ RUN_CMD=(
     --model_recipe_name  "${MODEL_RECIPE}"
     --gpu                "${GPU_TYPE}"
     --compute_dtype      "${COMPUTE_DTYPE}"
-    --config_variant     "${CONFIG_VARIANT}"
     --data               "${DATA}"
     --num_gpus           "${NUM_GPUS}"
     --max_steps          "${MAX_STEPS}"
@@ -146,6 +145,10 @@ RUN_CMD=(
     --cuda_graph_impl    "${CG_IMPL}"
     --cuda_graph_scope   "${CG_SCOPE}"
 )
+
+if [[ -n "${CONFIG_VARIANT}" ]]; then
+    RUN_CMD+=(--config_variant "${CONFIG_VARIANT}")
+fi
 
 echo "============================================================"
 echo " Megatron-Bridge Interactive Launch"

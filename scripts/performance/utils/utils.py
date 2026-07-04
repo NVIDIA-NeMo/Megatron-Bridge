@@ -47,26 +47,26 @@ _PRECISION_NAME_MAP = {
 # These overrides cover workloads whose default recipe is the smaller GPU-count
 # recipe.
 _DEFAULT_GPU_COUNT_OVERRIDES = {
-    ("llama3_8b", "pretrain", "b200", "bf16", "default"): 8,
-    ("llama3_8b", "pretrain", "b200", "fp8cs", "default"): 8,
-    ("llama3_8b", "pretrain", "gb200", "bf16", "default"): 8,
-    ("llama3_8b", "pretrain", "gb200", "fp8cs", "default"): 8,
-    ("llama3_8b", "pretrain", "gb300", "bf16", "default"): 8,
-    ("llama3_8b", "pretrain", "gb300", "fp8cs", "default"): 8,
-    ("llama3_8b", "pretrain", "gb300", "fp8mx", "default"): 8,
-    ("llama3_8b", "pretrain", "gb300", "nvfp4", "default"): 8,
-    ("llama3_8b", "pretrain", "h100", "bf16", "default"): 8,
-    ("llama3_8b", "pretrain", "h100", "fp8cs", "default"): 8,
-    ("nemotronh_56b", "pretrain", "b200", "fp8cs", "default"): 64,
-    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", "default"): 64,
-    ("qwen3_30b_a3b", "pretrain", "b200", "bf16", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb200", "fp8cs", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb300", "bf16", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "gb300", "fp8cs", "default"): 8,
-    ("qwen3_30b_a3b", "pretrain", "h100", "bf16", "default"): 16,
-    ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", "default"): 16,
+    ("llama3_8b", "pretrain", "b200", "bf16", None): 8,
+    ("llama3_8b", "pretrain", "b200", "fp8cs", None): 8,
+    ("llama3_8b", "pretrain", "gb200", "bf16", None): 8,
+    ("llama3_8b", "pretrain", "gb200", "fp8cs", None): 8,
+    ("llama3_8b", "pretrain", "gb300", "bf16", None): 8,
+    ("llama3_8b", "pretrain", "gb300", "fp8cs", None): 8,
+    ("llama3_8b", "pretrain", "gb300", "fp8mx", None): 8,
+    ("llama3_8b", "pretrain", "gb300", "nvfp4", None): 8,
+    ("llama3_8b", "pretrain", "h100", "bf16", None): 8,
+    ("llama3_8b", "pretrain", "h100", "fp8cs", None): 8,
+    ("nemotronh_56b", "pretrain", "b200", "fp8cs", None): 64,
+    ("nemotronh_56b", "pretrain", "gb300", "fp8cs", None): 64,
+    ("qwen3_30b_a3b", "pretrain", "b200", "bf16", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "b200", "fp8cs", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb200", "bf16", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb200", "fp8cs", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb300", "bf16", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "gb300", "fp8cs", None): 8,
+    ("qwen3_30b_a3b", "pretrain", "h100", "bf16", None): 16,
+    ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", None): 16,
 }
 
 
@@ -137,13 +137,17 @@ def _normalize_precision_name(precision: str) -> str:
 
 
 def _recipe_variant_suffix(config_variant: str | None) -> str:
-    if config_variant is None or config_variant.lower() == "default":
+    if config_variant is None:
         return ""
     return f"_{config_variant.lower()}"
 
 
-def _recipe_variant_name(config_variant: str | None) -> str:
-    return "default" if config_variant is None else config_variant.lower()
+def _recipe_variant_name(config_variant: str | None) -> str | None:
+    return None if config_variant is None else config_variant.lower()
+
+
+def _display_config_variant(config_variant: str | None) -> str:
+    return "default" if config_variant is None else config_variant
 
 
 def _recipe_function_name(
@@ -179,7 +183,7 @@ def _select_default_recipe_name(
         available_gpu_counts = [str(gpu_count) for gpu_count, _ in matches]
         raise ValueError(
             f"Default GPU count {override} for {model_recipe_name}/{task}/{gpu}/"
-            f"{_normalize_precision_name(precision)}/{_recipe_variant_name(config_variant)} did not match "
+            f"{_normalize_precision_name(precision)}/{_display_config_variant(config_variant)} did not match "
             f"available flat perf recipes: {', '.join(available_gpu_counts)}."
         )
     return matches[-1][1]
@@ -318,7 +322,8 @@ def _first_matching_perf_recipe_name(
         )
         raise ValueError(
             f"No flat perf recipe found for {model_recipe_name}/{task}/{gpu}/{precision}"
-            f"/{config_variant or 'default'}. Available variants: {available_variants}"
+            f"/{_display_config_variant(config_variant)}. Available variants: "
+            f"{[_display_config_variant(variant) for variant in available_variants]}"
         )
     if num_gpus is None:
         return _select_default_recipe_name(
@@ -374,7 +379,7 @@ def get_workload_base_config(
     gpu: str,
     compute_dtype: str,
     task: str,
-    config_variant: str = "default",
+    config_variant: str | None = None,
 ) -> WorkloadBaseConfig:
     """Return a compatibility workload config derived from flat perf recipes."""
     del model_family_name
@@ -401,7 +406,7 @@ def get_exp_name_config(
     gpu: str,
     compute_dtype: str,
     task: str,
-    config_variant: str = "default",
+    config_variant: str | None = None,
 ) -> str:
     """Get the experiment name from the flat perf recipe and user overrides."""
     base_config = get_workload_base_config(
@@ -463,7 +468,7 @@ def list_available_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-) -> list[str]:
+) -> list[str | None]:
     """List all available config variants for a model/task/gpu/dtype combination."""
     del model_family_name
     return _list_available_config_variants(
@@ -480,17 +485,17 @@ def _list_available_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-) -> list[str]:
+) -> list[str | None]:
     precision_name = _normalize_precision_name(compute_dtype)
     prefix = f"{model_recipe_name}_{task}_"
     suffix = f"gpu_{gpu}_{precision_name}"
-    variants: set[str] = set()
+    variants: set[str | None] = set()
     for name in flat_perf_recipe_names():
         if not name.startswith(prefix) or not name.endswith("_config") or suffix not in name:
             continue
         middle = name.removesuffix("_config").split(suffix, maxsplit=1)[1]
-        variants.add(middle.removeprefix("_") or "default")
-    return sorted(variants, key=lambda variant: (variant != "default", variant))
+        variants.add(middle.removeprefix("_") or None)
+    return sorted(variants, key=lambda variant: (variant is not None, variant or ""))
 
 
 def get_perf_optimized_recipe(
@@ -500,7 +505,7 @@ def get_perf_optimized_recipe(
     gpu: str,
     compute_dtype: str,
     mock: bool = True,
-    config_variant: str = "default",
+    config_variant: str | None = None,
     optimizer_type: str | None = None,
     num_gpus: int | None = None,
 ):
@@ -591,7 +596,7 @@ def _display_config_variants(
     gpu: str,
     compute_dtype: str,
     task: str,
-    variants: list[str],
+    variants: list[str | None],
     timeout: int,
 ) -> None:
     """Display available config variants with their derived workload configs."""
@@ -608,7 +613,8 @@ def _display_config_variants(
 
     for i, variant in enumerate(variants, 1):
         default_marker = f" {c.GREEN}(default){c.RESET}" if i == 1 else ""
-        _emit(f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant}{c.RESET}{default_marker}")
+        variant_label = _display_config_variant(variant)
+        _emit(f"\n  {c.BOLD}{c.CYAN}[{i}]{c.RESET} {c.BOLD}{c.WHITE}{variant_label}{c.RESET}{default_marker}")
         _emit(f"  {c.DIM}{'-' * 76}{c.RESET}")
 
         try:
@@ -676,7 +682,7 @@ def select_config_variant_interactive(
     task: str,
     timeout: int = CONFIG_VARIANT_SELECTION_TIMEOUT,
     force_interactive: bool = False,
-) -> str:
+) -> str | None:
     """Interactively select a config variant if multiple variants are available."""
     variants = list_available_config_variants(
         model_family_name=model_family_name,
@@ -694,14 +700,14 @@ def select_config_variant_interactive(
             gpu,
             compute_dtype,
         )
-        return "default"
+        return None
 
     if len(variants) == 1 and not force_interactive:
-        logger.info("Only one config variant available: %s", variants[0])
+        logger.info("Only one config variant available: %s", _display_config_variant(variants[0]))
         return variants[0]
 
     _display_config_variants(model_family_name, model_recipe_name, gpu, compute_dtype, task, variants, timeout)
     selection = _get_user_selection_with_timeout(len(variants), timeout)
     selected_variant = variants[selection - 1]
-    logger.info("Selected config variant: %s", selected_variant)
+    logger.info("Selected config variant: %s", _display_config_variant(selected_variant))
     return selected_variant

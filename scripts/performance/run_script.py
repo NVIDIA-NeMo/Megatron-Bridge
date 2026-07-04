@@ -91,7 +91,7 @@ def _find_perf_recipe(name: str) -> Callable[[], ConfigContainer] | None:
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    if config_variant is None or config_variant.lower() == "default":
+    if config_variant is None:
         return ""
     return f"_{config_variant.lower()}"
 

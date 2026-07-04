@@ -906,10 +906,9 @@ def parse_cli_args():
         "--config_variant",
         type=str,
         help=(
-            "Flat perf recipe variant for setup_experiment.py. Defaults to default, the suffix-less canonical recipe. "
+            "Flat perf recipe variant for setup_experiment.py. Omit to use the suffix-less canonical recipe. "
             "Named variants such as large_scale are supported when a matching recipe exists."
         ),
-        default="default",
     )
     config_variant_args.add_argument(
         "--list_config_variants",

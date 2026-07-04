@@ -512,7 +512,7 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
-    config_variant: str = "default",
+    config_variant: str | None = None,
 ) -> ConfigContainer:
     """Set the post overrides."""
     workload_base_config = get_workload_base_config(

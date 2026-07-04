@@ -478,7 +478,7 @@ def main(
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
-    config_variant: str = "default",
+    config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
 ):

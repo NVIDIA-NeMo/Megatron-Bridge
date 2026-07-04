@@ -506,14 +506,14 @@ def load_old_recipe(
     num_gpus: int,
     gpu: str,
     precision: str,
-    config_variant: str,
+    config_variant: str | None,
 ):
     """Load recipe using the OLD scripts/performance/configs/ path (main branch)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from utils.overrides import set_post_overrides
     from utils.utils import get_perf_optimized_recipe
 
-    variant_kwargs = {} if config_variant == "default" else {"config_variant": config_variant}
+    variant_kwargs = {} if config_variant is None else {"config_variant": config_variant}
     cfg = get_perf_optimized_recipe(
         model_family_name=family,
         model_recipe_name=recipe,
@@ -536,7 +536,7 @@ def load_old_recipe(
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    return "" if config_variant is None or config_variant == "default" else f"_{config_variant}"
+    return "" if config_variant is None else f"_{config_variant}"
 
 
 def load_new_recipe(
@@ -546,7 +546,7 @@ def load_new_recipe(
     num_gpus: int,
     gpu: str,
     precision: str,
-    config_variant: str,
+    config_variant: str | None,
 ):
     """Load recipe using the NEW flat perf recipe path (PR branch)."""
     precision_map = {
@@ -567,18 +567,18 @@ def load_new_recipe(
     return _apply_flat_recipe_runtime_overrides(fn(), precision)
 
 
-def _resolve_combo(combo: tuple, default_config_variant: str):
+def _resolve_combo(combo: tuple, fallback_config_variant: str | None):
     """Return normalized combo fields plus the effective config variant."""
     if len(combo) == 6:
         family, recipe, task, num_gpus, gpu, precision = combo
-        return family, recipe, task, num_gpus, gpu, precision, default_config_variant
+        return family, recipe, task, num_gpus, gpu, precision, fallback_config_variant
     if len(combo) == 7:
         family, recipe, task, num_gpus, gpu, precision, combo_config_variant = combo
         return family, recipe, task, num_gpus, gpu, precision, combo_config_variant
     raise ValueError(f"Invalid combo length {len(combo)} for {combo!r}")
 
 
-def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: str):
+def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: str | None):
     """Generate and dump all configs as YAML files."""
     out_dir.mkdir(parents=True, exist_ok=True)
     load_fn = load_old_recipe if mode == "old" else load_new_recipe
@@ -619,8 +619,7 @@ def main():
     parser.add_argument("--family", help="Only dump recipes for this model family")
     parser.add_argument(
         "--config-variant",
-        default="default",
-        help="Config variant to compare against. Defaults to the suffix-less flat recipe.",
+        help="Config variant to compare against. Omit to use the suffix-less flat recipe.",
     )
     args = parser.parse_args()
 

@@ -38,7 +38,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.model is not None
@@ -56,7 +56,7 @@ class TestPerfConfigIntegration:
             num_gpus=1024,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.model is not None
@@ -72,7 +72,7 @@ class TestPerfConfigIntegration:
             num_gpus=16,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.model is not None
@@ -88,7 +88,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
         cfg_fp8 = get_perf_recipe_by_name(
             model_recipe_name="llama3_8b",
@@ -96,7 +96,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="fp8_cs",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg_bf16.mixed_precision is not None
@@ -112,7 +112,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.num_gpus == 8
@@ -128,7 +128,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.num_gpus == 1024
@@ -143,7 +143,7 @@ class TestPerfConfigIntegration:
             gpu="h100",
             compute_dtype="bf16",
             task="pretrain",
-            config_variant="default",
+            config_variant=None,
         )
         recipe = get_perf_recipe_by_name(
             model_recipe_name="deepseek_v3",
@@ -151,7 +151,7 @@ class TestPerfConfigIntegration:
             num_gpus=1024,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
 
         assert cfg.num_gpus == 1024
@@ -188,10 +188,10 @@ class TestPerfConfigIntegration:
             task="pretrain",
         )
 
-        assert variants == ["default"]
+        assert variants == [None]
 
-    def test_list_available_config_variants_keeps_default_first(self):
-        """Test that interactive selection defaults to the canonical default recipe."""
+    def test_list_available_config_variants_keeps_suffixless_first(self):
+        """Test that interactive selection prefers the suffix-less recipe."""
         from utils.utils import list_available_config_variants
 
         variants = list_available_config_variants(
@@ -202,7 +202,7 @@ class TestPerfConfigIntegration:
             task="pretrain",
         )
 
-        assert variants == ["default", "large_scale"]
+        assert variants == [None, "large_scale"]
 
     def test_get_library_recipe_llama_sets_paths(self):
         """Test that the library recipe helper sets expected /nemo_run paths."""
@@ -245,7 +245,7 @@ class TestPerfConfigIntegration:
             train_task="pretrain",
             gpu="h100",
             compute_dtype="bf16",
-            config_variant="default",
+            config_variant=None,
             num_gpus=1024,
         )
 
@@ -261,7 +261,7 @@ class TestPerfConfigIntegration:
             train_task="pretrain",
             gpu="h100",
             compute_dtype="bf16",
-            config_variant="default",
+            config_variant=None,
             optimizer_type="adam",
         )
 
@@ -284,7 +284,7 @@ class TestPerfConfigIntegration:
             num_gpus=8,
             gpu="h100",
             precision="bf16",
-            config_variant="default",
+            config_variant=None,
         )
 
         cfg.train.train_iters = 100
