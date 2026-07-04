@@ -94,7 +94,8 @@ def test_glm5_perf_recipes_are_flat_and_preserve_bridge_dsa_fields(
     cfg = _build_recipe(recipe_func, monkeypatch)
 
     assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_flex_dispatcher_backend == "deepep"
+    expected_dispatcher_backend = "hybridep" if "_gb200_" in recipe_func.__name__ else "deepep"
+    assert cfg.model.moe_flex_dispatcher_backend == expected_dispatcher_backend
     assert cfg.model.dsa_kernel_backend == "cudnn"
     assert cfg.model.mtp_num_layers == 1
     if recipe_func.__name__.startswith("glm52_"):

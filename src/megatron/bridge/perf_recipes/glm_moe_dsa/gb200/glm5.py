@@ -65,7 +65,7 @@ def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_router_dtype = "fp32"
     cfg.model.moe_shared_expert_overlap = False
@@ -137,7 +137,7 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_grouped_gemm = True
-    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_router_dtype = "fp32"
     cfg.model.moe_shared_expert_overlap = False
