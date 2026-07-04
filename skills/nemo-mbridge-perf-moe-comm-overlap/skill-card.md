@@ -1,5 +1,5 @@
 ## Description: <br>
-MoE expert-parallel communication overlap in Megatron Bridge, covering dispatch/combine overlap, flex dispatcher backends, and expert wgrad scheduling. <br>
+MoE expert-parallel communication overlap in Megatron Bridge. Covers dispatch/combine overlap, flex dispatcher backends, and expert wgrad scheduling. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -7,16 +7,16 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache-2.0 <br>
+Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers tuning MoE communication overlap for expert-parallel distributed training, or tracing throughput regressions to comm-overlap configuration changes. <br>
+Developers and engineers tuning MoE expert-parallel communication overlap for throughput optimization in Megatron Bridge training runs. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -26,13 +26,14 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Communication Overlap Guide](docs/training/communication-overlap.md) <br>
+- [Comm Overlap Validation Source](src/megatron/bridge/training/comm_overlap.py) <br>
+- [Flex Dispatcher Backend Source](src/megatron/bridge/training/flex_dispatcher_backend.py) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Parallelisms Reference](docs/parallelisms.md) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Analysis] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -43,7 +44,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 internal evaluation task (positive skill-activation scenario) in NVSkills-Eval external profile. <br>
+Evaluated against 1 evaluation task (positive skill-activation case) in astra-sandbox environment with external NVSkills-Eval profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,10 +69,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+12%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+21%) |
-| Effectiveness | 1 | 86% (+86%) | 84% (+11%) |
-| Efficiency | 1 | 94% (+67%) | 96% (+13%) |
+| Correctness | 1 | 100% (+100%) | 97% (+75%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+50%) |
+| Effectiveness | 1 | 89% (+89%) | 100% (+100%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+38%) |
 
 ## Skill Version(s): <br>
 1.0.0+9edee0c (source: pyproject.toml) <br>

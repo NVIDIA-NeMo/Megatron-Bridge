@@ -7,9 +7,9 @@ This skill is ready for commercial/non-commercial use. <br>
 NVIDIA <br>
 
 ### License/Terms of Use: <br>
-Apache-2.0 <br>
+Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling MoE expert-parallel communication overlap to optimize training throughput, or diagnosing EP overlap configuration issues in Megatron-Bridge workloads. <br>
+Developers and engineers enabling MoE expert-parallel communication overlap to hide dispatch/combine latency in Megatron-Bridge training runs, or diagnosing throughput regressions related to EP overlap configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,25 +25,24 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- claude-code <br>
+- codex <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 internal skill task in the NVSkills-Eval external profile. <br>
+Evaluated against 1 evaluation task in the astra-sandbox environment using the external NVSkills-Eval profile with 1 attempt per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -70,13 +69,8 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+75%) | 97% (+22%) |
 | Discoverability | 1 | 100% (+75%) | 97% (+72%) |
-| Effectiveness | 1 | 93% (+93%) | 91% (+0%) |
+| Effectiveness | 1 | 100% (+100%) | 74% (-17%) |
 | Efficiency | 1 | 94% (+69%) | 96% (+69%) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
 1.0.0+9edee0c (source: pyproject.toml) <br>

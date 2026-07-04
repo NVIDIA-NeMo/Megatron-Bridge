@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need a starting recipe or training configuration for pretraining, SFT, or PEFT with Megatron Bridge across various model families and GPU topologies. <br>
+Developers and engineers who want a starting recipe or training configuration for pretraining, SFT, or PEFT with Megatron Bridge, matched to their model family, GPU count, and sequence length. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -26,7 +26,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (positive skill-activation case) in the NVSkills-Eval external profile. <br>
+Evaluated against 1 internal skill activation task using the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -67,10 +67,15 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 91% (+39%) |
-| Discoverability | 1 | 100% (+100%) | 80% (+53%) |
-| Effectiveness | 1 | 98% (+98%) | 94% (+53%) |
-| Efficiency | 1 | 94% (+67%) | 73% (+49%) |
+| Correctness | 1 | 100% (+100%) | 97% (+62%) |
+| Discoverability | 1 | 100% (+100%) | 89% (+17%) |
+| Effectiveness | 1 | 98% (+93%) | 96% (+43%) |
+| Efficiency | 1 | 94% (+67%) | 81% (+4%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
 1.0.0 (source: pyproject.toml) <br>
