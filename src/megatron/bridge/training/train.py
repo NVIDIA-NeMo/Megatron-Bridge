@@ -610,7 +610,8 @@ def train(
                 global_state,
                 history_wct,
                 model,
-                log_max_attention_logit,
+                pg_collection=pg_collection,
+                log_max_attention_logit=log_max_attention_logit,
                 loaded_iteration=start_iteration,
                 # training_log recomputes seqlen/FLOPS from the (log-step) accumulators
                 # itself; pass None so it uses that path (the per-step seqlen_sum is no
