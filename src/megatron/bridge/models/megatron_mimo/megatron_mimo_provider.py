@@ -29,6 +29,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
+    _EXPERT_VIEW,
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
@@ -296,10 +297,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     dp=grid.get_pg(["dp"]),
                     pp=pp_group,
                     cp=grid.get_pg(["cp"]),
-                    ep=grid.get_pg(["ep"]),
+                    ep=grid.get_pg(["expt_tp"], view=_EXPERT_VIEW),
                     dp_cp=grid.get_pg(["dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
-                    tp_ep_pp=grid.get_pg(["tp", "ep", "pp"]),
+                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=_EXPERT_VIEW),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )

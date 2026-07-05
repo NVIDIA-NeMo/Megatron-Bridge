@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
+_EXPERT_VIEW = "expert"
+
+
 def build_hypercomm_grids(
     megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
@@ -19,6 +22,11 @@ def build_hypercomm_grids(
 
     Creates grids on ALL ranks (required for consistent collective calls),
     but only ranks in each grid's range will participate in its operations.
+
+    Each grid is built with a dense ``base`` view plus a registered ``expert`` view over the same
+    rank span. Dense process groups (tp/cp/dp/pp) come from the base view; expert-parallel groups
+    (expt_tp/ep/expt_dp) come from the expert view, matching the contract mcore's
+    ``get_mimo_optimizer`` expects.
 
     Args:
         megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig specifying parallelism per module.
@@ -30,27 +38,46 @@ def build_hypercomm_grids(
 
     grids: Dict[str, HyperCommGrid] = {}
     for module_name, parallelism in megatron_mimo_parallelism_config.module_parallelisms.items():
-        shape = [
-            parallelism.tensor_model_parallel_size,
-            parallelism.context_parallel_size,
-            parallelism.expert_tensor_parallel_size,
-            parallelism.pipeline_model_parallel_size,
-            parallelism.data_parallel_size,
-        ]
+        tp = parallelism.tensor_model_parallel_size
+        cp = parallelism.context_parallel_size
+        etp = parallelism.expert_tensor_parallel_size
+        pp = parallelism.pipeline_model_parallel_size
+        dp = parallelism.data_parallel_size
+        if dp is None:
+            raise ValueError(f"data_parallel_size must be finalized before building grids for module '{module_name}'.")
+
+        num_ranks = tp * cp * etp * pp * dp
+        # Dense (base) view factors the module's ranks without expert parallelism; the expert-tensor
+        # ranks fold into data parallelism here (dp_base == etp * dp).
+        dp_base = num_ranks // (tp * cp * pp)
+        # Expert view re-factors the same ranks. MegatronMIMO models only expert-tensor parallelism
+        # (expt_tp == etp); expert-model parallelism is not exposed (ep == 1), so expt_dp == tp * cp * dp.
+        expt_dp = num_ranks // (etp * pp)
+
         grid = HyperCommGrid(
-            shape=shape,
-            dim_names=["tp", "cp", "ep", "pp", "dp"],
+            shape=[tp, cp, dp_base, pp],
+            dim_names=["tp", "cp", "dp", "pp"],
             rank_offset=parallelism.rank_offset,
             backend="nccl",
         )
-        # Create all standard process groups
-        for dim in ("tp", "cp", "ep", "pp", "dp"):
+        # Register the expert factorization over the same rank span; pp is shared with the base view.
+        # Required by mcore's get_mimo_optimizer, which reads expert groups from a dedicated view.
+        grid.register_view(
+            _EXPERT_VIEW,
+            shape=[etp, 1, expt_dp, pp],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
+
+        # Dense process groups (base view).
+        for dim in ("tp", "cp", "pp", "dp"):
             _ = grid.create_pg([dim])
         _ = grid.create_pg(["dp", "cp"])
         _ = grid.create_pg(["tp", "pp"])
-        _ = grid.create_pg(["tp", "ep", "pp"])
-        _ = grid.create_pg(["dp", "ep"])
-        _ = grid.create_pg(["tp", "cp", "ep", "pp", "dp"])
+        _ = grid.create_pg(["tp", "cp", "dp", "pp"])
+        # Expert process groups (expert view).
+        for dims in (["ep"], ["expt_tp"], ["expt_dp"], ["expt_tp", "ep", "pp"]):
+            _ = grid.create_pg(dims, view=_EXPERT_VIEW)
 
         grids[module_name] = grid
 

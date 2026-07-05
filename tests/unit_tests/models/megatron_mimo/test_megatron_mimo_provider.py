@@ -133,7 +133,7 @@ class TestMegatronMIMOProvider:
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
         mock_grid.is_current_rank_in_grid.return_value = True
-        mock_grid.get_pg.side_effect = lambda dims: pp_group if dims == ["pp"] else MagicMock()
+        mock_grid.get_pg.side_effect = lambda dims, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MegatronMIMOProvider.from_standard_provider(
@@ -777,21 +777,23 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_mp = MagicMock(name="mp_pg")
         mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
 
+        # Dense groups come from the base view; expert groups (ep, tp_ep_pp) come from the
+        # dedicated expert view, so they are keyed here by their expert-view dim names.
         pg_map = {
             ("tp",): mock_tp,
             ("dp",): mock_dp,
             ("pp",): mock_pp,
             ("cp",): mock_cp,
-            ("ep",): mock_ep,
+            ("expt_tp",): mock_ep,
             ("dp", "cp"): mock_dp_cp,
             ("tp", "pp"): mock_mp,
-            ("tp", "ep", "pp"): mock_tp_ep_pp,
+            ("expt_tp", "ep", "pp"): mock_tp_ep_pp,
         }
 
         mock_grid = MagicMock()
         mock_grid.rank_offset = 0
         mock_grid.size = 4
-        mock_grid.get_pg.side_effect = lambda dims: pg_map[tuple(dims)]
+        mock_grid.get_pg.side_effect = lambda dims, view=None: pg_map[tuple(dims)]
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,

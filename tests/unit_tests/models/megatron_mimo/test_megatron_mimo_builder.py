@@ -38,22 +38,35 @@ class TestBuildHypercommGrids:
         assert "language" in grids
         assert grids["language"] == mock_grid
 
-        # Check grid was created with correct shape
+        # Check grid was created with the dense (base) view shape: [tp, cp, dp_base, pp]
+        # where dp_base == etp * dp == 1 * 2 == 2.
         mock_grid_class.assert_called_once()
         call_kwargs = mock_grid_class.call_args[1]
-        assert call_kwargs["shape"] == [2, 1, 1, 2, 2]  # [tp, cp, ep, pp, dp]
-        assert call_kwargs["dim_names"] == ["tp", "cp", "ep", "pp", "dp"]
+        assert call_kwargs["shape"] == [2, 1, 2, 2]  # [tp, cp, dp, pp]
+        assert call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert call_kwargs["rank_offset"] == 0
         assert call_kwargs["backend"] == "nccl"
 
-        # Check all process groups were created
+        # Check the expert view was registered.
+        mock_grid.register_view.assert_called_once()
+        view_args, view_kwargs = mock_grid.register_view.call_args
+        assert view_args[0] == "expert"
+        assert view_kwargs["dim_names"] == ["expt_tp", "ep", "expt_dp", "pp"]
+        assert view_kwargs["shared_dims"] == ["pp"]
+
+        # Check dense process groups were created (base view).
         create_pg_calls = [call[0][0] for call in mock_grid.create_pg.call_args_list]
         assert ["tp"] in create_pg_calls
         assert ["cp"] in create_pg_calls
-        assert ["ep"] in create_pg_calls
         assert ["pp"] in create_pg_calls
         assert ["dp"] in create_pg_calls
         assert ["dp", "cp"] in create_pg_calls
+        assert ["tp", "cp", "dp", "pp"] in create_pg_calls
+        # Check expert process groups were created (expert view).
+        assert ["ep"] in create_pg_calls
+        assert ["expt_tp"] in create_pg_calls
+        assert ["expt_dp"] in create_pg_calls
+        assert ["expt_tp", "ep", "pp"] in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_multiple_modules(self, mock_grid_class):
@@ -122,14 +135,16 @@ class TestBuildHypercommGrids:
         # Check both grids created with different shapes
         assert mock_grid_class.call_count == 2
 
-        # First call (llm): shape [8, 1, 1, 2, 1]
+        # First call (llm): base view [tp, cp, dp_base, pp] == [8, 1, 1, 2] (dp_base == etp * dp == 1).
         first_call_kwargs = mock_grid_class.call_args_list[0][1]
-        assert first_call_kwargs["shape"] == [8, 1, 1, 2, 1]
+        assert first_call_kwargs["shape"] == [8, 1, 1, 2]
+        assert first_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert first_call_kwargs["rank_offset"] == 0
 
-        # Second call (encoder): shape [2, 1, 1, 1, 2]
+        # Second call (encoder): base view [2, 1, 2, 1] (dp_base == etp * dp == 2).
         second_call_kwargs = mock_grid_class.call_args_list[1][1]
-        assert second_call_kwargs["shape"] == [2, 1, 1, 1, 2]
+        assert second_call_kwargs["shape"] == [2, 1, 2, 1]
+        assert second_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert second_call_kwargs["rank_offset"] == 16
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
@@ -150,7 +165,7 @@ class TestBuildHypercommGrids:
         mock_grid = MagicMock()
         create_pg_calls = []
 
-        def track_create_pg(dims):
+        def track_create_pg(dims, view=None):
             create_pg_calls.append(dims)
             return MagicMock()
 
@@ -159,14 +174,17 @@ class TestBuildHypercommGrids:
 
         build_hypercomm_grids(megatron_mimo_config)
 
-        # Verify all dimension groups created
+        # Verify dense dimension groups created (base view)
         assert ["tp"] in create_pg_calls
         assert ["cp"] in create_pg_calls
-        assert ["ep"] in create_pg_calls
         assert ["pp"] in create_pg_calls
         assert ["dp"] in create_pg_calls
         # Verify composite group created
         assert ["dp", "cp"] in create_pg_calls
+        # Verify expert dimension groups created (expert view)
+        assert ["ep"] in create_pg_calls
+        assert ["expt_tp"] in create_pg_calls
+        assert ["expt_dp"] in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_uses_nccl_backend(self, mock_grid_class):
