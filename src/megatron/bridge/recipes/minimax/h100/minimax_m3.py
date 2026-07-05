@@ -26,13 +26,21 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 MINIMAX_M3_HF_PATH = "MiniMaxAI/MiniMax-M3"
 
 
-def _apply_minimax_m3_model_settings(cfg: ConfigContainer) -> None:
-    """Apply the shared MiniMax-M3 parallelism and kernel settings.
+def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for MiniMax-M3 (428B total, ~23B active).
 
     MiniMax-M3 has 60 decoder layers (first 3 dense), 128 routed experts with
-    top-4 routing plus one shared expert, and 4 KV heads. Baseline layout:
-    TP=2, PP=4 (15 layers per stage), EP=32, CP=1 — 128 GPUs minimum.
+    top-4 routing plus one shared expert, and 4 KV heads. Recommended
+    parallelism: TP=2, PP=4 (15 layers per stage), EP=32 (128 GPUs minimum;
+    256 GPUs gives DP=2).
     """
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
+        load_weights=False
+    )
+
+    # Parallelism
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 4
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -66,21 +74,6 @@ def _apply_minimax_m3_model_settings(cfg: ConfigContainer) -> None:
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.cuda_graph_impl = "none"
-
-
-def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a pre-training config for MiniMax-M3 (428B total, ~23B active).
-
-    Recommended parallelism: TP=2, PP=4, EP=32 (128 GPUs minimum; 256 GPUs
-    gives DP=2).
-    """
-    cfg = _pretrain_common()
-
-    cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
-
-    _apply_minimax_m3_model_settings(cfg)
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -136,7 +129,7 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
-    """MiniMax-M3 full SFT on unpacked (SBHD) sequences with Adam/bf16.
+    """MiniMax-M3 full SFT on packed (THD) sequences with Adam/bf16.
 
     Same TP=2 / PP=4 / EP=32 layout as the pretrain config (128 GPUs minimum).
     """
@@ -146,11 +139,44 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
         load_weights=False
     )
 
-    _apply_minimax_m3_model_settings(cfg)
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.seq_length = 4096
+    cfg.model.params_dtype = torch.bfloat16
 
-    # Tokenizer / dataset (real HF tokenizer; SBHD / unpacked)
+    # 60 layers split evenly across 4 stages
+    cfg.model.account_for_embedding_in_pipeline_split = False
+    cfg.model.account_for_loss_in_pipeline_split = False
+    cfg.model.num_layers_in_first_pipeline_stage = None
+    cfg.model.num_layers_in_last_pipeline_stage = None
+
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.attention_backend = None
+
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_router_force_load_balancing = False
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+
+    # Memory saving: recompute the MoE activation function only
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.cuda_graph_impl = "none"
+
+    # Tokenizer / dataset (real HF tokenizer; packed / THD)
     cfg.tokenizer.tokenizer_model = MINIMAX_M3_HF_PATH
-    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
+    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=True)
 
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
