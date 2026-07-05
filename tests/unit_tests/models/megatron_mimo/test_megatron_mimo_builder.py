@@ -235,3 +235,48 @@ class TestBuildHypercommGrids:
 
         encoder_kwargs = mock_grid_class.call_args_list[1][1]
         assert encoder_kwargs["rank_offset"] == 4
+
+    @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
+    def test_build_registers_expert_view_for_expert_tensor_parallel(self, mock_grid_class):
+        """etp>1 factors into a dedicated expert view; the dense base view folds etp into dp."""
+        megatron_mimo_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=4,
+                    context_parallel_size=1,
+                    expert_tensor_parallel_size=2,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                ),
+            }
+        )
+
+        mock_grid = MagicMock()
+        mock_grid.create_pg = MagicMock(return_value=MagicMock())
+        mock_grid_class.return_value = mock_grid
+
+        build_hypercomm_grids(megatron_mimo_config)
+
+        # num_ranks == tp*cp*etp*pp*dp == 4*1*2*1*1 == 8.
+        # Dense base view folds etp into dp: dp_base == num_ranks/(tp*cp*pp) == 8/4 == 2.
+        call_kwargs = mock_grid_class.call_args[1]
+        assert call_kwargs["shape"] == [4, 1, 2, 1]  # [tp, cp, dp_base, pp]
+        assert call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
+
+        # Expert view re-factors the same 8 ranks: expt_tp == etp == 2, ep == 1,
+        # expt_dp == num_ranks/(etp*pp) == 8/2 == 4.
+        mock_grid.register_view.assert_called_once()
+        view_args, view_kwargs = mock_grid.register_view.call_args
+        assert view_args[0] == "expert"
+        assert view_kwargs["shape"] == [2, 1, 4, 1]  # [expt_tp, ep, expt_dp, pp]
+        assert view_kwargs["dim_names"] == ["expt_tp", "ep", "expt_dp", "pp"]
+        assert view_kwargs["shared_dims"] == ["pp"]
+
+        # Expert groups are created on the expert view; dense groups stay on the base view.
+        expert_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") == "expert"]
+        dense_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") is None]
+        assert ["expt_tp", "ep", "pp"] in expert_dims
+        assert ["expt_dp"] in expert_dims
+        assert ["expt_tp"] in expert_dims
+        assert ["tp", "cp", "dp", "pp"] in dense_dims
+        assert ["dp"] in dense_dims
