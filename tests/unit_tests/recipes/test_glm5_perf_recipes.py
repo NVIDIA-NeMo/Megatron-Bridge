@@ -131,7 +131,7 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_stage(
             * cfg.model.expert_model_parallel_size
             * cfg.model.expert_tensor_parallel_size
         )
-        == 4
+        == 2
     )
 
     layout = cfg.model.pipeline_model_parallel_layout
