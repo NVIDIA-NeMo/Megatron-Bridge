@@ -235,12 +235,6 @@ class KimiK25VLBridge(MegatronModelBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list()
-        param_mappings = {
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-        }
-
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # In HF Kimi K2.5 VL models, the language component is nested under
         # "language_model.model" instead of just "model", so we need to add the prefix.
