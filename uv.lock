@@ -28,7 +28,7 @@ overrides = [
 
 [[manifest.dependency-metadata]]
 name = "flash-mla"
-version = "1.0.0+9edee0c"
+version = "1.0.0+b7643bd"
 
 [[package]]
 name = "absl-py"
@@ -1107,8 +1107,8 @@ wheels = [
 
 [[package]]
 name = "flash-mla"
-version = "1.0.0+9edee0c"
-source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19#9edee0c022cd0938148a18e334203b0aab43aa19" }
+version = "1.0.0+b7643bd"
+source = { git = "https://github.com/deepseek-ai/FlashMLA?rev=nv_dev#b7643bd54521f563b839b98289b5cd048c062ba2" }
 
 [[package]]
 name = "flashinfer-cubin"
@@ -2245,7 +2245,7 @@ docs = [
     { name = "sphinx-copybutton", specifier = ">=0.5.2" },
     { name = "sphinxcontrib-mermaid" },
 ]
-no-pypi-wheels = [{ name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=9edee0c022cd0938148a18e334203b0aab43aa19" }]
+no-pypi-wheels = [{ name = "flash-mla", git = "https://github.com/deepseek-ai/FlashMLA?rev=nv_dev" }]
 test = [
     { name = "click" },
     { name = "coverage", specifier = ">=7.8.1" },
