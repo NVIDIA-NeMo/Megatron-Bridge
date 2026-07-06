@@ -273,9 +273,7 @@ class GPTOSSBridge(MegatronModelBridge):
                     ),
                     GPTOSSMLPDownProjMapping(
                         hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
-                        megatron_param=(
-                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.bias"
-                        ),
+                        megatron_param=(f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.bias"),
                     ),
                     GPTOSSMLPGateUpProjMapping(
                         hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
@@ -285,9 +283,7 @@ class GPTOSSBridge(MegatronModelBridge):
                     ),
                     GPTOSSMLPGateUpProjMapping(
                         hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
-                        megatron_param=(
-                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.bias"
-                        ),
+                        megatron_param=(f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.bias"),
                     ),
                 ]
             )
