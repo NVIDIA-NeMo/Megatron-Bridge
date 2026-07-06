@@ -268,6 +268,27 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         # Lazily-built additive sbd_block_diff bias [1, 1, 2L, 2L].
         self._sbd_bias = None
 
+        # AR / causal core: a CP-capable TE attention for the autoregressive
+        # (inference_causal) path. Causal attention is `no_bias`, which TE supports
+        # with qkv_format="thd" AND context parallelism -- unlike the diffusion
+        # dense-bias path. The CP group is supplied per-forward via
+        # packed_seq_params.cp_group, so this single instance serves cp=1 and cp>1.
+        # Built from the original `config` (keeps its context_parallel_size), not
+        # the cp=1 copy used for the bias path.
+        # pg_collection=None matches self.core_attention: TE derives tp/cp from the
+        # global mpu parallel-state at runtime, and the CP group is overridden per
+        # forward by packed_seq_params.cp_group. (Avoids depending on a CP-populated
+        # pg_collection at construction.)
+        self._ar_core_attention = TEDotProductAttention(
+            config=config,
+            layer_number=self.layer_number,
+            attn_mask_type=AttnMaskType.causal,
+            attention_type=attention_type or "self",
+            attention_dropout=config.attention_dropout if attention_dropout is None else attention_dropout,
+            softmax_scale=self.softmax_scale,
+            pg_collection=None,
+        )
+
         import torch._dynamo.config as dcfg
 
         dcfg.cache_size_limit = 512
@@ -305,10 +326,18 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         attention_bias: Tensor = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
     ):
-        assert packed_seq_params is None, "Packed sequence is not supported by NemotronLabsDiffusionAttention."
-
         if self._inference_mode:
-            return self._inference_forward(query, key, value)
+            # AR / causal path: supports packed (thd) sequences + context
+            # parallelism through TE (causal is no_bias, which TE handles for thd+CP).
+            return self._inference_forward(query, key, value, packed_seq_params)
+
+        # Diffusion (sbd_block_diff) path: the mask is a dense post_scale_bias, for
+        # which TE has no THD attention kernel, so packed sequences are unsupported
+        # here. CP for diffusion is done unpacked via the gather/scatter below.
+        assert packed_seq_params is None, (
+            "Packed sequence is not supported by NemotronLabsDiffusionAttention in "
+            "diffusion mode (dense sbd_block_diff bias has no THD attention kernel)."
+        )
 
         cp_size = self.cp_size
         cp_group = parallel_state.get_context_parallel_group() if cp_size > 1 else None
@@ -391,11 +420,16 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         query: Tensor,
         key: Tensor,
         value: Tensor,
+        packed_seq_params: Optional[PackedSeqParams] = None,
     ) -> Tensor:
         """SDPA-based forward for inference with KV cache support.
 
         Args:
             query, key, value: [seq_len, batch, num_heads, head_dim]  (Megatron layout)
+            packed_seq_params: when not None, the inputs are THD-packed (and possibly
+                CP-sharded). Routed to the TE-based packed causal path, which supports
+                packing + context parallelism (the SDPA path below is for the
+                unpacked / KV-cache decode case only).
 
         The method:
           1. Computes position IDs accounting for cached tokens
@@ -406,14 +440,42 @@ class NemotronLabsDiffusionAttention(MegatronModule):
           6. Runs SDPA with causal or bidirectional mask
           7. Optionally stores the new K/V in cache
         """
-        sq = query.shape[0]
+        if packed_seq_params is not None:
+            assert self._inference_causal, (
+                "Packed-sequence AR path requires causal attention "
+                "(set_inference_params(causal=True))."
+            )
+            assert not self._cache_enabled, (
+                "KV cache is not supported on the packed-sequence path."
+            )
+            return self._packed_causal_forward(query, key, value, packed_seq_params)
 
         # Transpose to [b, np, s, hn]
         query = query.transpose(0, 1).transpose(1, 2)
         key = key.transpose(0, 1).transpose(1, 2)
         value = value.transpose(0, 1).transpose(1, 2)
 
-        # Position IDs: new tokens start after the cached tokens
+        # Context parallelism (unpacked / full-prefill case, e.g. diffusion
+        # leftmost-reveal bidirectional scoring). The input is zigzag-sharded
+        # along the sequence; all-gather Q/K/V to the full sequence (natural
+        # order) so SDPA sees the global (bidirectional or full-prefill causal)
+        # structure, then scatter the output back to this rank's zigzag slice.
+        # KV-cache decode is incompatible with this (the gathered sequence is the
+        # whole prompt), so it is rejected below.
+        cp_size = self.cp_size
+        cp_group = parallel_state.get_context_parallel_group() if cp_size > 1 else None
+        if cp_size > 1:
+            assert not self._cache_enabled, (
+                "KV cache is not supported with context parallelism on the "
+                "diffusion inference path (set cache_enabled=False)."
+            )
+            query = all_gather_seq_cp(query, cp_group, seq_dim=2)
+            key = all_gather_seq_cp(key, cp_group, seq_dim=2)
+            value = all_gather_seq_cp(value, cp_group, seq_dim=2)
+
+        sq = query.shape[2]
+
+        # Position IDs: new tokens start after the cached tokens (offset=0 under CP)
         offset = self._kv_cache_seq_len
         q_position_ids = torch.arange(offset, offset + sq, device=query.device).unsqueeze(0)
         k_position_ids = torch.arange(offset, offset + sq, device=key.device).unsqueeze(0)
@@ -490,4 +552,122 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         context = context.transpose(1, 2).transpose(0, 1)  # [sq, b, np, hn]
         new_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
         context = context.contiguous().view(*new_shape)
+
+        # Scatter the full-sequence output back to this rank's zigzag slice.
+        if cp_size > 1:
+            context = scatter_seq_cp(context, cp_group, seq_dim=0)
+
+        return context
+
+    @staticmethod
+    def _packed_position_ids(
+        packed_seq_params: PackedSeqParams,
+        total_tokens: int,
+        device: torch.device,
+        cp_group: "torch.distributed.ProcessGroup | None" = None,
+    ) -> Tensor:
+        """Per-pack RoPE position ids for THD packing, correct under context parallelism.
+
+        Positions reset to 0 at each packed sub-sequence boundary (so RoPE / Llama-4
+        scaling are per-sequence). Under CP, Megatron load-balanced ("zigzag") shards
+        each padded pack of length ``Lp`` into ``2*cp`` segments of ``cp_seg = Lp//(2*cp)``;
+        this rank holds segments ``[cp_rank]`` (global positions ``cp_rank*cp_seg ...``)
+        and ``[2*cp - cp_rank - 1]``. We reproduce that mapping (matching Megatron's
+        ``_get_thd_freqs_on_this_cp_rank``) so the local tokens get their true global
+        within-pack positions.
+
+        Returns [1, local_total_tokens].
+        """
+        # Megatron's thd RoPE uses the padded cu_seqlens (full, un-divided by CP).
+        cu = (
+            packed_seq_params.cu_seqlens_q_padded
+            if packed_seq_params.cu_seqlens_q_padded is not None
+            else packed_seq_params.cu_seqlens_q
+        )
+        cp_size = 1 if cp_group is None else cp_group.size()
+
+        if cp_size == 1:
+            t = torch.arange(total_tokens, device=device, dtype=cu.dtype)
+            pack = (torch.searchsorted(cu, t, right=True) - 1).clamp(min=0)
+            return (t - cu[pack]).to(torch.long).unsqueeze(0)
+
+        cp_rank = cp_group.rank()
+        chunks = []
+        for p in range(cu.numel() - 1):
+            lp = int((cu[p + 1] - cu[p]).item())  # full (padded) pack length
+            if lp <= 0:
+                continue
+            cp_seg = lp // (2 * cp_size)
+            fwd = cp_rank * cp_seg
+            bwd = (2 * cp_size - cp_rank - 1) * cp_seg
+            chunks.append(torch.arange(fwd, fwd + cp_seg, device=device))
+            chunks.append(torch.arange(bwd, bwd + cp_seg, device=device))
+        pos = torch.cat(chunks).to(torch.long).unsqueeze(0) if chunks else torch.zeros(
+            1, total_tokens, dtype=torch.long, device=device
+        )
+        return pos
+
+    def _packed_causal_forward(
+        self,
+        query: Tensor,
+        key: Tensor,
+        value: Tensor,
+        packed_seq_params: PackedSeqParams,
+    ) -> Tensor:
+        """AR / causal forward for THD-packed (and optionally CP-sharded) sequences.
+
+        Causal attention is `no_bias`, which TE supports with qkv_format="thd" and
+        context parallelism, so we apply the model's RoPE + Llama-4 scaling with
+        per-pack positions and delegate the attention to the CP-capable causal TE
+        core. The CP group (if any) is carried in packed_seq_params.cp_group.
+
+        query, key, value: [total, np, hn] (Megatron squeezes the dummy batch dim
+        for thd before calling core_attention). A 4D [total, 1, np, hn] caller (e.g.
+        unit tests) is also accepted and squeezed.
+        """
+        # Normalize to 3D THD layout [total, heads, hn].
+        if query.dim() == 4:
+            query = query.squeeze(1)
+            key = key.squeeze(1)
+            value = value.squeeze(1)
+        total = query.shape[0]
+
+        # Per-pack RoPE (positions reset at each cu_seqlens boundary). Under CP the
+        # local tokens are a zigzag slice of the full sequence, so positions must be
+        # the true global within-pack positions (see _packed_position_ids).
+        cp_group = (
+            parallel_state.get_context_parallel_group() if self.cp_size > 1 else None
+        )
+        position_ids = self._packed_position_ids(
+            packed_seq_params, total, query.device, cp_group
+        )  # [1, total]
+        cos, sin = self.rope_embedding_module(query, position_ids)
+        cos = cos.squeeze(0).unsqueeze(1)
+        sin = sin.squeeze(0).unsqueeze(1)
+        q = (query * cos) + (rotate_half(query) * sin)  # [total, np, hn]
+        k = (key * cos) + (rotate_half(key) * sin)      # [total, n_kv, hn]
+        v = value
+
+        # Llama-4 query scaling (per-pack positions); scale [total, 1] -> [total, 1, 1]
+        # to broadcast over [total, np, hn].
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(
+                position_ids.squeeze(0), self.beta, self.max_position_embeddings
+            ).to(q.dtype)
+            q = q * scale.unsqueeze(-1)
+
+        # q/k/v are already 3D [total, heads, hn] == TE's thd layout. GQA is handled
+        # inside TE (num_gqa_groups). TE converts AttnMaskType.causal -> padding_causal
+        # for thd and applies per-pack causal masking via cu_seqlens in packed_seq_params.
+        context = self._ar_core_attention(
+            q.contiguous(),
+            k.contiguous(),
+            v.contiguous(),
+            attention_mask=None,
+            attn_mask_type=AttnMaskType.causal,
+            packed_seq_params=packed_seq_params,
+        )
+        # Restore [total, b=1, hidden] (Megatron reshapes thd output to this anyway).
+        if context.dim() == 2:
+            context = context.unsqueeze(1)
         return context

@@ -30,7 +30,7 @@ import torch.nn.functional as F
 # Sampling primitives shared across all block-diffusion models in this repo.
 # Re-exported here so existing importers (and tests) that reference them from
 # this module continue to work unchanged.
-from megatron.bridge.diffusion.common.dllm import (
+from megatron.bridge.diffusion.common.dllm_sampling import (
     add_gumbel_noise,
     get_num_transfer_tokens,
     get_transfer_index,

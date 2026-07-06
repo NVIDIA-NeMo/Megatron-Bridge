@@ -22,7 +22,7 @@ no model, no checkpoint, no GPU.
 import pytest
 import torch
 
-from megatron.bridge.diffusion.common.dllm import (
+from megatron.bridge.diffusion.common.dllm_sampling import (
     add_gumbel_noise,
     get_num_transfer_tokens,
     get_transfer_index,
