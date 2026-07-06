@@ -94,6 +94,37 @@ def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int]:
     return (len(layer_types), 0)
 
 
+def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> list[str]:
+    """Reconstruct the Hugging Face per-layer attention pattern."""
+    pattern = getattr(provider, "window_attn_skip_freq", None)
+    if isinstance(pattern, list):
+        return [
+            value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
+            for value in pattern
+        ]
+    if isinstance(pattern, int) and pattern > 0:
+        return [
+            "sliding_attention" if layer_number % pattern else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+
+    sliding_count, full_count = getattr(provider, "interleaved_attn_pattern", (provider.num_layers, 0))
+    cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+    if not cycle:
+        return ["full_attention"] * provider.num_layers
+    return [cycle[index % len(cycle)] for index in range(provider.num_layers)]
+
+
+def _sliding_window_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> int | None:
+    """Convert MCore's inclusive window tuple to Hugging Face's window size."""
+    window_size = getattr(provider, "window_size", None)
+    if window_size is None:
+        return None
+    if isinstance(window_size, tuple):
+        return int(window_size[0]) + 1
+    return int(window_size)
+
+
 # ---------------------------------------------------------------------------
 # Gemma4Bridge — text-only CausalLM bridge (MoE and Dense)
 # ---------------------------------------------------------------------------
@@ -181,7 +212,7 @@ class Gemma4Bridge(MegatronModelBridge):
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
             bf16=True,
-            final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", 30.0),
+            final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", None),
         )
 
     def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:
@@ -228,6 +259,19 @@ class Gemma4Bridge(MegatronModelBridge):
         provider.make_vocab_size_divisible_by = 128
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
+        """Convert a Gemma 4 provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+        hf_config["layer_types"] = _layer_types_from_provider(provider)
+
+        sliding_window = _sliding_window_from_provider(provider)
+        if sliding_window is not None:
+            hf_config["sliding_window"] = sliding_window
+
+        return hf_config
 
     def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
         """Un-fuse fused weights and drop synthesized keys on export."""

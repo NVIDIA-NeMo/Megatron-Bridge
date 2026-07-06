@@ -743,11 +743,37 @@ class TestGemma4VLBridgeProviderBridgeDense:
     def test_returns_dense_vl_provider(self, bridge, mock_hf_pretrained_dense):
         assert isinstance(bridge.provider_bridge(mock_hf_pretrained_dense), Gemma4DenseVLProvider)
 
+    def test_preserves_logit_softcapping_and_window(self, bridge, mock_hf_pretrained_dense):
+        provider = bridge.provider_bridge(mock_hf_pretrained_dense)
+
+        assert provider.final_logit_softcapping == 30.0
+        assert provider.window_size == (1023, 0)
+
     def test_text_mode_returns_text_provider(self, bridge, mock_hf_pretrained_dense, monkeypatch):
         monkeypatch.setenv("GEMMA4_CONVERSION_MODE", "text")
         p = bridge.provider_bridge(mock_hf_pretrained_dense)
         assert isinstance(p, Gemma4DenseProvider)
         assert not isinstance(p, Gemma4DenseVLProvider)
+
+
+@pytest.mark.parametrize("provider_cls", [Gemma4DenseVLProvider, Gemma4VLModelProvider])
+def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
+    provider = provider_cls(num_layers=2, final_logit_softcapping=17.0)
+    if provider_cls is Gemma4DenseVLProvider:
+        provider.window_size = (1023, 0)
+        provider.window_attn_skip_freq = [True, False]
+    else:
+        provider.window_size = 1024
+        provider.interleaved_attn_pattern = (1, 1)
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    assert "final_logit_softcapping" not in hf_config
+    assert "sliding_window" not in hf_config
+    assert "layer_types" not in hf_config
+    assert hf_config["text_config"]["final_logit_softcapping"] == 17.0
+    assert hf_config["text_config"]["sliding_window"] == 1024
+    assert hf_config["text_config"]["layer_types"] == ["sliding_attention", "full_attention"]
 
 
 class TestGemma4VLBridgeMappingRegistry:

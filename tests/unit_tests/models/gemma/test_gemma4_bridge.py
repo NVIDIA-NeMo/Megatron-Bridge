@@ -237,6 +237,44 @@ class TestGemma4BridgeProviderBridgeDense:
     def test_does_not_return_moe_provider(self, bridge, mock_pretrained_dense):
         assert not isinstance(bridge.provider_bridge(mock_pretrained_dense), Gemma4ModelProvider)
 
+    def test_window_and_layer_pattern(self, bridge, mock_pretrained_dense):
+        provider = bridge.provider_bridge(mock_pretrained_dense)
+
+        assert provider.window_size == (1023, 0)
+        assert provider.window_attn_skip_freq == [True] * 5 + [False] + [True] * 5 + [False]
+
+    def test_logit_softcapping(self, bridge, mock_pretrained_dense):
+        assert bridge.provider_bridge(mock_pretrained_dense).final_logit_softcapping == 30.0
+
+    def test_missing_logit_softcapping_disables_it(self, bridge, mock_pretrained_dense):
+        del mock_pretrained_dense.config.final_logit_softcapping
+
+        assert bridge.provider_bridge(mock_pretrained_dense).final_logit_softcapping is None
+
+
+@pytest.mark.parametrize("provider_cls", [Gemma4DenseProvider, Gemma4ModelProvider])
+def test_megatron_to_hf_config_preserves_attention_and_softcap(provider_cls):
+    provider = provider_cls(
+        num_layers=4,
+        window_size=(1023, 0) if provider_cls is Gemma4DenseProvider else 1024,
+        final_logit_softcapping=17.0,
+    )
+    if provider_cls is Gemma4DenseProvider:
+        provider.window_attn_skip_freq = [True, False, True, False]
+    else:
+        provider.interleaved_attn_pattern = (1, 1)
+
+    hf_config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+    assert hf_config["final_logit_softcapping"] == 17.0
+    assert hf_config["sliding_window"] == 1024
+    assert hf_config["layer_types"] == [
+        "sliding_attention",
+        "full_attention",
+        "sliding_attention",
+        "full_attention",
+    ]
+
 
 # ===========================================================================
 # _infer_attn_pattern helper
