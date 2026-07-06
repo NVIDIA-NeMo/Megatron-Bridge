@@ -179,8 +179,8 @@ class GPTOSSBridge(MegatronModelBridge):
         Return MegatronMappingRegistry containing parameter mappings from HF to Megatron format.
         Based on the GPT-OSS importer code provided.
         """
-        hf_config = getattr(self, "hf_config", None)
-        num_hf_layers = getattr(hf_config, "num_hidden_layers", None)
+        hf_config = self.hf_config
+        num_hf_layers = hf_config.num_hidden_layers
 
         # Dictionary maps HF parameter names -> Megatron parameter names
         param_mappings = {
@@ -196,102 +196,101 @@ class GPTOSSBridge(MegatronModelBridge):
         # HybridModel names the final normalization weight differently from GPTModel.
         mapping_list.append(AutoMapping(hf_param="model.norm.weight", megatron_param="decoder.final_norm.weight"))
 
-        if num_hf_layers is not None:
-            for hf_layer_idx in range(num_hf_layers):
-                attention_layer_idx = 2 * hf_layer_idx
-                moe_layer_idx = attention_layer_idx + 1
-                mapping_list.extend(
-                    [
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.input_layernorm.weight",
-                            megatron_param=(
-                                f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.layer_norm_weight"
-                            ),
+        for hf_layer_idx in range(num_hf_layers):
+            attention_layer_idx = 2 * hf_layer_idx
+            moe_layer_idx = attention_layer_idx + 1
+            mapping_list.extend(
+                [
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.input_layernorm.weight",
+                        megatron_param=(
+                            f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.layer_norm_weight"
                         ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.self_attn.o_proj.bias",
-                            megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_proj.bias",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.self_attn.o_proj.bias",
+                        megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_proj.bias",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.self_attn.o_proj.weight",
+                        megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_proj.weight",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.self_attn.sinks",
+                        megatron_param=(
+                            f"decoder.layers.{attention_layer_idx}.self_attention.core_attention.softmax_offset"
                         ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.self_attn.o_proj.weight",
-                            megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_proj.weight",
+                    ),
+                    QKVMapping(
+                        q=f"model.layers.{hf_layer_idx}.self_attn.q_proj.weight",
+                        k=f"model.layers.{hf_layer_idx}.self_attn.k_proj.weight",
+                        v=f"model.layers.{hf_layer_idx}.self_attn.v_proj.weight",
+                        megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.weight",
+                    ),
+                    QKVMapping(
+                        q=f"model.layers.{hf_layer_idx}.self_attn.q_proj.bias",
+                        k=f"model.layers.{hf_layer_idx}.self_attn.k_proj.bias",
+                        v=f"model.layers.{hf_layer_idx}.self_attn.v_proj.bias",
+                        megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.bias",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.post_attention_layernorm.weight",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.pre_mlp_layernorm.weight",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.router.bias",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.router.bias",
+                    ),
+                    AutoMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.router.weight",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.router.weight",
+                    ),
+                    # Register the de-quantized weight names. If HF model is quantized,
+                    # the logic in `modify_loaded_hf_weight` will find the blocks and scales tensors.
+                    # Export is always de-quantized.
+                    GPTOSSMLPDownProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc2.weight*",
+                    ),
+                    GPTOSSMLPDownProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc2.bias*",
+                    ),
+                    GPTOSSMLPGateUpProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc1.weight*",
+                    ),
+                    GPTOSSMLPGateUpProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
+                        megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc1.bias*",
+                    ),
+                    # SequentialMLP (moe_grouped_gemm=False): expert weights stored per local_expert.
+                    GPTOSSMLPDownProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj",
+                        megatron_param=(
+                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.weight"
                         ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.self_attn.sinks",
-                            megatron_param=(
-                                f"decoder.layers.{attention_layer_idx}.self_attention.core_attention.softmax_offset"
-                            ),
+                    ),
+                    GPTOSSMLPDownProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
+                        megatron_param=(
+                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.bias"
                         ),
-                        QKVMapping(
-                            q=f"model.layers.{hf_layer_idx}.self_attn.q_proj.weight",
-                            k=f"model.layers.{hf_layer_idx}.self_attn.k_proj.weight",
-                            v=f"model.layers.{hf_layer_idx}.self_attn.v_proj.weight",
-                            megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.weight",
+                    ),
+                    GPTOSSMLPGateUpProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
+                        megatron_param=(
+                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.weight"
                         ),
-                        QKVMapping(
-                            q=f"model.layers.{hf_layer_idx}.self_attn.q_proj.bias",
-                            k=f"model.layers.{hf_layer_idx}.self_attn.k_proj.bias",
-                            v=f"model.layers.{hf_layer_idx}.self_attn.v_proj.bias",
-                            megatron_param=f"decoder.layers.{attention_layer_idx}.self_attention.linear_qkv.bias",
+                    ),
+                    GPTOSSMLPGateUpProjMapping(
+                        hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
+                        megatron_param=(
+                            f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.bias"
                         ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.post_attention_layernorm.weight",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.pre_mlp_layernorm.weight",
-                        ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.router.bias",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.router.bias",
-                        ),
-                        AutoMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.router.weight",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.router.weight",
-                        ),
-                        # Register the de-quantized weight names. If HF model is quantized,
-                        # the logic in `modify_loaded_hf_weight` will find the blocks and scales tensors.
-                        # Export is always de-quantized.
-                        GPTOSSMLPDownProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc2.weight*",
-                        ),
-                        GPTOSSMLPDownProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc2.bias*",
-                        ),
-                        GPTOSSMLPGateUpProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc1.weight*",
-                        ),
-                        GPTOSSMLPGateUpProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
-                            megatron_param=f"decoder.layers.{moe_layer_idx}.mlp.experts.linear_fc1.bias*",
-                        ),
-                        # SequentialMLP (moe_grouped_gemm=False): expert weights stored per local_expert.
-                        GPTOSSMLPDownProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj",
-                            megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.weight"
-                            ),
-                        ),
-                        GPTOSSMLPDownProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.down_proj_bias",
-                            megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc2.bias"
-                            ),
-                        ),
-                        GPTOSSMLPGateUpProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj",
-                            megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.weight"
-                            ),
-                        ),
-                        GPTOSSMLPGateUpProjMapping(
-                            hf_param=f"model.layers.{hf_layer_idx}.mlp.experts.gate_up_proj_bias",
-                            megatron_param=(
-                                f"decoder.layers.{moe_layer_idx}.mlp.experts.local_experts.*.linear_fc1.bias"
-                            ),
-                        ),
-                    ]
-                )
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)
 
