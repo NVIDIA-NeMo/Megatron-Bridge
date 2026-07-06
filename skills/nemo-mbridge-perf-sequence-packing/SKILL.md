@@ -94,7 +94,7 @@ return _text_hf_dataset_provider(
 
 Bridge validation:
 
-```1219:1247:src/megatron/bridge/training/config.py
+```1220:1248:src/megatron/bridge/training/config.py
 enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
 enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
 offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
@@ -111,7 +111,7 @@ if enable_in_batch_packing:
     self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 ```
 
-```1399:1441:src/megatron/bridge/training/config.py
+```1400:1442:src/megatron/bridge/training/config.py
 if self.model.context_parallel_size > 1:
     assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, ...
     if isinstance(self.dataset, FinetuningDatasetConfig):
@@ -172,6 +172,7 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 4. `pad_cu_seqlens=True` also requires `pad_to_max_length=True`.
 5. Packing support is model-family-specific. `Qwen3-Next`, `GLM-4.5`, and `Qwen3.5-VL` contain explicit opt-outs in different paths.
 6. MTP finetuning is documented as incompatible with packed sequences.
+7. Synthetic padding rows, including negative indices remapped through `samples_mapping`, must retain an all-zero loss mask.
 
 ## Verification
 
@@ -181,7 +182,9 @@ Use the checked-in unit coverage:
 uv run python -m pytest tests/unit_tests/training/utils/test_packed_seq_utils.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or offline_and_in_batch_packing_are_mutually_exclusive or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
 uv run python -m pytest tests/unit_tests/data/vlm_datasets/test_batching.py -v && \
-uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v
+uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v && \
+uv run python -m pytest tests/unit_tests/data/datasets/test_packed_parquet.py -k "negative_index_zeroes_loss_mask" -v && \
+uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
 ```
 
 Success criteria:
@@ -189,3 +192,4 @@ Success criteria:
 - all selected tests pass
 - offline and in-batch configuration validation remains mutually exclusive
 - packed metadata reaches the training step in MCore THD form
+- mapped padding rows do not contribute to loss
