@@ -37,7 +37,16 @@ except ImportError:
             return 1
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
-from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
+try:
+    from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
+except (ImportError, ModuleNotFoundError):
+
+    def get_local_rank_preinit() -> int:
+        """Compatibility fallback for MCore before training.utils became a package."""
+        try:
+            return int(os.environ.get("LOCAL_RANK", os.environ.get("SLURM_LOCALID", 0)))
+        except (TypeError, ValueError):
+            return 0
 
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_master_addr,
