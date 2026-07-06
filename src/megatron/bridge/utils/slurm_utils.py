@@ -21,12 +21,30 @@ distributed training configuration from SLURM environment variables.
 import os
 import warnings
 
-from megatron.core._slurm_utils import (
-    is_slurm_job,  # noqa: F401
-    resolve_slurm_local_rank,  # noqa: F401
-    resolve_slurm_rank,  # noqa: F401
-    resolve_slurm_world_size,  # noqa: F401
-)
+try:
+    from megatron.core._slurm_utils import (
+        is_slurm_job,  # noqa: F401
+        resolve_slurm_local_rank,  # noqa: F401
+        resolve_slurm_rank,  # noqa: F401
+        resolve_slurm_world_size,  # noqa: F401
+    )
+except ModuleNotFoundError:
+
+    def is_slurm_job() -> bool:
+        return "SLURM_NTASKS" in os.environ
+
+    def resolve_slurm_rank() -> int | None:
+        if not is_slurm_job() or "SLURM_PROCID" not in os.environ:
+            return None
+        return int(os.environ["SLURM_PROCID"])
+
+    def resolve_slurm_world_size() -> int | None:
+        return int(os.environ["SLURM_NTASKS"]) if is_slurm_job() else None
+
+    def resolve_slurm_local_rank() -> int | None:
+        if not is_slurm_job() or "SLURM_LOCALID" not in os.environ:
+            return None
+        return int(os.environ["SLURM_LOCALID"])
 
 
 def resolve_slurm_master_addr() -> str | None:
