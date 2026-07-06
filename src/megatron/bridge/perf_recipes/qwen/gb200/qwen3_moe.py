@@ -16,8 +16,10 @@
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
+    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
+    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -154,7 +156,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
     _benchmark_common(cfg)
     return cfg
@@ -366,4 +368,172 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 16× GB200, BF16, HybridEP."""
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+
+    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 512
+    cfg.checkpoint.load_rng = False
+    cfg.checkpoint.load_optim = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_partial_cg_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 16× GB200, MXFP8 and scoped CUDA graphs."""
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.external_cuda_graph = True
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 512
+    cfg.checkpoint.load_rng = False
+    cfg.checkpoint.load_optim = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.rng.te_rng_tracker = True
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 16× GB200, MXFP8 and paged-stash CUDA graphs."""
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_page_size = 64
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.1
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.offload_modules = []
+
+    cfg.train.micro_batch_size = 4
+    cfg.train.global_batch_size = 512
+    cfg.checkpoint.load_rng = False
+    cfg.checkpoint.load_optim = False
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
+    cfg.rng.te_rng_tracker = True
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_paged_stash_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 64× GB200, MXFP8 and paged-stash CUDA graphs."""
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.8
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_warmup_steps = 2
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.offload_modules = []
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 8192
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    cfg.rng.te_rng_tracker = True
+    cfg.dist.distributed_timeout_minutes = 220
+    _enable_qwen_precision_aware_optimizer(cfg)
+    return cfg
+
+
+def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_partial_cg_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 128× GB200, MXFP8 and scoped CUDA graphs."""
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.cuda_graph_warmup_steps = 2
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 8192
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    cfg.rng.te_rng_tracker = True
+    cfg.dist.distributed_timeout_minutes = 220
+    _enable_qwen_precision_aware_optimizer(cfg)
     return cfg
