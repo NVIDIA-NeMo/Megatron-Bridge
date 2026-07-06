@@ -28,8 +28,6 @@ Usage::
 """
 
 import os
-import re
-from typing import Mapping
 
 import torch
 
@@ -195,50 +193,6 @@ class Gemma4VLBridge(Gemma4Bridge):
     def _hf_layer_prefix(self) -> str:
         """VLM text weights live under ``model.language_model.*``."""
         return "model.language_model."
-
-    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        """Fuse router preprocessing — VLM prefix-aware version."""
-        proj_weight = hf_state_dict[hf_param]
-        layer_match = re.search(r"layers\.(\d+)\.", hf_param)
-        if layer_match is None:
-            return proj_weight
-        layer_idx = layer_match.group(1)
-        prefix = hf_param.rsplit("layers.", 1)[0]
-        scale_key = f"{prefix}layers.{layer_idx}.router.scale"
-        ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if scale_key not in hf_state_dict or ln2_key not in hf_state_dict:
-            return proj_weight
-        router_scale = hf_state_dict[scale_key].float()
-        ln2_weight = hf_state_dict[ln2_key].float()
-        hidden_size = proj_weight.shape[-1]
-        scalar_root_size = hidden_size**-0.5
-        fusion_factor = router_scale * scalar_root_size / ln2_weight
-        fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
-        return fused_weight.to(proj_weight.dtype)
-
-    def _fuse_shared_expert_prenorm(
-        self, hf_param: dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
-        """Fuse pre-norm correction — VLM prefix-aware version."""
-        gate_name = hf_param["gate"]
-        layer_match = re.search(r"layers\.(\d+)\.", gate_name)
-        if layer_match is None:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        layer_idx = layer_match.group(1)
-        prefix = gate_name.rsplit("layers.", 1)[0]
-        pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
-        pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if pffl_key not in hf_state_dict or pffl2_key not in hf_state_dict:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        w_pffl = hf_state_dict[pffl_key].float()
-        w_pffl2 = hf_state_dict[pffl2_key].float()
-        correction = w_pffl / w_pffl2
-        hf_weights = {}
-        for role, name in hf_param.items():
-            weight = hf_state_dict[name]
-            fused = weight.float() * correction.unsqueeze(0)
-            hf_weights[role] = fused.to(weight.dtype)
-        return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Dispatch to Dense or MoE VLM mappings."""

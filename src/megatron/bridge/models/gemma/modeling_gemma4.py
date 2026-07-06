@@ -32,13 +32,13 @@ import inspect
 import types
 import weakref
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from megatron.core import parallel_state
+from megatron.core import parallel_state, tensor_parallel
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.backends import LocalSpecProvider
@@ -51,7 +51,7 @@ from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import (
     LayerNormBuilder,
@@ -84,6 +84,17 @@ TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transforme
 # ---------------------------------------------------------------------------
 
 
+def _gemma4_rms_norm(hidden_states: Tensor, weight: Tensor | None, eps: float) -> Tensor:
+    """Apply the exact RMSNorm expression used by Hugging Face Gemma 4."""
+    normed_output = hidden_states.float() * torch.pow(
+        hidden_states.float().pow(2).mean(-1, keepdim=True) + eps,
+        -0.5,
+    )
+    if weight is not None:
+        normed_output = normed_output * weight.float()
+    return normed_output.type_as(hidden_states)
+
+
 class Gemma4RMSNorm(nn.Module):
     """HF Gemma4-compatible RMSNorm.
 
@@ -106,20 +117,46 @@ class Gemma4RMSNorm(nn.Module):
         super().__init__()
         self.with_scale = with_scale
         if with_scale:
-            self.weight = nn.Parameter(torch.ones(hidden_size))
+            self.weight = nn.Parameter(torch.ones(hidden_size, dtype=getattr(config, "params_dtype", torch.float32)))
         self.eps = eps
 
     def forward(self, hidden_states: Tensor) -> Tensor:
-        normed_output = hidden_states.float() * torch.pow(
-            hidden_states.float().pow(2).mean(-1, keepdim=True) + self.eps,
-            -0.5,
-        )
-        if self.with_scale:
-            normed_output = normed_output * self.weight.float()
-        return normed_output.type_as(hidden_states)
+        weight = self.weight if self.with_scale else None
+        return _gemma4_rms_norm(hidden_states, weight, self.eps)
 
 
 RMSNorm = Gemma4RMSNorm
+
+
+class Gemma4DenseMLP(MLP):
+    """Dense MLP that permits Gemma 4's layer-specific FFN widths."""
+
+    def __init__(
+        self,
+        config: TransformerConfig,
+        submodules: MLPSubmodules,
+        ffn_hidden_size: int | None = None,
+        **kwargs: object,
+    ) -> None:
+        ffn_hidden_size = config.ffn_hidden_size if ffn_hidden_size is None else ffn_hidden_size
+        layer_config = copy.copy(config)
+        layer_config.ffn_hidden_size = ffn_hidden_size
+        super().__init__(
+            config=layer_config,
+            submodules=submodules,
+            ffn_hidden_size=ffn_hidden_size,
+            **kwargs,
+        )
+
+
+def _gemma4_dense_ffn_hidden_size(config: TransformerConfig, layer_number: int) -> int:
+    """Return the HF FFN width for a one-indexed dense Gemma 4 layer."""
+    base_width = int(config.ffn_hidden_size)
+    first_shared_layer = int(config.num_layers) - int(getattr(config, "num_kv_shared_layers", 0))
+    is_shared_layer = first_shared_layer > 0 and layer_number - 1 >= first_shared_layer
+    if getattr(config, "use_double_wide_mlp", False) and is_shared_layer:
+        return 2 * base_width
+    return base_width
 
 
 # ---------------------------------------------------------------------------
@@ -483,8 +520,16 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         config: TransformerConfig,
         submodules: Gemma4DenseTransformerLayerSubmodules,
         layer_number: int = 1,
-        **kwargs,
-    ):
+        **kwargs: object,
+    ) -> None:
+        submodules = copy.deepcopy(submodules)
+        mlp_submodules = get_submodules(submodules.mlp)
+        ffn_hidden_size = _gemma4_dense_ffn_hidden_size(config, layer_number)
+        submodules.mlp = partial(
+            Gemma4DenseMLP.as_mlp_submodule,
+            submodules=mlp_submodules,
+            ffn_hidden_size=ffn_hidden_size,
+        )
         super().__init__(config, submodules, layer_number=layer_number, **kwargs)
 
         self.post_self_attn_layernorm = submodules.post_self_attn_layernorm(
@@ -1209,19 +1254,50 @@ def _install_ple_forward(model: "torch.nn.Module") -> None:
 class Gemma4TransformerLayer(TransformerLayer):
     """Gemma 4 MoE transformer layer with per-layer output scaling and extra post-norms."""
 
-    def __init__(self, config, submodules, layer_number=1, **kwargs):
+    def __init__(
+        self,
+        config: TransformerConfig,
+        submodules: TransformerLayerSubmodules,
+        layer_number: int = 1,
+        **kwargs: object,
+    ) -> None:
         super().__init__(config=config, submodules=submodules, layer_number=layer_number, **kwargs)
         self.register_buffer("layer_scalar", torch.ones(1, dtype=config.params_dtype))
-        self.register_buffer("pffl_weight", torch.ones(config.hidden_size, dtype=config.params_dtype))
+        self.pffl_weight = nn.Parameter(torch.ones(config.hidden_size, dtype=config.params_dtype))
+        self.post_ffn_layernorm = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
 
-        NormImpl = TENorm if HAVE_TE else torch.nn.Identity
-        self.post_ffn_layernorm = NormImpl(
-            config=config,
-            hidden_size=config.hidden_size,
-            eps=config.layernorm_epsilon,
+    def _forward_mlp(
+        self,
+        hidden_states: Tensor,
+        inference_context: BaseInferenceContext | None = None,
+        padding_mask: Tensor | None = None,
+    ) -> Tensor:
+        """Run HF's separate shared-expert, routed-expert, and router inputs."""
+        del inference_context
+        residual = hidden_states.float() if self.config.fp32_residual_connection else hidden_states
+        expert_input = _gemma4_rms_norm(
+            residual,
+            self.pre_mlp_layernorm.weight,
+            self.config.layernorm_epsilon,
         )
+        shared_expert_input = _gemma4_rms_norm(
+            residual,
+            self.pffl_weight,
+            self.config.layernorm_epsilon,
+        )
+        mlp_output_with_bias = self.mlp.forward_with_separate_inputs(
+            expert_input,
+            shared_expert_input,
+            residual,
+            padding_mask=padding_mask,
+        )
+        return self._forward_post_mlp(mlp_output_with_bias, residual)
 
-    def _forward_post_mlp(self, mlp_output_with_bias, residual):
+    def _forward_post_mlp(
+        self,
+        mlp_output_with_bias: tuple[Tensor, Tensor | None],
+        residual: Tensor,
+    ) -> Tensor:
         from megatron.core.utils import make_viewless_tensor
 
         mlp_out = mlp_output_with_bias[0]
@@ -1242,19 +1318,26 @@ class Gemma4TransformerLayer(TransformerLayer):
 class Gemma4TopKRouter(TopKRouter):
     """Gemma 4 MoE router with per-expert scaling."""
 
-    def __init__(self, config, **kwargs):
+    def __init__(self, config: TransformerConfig, **kwargs: object) -> None:
         super().__init__(config=config, **kwargs)
-        self.register_buffer(
-            "per_expert_scale",
-            torch.ones(config.num_moe_experts, dtype=config.params_dtype),
-        )
-        self.register_buffer(
-            "scale",
-            torch.ones(config.hidden_size, dtype=config.params_dtype),
-        )
+        self.per_expert_scale = nn.Parameter(torch.ones(config.num_moe_experts, dtype=config.params_dtype))
+        self.scale = nn.Parameter(torch.ones(config.hidden_size, dtype=config.params_dtype))
+        self.scalar_root_size = config.hidden_size**-0.5
 
-    def routing(self, logits, padding_mask=None, input_ids=None):
-        routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask, input_ids=input_ids)
+    def gating(self, input: Tensor) -> Tensor:
+        """Apply HF's scaleless RMSNorm and learned router scale before projection."""
+        input = _gemma4_rms_norm(input, None, self.config.layernorm_epsilon)
+        input = input * self.scale * self.scalar_root_size
+        return super().gating(input)
+
+    def routing(
+        self,
+        logits: Tensor,
+        padding_mask: Tensor | None = None,
+        input_ids: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor | None]:
+        del input_ids
+        routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask)
         if routing_map is not None:
             prob_sums = routing_probs.sum(dim=-1, keepdim=True).clamp(min=1e-20)
             routing_probs = routing_probs / prob_sums
@@ -1265,21 +1348,49 @@ class Gemma4TopKRouter(TopKRouter):
 class Gemma4MoELayer(MoELayer):
     """Gemma 4 MoE layer with post-routed-expert and post-shared-expert normalization."""
 
-    def __init__(self, config, submodules, **kwargs):
+    def __init__(self, config: TransformerConfig, submodules: object, **kwargs: object) -> None:
         super().__init__(config=config, submodules=submodules, **kwargs)
-        NormImpl = TENorm if HAVE_TE else torch.nn.Identity
-        self.post_moe_layernorm = NormImpl(
-            config=config,
-            hidden_size=config.hidden_size,
-            eps=config.layernorm_epsilon,
-        )
-        self.post_shared_expert_layernorm = NormImpl(
-            config=config,
-            hidden_size=config.hidden_size,
-            eps=config.layernorm_epsilon,
-        )
+        self.post_moe_layernorm = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
+        self.post_shared_expert_layernorm = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
 
-    def postprocess(self, output, shared_expert_output):
+    def forward_with_separate_inputs(
+        self,
+        expert_input: Tensor,
+        shared_expert_input: Tensor,
+        router_input: Tensor,
+        padding_mask: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor | None]:
+        """Run the MoE using the three independently normalized HF inputs."""
+        if self.shared_expert_overlap:
+            raise NotImplementedError("Gemma 4 separate shared-expert normalization requires overlap to be disabled")
+        if padding_mask is not None:
+            padding_mask = padding_mask.transpose(0, 1).bool()
+
+        def custom_forward(
+            expert_input: Tensor,
+            shared_expert_input: Tensor,
+            router_input: Tensor,
+        ) -> tuple[Tensor, Tensor | None]:
+            shared_expert_output = self.shared_experts_compute(shared_expert_input)
+            probs, routing_map = self.route(router_input, padding_mask)
+            dispatched_input, probs = self.preprocess(expert_input, probs, routing_map)
+            dispatched_input, probs = self.dispatch(dispatched_input, probs)
+            output, mlp_bias = self.routed_experts_compute(dispatched_input, probs)
+            output = self.combine(output)
+            output = self.postprocess(output, shared_expert_output)
+            return output, mlp_bias
+
+        if self.moe_layer_recompute and self.training:
+            return tensor_parallel.checkpoint(
+                custom_forward,
+                False,
+                expert_input,
+                shared_expert_input,
+                router_input,
+            )
+        return custom_forward(expert_input, shared_expert_input, router_input)
+
+    def postprocess(self, output: Tensor, shared_expert_output: Tensor | None) -> Tensor:
         output = self.token_dispatcher.combine_postprocess(output)
         if self.config.moe_latent_size:
             output, _ = self.fc2_latent_proj(output)
@@ -1352,6 +1463,12 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
             mlp_spec.module = Gemma4MoELayer
             if hasattr(mlp_spec, "submodules") and mlp_spec.submodules is not None:
                 mlp_spec.submodules.router = Gemma4TopKRouter
+        elif isinstance(mlp_spec, partial) and isinstance(mlp_spec.func, type) and issubclass(mlp_spec.func, MoELayer):
+            mlp_kwargs = dict(mlp_spec.keywords or {})
+            mlp_submodules = copy.deepcopy(mlp_kwargs["submodules"])
+            mlp_submodules.router = Gemma4TopKRouter
+            mlp_kwargs["submodules"] = mlp_submodules
+            layer_spec.submodules.mlp = partial(Gemma4MoELayer, *mlp_spec.args, **mlp_kwargs)
 
     return block_spec
 

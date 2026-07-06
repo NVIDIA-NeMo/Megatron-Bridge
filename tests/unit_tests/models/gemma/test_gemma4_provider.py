@@ -93,6 +93,7 @@ class TestGemma4DenseProviderDefaults:
             ("full_attention_rope_base", 1_000_000.0),
             ("full_attention_rope_partial_factor", 0.25),
             ("num_kv_shared_layers", 18),
+            ("use_double_wide_mlp", False),
             ("per_layer_embed_vocab_size", 262_144),
             ("per_layer_embed_dim", 256),
             ("final_logit_softcapping", 30.0),

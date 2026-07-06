@@ -143,6 +143,7 @@ class Gemma4DenseProvider(GPTModelProvider):
     full_attention_rope_base: float = 1000000.0
     full_attention_rope_partial_factor: float = 0.25
     num_kv_shared_layers: int = 18
+    use_double_wide_mlp: bool = False
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
     final_logit_softcapping: float | None = 30.0

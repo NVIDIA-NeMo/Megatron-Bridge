@@ -443,36 +443,30 @@ class TestMaybeModifyLoadedHFWeightCausal:
         result = causal_bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
         assert result is not None
 
-    def test_router_weight_fusion(self, causal_bridge):
-        hidden = 8
-        sd = self._make_sd(hidden=hidden)
+    def test_router_weight_passthrough(self, causal_bridge):
+        sd = self._make_sd(hidden=8)
         hf_param = "model.layers.0.router.proj.weight"
+
         result = causal_bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
-        assert isinstance(result, torch.Tensor)
-        assert result.shape == sd[hf_param].shape
-        expected_factor = 1.0 * (hidden**-0.5) / 2.0
-        expected = (sd[hf_param].float() * expected_factor).to(sd[hf_param].dtype)
-        torch.testing.assert_close(result, expected)
+
+        torch.testing.assert_close(result, sd[hf_param], rtol=0, atol=0)
 
     def test_router_fusion_missing_keys_passthrough(self, causal_bridge):
         sd = {"model.layers.0.router.proj.weight": torch.randn(4, 8)}
         result = causal_bridge.maybe_modify_loaded_hf_weight("model.layers.0.router.proj.weight", sd)
         torch.testing.assert_close(result, sd["model.layers.0.router.proj.weight"])
 
-    def test_shared_expert_prenorm_fusion(self, causal_bridge):
-        hidden = 8
-        sd = self._make_sd(hidden=hidden)
+    def test_shared_expert_weights_passthrough(self, causal_bridge):
+        sd = self._make_sd(hidden=8)
         hf_param = {
             "gate": "model.layers.0.mlp.gate_proj.weight",
             "up": "model.layers.0.mlp.up_proj.weight",
         }
+
         result = causal_bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
-        assert isinstance(result, dict)
-        correction = 3.0 / 2.0
-        expected = (sd["model.layers.0.mlp.gate_proj.weight"].float() * correction).to(
-            sd["model.layers.0.mlp.gate_proj.weight"].dtype
-        )
-        torch.testing.assert_close(result["gate"], expected)
+
+        torch.testing.assert_close(result["gate"], sd[hf_param["gate"]], rtol=0, atol=0)
+        torch.testing.assert_close(result["up"], sd[hf_param["up"]], rtol=0, atol=0)
 
     def test_shared_expert_fusion_missing_keys_passthrough(self, causal_bridge):
         sd = {
@@ -508,38 +502,38 @@ class TestMaybeModifyConvertedHFWeightCausal:
         assert "model.layers.0.self_attn.v_proj.weight" not in result
         assert "model.layers.0.self_attn.q_proj.weight" in result
 
-    def test_router_weight_unfusion(self, causal_bridge):
-        hidden = 8
-        ref_sd = self._make_ref_sd(hidden=hidden)
-        factor = 1.0 * (hidden**-0.5) / 2.0
-        fused = (ref_sd["model.layers.0.router.proj.weight"].float() * factor).to(
-            ref_sd["model.layers.0.router.proj.weight"].dtype
-        )
+    def test_router_weight_export_passthrough(self, causal_bridge):
+        ref_sd = self._make_ref_sd(hidden=8)
+        converted = {"model.layers.0.router.proj.weight": torch.randn(4, 8)}
+
         result = causal_bridge.maybe_modify_converted_hf_weight(
-            None, {"model.layers.0.router.proj.weight": fused}, ref_sd
-        )
-        torch.testing.assert_close(
-            result["model.layers.0.router.proj.weight"],
-            ref_sd["model.layers.0.router.proj.weight"],
-            atol=1e-5,
-            rtol=1e-5,
+            None,
+            converted,
+            ref_sd,
         )
 
-    def test_shared_expert_gate_unfusion(self, causal_bridge):
-        hidden = 8
-        ref_sd = self._make_ref_sd(hidden=hidden)
-        correction = 3.0 / 2.0
-        fused = (ref_sd["model.layers.0.mlp.gate_proj.weight"].float() * correction).to(
-            ref_sd["model.layers.0.mlp.gate_proj.weight"].dtype
+        torch.testing.assert_close(
+            result["model.layers.0.router.proj.weight"],
+            converted["model.layers.0.router.proj.weight"],
+            rtol=0,
+            atol=0,
         )
+
+    def test_shared_expert_weight_export_passthrough(self, causal_bridge):
+        ref_sd = self._make_ref_sd(hidden=8)
+        converted = {"model.layers.0.mlp.gate_proj.weight": torch.randn(16, 8)}
+
         result = causal_bridge.maybe_modify_converted_hf_weight(
-            None, {"model.layers.0.mlp.gate_proj.weight": fused}, ref_sd
+            None,
+            converted,
+            ref_sd,
         )
+
         torch.testing.assert_close(
             result["model.layers.0.mlp.gate_proj.weight"],
-            ref_sd["model.layers.0.mlp.gate_proj.weight"],
-            atol=1e-5,
-            rtol=1e-5,
+            converted["model.layers.0.mlp.gate_proj.weight"],
+            rtol=0,
+            atol=0,
         )
 
     def test_empty_hf_state_dict_passthrough(self, causal_bridge):

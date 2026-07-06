@@ -17,12 +17,14 @@
 import types
 import weakref
 from contextlib import nullcontext
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 import torch
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
+    Gemma4DenseMLP,
     Gemma4DenseRotaryEmbedding,
     Gemma4DenseSelfAttention,
     Gemma4DenseTransformerLayer,
@@ -89,6 +91,14 @@ class TestGemma4RMSNorm:
 
         assert not hasattr(norm, "weight")
 
+    def test_weight_uses_model_parameter_dtype(self):
+        norm = Gemma4RMSNorm(
+            _config(params_dtype=torch.bfloat16),
+            hidden_size=2,
+        )
+
+        assert norm.weight.dtype is torch.bfloat16
+
 
 class TestGemma4MoE:
     def test_router_returns_normalized_topk_weights(self):
@@ -149,6 +159,38 @@ class TestGemma4LayerSpec:
         assert layer_spec.submodules.self_attention.module is Gemma4DenseSelfAttention
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
+
+    def test_double_wide_mlp_only_applies_to_shared_kv_layers(self, monkeypatch):
+        mlp_builders = []
+
+        def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
+            del kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+            self.layer_number = layer_number
+            mlp_builders.append(submodules.mlp)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer.__init__",
+            fake_layer_init,
+        )
+        config = _config(
+            hidden_size=4,
+            ffn_hidden_size=6,
+            num_layers=4,
+            num_kv_shared_layers=2,
+            use_double_wide_mlp=True,
+            per_layer_embed_dim=0,
+            enable_moe_block=False,
+        )
+
+        Gemma4DenseTransformerLayer(config, get_gemma4_layer_spec().submodules, layer_number=2)
+        Gemma4DenseTransformerLayer(config, get_gemma4_layer_spec().submodules, layer_number=3)
+
+        assert mlp_builders[0].func.__self__ is Gemma4DenseMLP
+        assert mlp_builders[0].keywords["ffn_hidden_size"] == 6
+        assert mlp_builders[1].func.__self__ is Gemma4DenseMLP
+        assert mlp_builders[1].keywords["ffn_hidden_size"] == 12
 
 
 class TestGemma4DenseSelfAttention:
@@ -1637,6 +1679,46 @@ class TestGemma4PLEHelpers:
 
 
 class TestGemma4MoEHelpers:
+    def test_topk_router_scale_state_is_trainable(self, monkeypatch):
+        def fake_router_init(self, config, **kwargs):
+            del kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TopKRouter.__init__",
+            fake_router_init,
+        )
+        router = Gemma4TopKRouter(
+            _config(
+                num_moe_experts=3,
+                params_dtype=torch.bfloat16,
+            )
+        )
+
+        assert isinstance(router.scale, torch.nn.Parameter)
+        assert isinstance(router.per_expert_scale, torch.nn.Parameter)
+        assert router.scale.dtype is torch.bfloat16
+        assert router.per_expert_scale.dtype is torch.bfloat16
+
+    def test_transformer_moe_norm_state_is_trainable(self, monkeypatch):
+        def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
+            del submodules, layer_number, kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer.__init__",
+            fake_layer_init,
+        )
+        layer = Gemma4TransformerLayer(
+            _config(params_dtype=torch.bfloat16),
+            submodules=SimpleNamespace(),
+        )
+
+        assert isinstance(layer.pffl_weight, torch.nn.Parameter)
+        assert isinstance(layer.post_ffn_layernorm.weight, torch.nn.Parameter)
+
     def test_gemma4_block_spec_patches_attention_layer_and_moe_modules(self, monkeypatch):
         from megatron.core.transformer.attention import SelfAttention
         from megatron.core.transformer.moe.moe_layer import MoELayer
@@ -1672,6 +1754,27 @@ class TestGemma4MoEHelpers:
         assert attn_submodules.linear_proj != "old_proj"
         assert layer_spec.submodules.mlp.module is Gemma4MoELayer
         assert mlp_submodules.router is Gemma4TopKRouter
+
+    def test_gemma4_block_spec_patches_partial_moe_builder(self, monkeypatch):
+        from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+
+        mlp_submodules = MoESubmodules(experts=object(), shared_experts=object())
+        layer_spec = SimpleNamespace(
+            module=object,
+            submodules=SimpleNamespace(
+                self_attention=SimpleNamespace(module=object, submodules=None),
+                mlp=partial(MoELayer, submodules=mlp_submodules),
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.get_gpt_decoder_block_spec",
+            lambda *args, **kwargs: SimpleNamespace(layer_specs=[layer_spec]),
+        )
+
+        _gemma4_block_spec("config", use_transformer_engine=True)
+
+        assert layer_spec.submodules.mlp.func is Gemma4MoELayer
+        assert layer_spec.submodules.mlp.keywords["submodules"].router is Gemma4TopKRouter
 
     def test_gemma4_block_spec_skips_te_projection_patch_when_disabled(self, monkeypatch):
         from megatron.core.transformer.attention import SelfAttention
@@ -1725,6 +1828,61 @@ class TestGemma4MoEHelpers:
         assert out_map is routing_map
         torch.testing.assert_close(out_probs[0], torch.tensor([0.4, 1.2, 0.0]))
         torch.testing.assert_close(out_probs[1], torch.tensor([0.5, 1.0, 0.0]))
+
+    def test_topk_router_gating_applies_hf_norm_and_scale(self, monkeypatch):
+        captured = []
+
+        def fake_gating(self, hidden_states):
+            del self
+            captured.append(hidden_states)
+            return hidden_states
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.TopKRouter.gating", fake_gating)
+        router = object.__new__(Gemma4TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.config = SimpleNamespace(layernorm_epsilon=1e-6)
+        router.scale = torch.nn.Parameter(torch.tensor([2.0, 3.0]))
+        router.scalar_root_size = 2**-0.5
+        hidden_states = torch.tensor([[3.0, 4.0]])
+
+        output = Gemma4TopKRouter.gating(router, hidden_states)
+
+        normed = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expected = normed * router.scale * router.scalar_root_size
+        torch.testing.assert_close(output, expected)
+        torch.testing.assert_close(captured[0], expected)
+
+    def test_transformer_layer_uses_separate_moe_inputs(self):
+        calls = []
+
+        class FakeMoE:
+            def forward_with_separate_inputs(self, expert, shared, router, padding_mask=None):
+                calls.append((expert, shared, router, padding_mask))
+                return torch.zeros_like(expert), None
+
+        layer = SimpleNamespace(
+            config=SimpleNamespace(fp32_residual_connection=False, layernorm_epsilon=1e-6),
+            pre_mlp_layernorm=SimpleNamespace(weight=torch.tensor([2.0, 2.0])),
+            pffl_weight=torch.tensor([3.0, 3.0]),
+            mlp=FakeMoE(),
+            _forward_post_mlp=lambda output, residual: (output, residual),
+        )
+        hidden_states = torch.tensor([[[3.0, 4.0]]])
+
+        output, residual = Gemma4TransformerLayer._forward_mlp(
+            layer,
+            hidden_states,
+            padding_mask=torch.tensor([[True]]),
+        )
+
+        base = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expert, shared, router, padding_mask = calls[0]
+        torch.testing.assert_close(expert, base * 2.0)
+        torch.testing.assert_close(shared, base * 3.0)
+        torch.testing.assert_close(router, hidden_states)
+        torch.testing.assert_close(output[0], torch.zeros_like(hidden_states))
+        torch.testing.assert_close(residual, hidden_states)
+        torch.testing.assert_close(padding_mask, torch.tensor([[True]]))
 
     def test_topk_router_routing_keeps_probs_when_map_missing(self, monkeypatch):
         routing_probs = torch.ones(2, 3)
