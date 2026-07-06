@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import partial
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.moe.router import TopKRouter
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -41,6 +43,33 @@ try:
 except ImportError:
     # Fallback if fused_bias_geglu is not available
     quick_gelu = torch.nn.functional.gelu
+
+
+def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[torch.nn.Module]:
+    """Keep MiniMax-M3 router parameters in FP32 for every load path.
+
+    Megatron initializes router parameters in ``params_dtype`` even when
+    ``moe_router_dtype="fp32"``. Promoting them immediately after construction
+    prevents truncation when loading either HF weights or a native Megatron
+    checkpoint.
+    """
+    for model_chunk in model:
+        for module in model_chunk.modules():
+            if isinstance(module, TopKRouter) and module.weight.dtype != torch.float32:
+                module.weight.data = module.weight.data.float()
+            if isinstance(module, TopKRouter):
+                module._keep_in_float32_parameter_names = ("weight",)
+    return model
+
+
+@dataclass
+class MiniMaxM3ModelProvider(GPTModelProvider):
+    """GPT provider that preserves MiniMax-M3's FP32 router parameters."""
+
+    def __post_init__(self) -> None:
+        """Install the router hook on fresh and deserialized providers."""
+        super().__post_init__()
+        self.register_pre_wrap_hook(_promote_router_weights_to_float32, prepend=True)
 
 
 @MegatronModelBridge.register_bridge(
@@ -80,19 +109,24 @@ class MiniMaxM3Bridge(MegatronModelBridge):
           ``index_block_size`` granularity with ``index_topk_blocks`` kept per
           query, so full attention is mathematically identical for sequences up
           to ``index_topk_blocks * index_block_size`` tokens (2048 for the
-          released checkpoint) and an approximation beyond that. Exported
-          checkpoints therefore declare ``full_attention`` on every layer.
+          released checkpoint) and an approximation beyond that.
         - The vision tower, multimodal projector, and patch-merge MLP are not
           mapped (language model only).
         - MTP (Multi-Token Prediction) modules are not mapped. The released
           checkpoint advertises ``num_nextn_predict_layers`` in its config but
           ships no ``mtp.*`` weights, so ``mtp_num_layers`` is forced to None.
+        - Standalone Hugging Face checkpoint export is not supported. The HF
+          checkpoint is multimodal, while this bridge maps only its
+          ``language_model.*`` tensors. In-memory HF-to-Megatron-to-HF weight
+          verification remains supported.
 
     Example:
         >>> from megatron.bridge import AutoBridge
-        >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3")
+        >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
+
+    SUPPORTS_HF_PRETRAINED_EXPORT = False
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -109,15 +143,15 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             return quick_gelu
         return super().hf_to_megatron_activation(hidden_act)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> GPTModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> MiniMaxM3ModelProvider:
         """Convert the HuggingFace MiniMax-M3 config to a GPTModelProvider."""
         hf_config = hf_pretrained.config
         text_config = getattr(hf_config, "text_config", hf_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
         provider_kwargs.pop("_mla_rope_params", None)
-        valid_fields = GPTModelProvider.__dataclass_fields__
-        provider = GPTModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
+        valid_fields = MiniMaxM3ModelProvider.__dataclass_fields__
+        provider = MiniMaxM3ModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
         provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
@@ -168,10 +202,16 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
-        provider.moe_router_load_balancing_type = "seq_aux_loss"
+        # HF exposes a token-global Switch auxiliary loss. MCore's closest
+        # equivalent uses normalized sigmoid scores rather than HF's softmax
+        # scores, but preserves the global (rather than per-sequence) scope.
+        provider.moe_router_load_balancing_type = "aux_loss"
         provider.moe_aux_loss_coeff = getattr(text_config, "router_aux_loss_coef", 1e-3)
         provider.moe_router_topk_scaling_factor = getattr(text_config, "routed_scaling_factor", 1.0)
-        provider.moe_shared_expert_overlap = True
+        # The overlapped shared-expert path applies a generic GLU and does not
+        # honor activation_func_clamp_value or glu_linear_offset. Keep it off so
+        # the shared expert uses MiniMax-M3's clamped (up + 1) SwiGLU-OAI math.
+        provider.moe_shared_expert_overlap = False
 
         n_shared_experts = getattr(text_config, "n_shared_experts", 0) or 0
         shared_intermediate_size = getattr(text_config, "shared_intermediate_size", 0) or 0
@@ -194,7 +234,11 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         provider.mtp_num_layers = None
 
         provider.persist_layer_norm = True
-        provider.bias_activation_fusion = True
+        # The fused bias-activation path only supports quick-GELU when MoE
+        # routing probabilities are supplied. MiniMax-M3 also uses the same
+        # activation in dense layers and the shared expert, so use the
+        # unfused path that applies the clamp and linear offset in both cases.
+        provider.bias_activation_fusion = False
         provider.bias_dropout_fusion = True
 
         # Released checkpoints are bf16; text_config carries no dtype of its own
@@ -211,56 +255,12 @@ class MiniMaxM3Bridge(MegatronModelBridge):
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
-        """Build a text-only HF config for exported checkpoints.
-
-        Only the language model is bridged, so exports declare the standalone
-        ``MiniMaxM3VLForCausalLM`` text architecture with full attention on
-        every layer (the lightning-indexer weights are not mapped).
-        """
-        hf_cfg = super(MiniMaxM3Bridge, cls).megatron_to_hf_config(provider)
-
-        hf_cfg["architectures"] = ["MiniMaxM3VLForCausalLM"]
-        hf_cfg["model_type"] = "minimax_m3_vl_text"
-
-        # CONFIG_MAPPING reverses ffn_hidden_size into intermediate_size, but for
-        # MiniMax-M3 intermediate_size is the per-expert FFN size and the dense
-        # MLP size lives in dense_intermediate_size
-        dense_intermediate_size = hf_cfg.pop("intermediate_size", None)
-        moe_intermediate_size = hf_cfg.pop("moe_intermediate_size", None)
-        if moe_intermediate_size is not None:
-            hf_cfg["intermediate_size"] = moe_intermediate_size
-        if dense_intermediate_size is not None:
-            hf_cfg["dense_intermediate_size"] = dense_intermediate_size
-
-        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
-        if shared_size:
-            hf_cfg["n_shared_experts"] = 1
-            hf_cfg["shared_intermediate_size"] = shared_size
-
-        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
-        if isinstance(moe_layer_freq, list):
-            hf_cfg["moe_layer_freq"] = [int(f) for f in moe_layer_freq]
-
-        kv_channels = getattr(provider, "kv_channels", None)
-        rotary_percent = getattr(provider, "rotary_percent", None)
-        if kv_channels and rotary_percent is not None:
-            hf_cfg["rotary_dim"] = int(kv_channels * rotary_percent)
-
-        hf_cfg["use_gemma_norm"] = bool(getattr(provider, "layernorm_zero_centered_gamma", False))
-        hf_cfg["use_qk_norm"] = bool(getattr(provider, "qk_layernorm", False))
-        hf_cfg["qk_norm_type"] = "per_head"
-        hf_cfg["hidden_act"] = "swigluoai"
-        hf_cfg["swiglu_alpha"] = 1.702
-        clamp_value = getattr(provider, "activation_func_clamp_value", None)
-        if clamp_value is not None:
-            hf_cfg["swiglu_limit"] = clamp_value
-
-        # Indexer weights are not mapped, so the exported model runs (and must
-        # declare) full attention; MTP modules are not exported either
-        hf_cfg["layer_types"] = ["full_attention"] * provider.num_layers
-        hf_cfg["num_nextn_predict_layers"] = 0
-
-        return hf_cfg
+        """Reject standalone HF export until the full multimodal contract is mapped."""
+        raise NotImplementedError(
+            "MiniMax-M3 standalone Hugging Face export is not supported: the source checkpoint is multimodal, "
+            "but this bridge maps only language_model.* tensors. Use HF import, native Megatron checkpoints, "
+            "or in-memory round-trip verification."
+        )
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return the parameter mappings for the MiniMax-M3 language model.

@@ -20,11 +20,19 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers import GenerationConfig
+from transformers import GenerationConfig, PretrainedConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
-from megatron.bridge.models.minimax_m3.minimax_m3_bridge import MiniMaxM3Bridge, quick_gelu
+from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
+    MiniMaxM3Bridge,
+    MiniMaxM3ModelProvider,
+    TopKRouter,
+    _promote_router_weights_to_float32,
+    quick_gelu,
+)
+from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
 
 
 # Toy text-backbone config (mirrors the shape of MiniMaxAI/MiniMax-M3 text_config)
@@ -149,9 +157,10 @@ class TestMiniMaxM3Bridge:
         assert provider.moe_router_score_function == "sigmoid"
         assert provider.moe_router_enable_expert_bias is True
         assert provider.moe_token_dispatcher_type == "alltoall"
-        assert provider.moe_router_load_balancing_type == "seq_aux_loss"
+        assert provider.moe_router_load_balancing_type == "aux_loss"
         assert provider.moe_router_topk_scaling_factor == 2.0
         assert provider.moe_shared_expert_intermediate_size == 32
+        assert provider.moe_shared_expert_overlap is False
         assert provider.moe_layer_freq == [0, 1, 1, 1]
 
     def test_provider_bridge_derives_moe_layer_freq_from_mlp_layer_types(self):
@@ -187,6 +196,7 @@ class TestMiniMaxM3Bridge:
         assert provider.activation_func is quick_gelu
         assert provider.activation_func_clamp_value == 7.0
         assert provider.glu_linear_offset == 1.0
+        assert provider.bias_activation_fusion is False
 
     def test_hf_to_megatron_activation_swigluoai(self):
         assert MiniMaxM3Bridge.hf_to_megatron_activation("swigluoai") is quick_gelu
@@ -254,6 +264,42 @@ class TestMiniMaxM3Bridge:
         assert any("mlp.shared_experts.linear_fc1" in p for p in megatron_params), "Shared expert mapping missing"
         assert any("mlp.linear_fc1.weight" in p for p in megatron_params), "Dense MLP mapping missing"
 
+    def test_router_hook_preserves_float32_during_native_state_reload(self):
+        router = TopKRouter.__new__(TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.weight = torch.nn.Parameter(torch.empty(8, 64, dtype=torch.bfloat16))
+        model = torch.nn.Module()
+        model.router = router
+        source_weight = torch.randn(8, 64, dtype=torch.float32)
+
+        _promote_router_weights_to_float32([model])
+        model.load_state_dict({"router.weight": source_weight})
+
+        assert router.weight.dtype == torch.float32
+        assert torch.equal(router.weight, source_weight)
+
+    def test_router_weight_survives_mixed_precision_wrapper(self):
+        router = TopKRouter.__new__(TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.weight = torch.nn.Parameter(torch.empty(8, 64, dtype=torch.bfloat16))
+        model = torch.nn.Module()
+        model.router = router
+        source_weight = torch.randn(8, 64, dtype=torch.float32)
+
+        _promote_router_weights_to_float32([model])
+        model.load_state_dict({"router.weight": source_weight})
+        wrapped = _apply_mixed_precision_wrapper([model], object(), lambda _config, module: module.bfloat16())
+
+        assert wrapped == [model]
+        assert router.weight.dtype == torch.float32
+        assert torch.equal(router.weight, source_weight)
+
+    def test_provider_registers_router_dtype_hook_first(self, mock_pretrained):
+        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+
+        assert isinstance(provider, MiniMaxM3ModelProvider)
+        assert provider._pre_wrap_hooks[0] is _promote_router_weights_to_float32
+
     def test_mapping_registry_uses_language_model_prefix(self):
         """All HF-side params must live under the multimodal language_model. prefix."""
         bridge = MiniMaxM3Bridge()
@@ -277,26 +323,21 @@ class TestMiniMaxM3Bridge:
                 assert "index_" not in str(p)
                 assert "vision_tower" not in str(p)
 
-    def test_megatron_to_hf_config_exports_text_only_model(self, mock_pretrained):
+    def test_megatron_to_hf_config_rejects_incomplete_multimodal_export(self, mock_pretrained):
         bridge = MiniMaxM3Bridge()
         provider = bridge.provider_bridge(mock_pretrained)
 
-        hf_cfg = MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        with pytest.raises(NotImplementedError, match="multimodal"):
+            MiniMaxM3Bridge.megatron_to_hf_config(provider)
 
-        assert hf_cfg["architectures"] == ["MiniMaxM3VLForCausalLM"]
-        assert hf_cfg["model_type"] == "minimax_m3_vl_text"
-        # Expert/dense FFN sizes are swapped back into the HF layout
-        assert hf_cfg["intermediate_size"] == 32
-        assert hf_cfg["dense_intermediate_size"] == 128
-        assert hf_cfg["shared_intermediate_size"] == 32
-        assert hf_cfg["n_shared_experts"] == 1
-        assert hf_cfg["moe_layer_freq"] == [0, 1, 1, 1]
-        assert hf_cfg["rotary_dim"] == 8
-        assert hf_cfg["use_gemma_norm"] is True
-        assert hf_cfg["use_qk_norm"] is True
-        assert hf_cfg["hidden_act"] == "swigluoai"
-        assert hf_cfg["swiglu_limit"] == 7.0
-        # Indexer weights are unmapped, so the export declares full attention
-        assert hf_cfg["layer_types"] == ["full_attention"] * provider.num_layers
-        assert hf_cfg["num_nextn_predict_layers"] == 0
-        assert hf_cfg["torch_dtype"] == "bfloat16"
+    def test_public_hf_save_rejects_before_creating_output(self, tmp_path):
+        hf_config = PretrainedConfig()
+        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
+        hf_config.model_type = "minimax_m3_vl"
+        auto_bridge = AutoBridge(hf_config)
+        output_path = tmp_path / "incomplete-hf-export"
+
+        with pytest.raises(NotImplementedError, match="standalone Hugging Face"):
+            auto_bridge.save_hf_pretrained([], output_path)
+
+        assert not output_path.exists()

@@ -954,6 +954,10 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
+        if not self._model_bridge.SUPPORTS_HF_PRETRAINED_EXPORT:
+            raise NotImplementedError(
+                f"{type(self._model_bridge).__name__} does not support standalone Hugging Face checkpoint export."
+            )
         if not isinstance(self.hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
             raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
         is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)

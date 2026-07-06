@@ -394,6 +394,8 @@ class MegatronModelBridge(
         - MegatronModel: The Megatron model type
     """
 
+    SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
+
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
