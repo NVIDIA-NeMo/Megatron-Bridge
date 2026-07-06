@@ -159,6 +159,8 @@ class Gemma4Bridge(MegatronModelBridge):
         if layer_types is not None:
             layer_types = [layer_type == "sliding_attention" for layer_type in layer_types]
 
+        sliding_window = getattr(hf_config, "sliding_window", 512)
+
         return Gemma4DenseProvider(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
@@ -172,12 +174,14 @@ class Gemma4Bridge(MegatronModelBridge):
             vocab_size=hf_config.vocab_size,
             normalization="RMSNorm",
             layernorm_epsilon=hf_config.rms_norm_eps,
+            window_size=(sliding_window - 1, 0),
             window_attn_skip_freq=layer_types if layer_types is not None else 6,
             sliding_window_rope_base=sliding_rope.get("rope_theta", 10000.0),
             full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
             full_attention_rope_partial_factor=full_rope.get("partial_rotary_factor", 0.25),
             num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
             use_double_wide_mlp=getattr(hf_config, "use_double_wide_mlp", False),
+            attention_k_eq_v=getattr(hf_config, "attention_k_eq_v", False),
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
             final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", None),
@@ -202,6 +206,7 @@ class Gemma4Bridge(MegatronModelBridge):
 
         provider.global_head_dim = getattr(hf_config, "global_head_dim", 512)
         provider.num_global_key_value_heads = getattr(hf_config, "num_global_key_value_heads", 2)
+        provider.attention_k_eq_v = getattr(hf_config, "attention_k_eq_v", False)
 
         rope_params = getattr(hf_config, "rope_parameters", {})
         if isinstance(rope_params, dict):
@@ -231,9 +236,30 @@ class Gemma4Bridge(MegatronModelBridge):
 
     @classmethod
     def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
-        """Convert a Gemma 4 provider config back to Hugging Face config."""
+        """Preserve Gemma 4 architecture fields affected by provider conversion."""
         hf_config = super().megatron_to_hf_config(provider)
-        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+        is_moe = provider.num_moe_experts is not None
+        window_size = provider.window_size
+        hf_config.update(
+            {
+                "attention_k_eq_v": provider.attention_k_eq_v,
+                "enable_moe_block": is_moe,
+                "final_logit_softcapping": provider.final_logit_softcapping,
+                "num_kv_shared_layers": getattr(provider, "num_kv_shared_layers", 0),
+                "sliding_window": window_size[0] + 1 if isinstance(window_size, tuple) else window_size,
+                "use_double_wide_mlp": getattr(provider, "use_double_wide_mlp", False),
+            }
+        )
+        if is_moe:
+            hf_config.update(
+                {
+                    "intermediate_size": provider.moe_shared_expert_intermediate_size,
+                    "moe_intermediate_size": provider.moe_ffn_hidden_size,
+                    "num_experts": provider.num_moe_experts,
+                    "top_k_experts": provider.moe_router_topk,
+                }
+            )
+            hf_config.pop("num_experts_per_tok", None)
         return hf_config
 
     def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
@@ -417,7 +443,7 @@ class Gemma4Bridge(MegatronModelBridge):
                     hf_param="model.layers.*.router.scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.pffl_weight",
+                    megatron_param="decoder.layers.*.pre_shared_expert_layernorm.weight",
                     hf_param="model.layers.*.pre_feedforward_layernorm.weight",
                 ),
                 ReplicatedMapping(

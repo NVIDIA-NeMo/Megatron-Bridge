@@ -71,6 +71,7 @@ def mock_hf_config_causal_moe():
     cfg.head_dim = 256
     cfg.global_head_dim = 512
     cfg.num_global_key_value_heads = 2
+    cfg.attention_k_eq_v = True
     cfg.initializer_range = 0.02
     cfg.rms_norm_eps = 1e-6
     cfg.vocab_size = 262144
@@ -103,6 +104,7 @@ def mock_hf_config_causal_dense():
     cfg.head_dim = 256
     cfg.global_head_dim = 512
     cfg.num_global_key_value_heads = 2
+    cfg.attention_k_eq_v = True
     cfg.initializer_range = 0.02
     cfg.rms_norm_eps = 1e-6
     cfg.vocab_size = 262144
@@ -158,6 +160,7 @@ def mock_text_config_moe():
     config.head_dim = 256
     config.global_head_dim = 512
     config.num_global_key_value_heads = 2
+    config.attention_k_eq_v = True
     config.initializer_range = 0.02
     config.rms_norm_eps = 1e-6
     config.vocab_size = 262144
@@ -192,6 +195,7 @@ def mock_text_config_dense():
     config.head_dim = 256
     config.global_head_dim = 512
     config.num_global_key_value_heads = 2
+    config.attention_k_eq_v = True
     config.initializer_range = 0.02
     config.rms_norm_eps = 1e-6
     config.vocab_size = 262144
@@ -331,6 +335,7 @@ class TestGemma4BridgeProviderBridgeMoE:
         assert p.global_head_dim == 512
         assert p.num_global_key_value_heads == 2
         assert p.global_rotary_percent == 0.25
+        assert p.attention_k_eq_v is True
 
     def test_interleaved_attn_pattern(self, causal_bridge, mock_causal_pretrained):
         assert causal_bridge.provider_bridge(mock_causal_pretrained).interleaved_attn_pattern == (5, 1)
@@ -692,6 +697,7 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.moe_ffn_hidden_size == 704
         assert p.moe_shared_expert_intermediate_size == 2112
         assert p.moe_layer_freq == 1
+        assert p.attention_k_eq_v is True
 
     def test_softmax_scale_is_one(self, bridge, mock_hf_pretrained_moe):
         assert bridge.provider_bridge(mock_hf_pretrained_moe).softmax_scale == 1.0
@@ -821,6 +827,12 @@ class TestGemma4VLBridgeMappingRegistry:
         bridge.hf_config = mock_hf_config_moe
         names = self._collect_names(bridge.mapping_registry())
         assert any("post_shared_expert_layernorm" in n for n in names)
+
+    def test_has_direct_pre_shared_expert_norm_mapping(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+        names = self._collect_names(bridge.mapping_registry())
+        assert "language_model.decoder.layers.*.pre_shared_expert_layernorm.weight" in names
+        assert "model.language_model.layers.*.pre_feedforward_layernorm.weight" in names
 
     def test_moe_registry_has_no_duplicate_non_layernorm_hf_targets(self, bridge, mock_hf_config_moe):
         bridge.hf_config = mock_hf_config_moe

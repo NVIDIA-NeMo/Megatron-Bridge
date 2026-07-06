@@ -48,6 +48,7 @@ def mock_hf_config_moe():
     cfg.head_dim = 256
     cfg.global_head_dim = 512
     cfg.num_global_key_value_heads = 2
+    cfg.attention_k_eq_v = True
     cfg.initializer_range = 0.02
     cfg.rms_norm_eps = 1e-6
     cfg.vocab_size = 262144
@@ -80,6 +81,7 @@ def mock_hf_config_dense():
     cfg.head_dim = 256
     cfg.global_head_dim = 512
     cfg.num_global_key_value_heads = 2
+    cfg.attention_k_eq_v = True
     cfg.initializer_range = 0.02
     cfg.rms_norm_eps = 1e-6
     cfg.vocab_size = 262144
@@ -190,6 +192,7 @@ class TestGemma4BridgeProviderBridgeMoE:
         assert p.global_head_dim == 512
         assert p.num_global_key_value_heads == 2
         assert p.global_rotary_percent == 0.25
+        assert p.attention_k_eq_v is True
 
     def test_interleaved_attn_pattern(self, bridge, mock_pretrained_moe):
         assert bridge.provider_bridge(mock_pretrained_moe).interleaved_attn_pattern == (5, 1)
@@ -261,6 +264,49 @@ class TestGemma4DenseArchitectureConfig:
 
         assert provider.use_double_wide_mlp is True
         assert provider.num_kv_shared_layers == 20
+
+    def test_dense_attention_config(self, bridge, mock_pretrained_dense):
+        provider = bridge.provider_bridge(mock_pretrained_dense)
+
+        assert provider.window_size == (1023, 0)
+        assert provider.attention_k_eq_v is True
+
+
+class TestGemma4BridgeConfigExport:
+    def test_dense_architecture_fields(self):
+        provider = Gemma4DenseProvider(
+            window_size=(1023, 0),
+            attention_k_eq_v=True,
+            num_kv_shared_layers=20,
+            use_double_wide_mlp=True,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        assert config["enable_moe_block"] is False
+        assert config["sliding_window"] == 1024
+        assert config["attention_k_eq_v"] is True
+        assert config["num_kv_shared_layers"] == 20
+        assert config["use_double_wide_mlp"] is True
+
+    def test_moe_architecture_fields(self):
+        provider = Gemma4ModelProvider(
+            attention_k_eq_v=True,
+            num_moe_experts=128,
+            moe_router_topk=8,
+            moe_ffn_hidden_size=704,
+            moe_shared_expert_intermediate_size=2112,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        assert config["enable_moe_block"] is True
+        assert config["attention_k_eq_v"] is True
+        assert config["num_experts"] == 128
+        assert config["top_k_experts"] == 8
+        assert config["moe_intermediate_size"] == 704
+        assert config["intermediate_size"] == 2112
+
 
 # ===========================================================================
 # _infer_attn_pattern helper
@@ -514,6 +560,11 @@ class TestGemma4BridgeMappingRegistry:
     def test_has_shared_expert_mapping(self, bridge):
         names = self._collect_names(bridge.mapping_registry())
         assert any("shared_experts" in n for n in names)
+
+    def test_has_direct_pre_shared_expert_norm_mapping(self, bridge):
+        names = self._collect_names(bridge.mapping_registry())
+        assert "decoder.layers.*.pre_shared_expert_layernorm.weight" in names
+        assert "model.layers.*.pre_feedforward_layernorm.weight" in names
 
     def test_has_post_moe_layernorm(self, bridge):
         names = self._collect_names(bridge.mapping_registry())

@@ -95,6 +95,11 @@ def _gemma4_rms_norm(hidden_states: Tensor, weight: Tensor | None, eps: float) -
     return normed_output.type_as(hidden_states)
 
 
+def _mark_sequence_parallel_parameter(parameter: nn.Parameter, config: TransformerConfig) -> None:
+    """Mark replicated parameters whose gradients span sequence-parallel shards."""
+    setattr(parameter, "sequence_parallel", bool(getattr(config, "sequence_parallel", False)))
+
+
 class Gemma4RMSNorm(nn.Module):
     """HF Gemma4-compatible RMSNorm.
 
@@ -118,6 +123,7 @@ class Gemma4RMSNorm(nn.Module):
         self.with_scale = with_scale
         if with_scale:
             self.weight = nn.Parameter(torch.ones(hidden_size, dtype=getattr(config, "params_dtype", torch.float32)))
+            _mark_sequence_parallel_parameter(self.weight, config)
         self.eps = eps
 
     def forward(self, hidden_states: Tensor) -> Tensor:
@@ -129,7 +135,12 @@ RMSNorm = Gemma4RMSNorm
 
 
 class Gemma4DenseMLP(MLP):
-    """Dense MLP that permits Gemma 4's layer-specific FFN widths."""
+    """Keep both MCore projections on Gemma 4's layer-specific FFN width.
+
+    MCore's FC1 accepts an explicit width, while FC2 reads it from the config.
+    Gemma 4 E2B doubles the final shared layers, so a shallow config copy keeps
+    both projections consistent without replacing MCore's optimized kernels.
+    """
 
     def __init__(
         self,
@@ -1263,7 +1274,11 @@ class Gemma4TransformerLayer(TransformerLayer):
     ) -> None:
         super().__init__(config=config, submodules=submodules, layer_number=layer_number, **kwargs)
         self.register_buffer("layer_scalar", torch.ones(1, dtype=config.params_dtype))
-        self.pffl_weight = nn.Parameter(torch.ones(config.hidden_size, dtype=config.params_dtype))
+        self.pre_shared_expert_layernorm = Gemma4RMSNorm(
+            config,
+            config.hidden_size,
+            eps=config.layernorm_epsilon,
+        )
         self.post_ffn_layernorm = Gemma4RMSNorm(config, config.hidden_size, eps=config.layernorm_epsilon)
 
     def _forward_mlp(
@@ -1282,7 +1297,7 @@ class Gemma4TransformerLayer(TransformerLayer):
         )
         shared_expert_input = _gemma4_rms_norm(
             residual,
-            self.pffl_weight,
+            self.pre_shared_expert_layernorm.weight,
             self.config.layernorm_epsilon,
         )
         mlp_output_with_bias = self.mlp.forward_with_separate_inputs(
@@ -1322,6 +1337,8 @@ class Gemma4TopKRouter(TopKRouter):
         super().__init__(config=config, **kwargs)
         self.per_expert_scale = nn.Parameter(torch.ones(config.num_moe_experts, dtype=config.params_dtype))
         self.scale = nn.Parameter(torch.ones(config.hidden_size, dtype=config.params_dtype))
+        _mark_sequence_parallel_parameter(self.per_expert_scale, config)
+        _mark_sequence_parallel_parameter(self.scale, config)
         self.scalar_root_size = config.hidden_size**-0.5
 
     def gating(self, input: Tensor) -> Tensor:

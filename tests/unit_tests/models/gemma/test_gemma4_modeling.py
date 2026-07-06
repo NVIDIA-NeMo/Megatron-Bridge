@@ -99,6 +99,14 @@ class TestGemma4RMSNorm:
 
         assert norm.weight.dtype is torch.bfloat16
 
+    def test_weight_is_marked_for_sequence_parallel_reduction(self):
+        norm = Gemma4RMSNorm(
+            _config(params_dtype=torch.bfloat16, sequence_parallel=True),
+            hidden_size=2,
+        )
+
+        assert norm.weight.sequence_parallel is True
+
 
 class TestGemma4MoE:
     def test_router_returns_normalized_topk_weights(self):
@@ -191,6 +199,25 @@ class TestGemma4LayerSpec:
         assert mlp_builders[0].keywords["ffn_hidden_size"] == 6
         assert mlp_builders[1].func.__self__ is Gemma4DenseMLP
         assert mlp_builders[1].keywords["ffn_hidden_size"] == 12
+
+    def test_dense_mlp_sets_width_on_layer_config_and_constructor(self, monkeypatch):
+        captured = {}
+
+        def fake_mlp_init(self, config, submodules, ffn_hidden_size=None, **kwargs):
+            del submodules, kwargs
+            torch.nn.Module.__init__(self)
+            captured["config"] = config
+            captured["ffn_hidden_size"] = ffn_hidden_size
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.MLP.__init__", fake_mlp_init)
+        config = _config(ffn_hidden_size=6)
+
+        Gemma4DenseMLP(config, submodules=SimpleNamespace(), ffn_hidden_size=12)
+
+        assert captured["config"] is not config
+        assert config.ffn_hidden_size == 6
+        assert captured["config"].ffn_hidden_size == 12
+        assert captured["ffn_hidden_size"] == 12
 
 
 class TestGemma4DenseSelfAttention:
@@ -1693,6 +1720,7 @@ class TestGemma4MoEHelpers:
             _config(
                 num_moe_experts=3,
                 params_dtype=torch.bfloat16,
+                sequence_parallel=True,
             )
         )
 
@@ -1700,6 +1728,8 @@ class TestGemma4MoEHelpers:
         assert isinstance(router.per_expert_scale, torch.nn.Parameter)
         assert router.scale.dtype is torch.bfloat16
         assert router.per_expert_scale.dtype is torch.bfloat16
+        assert router.scale.sequence_parallel is True
+        assert router.per_expert_scale.sequence_parallel is True
 
     def test_transformer_moe_norm_state_is_trainable(self, monkeypatch):
         def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
@@ -1712,12 +1742,14 @@ class TestGemma4MoEHelpers:
             fake_layer_init,
         )
         layer = Gemma4TransformerLayer(
-            _config(params_dtype=torch.bfloat16),
+            _config(params_dtype=torch.bfloat16, sequence_parallel=True),
             submodules=SimpleNamespace(),
         )
 
-        assert isinstance(layer.pffl_weight, torch.nn.Parameter)
+        assert isinstance(layer.pre_shared_expert_layernorm.weight, torch.nn.Parameter)
         assert isinstance(layer.post_ffn_layernorm.weight, torch.nn.Parameter)
+        assert layer.pre_shared_expert_layernorm.weight.sequence_parallel is True
+        assert layer.post_ffn_layernorm.weight.sequence_parallel is True
 
     def test_gemma4_block_spec_patches_attention_layer_and_moe_modules(self, monkeypatch):
         from megatron.core.transformer.attention import SelfAttention
@@ -1863,7 +1895,7 @@ class TestGemma4MoEHelpers:
         layer = SimpleNamespace(
             config=SimpleNamespace(fp32_residual_connection=False, layernorm_epsilon=1e-6),
             pre_mlp_layernorm=SimpleNamespace(weight=torch.tensor([2.0, 2.0])),
-            pffl_weight=torch.tensor([3.0, 3.0]),
+            pre_shared_expert_layernorm=SimpleNamespace(weight=torch.tensor([3.0, 3.0])),
             mlp=FakeMoE(),
             _forward_post_mlp=lambda output, residual: (output, residual),
         )

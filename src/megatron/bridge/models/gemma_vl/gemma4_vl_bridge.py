@@ -296,7 +296,7 @@ class Gemma4VLBridge(Gemma4Bridge):
                     hf_param="model.language_model.layers.*.router.scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="language_model.decoder.layers.*.pffl_weight",
+                    megatron_param="language_model.decoder.layers.*.pre_shared_expert_layernorm.weight",
                     hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
                 ),
                 ReplicatedMapping(
