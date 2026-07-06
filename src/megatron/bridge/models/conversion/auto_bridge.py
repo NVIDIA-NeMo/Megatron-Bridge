@@ -18,6 +18,7 @@ import dataclasses
 import logging
 from collections.abc import Callable
 from contextlib import nullcontext
+from datetime import timedelta
 from functools import cached_property, partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Iterable, List, Literal, Optional, Tuple, Type, TypeVar, Union
@@ -1073,8 +1074,11 @@ class AutoBridge(Generic[MegatronModelT]):
             - The saved weights can be loaded with HuggingFace's from_pretrained
         """
         is_distributed = dist.is_initialized()
+        save_sync_group = None
         if is_distributed:
             dist.barrier()
+            # Writer-rank checkpoint I/O can outlast the NCCL collective timeout, so the exit sync uses Gloo.
+            save_sync_group = dist.new_group(backend="gloo", timeout=timedelta(hours=4))
         bridge = self._model_bridge
         generator = bridge.stream_weights_megatron_to_hf(
             model,
@@ -1161,7 +1165,8 @@ class AutoBridge(Generic[MegatronModelT]):
                 torch.save(quant_tensors, sidecar_path)
 
         if is_distributed:
-            dist.barrier()
+            dist.barrier(group=save_sync_group)
+            dist.destroy_process_group(save_sync_group)
 
     def save_megatron_model(
         self,

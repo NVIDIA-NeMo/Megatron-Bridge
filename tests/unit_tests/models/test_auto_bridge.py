@@ -17,6 +17,7 @@ Unit tests for AutoBridge automatic bridge selection and bridge functionality.
 """
 
 import json
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, PropertyMock, patch
@@ -269,7 +270,35 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
 
-    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
+    def test_save_hf_weights_distributed_exit_sync_uses_gloo_group(self, tmp_path):
+        """The distributed exit sync runs on a Gloo group with an I/O-sized timeout."""
+        source = _make_fake_source(present=set())
+        fake_dist = Mock()
+        fake_dist.is_initialized.return_value = True
+        fake_dist.get_rank.return_value = 0
+        gloo_group = Mock()
+        fake_dist.new_group.return_value = gloo_group
+
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1, dist_mock=fake_dist)
+
+        _, kwargs = fake_dist.new_group.call_args
+        assert kwargs["backend"] == "gloo"
+        assert kwargs["timeout"] > timedelta(seconds=600)
+        fake_dist.barrier.assert_called_with(group=gloo_group)
+        fake_dist.destroy_process_group.assert_called_once_with(gloo_group)
+
+    def test_save_hf_weights_non_distributed_skips_sync_group(self, tmp_path):
+        """Without torch.distributed initialized, no sync group or barrier is used."""
+        source = _make_fake_source(present=set())
+        fake_dist = Mock()
+        fake_dist.is_initialized.return_value = False
+
+        self._run_save_hf_weights(source, tmp_path, mtp_num_layers=1, dist_mock=fake_dist)
+
+        fake_dist.new_group.assert_not_called()
+        fake_dist.barrier.assert_not_called()
+
+    def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers, dist_mock=None):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.
 
@@ -287,6 +316,9 @@ class TestAutoBridge:
 
         fake_model_bridge = Mock()
         fake_model_bridge.stream_weights_megatron_to_hf.return_value = iter([])
+        if dist_mock is None:
+            dist_mock = Mock()
+            dist_mock.is_initialized.return_value = False
 
         with (
             # ``state`` is a read-only property on PreTrainedBase, so patch it
@@ -300,6 +332,7 @@ class TestAutoBridge:
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_bridge,
             patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
             patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+            patch("megatron.bridge.models.conversion.auto_bridge.dist", dist_mock),
         ):
             mock_bridge.return_value = fake_model_bridge
             bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
@@ -1565,11 +1598,15 @@ class TestAutoBridge:
 
             assert call_kwargs["additional_files"] is None
 
+    @patch("torch.distributed.destroy_process_group")
+    @patch("torch.distributed.new_group")
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
-    def test_save_hf_weights_filters_quantizer_tensors(self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier):
+    def test_save_hf_weights_filters_quantizer_tensors(
+        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, mock_new_group, mock_destroy_pg
+    ):
         """Test that save_hf_weights separates _quantizer. tensors into a sidecar file."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
@@ -1636,12 +1673,14 @@ class TestAutoBridge:
             sidecar_dict = mock_torch_save.call_args[0][0]
             assert "model.layers.0.self_attn.q_proj.input_quantizer._amax" in sidecar_dict
 
+    @patch("torch.distributed.destroy_process_group")
+    @patch("torch.distributed.new_group")
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
     def test_save_hf_weights_no_sidecar_when_not_quantized(
-        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier
+        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, mock_new_group, mock_destroy_pg
     ):
         """Test that save_hf_weights skips sidecar logic when model is not quantized."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -1689,12 +1728,14 @@ class TestAutoBridge:
             )
             mock_torch_save.assert_not_called()
 
+    @patch("torch.distributed.destroy_process_group")
+    @patch("torch.distributed.new_group")
     @patch("torch.distributed.barrier")
     @patch("torch.distributed.is_available", return_value=True)
     @patch("torch.distributed.is_initialized", return_value=True)
     @patch("torch.distributed.get_rank", return_value=0)
     def test_save_hf_weights_ignores_mtp_source_keys_when_mtp_disabled(
-        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, tmp_path
+        self, mock_get_rank, mock_is_init, mock_is_avail, mock_barrier, mock_new_group, mock_destroy_pg, tmp_path
     ):
         """Pass MTP source-key ignore prefixes when the exported config disables MTP."""
         from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
