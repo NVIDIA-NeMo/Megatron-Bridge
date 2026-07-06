@@ -284,6 +284,69 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = replace(
 
 
 # =============================================================================
+# Tuned hardware variants
+# =============================================================================
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_PARTIAL_CG = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=256,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=2,
+    expert_model_parallel_size=64,
+    global_batch_size=8192,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=True,
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
+    recompute_modules=["mla_up_proj"],
+    fine_grained_activation_offloading=True,
+    offload_modules=["expert_fc1"],
+    pp_layout="Et*4|(tttt|)*14tmL",
+)
+
+DEEPSEEK_V4_FLASH_PRETRAIN_CONFIG_GB200_FP8_MX_PAGED_STASH = WorkloadBaseConfig(
+    num_gpus=128,
+    expert_model_parallel_size=64,
+    expert_tensor_parallel_size=1,
+    global_batch_size=2048,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=False,
+    cuda_graph_impl="local",
+    cuda_graph_scope=["full_iteration"],
+    cutedsl_fused_grouped_mlp=True,
+    recompute_modules=["mla_up_proj"],
+)
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_DEEPEP = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=1024,
+    pipeline_model_parallel_size=16,
+    expert_model_parallel_size=64,
+    global_batch_size=8192,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
+    moe_a2a_overlap=False,
+)
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_DEEPEP = replace(
+    BASE_DEEPSEEK_V3_CONFIG,
+    num_gpus=1024,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=8,
+    virtual_pipeline_model_parallel_size=2,
+    expert_model_parallel_size=64,
+    global_batch_size=8192,
+    micro_batch_size=1,
+    moe_flex_dispatcher_backend="deepep",
+    moe_a2a_overlap=True,
+    recompute_modules=["mla_up_proj", "mlp"],
+    pp_layout="Et*3|(tt|)*29m|L",
+)
+
+
+# =============================================================================
 # DeepSeek V3 Pretrain - FSDP (FSDP, no PP, GBS=256 for GB300)
 # =============================================================================
 
@@ -394,6 +457,11 @@ __all__ = [
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_CS_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_VR200_NVFP4_V2",
+    # Tuned hardware variants
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_PARTIAL_CG",
+    "DEEPSEEK_V4_FLASH_PRETRAIN_CONFIG_GB200_FP8_MX_PAGED_STASH",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_BF16_DEEPEP",
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_DEEPEP",
     # FSDP (FSDP, GBS=256 for GB300)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP",
