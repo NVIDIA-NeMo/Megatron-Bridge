@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge, including configuring offline packed SFT for LLMs, in-batch packing for VLMs, and context parallelism constraints. <br>
+Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge training workflows, including configuring offline packed SFT for LLMs and in-batch packing for VLMs with correct context-parallelism constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,13 +27,14 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Validation Card (card.yaml)](skills/nemo-mbridge-perf-sequence-packing/card.yaml) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Multi-Token Prediction](docs/training/multi-token-prediction.md) <br>
+- [Hierarchical Context Parallel](docs/training/hierarchical-context-parallel.md) <br>
+- [Megatron-Bridge Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Analysis, Shell commands] <br>
-**Output Format:** [Markdown with inline Python and bash code blocks] <br>
+**Output Type(s):** [Configuration instructions, Code] <br>
+**Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -44,7 +45,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task covering offline packed SFT vs. VLM in-batch packing configuration (NVSkills-Eval `external` profile, `astra-sandbox` environment). <br>
+Evaluated against 1 positive skill-activation task in the NVSkills-Eval external profile, testing sequence packing configuration correctness including micro-batch rules, PackedSequenceSpecs fields, CP padding formula, CUDA-graphs metadata requirements, and finetuning CP settings. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,10 +70,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+23%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+66%) |
-| Effectiveness | 1 | 96% (+96%) | 94% (+7%) |
-| Efficiency | 1 | 94% (+67%) | 94% (+62%) |
+| Correctness | 1 | 100% (+100%) | 84% (+9%) |
+| Discoverability | 1 | 100% (+100%) | 84% (+51%) |
+| Effectiveness | 1 | 98% (+98%) | 94% (+2%) |
+| Efficiency | 1 | 94% (+67%) | 90% (+56%) |
 
 ## Skill Version(s): <br>
 1.0.0+9edee0c (source: pyproject.toml) <br>
