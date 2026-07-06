@@ -66,6 +66,7 @@ class TestBuildHypercommGrids:
         assert ["ep"] in create_pg_calls
         assert ["expt_tp"] in create_pg_calls
         assert ["expt_dp"] in create_pg_calls
+        assert ["expt_tp", "ep"] in create_pg_calls
         assert ["expt_tp", "ep", "pp"] in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
@@ -276,6 +277,8 @@ class TestBuildHypercommGrids:
         expert_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") == "expert"]
         dense_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") is None]
         assert ["expt_tp", "ep", "pp"] in expert_dims
+        assert ["expt_tp", "ep"] in expert_dims
+        assert ["ep"] in expert_dims
         assert ["expt_dp"] in expert_dims
         assert ["expt_tp"] in expert_dims
         assert ["tp", "cp", "dp", "pp"] in dense_dims

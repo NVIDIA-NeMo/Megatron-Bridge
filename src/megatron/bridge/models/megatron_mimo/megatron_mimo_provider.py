@@ -29,7 +29,6 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
-    _EXPERT_VIEW,
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
@@ -42,6 +41,9 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
+
+
+_EXPERT_VIEW = "expert"
 
 
 @dataclass
@@ -291,16 +293,24 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             if grid.is_current_rank_in_grid():
                 first_stage = is_pp_first_stage(pp_group)
                 last_stage = is_pp_last_stage(pp_group)
+                dp_cp_group = grid.get_pg(["dp", "cp"])
+                expt_dp_group = grid.get_pg(["expt_dp"], view=_EXPERT_VIEW)
 
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
                     pp=pp_group,
                     cp=grid.get_pg(["cp"]),
-                    ep=grid.get_pg(["expt_tp"], view=_EXPERT_VIEW),
-                    dp_cp=grid.get_pg(["dp", "cp"]),
+                    ep=grid.get_pg(["ep"], view=_EXPERT_VIEW),
+                    expt_tp=grid.get_pg(["expt_tp"], view=_EXPERT_VIEW),
+                    expt_dp=expt_dp_group,
+                    dp_cp=dp_cp_group,
+                    intra_dp_cp=dp_cp_group,
+                    intra_expt_dp=expt_dp_group,
                     mp=grid.get_pg(["tp", "pp"]),
+                    tp_ep=grid.get_pg(["expt_tp", "ep"], view=_EXPERT_VIEW),
                     tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=_EXPERT_VIEW),
+                    intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )

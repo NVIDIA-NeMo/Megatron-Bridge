@@ -76,7 +76,13 @@ def build_hypercomm_grids(
         _ = grid.create_pg(["tp", "pp"])
         _ = grid.create_pg(["tp", "cp", "dp", "pp"])
         # Expert process groups (expert view).
-        for dims in (["ep"], ["expt_tp"], ["expt_dp"], ["expt_tp", "ep", "pp"]):
+        for dims in (
+            ["ep"],
+            ["expt_tp"],
+            ["expt_dp"],
+            ["expt_tp", "ep"],
+            ["expt_tp", "ep", "pp"],
+        ):
             _ = grid.create_pg(dims, view=_EXPERT_VIEW)
 
         grids[module_name] = grid
