@@ -15,8 +15,10 @@
 from unittest.mock import Mock
 
 import pytest
+from transformers import Mistral3Config
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
@@ -399,3 +401,70 @@ class TestMinistral3BridgeCompatibility:
         assert provider.hidden_size == 5120
         assert provider.ffn_hidden_size == 16384
         assert provider.rotary_base == 1000000000.0
+
+    def test_auto_config_export_uses_checkpoint_text_dimensions(self, ministral3_bridge):
+        """Test resized checkpoints replace the reference model's nested text dimensions."""
+        reference_config = Mistral3Config(
+            text_config={
+                "hidden_size": 512,
+                "intermediate_size": 1536,
+                "num_hidden_layers": 4,
+                "num_attention_heads": 8,
+                "num_key_value_heads": 2,
+                "head_dim": 64,
+                "vocab_size": 32768,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
+            },
+            vision_config={
+                "hidden_size": 128,
+                "intermediate_size": 256,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "patch_size": 14,
+                "image_size": 28,
+            },
+        )
+        checkpoint_provider = Ministral3ModelProvider(
+            hidden_size=256,
+            ffn_hidden_size=768,
+            num_layers=2,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=64,
+            vocab_size=16384,
+            hf_config=reference_config,
+        )
+
+        checkpoint_config = ministral3_bridge.megatron_to_hf_config(checkpoint_provider)
+        synthesized_config = Mistral3Config(
+            **conform_config_to_reference(checkpoint_config, reference_config.to_dict())
+        )
+
+        assert synthesized_config.text_config.hidden_size == checkpoint_provider.hidden_size
+        assert synthesized_config.text_config.intermediate_size == checkpoint_provider.ffn_hidden_size
+        assert synthesized_config.text_config.num_hidden_layers == checkpoint_provider.num_layers
+        assert synthesized_config.text_config.num_attention_heads == checkpoint_provider.num_attention_heads
+        assert synthesized_config.text_config.num_key_value_heads == checkpoint_provider.num_query_groups
+        assert synthesized_config.text_config.vocab_size == checkpoint_provider.vocab_size
+
+    def test_auto_config_export_preserves_checkpoint_embedding_tying(self, ministral3_bridge):
+        """Test nested config synthesis preserves the checkpoint's top-level tying contract."""
+        reference_config = Mistral3Config(tie_word_embeddings=False)
+        checkpoint_provider = Ministral3ModelProvider(
+            hidden_size=256,
+            ffn_hidden_size=768,
+            num_layers=2,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=64,
+            vocab_size=16384,
+            share_embeddings_and_output_weights=True,
+            hf_config=reference_config,
+        )
+
+        checkpoint_config = ministral3_bridge.megatron_to_hf_config(checkpoint_provider)
+        synthesized_config = Mistral3Config(
+            **conform_config_to_reference(checkpoint_config, reference_config.to_dict())
+        )
+
+        assert synthesized_config.tie_word_embeddings is checkpoint_provider.share_embeddings_and_output_weights

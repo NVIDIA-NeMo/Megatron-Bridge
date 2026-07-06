@@ -104,6 +104,15 @@ class Ministral3Bridge(MegatronModelBridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Ministral3ModelProvider) -> dict[str, object]:
+        """Convert a Ministral 3 provider to its nested HuggingFace config layout."""
+        text_config = super().megatron_to_hf_config(provider)
+        top_level_keys = ("architectures", "model_type", "tie_word_embeddings")
+        hf_config = {key: text_config.pop(key) for key in top_level_keys if key in text_config}
+        hf_config["text_config"] = text_config
+        return hf_config
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings for VL models.
