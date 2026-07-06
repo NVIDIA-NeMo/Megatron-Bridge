@@ -317,9 +317,11 @@ cfg.env_vars.update(
 
 Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for library recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
 
+When launching through `scripts/performance/setup_experiment.py`, recipe defaults are copied into the Slurm or Kubeflow executor before distributed workers start. Explicit `--env` and `--custom_env_vars` values take precedence.
+
 Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={TORCHINDUCTOR_WORKER_START:fork,QUANTIZATION_TYPE_DEBUG:1}'`. Do not store credentials or other secrets in recipe configs.
 
-When overriding topology fields such as `model.expert_model_parallel_size`, also override any topology-dependent environment value, such as `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN`.
+For library recipes, `setup_experiment.py` keeps `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` aligned with its expert-parallel CLI override. When invoking a rank-local entry point directly, override topology-dependent environment values together with fields such as `model.expert_model_parallel_size`.
 
 ## Resources
 

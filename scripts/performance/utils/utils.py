@@ -579,6 +579,65 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
     return cfg
 
 
+def add_library_recipe_environment_variables(
+    *,
+    custom_env_vars: dict[str, str],
+    model_family_name: str,
+    model_recipe_name: str,
+    train_task: str,
+    gpu: str,
+    experiment_name: str,
+    expert_model_parallel_size: int | None = None,
+) -> None:
+    """Add library recipe environment defaults before launching distributed workers.
+
+    Args:
+        custom_env_vars: Existing user or cluster environment values to preserve.
+        model_family_name: Model family used to locate the recipe.
+        model_recipe_name: Model recipe selector name.
+        train_task: Training task such as pretrain or sft.
+        gpu: Target GPU architecture name.
+        experiment_name: Experiment name used when constructing a library recipe.
+        expert_model_parallel_size: Optional launcher override for expert parallelism.
+
+    Raises:
+        TypeError: If a recipe environment value is not a supported scalar.
+        ValueError: If an environment name is invalid or HybridEP exceeds the NVLink domain.
+    """
+    config = get_library_recipe(
+        model_family_name=model_family_name,
+        model_recipe_name=model_recipe_name,
+        train_task=train_task,
+        wandb_experiment_name=experiment_name,
+    )
+    model_config = config.model
+    env_vars = dict(config.env_vars)
+
+    topology_env_name = "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"
+    if (
+        expert_model_parallel_size is not None
+        and topology_env_name in env_vars
+        and getattr(model_config, "moe_flex_dispatcher_backend", None) == "hybridep"
+    ):
+        if gpu.lower() in {"h100", "b200", "b300"}:
+            env_vars[topology_env_name] = min(expert_model_parallel_size, 8)
+            if "USE_MNNVL" in env_vars:
+                env_vars["USE_MNNVL"] = 0
+        else:
+            if expert_model_parallel_size > 72:
+                raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+            env_vars[topology_env_name] = expert_model_parallel_size
+            if "USE_MNNVL" in env_vars:
+                env_vars["USE_MNNVL"] = 1
+
+    for name, value in env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        custom_env_vars.setdefault(name, str(value))
+
+
 class _Colors:
     """ANSI color codes for terminal output."""
 
