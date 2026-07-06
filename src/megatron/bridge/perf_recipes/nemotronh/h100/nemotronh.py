@@ -57,7 +57,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba"]
@@ -86,7 +86,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["mamba"]
