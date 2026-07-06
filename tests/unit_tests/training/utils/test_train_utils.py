@@ -1328,6 +1328,85 @@ class TestTrainingLog:
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
     @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
     @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.track_moe_metrics")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_moe_logging_hybrid_pattern_default_freq(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_track_moe,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Hybrid-MoE models must derive the averaging denominator from the pattern.
+
+        Regression: recipes such as ``nemotron_3_nano`` set a ``hybrid_layer_pattern``
+        with a handful of ``E`` (MoE) layers but leave ``moe_layer_freq`` at the
+        inherited default (``1``). ``num_layers`` must stay at full depth for the
+        tracker storage size (the NCCL-deadlock fix), while ``moe_layer_freq`` is
+        passed as the per-layer binary MoE mask derived from the pattern so aux/z-loss
+        are averaged over only the MoE layers.
+        """
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        # Hybrid Mamba+MoE config: pattern places MoE ("E") on 2 of 8 layers,
+        # while moe_layer_freq is the inherited default (1, not None).
+        pattern = "M-M*E-M*E-"
+        mock_config.model.num_moe_experts = 8
+        mock_config.model.moe_router_load_balancing_type = "aux_loss"
+        mock_config.model.moe_z_loss_coeff = None
+        mock_config.model.moe_per_layer_logging = True
+        mock_config.model.num_layers = len(pattern)
+        mock_config.model.moe_layer_freq = 1
+        mock_config.model.mtp_num_layers = None
+        mock_config.model.is_hybrid_model = True
+        mock_config.model.hybrid_layer_pattern = pattern
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_track_moe.assert_called_once()
+        call_args = mock_track_moe.call_args
+        # Storage size stays at full depth so PP tensor sizes match (deadlock fix).
+        assert call_args.kwargs["num_layers"] == len(pattern)
+        # Averaging denominator is the per-layer MoE mask, summing to only the "E"s.
+        moe_layer_freq = call_args.kwargs["moe_layer_freq"]
+        assert moe_layer_freq == [1 if c == "E" else 0 for c in pattern]
+        assert sum(moe_layer_freq) == pattern.count("E") == 2
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
     @mock.patch("megatron.bridge.training.utils.train_utils.MTPLossLoggingHelper")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
     @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")

@@ -286,6 +286,11 @@ def _megatron_local_name_to_global(
     vp_stage: Optional[int] = None,
 ) -> str:
     """Adjust layer number and expert number from local to global numbering."""
+    # ``layer_module`` is resolved lazily and shared between the PP and EP
+    # branches. It stays ``None`` on the EP-only path (PP=1, EP>1) until the EP
+    # branch resolves it, so it must never be read before being assigned.
+    layer_module = None
+
     # PP
     pp_group = _get_pp_group(models)
     if "layers." in param_name and get_pg_size(pp_group) > 1:
@@ -310,7 +315,25 @@ def _megatron_local_name_to_global(
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
-        num_experts_per_rank = layer_module.mlp.num_local_experts   # per-layer, heterogeneous-safe
+        # Resolve the layer module independently of the PP branch above: on the
+        # EP-only path (PP=1, EP>1) that branch never runs, so ``layer_module``
+        # is still ``None`` here. Prefer the per-layer module count
+        # (heterogeneous-safe); fall back to the config-derived count when the
+        # model isn't available (e.g. name-only conversions in tests).
+        if layer_module is None:
+            layer_match = re.match(r"^(.+?\.layers\.\d+)", param_name)
+            if models is not None and layer_match is not None:
+                try:
+                    _, layer_module = get_module_and_param_from_name(
+                        models=models, param_name=layer_match.group(1), vp_stage=vp_stage
+                    )
+                except (ValueError, AttributeError):
+                    layer_module = None
+
+        if isinstance(layer_module, MegatronModule):
+            num_experts_per_rank = layer_module.mlp.num_local_experts  # per-layer, heterogeneous-safe
+        else:
+            num_experts_per_rank = config.num_moe_experts // get_pg_size(ep_group)
 
         def _update_grouped_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
