@@ -204,6 +204,14 @@ class TestPackedParquetDatasetSingleFile:
         ds = _make_dataset(parquet_file, max_num_samples=5)
         assert len(ds) == 5
 
+    def test_mapped_negative_index_zeroes_loss_mask(self, parquet_file):
+        ds = _make_dataset(parquet_file, max_num_samples=5)
+
+        sample = ds[-1]
+
+        assert ds.samples_mapping is not None
+        assert all(m == 0 for m in sample["loss_mask"])
+
     def test_oversampling(self, parquet_file):
         ds = _make_dataset(parquet_file, max_num_samples=25)
         assert len(ds) == 25
