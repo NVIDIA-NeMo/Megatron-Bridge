@@ -48,7 +48,7 @@ from megatron.core.utils import (
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (
@@ -408,6 +408,7 @@ def _create_pg_collection(
     save_grid: bool = False,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
+    _set_moe_expert_tensor_parallel_default(model_config)
     hcp_sizes = getattr(model_config, "hierarchical_context_parallel_sizes", None)
     if hcp_sizes is not None:
         raise NotImplementedError(
@@ -699,6 +700,8 @@ def _initialize_distributed(
     use_inprocess_restart: bool = False,
 ) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""
+
+    _set_moe_expert_tensor_parallel_default(model_config)
 
     device_count = torch.cuda.device_count()
     if torch.distributed.is_initialized():

@@ -27,6 +27,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -57,7 +58,7 @@ def get_batch_from_iterator(
         dict[str, torch.Tensor]: A dictionary containing the batch data.
     """
     batch = next(data_iterator)
-    if "cu_seqlens" in batch:
+    if batch.get("cu_seqlens_q") is not None or batch.get("cu_seqlens") is not None:
         raise ValueError(
             "qwen3_vl_step does not support collate-time in-batch packing. "
             "Use an unpacked collate batch with this step so it can build Qwen3-VL packed sequence metadata itself."
@@ -71,11 +72,6 @@ def get_batch_from_iterator(
 
     # Instead of raw tensors, expect a single 'visual_inputs' object in batch
     required_device_keys.add("visual_inputs")
-
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        required_host_keys.add("cu_seqlens_argmin")
-        required_host_keys.add("max_seqlen")
 
     required_device_keys.update(("tokens", "input_ids", "position_ids"))
     if is_last_pp_stage:
@@ -172,7 +168,7 @@ def _pad_and_pack_qwen3_vl_step(
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``pad_or_pack_sequence``.
+    prefer collate-time packing via ``prepare_padded_or_packed_sequence_batch``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -268,6 +264,28 @@ def forward_step(
         force_to_pad_to_seq_len=this_pg_collection.pp.size() > 1 or this_pg_collection.ep.size() > 1,
         seq_length=config.seq_length,
     )
+
+    # Accumulate FLOPS metadata across micro-batches. When in-batch packing is
+    # active, ``packed_seq_params.cu_seqlens_q`` describes the real sub-seq
+    # boundaries used by the THD attention kernel; the helper uses it to
+    # compute the THD-correct Σᵢ sᵢ² instead of pack-length² (BSHD). When not
+    # packed, the helper falls back to BSHD. train.py resets these before each
+    # step and reads accumulated values afterwards.
+    # Vision-patch count is model-specific (Qwen-VL reports grid_thw = t*h*w per
+    # image/video); compute it here and pass a scalar to the model-agnostic helper.
+    num_vision_patches = None
+    if isinstance(multi_modal_inputs, dict):
+        for grid in (multi_modal_inputs.get("image_grid_thw"), multi_modal_inputs.get("video_grid_thw")):
+            if grid is not None and grid.numel() > 0:
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
+        num_vision_patches=num_vision_patches,
+    )
+
     forward_args = {
         "input_ids": tokens,
         "labels": labels,
@@ -325,7 +343,11 @@ def forward_step(
             loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
             return schedule_plan, loss_function
         else:
-            output_tensor = model(**forward_args)
+            model_output = model(**forward_args)
+            if isinstance(model_output, tuple):
+                output_tensor, loss_mask = model_output
+            else:
+                output_tensor = model_output
 
     loss_function = _create_loss_function(loss_mask, check_for_nan_in_loss, check_for_spiky_loss)
 

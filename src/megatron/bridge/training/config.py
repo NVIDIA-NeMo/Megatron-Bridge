@@ -526,6 +526,11 @@ class SchedulerConfig(MTrainSchedulerConfig):
 class TrainingConfig(MTrainTrainingConfig):
     """Configuration settings related to the training loop and validation."""
 
+    num_epochs: float | None = None
+    """Number of passes over a finite training dataset. Supports fractional epochs."""
+
+    _train_iters_from_num_epochs: bool = field(default=False, init=False, repr=False)
+
     check_optimizer_step_success: bool = True
     """Checks optimizer.step() succeeded at each training step ."""
 
@@ -547,9 +552,21 @@ class TrainingConfig(MTrainTrainingConfig):
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
+        has_num_epochs = self.num_epochs is not None
+        num_training_modes = sum(
+            (
+                has_train_iters and not self._train_iters_from_num_epochs,
+                has_train_samples,
+                has_num_epochs,
+            )
+        )
 
-        assert has_train_iters or has_train_samples, "Either train_iters or train_samples must be provided"
-        assert not (has_train_iters and has_train_samples), "Cannot specify both train_iters and train_samples"
+        assert num_training_modes > 0, "One of train_iters, train_samples, or num_epochs must be provided"
+        assert num_training_modes == 1, "Cannot specify more than one of train_iters, train_samples, or num_epochs"
+        if has_num_epochs:
+            assert self.num_epochs > 0, "num_epochs must be a positive number"
+            assert self.rampup_batch_size is None, "Batch size rampup not supported with epoch-based training"
+            assert self.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
         if has_train_samples:
             assert self.train_samples > 0, "train_samples must be positive"
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
@@ -1061,6 +1078,7 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
+    _checkpoint_load_required: bool = field(default=False, init=False, repr=False)
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -1191,6 +1209,13 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        if self.train.num_epochs is not None and not isinstance(self.dataset, FinetuningDatasetConfig):
+            raise ValueError(
+                "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+                "providers may build a requested number of samples instead of exposing their true dataset size."
+            )
+        if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
+            raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
 
         enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
         enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
@@ -1368,8 +1393,9 @@ class ConfigContainer(Container):
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()
 
-        # Calculate scheduler steps for both iteration-based and sample-based training
-        self._calculate_scheduler_steps()
+        # Epoch-based training is resolved after the finite dataset is built.
+        if self.train.train_iters is not None:
+            self._calculate_scheduler_steps()
 
         if self.model.context_parallel_size > 1:
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
@@ -1509,6 +1535,22 @@ class ConfigContainer(Container):
             assert not (self.scheduler.lr_warmup_fraction is not None and self.scheduler.lr_warmup_iters != 0), (
                 "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
             )
+
+    def _resolve_num_epochs(self, train_dataset_size: int) -> None:
+        """Calculate training iterations from the size of a finite training dataset."""
+        assert self.train.num_epochs is not None, "num_epochs must be set before resolving epoch-based training"
+        assert train_dataset_size > 0, "train dataset must contain at least one sample"
+        assert self.train.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
+
+        train_iters_per_epoch = math.ceil(train_dataset_size / self.train.global_batch_size)
+        self.train.train_iters = math.ceil(self.train.num_epochs * train_iters_per_epoch)
+        self.train._train_iters_from_num_epochs = True
+        print_rank_0(
+            f"Setting training iterations to {self.train.train_iters} based on {self.train.num_epochs} epochs, "
+            f"{train_dataset_size} train samples, {train_iters_per_epoch} iterations per epoch, "
+            f"and global batch size {self.train.global_batch_size}"
+        )
+        self._calculate_scheduler_steps()
 
     def _calculate_scheduler_steps(self) -> None:
         """Calculate scheduler steps for both iteration-based and sample-based training."""
@@ -1783,6 +1825,9 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
+    if cfg.train.num_epochs is not None:
+        raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
+
     # MegatronMIMO: data_parallel_size is always 1 from the training loop's perspective.
     cfg.data_parallel_size = 1
 

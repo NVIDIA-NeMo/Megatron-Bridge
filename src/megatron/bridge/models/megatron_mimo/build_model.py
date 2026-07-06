@@ -132,10 +132,14 @@ def _bridge_parallel_state_globals(local_pg_collection) -> None:
         mpu._EXPERT_MODEL_PARALLEL_GROUP = local_pg_collection.ep
     else:
         mpu._EXPERT_MODEL_PARALLEL_GROUP = local_pg_collection.tp
-    if getattr(local_pg_collection, "etp", None) is not None:
-        mpu._EXPERT_TENSOR_PARALLEL_GROUP = local_pg_collection.etp
+    if getattr(local_pg_collection, "expt_tp", None) is not None:
+        mpu._EXPERT_TENSOR_PARALLEL_GROUP = local_pg_collection.expt_tp
     else:
         mpu._EXPERT_TENSOR_PARALLEL_GROUP = local_pg_collection.tp
+    if getattr(local_pg_collection, "tp_ep", None) is not None:
+        mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP = local_pg_collection.tp_ep
+    if getattr(local_pg_collection, "tp_ep_pp", None) is not None:
+        mpu._EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP = local_pg_collection.tp_ep_pp
     if getattr(local_pg_collection, "cp", None) is not None:
         mpu._CONTEXT_PARALLEL_GROUP = local_pg_collection.cp
     else:
