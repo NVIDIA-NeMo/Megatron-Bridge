@@ -27,7 +27,7 @@ Megatron Bridge derives model provider settings from Hugging Face configs throug
 ### Supported Model Families
 
 Megatron Bridge supports the following model families through bridge mappings and provider classes:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `HybridModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
@@ -245,7 +245,8 @@ def create_finetune_config():
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=2048,
             ),
         ),
@@ -286,12 +287,12 @@ recipe = llm.llama3_8b.pretrain_recipe(name="my_run", num_nodes=2)
 
 **Megatron Bridge**: Recipes in `megatron.bridge.recipes/`  
 ```python
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.training import pretrain
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 # Use pre-built recipe
-cfg = pretrain_config()
+cfg = llama3_8b_pretrain_config()
 
 # Customize as needed
 cfg.train.train_iters = 10000
@@ -384,7 +385,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.models import GPTModelProvider
-from megatron.bridge.training import pretrain
+from megatron.bridge.training.pretrain import pretrain
 
 def llama3_8b_config(
     # Model/parallelism params
@@ -1221,8 +1222,9 @@ result = llm.finetune(
 In Megatron Bridge, training entry points take a single `ConfigContainer` and a `forward_step_func`:
 
 ```python
-from megatron.bridge.training import pretrain, finetune
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.pretrain import pretrain
 
 # Create unified configuration
 cfg = ConfigContainer(
@@ -1285,8 +1287,8 @@ For GPT models, use the provided {py:func}`bridge.training.gpt_step.forward_step
 Use `pretrain()` with `GPTDatasetConfig` for training models from scratch:
 
 ```python
-from megatron.bridge.training import pretrain
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 config = ConfigContainer(
     model=GPTModelProvider(
@@ -1321,8 +1323,8 @@ Use `finetune()` with `FinetuningDatasetConfig` for both full fine-tuning (SFT) 
 Full fine-tuning without PEFT - all model parameters are updated:
 
 ```python
-from megatron.bridge.training import finetune
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.finetune import finetune
 
 config = ConfigContainer(
     model=GPTModelProvider(),

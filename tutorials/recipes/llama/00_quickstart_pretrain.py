@@ -48,7 +48,7 @@ def main() -> None:
     config.scheduler.lr_warmup_iters = 2
 
     # Use your own data:
-    # config.data.data_path = "/path/to/your/dataset"
+    # config.dataset.data_path = "/path/to/your/dataset"
 
     # Adjust batch sizes for your GPU memory:
     # config.train.global_batch_size = 256

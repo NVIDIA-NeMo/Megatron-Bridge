@@ -47,8 +47,8 @@ from megatron.core.utils import (
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
-from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.transformer_config import TransformerConfig, _set_moe_expert_tensor_parallel_default
 from megatron.bridge.training.config import ConfigContainer, DistributedInitConfig, RerunStateMachineConfig, RNGConfig
 from megatron.bridge.training.utils.pg_utils import DistTrainProcessGroupCollection
 from megatron.bridge.utils.common_utils import (
@@ -157,7 +157,7 @@ def initialize_megatron(
 
 
 def torch_dist_init(
-    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig,
     dist_config: DistributedInitConfig,
     rng_config: RNGConfig,
     micro_batch_size: int,
@@ -193,7 +193,7 @@ def torch_dist_init(
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
             model_config=model_config.transformer
-            if isinstance(model_config, (GPTModelConfig, MambaModelConfig))
+            if isinstance(model_config, (GPTModelConfig, HybridModelConfig))
             else model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
@@ -278,7 +278,7 @@ def init_rerun_state(rerun_state_machine_config: RerunStateMachineConfig) -> Non
 
 
 def set_jit_fusion_options(
-    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig, micro_batch_size: int
 ) -> None:
     """Set PyTorch JIT layer fusion options and warmup JIT functions.
 
@@ -309,7 +309,7 @@ def set_jit_fusion_options(
         torch._C._jit_override_can_fuse_on_gpu(True)
 
     _warmup_jit_function(
-        model_config.transformer if isinstance(model_config, (GPTModelConfig, MambaModelConfig)) else model_config,
+        model_config.transformer if isinstance(model_config, (GPTModelConfig, HybridModelConfig)) else model_config,
         micro_batch_size,
     )
 
@@ -329,7 +329,7 @@ def destroy_global_state() -> None:
 
 
 def _initialize_tp_communicators(
-    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig, micro_batch_size: int
+    model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig, micro_batch_size: int
 ) -> None:
     """initializing the communicators with user buffers for high-performance tensor-model-parallel
     communication overlap"""
@@ -408,6 +408,7 @@ def _create_pg_collection(
     save_grid: bool = False,
 ) -> ProcessGroupCollection:
     """Create all process groups via HyperCommGrid and return a ProcessGroupCollection."""
+    _set_moe_expert_tensor_parallel_default(model_config)
     hcp_sizes = getattr(model_config, "hierarchical_context_parallel_sizes", None)
     if hcp_sizes is not None:
         raise NotImplementedError(
@@ -699,6 +700,8 @@ def _initialize_distributed(
     use_inprocess_restart: bool = False,
 ) -> ProcessGroupCollection:
     """Initialize torch.distributed and core model parallel."""
+
+    _set_moe_expert_tensor_parallel_default(model_config)
 
     device_count = torch.cuda.device_count()
     if torch.distributed.is_initialized():

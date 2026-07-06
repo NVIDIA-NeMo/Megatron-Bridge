@@ -91,6 +91,54 @@ config = ConfigContainer(
 )
 ```
 
+## NVFP4 Training
+
+NVFP4 is a 4-bit floating-point training mode for Blackwell-generation GPUs, implemented through Transformer Engine. In Megatron Bridge it is configured through the `fp4` fields on {py:class}`bridge.training.mixed_precision.MixedPrecisionConfig`, not through the FP8 fields.
+
+NVFP4 and FP8 are mutually exclusive. If `fp4` and `fp8` are both set, configuration finalization raises an error. NVFP4 also requires a Transformer Engine build with NVFP4 block-scaling support.
+
+### NVFP4 Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `fp4` | `Optional[str]` | `None` | FP4 format. The predefined NVFP4 recipe uses `"e2m1"` |
+| `fp4_recipe` | `str` | `"nvfp4"` | FP4 recipe type |
+| `fp4_param` | `Optional[bool]` | `None` | Store module-level parameters in FP4; synchronized with `fp4_param_gather` |
+| `fp4_param_gather` | `bool` | `False` | Enable FP4 parameter gathering |
+
+### NVFP4 Recipe Examples
+
+Use the predefined NVFP4 mixed-precision recipe for pretraining, SFT, or PEFT:
+
+```python
+from megatron.bridge.training.config import ConfigContainer
+
+config = ConfigContainer(
+    mixed_precision="bf16_with_nvfp4_mixed",
+    # ... other config parameters
+)
+```
+
+The same field is used for fine-tuning:
+
+```python
+from megatron.bridge.recipes.llama import llama32_1b_peft_config
+
+cfg = llama32_1b_peft_config()
+cfg.mixed_precision = "bf16_with_nvfp4_mixed"
+cfg.checkpoint.pretrained_checkpoint = "/checkpoints/base_model"
+```
+
+Some model families expose tuned NVFP4 recipes. For example, Llama 3 8B has a hardware-specific low-precision pretraining recipe:
+
+```python
+from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp4_config
+
+cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
+```
+
+NVFP4 is related to FP8 in that both use Transformer Engine low-precision kernels and BF16 fallback for non-quantized state, but the configuration knobs are separate. Use FP8 recipes on Hopper or Blackwell when FP8 is the target precision; use NVFP4 recipes on Blackwell when the model and hardware have been validated for 4-bit training.
+
 ## Available Mixed Precision Recipes
 
 Megatron Bridge provides numerous predefined mixed precision recipes for different use cases. You can use the {py:func}`~megatron.bridge.training.mixed_precision.get_mixed_precision_config` utility function to convert from a string shortname to a class instance. For the complete list of available recipes and their specific configurations, see the {py:mod}`megatron.bridge.training.mixed_precision` module.

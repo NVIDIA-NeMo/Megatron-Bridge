@@ -410,6 +410,7 @@ def _build_resume_config(
     save_interval: int,
     ckpt_save_dir: str,
     ckpt_load_dir: str | None = None,
+    save_rng: bool = True,
 ) -> ConfigContainer:
     """Config builder for the checkpoint-resume L2 test.
 
@@ -448,7 +449,7 @@ def _build_resume_config(
         ckpt_format="torch_dist",
         fully_parallel_save=True,  # llm pp==1 in this test
         dist_ckpt_optim_fully_reshardable=True,
-        save_rng=False,  # MegatronMIMO RNG save produces duplicate shard keys; disable
+        save_rng=save_rng,
     )
     if ckpt_load_dir is not None:
         ckpt_cfg.load = ckpt_load_dir
@@ -566,7 +567,8 @@ class TestMegatronMIMOTraining:
                         os.environ[k] = v
 
     @pytest.mark.run_only_on("GPU")
-    def test_megatron_mimo_checkpoint_resume_dp1_both(self, tmp_path):
+    @pytest.mark.parametrize("save_rng", [True, False], ids=["save_rng", "no_save_rng"])
+    def test_megatron_mimo_checkpoint_resume_dp1_both(self, tmp_path, save_rng):
         """Fast checkpoint-resume check (issue #11 regression guard).
 
         Single torchrun, single process-group init. Runs two ``pretrain_megatron_mimo``
@@ -574,7 +576,12 @@ class TestMegatronMIMOTraining:
         checkpoint; phase 2 loads the same checkpoint and trains to ``TOTAL_STEPS``.
         ``_IndexTaggedDataset`` puts each sample's global index into
         ``sample_index``, and ``_tracing_wrap_iter`` records those indices as the
-        sampler yields them. Asserts:
+        sampler yields them.
+
+        Parametrized over ``save_rng``: the ``True`` case guards the per-module
+        ``ShardedObject("rng_state")`` key-collision fix — without it,
+        ``dist_checkpointing.save`` raises during phase 1 because each MegatronMIMO
+        module emits an identically-keyed RNG ShardedObject. Asserts:
 
         * ``train_state.step`` goes 0 → SAVE_STEPS after phase 1, SAVE_STEPS → TOTAL_STEPS after phase 2
         * ``train_state.consumed_train_samples`` is correctly restored
@@ -629,6 +636,7 @@ class TestMegatronMIMOTraining:
             train_iters=save_steps,
             save_interval=save_steps,
             ckpt_save_dir=ckpt_dir,
+            save_rng=save_rng,
         )
         state_save = GlobalState()
         pretrain_megatron_mimo(
@@ -651,6 +659,7 @@ class TestMegatronMIMOTraining:
             save_interval=total_steps,
             ckpt_save_dir=ckpt_dir,
             ckpt_load_dir=ckpt_dir,
+            save_rng=save_rng,
         )
         # Save phase used train_iters=save_steps so the checkpoint's scheduler
         # state doesn't match total_steps; override so the resumed scheduler uses

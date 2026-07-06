@@ -198,16 +198,25 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
 - `--packager`: How code is packaged for the job. `git` snapshots the repo at submission time (default). `none` skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.
 
-##### DGXCloud arguments
+##### Kubeflow arguments
 
-- `--dgxc_cluster`: DGXCloud cluster to use for experiment.
-- `--dgxc_base_url`: DGXCloud base URL.
-- `--dgxc_kube_apiserver_url`: DGXCloud Kube API server URL.
-- `--dgxc_app_id`: DGXCloud app ID.
-- `--dgxc_app_secret`: DGXCloud app secret.
-- `--dgxc_project_name`: DGXCloud project name.
-- `--dgxc_pvc_claim_name`: DGXCloud PVC claim name.
-- `--dgxc_pvc_mount_path`: DGXCloud PVC mount path.
+- `--kubeflow_namespace`: Kubernetes namespace for the Kubeflow TrainJob. Setting this routes the experiment through the Kubeflow executor instead of Slurm.
+- `--csp`: cloud provider whose fabric plugin to apply to the Kubeflow executor — `aws` applies `EKSEnvPlugin` (EFA: `FI_PROVIDER=efa`, `FI_EFA_USE_HUGE_PAGE=0`, EFA device requests + privileged container) and `gcp` applies `GKEEnvPlugin` (gIB RDMA-NIC pod annotations). No-op for the Slurm executor.
+- `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
+- `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
+- `--kubeflow_workdir_local_path`: Local directory whose contents nemo-run's `KubeflowExecutor.package()` rsyncs into the workdir PVC via a temporary alpine pod before launch. Used to overlay a `--mbridge-ref` checkout onto `/opt/Megatron-Bridge` in the trainer container without rebuilding the image.
+- `--kubeflow_image_pull_secrets`: Comma-separated list of Kubernetes image pull secret names.
+- `--kubeflow_volumes_json`: JSON-encoded list of Kubernetes `Volume` dicts attached to the training pod (PVC, emptyDir, hostPath).
+- `--kubeflow_volume_mounts_json`: JSON-encoded list of Kubernetes `VolumeMount` dicts applied to the training container (must match a name in `--kubeflow_volumes_json`).
+- `--kubeflow_tolerations_json`: JSON-encoded list of Kubernetes `Toleration` dicts applied to the training pods (e.g. to land on lease-tainted nodes such as `gpu-wrangler.nvidia.com/lease`).
+- `--kubeflow_affinity_json`: JSON-encoded Kubernetes `Affinity` dict applied to the training pods (e.g. node affinity onto GPULease-allocated nodes).
+- `--kubeflow_env_list_json`: JSON-encoded list of Kubernetes `EnvVar` dicts (supports `valueFrom.secretKeyRef` for secret-backed env vars such as `WANDB_API_KEY` / `HF_TOKEN`).
+- `--kubeflow_extra_resource_requests_json`: JSON-encoded dict of extra container resource requests (e.g. `{"vpc.amazonaws.com/efa": "32"}` for EFA on AWS).
+- `--kubeflow_extra_resource_limits_json`: JSON-encoded dict of extra container resource limits (paired with the requests above).
+- `--kubeflow_pod_spec_overrides_json`: JSON-encoded dict merged into the pod spec — escape hatch for `nodeSelector`, `hostNetwork`, etc.
+- `--kubeflow_container_kwargs_json`: JSON-encoded dict of extra fields set on the training container (e.g. `{"securityContext": {"privileged": true}}` for EFA / RDMA).
+- `--kubeflow_pod_annotations_json`: JSON-encoded dict of annotations applied to the trainer pod template metadata (e.g. GKE `networking.gke.io/interfaces` to attach the RDMA NICs for gIB). Usually set for you by `--csp gcp`.
+- `--kubeflow_labels_json`: JSON-encoded dict of labels applied to the TrainJob's pods.
 
 ##### Performance arguments
 
@@ -309,15 +318,15 @@ python scripts/performance/setup_experiment.py \
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 
 ```python
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config
 
-cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config()
 
 # Or, apply overrides to any existing recipe:
 from megatron.bridge.recipes.utils import apply_determinism_overrides
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_config
 
-cfg = llama3_70b_pretrain_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 

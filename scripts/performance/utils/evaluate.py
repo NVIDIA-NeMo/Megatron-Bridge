@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import itertools
 import json
 import logging
 import math
@@ -41,6 +42,19 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
+# Cap on the number of per-step entries persisted to a golden-values file. Long
+# convergence runs (e.g. 150k steps) would otherwise produce multi-MB files that
+# exceed the golden-values repo's 5 MiB/file push limit. The in-job convergence
+# check aligns current vs. golden by step key, so a downsampled (sparse) golden is
+# still compared correctly against the full-resolution run.
+MAX_PERSISTED_GOLDEN_STEPS = 10000
+
+# Step keys always retained when downsampling (in addition to the first and final
+# step): step "49" is the threshold step the downstream perf reporter
+# (nemo-ci report.py STEPS_THRESHOLD) requires to treat a golden file as comparable.
+_PINNED_GOLDEN_STEPS = ("0", "49")
+
+
 def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     """
     Parse training log files and extract metrics.
@@ -69,16 +83,34 @@ def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     metrics: Dict[str, List] = {k: [] for k in patterns}
     all_lines = []
     handles = []
-    for log_path in list(set(log_paths)):
-        if "allranks" in log_path:
-            continue
+    # Prefer the aggregated all-ranks capture when present: it already contains
+    # every rank (rank-0 memory line + rank-last "iteration | lm loss" line), and
+    # the per-step dict + first/max scalar reductions below make any duplication
+    # harmless. This is robust on Kubeflow, where nemo-run's log glob can also
+    # surface a stray/empty per-rank log alongside the all-ranks file — reading
+    # the per-rank one yielded an empty golden for longer-running recipes
+    # (e.g. nemotron). Fall back to whatever logs exist when no all-ranks file is
+    # present (e.g. some SLURM layouts that only write per-rank logs).
+    candidate_paths = list(set(log_paths))
+    allranks_paths = [p for p in candidate_paths if "allranks" in p]
+    chosen_paths = allranks_paths or candidate_paths
+    for log_path in chosen_paths:
         logger.info(f"Reading log file: {log_path}")
-        handles.append(open(log_path))
+        # errors="replace" — log files mix structured Python output with NCCL
+        # debug, DeepEP startup, and ANSI-coloured wandb/comet_ml banners.
+        # Those non-Python writers occasionally emit a non-UTF-8 byte that
+        # crashes the whole convergence check (UnicodeDecodeError aborts the
+        # itertools.chain iterator below, losing every metric). Replacing the
+        # bad byte with U+FFFD keeps every line readable for the regex match.
+        handles.append(open(log_path, encoding="utf-8", errors="replace"))
 
     try:
-        for lines in zip(*handles):
-            for line in lines:
-                all_lines.append(line)
+        # chain (not zip): read every line from every handle. zip iterates the
+        # handles in lockstep and stops at the shortest file, which silently
+        # drops metrics when more than one log is chosen (e.g. a torchrun restart
+        # produces multiple log-allranks_<n>.out).
+        for line in itertools.chain(*handles):
+            all_lines.append(line)
     finally:
         for f in handles:
             f.close()
@@ -537,23 +569,101 @@ def validate_memory(
     return results
 
 
+def downsample_golden_values(values: Dict[str, Any], max_steps: int = MAX_PERSISTED_GOLDEN_STEPS) -> Dict[str, Any]:
+    """Reduce per-step golden entries to at most ~``max_steps`` evenly-spaced points.
+
+    Scalar entries (``alloc``/``max_alloc``/``max_reserved``/``job_id``) and any other
+    non-step keys are preserved unchanged. When the number of per-step entries already
+    fits within ``max_steps`` the mapping is returned unchanged. Otherwise an evenly
+    strided subset of step keys is kept, always including the first step, the final step
+    (so final-loss validation is unaffected), and the pinned steps in
+    ``_PINNED_GOLDEN_STEPS`` when present.
+
+    The in-job convergence/perf check aligns current vs. golden by step key, so a
+    downsampled (sparse) golden is still compared correctly against a full-resolution
+    run; this only bounds the size of the persisted golden-values file.
+
+    Args:
+        values: Golden values mapping (step-keyed dicts plus scalar entries).
+        max_steps: Approximate upper bound on the number of per-step entries to keep.
+
+    Returns:
+        A new mapping with the per-step entries downsampled and all other keys intact.
+    """
+    step_keys = sorted((k for k in values if k.lstrip("-").isdigit()), key=int)
+    if len(step_keys) <= max_steps:
+        return dict(values)
+    stride = math.ceil(len(step_keys) / max_steps)
+    kept = set(step_keys[::stride])
+    kept.add(step_keys[-1])
+    kept.update(step for step in _PINNED_GOLDEN_STEPS if step in values)
+    return {k: v for k, v in values.items() if not k.lstrip("-").isdigit() or k in kept}
+
+
 def write_golden_values_to_disk(
-    current_values: Dict[str, Any], golden_values_path: str, wandb_run: Optional["wandb.Run"] = None
+    current_values: Dict[str, Any],
+    golden_values_path: str,
+    wandb_run: Optional["wandb.Run"] = None,
+    max_steps: int = MAX_PERSISTED_GOLDEN_STEPS,
 ):
     """
     Write golden values to a file.
+
+    Per-step entries are downsampled to at most ``max_steps`` points (see
+    ``downsample_golden_values``) so long-convergence runs stay under the golden-values
+    repo's file-size limit. Downsampling is applied only to the persisted copy; the
+    full-resolution ``current_values`` is left untouched for the caller (e.g. the
+    cumulative resume curve).
     """
+    persisted_values = downsample_golden_values(current_values, max_steps)
     os.makedirs(os.path.dirname(golden_values_path), exist_ok=True)
     with open(golden_values_path, "w") as f:
-        json.dump(current_values, f)
+        json.dump(persisted_values, f)
 
     if wandb_run is not None:
         artifact = wandb.Artifact("golden_values", type="dataset")
         with artifact.new_file("golden_values.json", "w") as f:
-            json.dump({datetime.now().strftime("%m.%d.%y"): current_values}, f)
+            json.dump({datetime.now().strftime("%m.%d.%y"): persisted_values}, f)
         wandb_run.log_artifact(artifact)
 
     logger.info(f"Golden values were saved for {golden_values_path}.")
+
+
+def merge_golden_values(prior: Optional[Dict[str, Any]], segment: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge per-step golden values across resume slices of a long-convergence run.
+
+    A long-convergence run is split across walltime/resume slices; each slice's log
+    only covers the steps it ran, so the values parsed from a single slice describe a
+    partial curve (only the tail) for a resumed run. ``prior`` holds the per-step
+    values accumulated from earlier slices; ``segment`` holds this slice's values.
+
+    Per-step entries (numeric-string keys) are unioned with the current slice winning
+    on overlap (its checkpoint-continued steps are authoritative); scalar entries
+    (``alloc``/``max_alloc``/``max_reserved``, ``job_id``) are taken from the current
+    slice. Returns ``segment`` unchanged when there is no prior.
+
+    Args:
+        prior: Accumulated per-step values from earlier slices, or ``None``/empty.
+        segment: Per-step values parsed from the current slice's logs.
+
+    Returns:
+        The merged per-step golden values spanning every slice seen so far.
+    """
+    if not prior:
+        return segment
+    return {**prior, **segment}
+
+
+def _unwrap_golden_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the step mapping from a flat or snapshot-wrapped golden file."""
+    for snapshot_key in ("baseline", "current"):
+        if snapshot_key not in values:
+            continue
+        snapshot = values[snapshot_key]
+        if not isinstance(snapshot, dict):
+            raise ValueError(f"Golden values snapshot {snapshot_key!r} must be a mapping.")
+        return snapshot
+    return values
 
 
 def calc_convergence_and_performance(
@@ -572,6 +682,7 @@ def calc_convergence_and_performance(
     wandb_run: Optional["wandb.Run"] = None,
     _logger: logging.Logger = None,
     max_reserved_metric: str = "max_reserved",
+    prior_values: Optional[Dict[str, Any]] = None,
 ):
     """
     Calculate convergence metrics and validate against golden values.
@@ -617,27 +728,35 @@ def calc_convergence_and_performance(
     expected_golden_values_path = os.path.join(pathlib.Path(golden_values_path).parent, golden_values_file_name)
     _logger.info(f"Golden values path: {expected_golden_values_path}")
 
+    # Per-step values parsed from THIS slice's logs only.
+    segment_values = dict(
+        **{
+            step: {
+                k: v
+                for k, v in {
+                    loss_metric: current_train_loss.get(step),
+                    timing_metric: current_iter_time.get(step),
+                    "GPU utilization": current_gpu_util.get(step),
+                }.items()
+                if v is not None
+            }
+            for step in current_train_loss.keys()
+        },
+        **{
+            alloc_metric: current_alloc,
+            max_alloc_metric: current_max_alloc,
+            max_reserved_metric: current_max_reserved,
+        },
+    )
+    # A resumed long-convergence slice only logs its own steps, so persisting this
+    # slice alone records a partial (tail-only) curve. Merge with the per-step values
+    # carried over from earlier slices (read from the persistent dir by the launcher
+    # and passed in via prior_values) so the recorded actuals span the whole run.
+    current_values = merge_golden_values(prior_values, segment_values)
+
     # Always write actuals into experiment directory
     write_golden_values_to_disk(
-        current_values=dict(
-            **{
-                step: {
-                    k: v
-                    for k, v in {
-                        loss_metric: current_train_loss.get(step),
-                        timing_metric: current_iter_time.get(step),
-                        "GPU utilization": current_gpu_util.get(step),
-                    }.items()
-                    if v is not None
-                }
-                for step in current_train_loss.keys()
-            },
-            **{
-                alloc_metric: current_alloc,
-                max_alloc_metric: current_max_alloc,
-                max_reserved_metric: current_max_reserved,
-            },
-        ),
+        current_values=current_values,
         golden_values_path=next_golden_values_path,
         wandb_run=wandb_run,
     )
@@ -666,9 +785,7 @@ def calc_convergence_and_performance(
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
-    # Normalize: new format stores baseline data under a "baseline" key.
-    if "baseline" in expected_golden_values:
-        expected_golden_values = expected_golden_values["baseline"]
+    expected_golden_values = _unwrap_golden_values(expected_golden_values)
 
     steps = []
     golden_train_loss = {}
@@ -839,4 +956,4 @@ def calc_convergence_and_performance(
             error_msg += f'  "{max_reserved_metric}": {current_max_reserved}\n'
 
     _logger.info(f"Convergence check completed successfully for {model_family_name}_{model_recipe_name}")
-    return has_validation_failures is False, error_msg
+    return has_validation_failures is False, error_msg, current_values

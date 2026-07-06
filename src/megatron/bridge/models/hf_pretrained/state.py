@@ -20,7 +20,7 @@ from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import (
     Dict,
     Iterable,
@@ -37,6 +37,48 @@ import torch
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_safetensors_shard_filename(filename: object, *, tensor_key: str, index_file: Path) -> str:
+    """Validate a shard filename loaded from a safetensors index."""
+    if not isinstance(filename, str) or not filename:
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: expected a non-empty string."
+        )
+
+    path = Path(filename)
+    windows_path = PureWindowsPath(filename)
+    if (
+        "\x00" in filename
+        or "\\" in filename
+        or path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or ".." in path.parts
+    ):
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: {filename!r} must be a relative "
+            "path within the checkpoint directory."
+        )
+
+    if path.suffix != ".safetensors":
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: {filename!r} must end with "
+            "'.safetensors'."
+        )
+
+    return filename
+
+
+def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
+    """Resolve a shard output path and ensure it remains inside output_path."""
+    output_root = output_path.resolve()
+    output_file_path = (output_root / filename).resolve()
+    try:
+        output_file_path.relative_to(output_root)
+    except ValueError:
+        raise ValueError(f"Shard filename {filename!r} escapes output directory {output_root}.") from None
+    return output_file_path
 
 
 class StateDict(Mapping[str, torch.Tensor]):
@@ -787,7 +829,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -803,7 +845,8 @@ class SafeTensorsStateSource(StateSource):
                     # This shard is complete, save it.
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
 
-                    output_file_path = output_path / filename
+                    output_file_path = _resolve_output_shard_path(output_path, filename)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
@@ -834,7 +877,8 @@ class SafeTensorsStateSource(StateSource):
                 for filename in list(files_to_save.keys()):
                     keys_for_file = files_to_save[filename]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
-                    output_file_path = output_path / filename
+                    output_file_path = _resolve_output_shard_path(output_path, filename)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
@@ -857,6 +901,14 @@ class SafeTensorsStateSource(StateSource):
 
         # Final check on whether all original tensors were written.
         unsaved_keys = all_expected_keys - all_saved_keys
+        if unsaved_keys and strict:
+            print(f"\nError: {len(unsaved_keys)} tensors from the original checkpoint were not written:")
+            for key in sorted(unsaved_keys):
+                print(f"  - {key}")
+            raise RuntimeError(
+                f"{len(unsaved_keys)} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
         if not unsaved_keys:
             extra_keys = all_yielded_keys - all_expected_keys
             if extra_keys:
@@ -902,7 +954,14 @@ class SafeTensorsStateSource(StateSource):
                 try:
                     index_data = json.load(f)
                     if "weight_map" in index_data and isinstance(index_data["weight_map"], dict):
-                        return index_data["weight_map"]
+                        return {
+                            key: _validate_safetensors_shard_filename(
+                                filename,
+                                tensor_key=key,
+                                index_file=index_file,
+                            )
+                            for key, filename in index_data["weight_map"].items()
+                        }
                 except json.JSONDecodeError:
                     return None
         return None
@@ -987,7 +1046,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -1018,8 +1077,39 @@ class SafeTensorsStateSource(StateSource):
                 tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
                 if not tensors_to_save:
                     continue
-                save_file(tensors_to_save, output_path / fname)
+                output_file_path = _resolve_output_shard_path(output_path, fname)
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                save_file(tensors_to_save, output_file_path)
                 actually_saved_keys.update(tensors_to_save.keys())
+
+        # Strict-mode check: ensure all expected tensors were written. Aggregate
+        # per-rank missing counts so all ranks raise consistently (avoids hangs
+        # on the trailing barriers).
+        if is_saver_rank:
+            local_unsaved_keys = assigned_expected_keys - actually_saved_keys
+        else:
+            local_unsaved_keys = set()
+
+        if is_distributed:
+            gathered_counts: list[int | None] = [None] * world_size
+            torch.distributed.all_gather_object(gathered_counts, len(local_unsaved_keys))
+            total_unsaved_count = sum(c for c in gathered_counts if c is not None)
+        else:
+            total_unsaved_count = len(local_unsaved_keys)
+
+        if total_unsaved_count and strict:
+            if local_unsaved_keys:
+                keys_sorted = sorted(local_unsaved_keys)
+                preview = ", ".join(keys_sorted[:20])
+                suffix = f", ... (+{len(keys_sorted) - 20} more)" if len(keys_sorted) > 20 else ""
+                print(
+                    f"Rank {rank}: Error: {len(keys_sorted)} tensors not written: {preview}{suffix}",
+                    flush=True,
+                )
+            raise RuntimeError(
+                f"{total_unsaved_count} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
 
         # Rank 0 builds the index from the files that were actually written.
         # This avoids all_gather_object on very large key lists, which can
@@ -1032,7 +1122,7 @@ class SafeTensorsStateSource(StateSource):
 
                 all_saved_keys_aggregated = set()
                 for fname in all_filenames:
-                    file_path = output_path / fname
+                    file_path = _resolve_output_shard_path(output_path, fname)
                     if not file_path.exists():
                         continue
                     with safe_open(file_path, framework="pt", device="cpu") as f:

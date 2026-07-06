@@ -45,7 +45,7 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Model and training configurations
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/GLM-4.5V
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/GLM-4.5V/iter_0000000}
 MODEL_NAME=glm_45v
 DATASET_NAME=cord_v2
 SEQ_LENGTH=8192
@@ -136,7 +136,7 @@ CLI_OVERRIDES="\
 # If mounting a workspace that requires re-syncing dependencies, uncomment the uv sync line:
 # CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
 CMD="uv run --no-sync python scripts/training/run_recipe.py"
-CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
+CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
 CMD="$CMD --step_func vlm_step"
 CMD="$CMD --peft_scheme lora"
 CMD="$CMD $CLI_OVERRIDES"

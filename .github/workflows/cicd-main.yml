@@ -89,11 +89,25 @@ jobs:
       expect_l1:         ${{ steps.configure.outputs.expect_l1 }}
       expect_l2:         ${{ steps.configure.outputs.expect_l2 }}
       perf_scripts_only: ${{ steps.configure.outputs.perf_scripts_only }}
+      merge_sha:         ${{ steps.merge-sha.outputs.merge_sha }}
     steps:
       - name: Get PR info
         id: get-pr-info
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@main
+
+      - name: Resolve merge commit sha
+        id: merge-sha
+        shell: bash -e -u -o pipefail {0}
+        env:
+          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
+        run: |
+          if [[ "$IS_PR" == "true" ]]; then
+            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
+          else
+            SHA=${GITHUB_SHA}
+          fi
+          echo "merge_sha=${SHA}" | tee -a "$GITHUB_OUTPUT"
 
       - name: Configure
         id: configure
@@ -220,7 +234,7 @@ jobs:
   lint-check:
     name: Lint check
     runs-on: ubuntu-latest
-    needs: [pre-flight]
+    needs: [pre-flight, configure]
     if: |
       needs.pre-flight.outputs.is_deployment_workflow == 'false'
       || github.event_name == 'workflow_dispatch'
@@ -229,6 +243,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: "recursive"
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -325,24 +340,11 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/pull-request/')
         uses: nv-gha-runners/get-pr-info@main
 
-      - name: Get merge commit sha
-        shell: bash -x -e -u -o pipefail {0}
-        id: sha
-        env:
-          IS_PR: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
-        run: |
-          if [[ "$IS_PR" == "true" ]]; then
-            SHA=${{ fromJSON(steps.get-pr-info.outputs.pr-info || '{}').merge_commit_sha }}
-          else
-            SHA=${GITHUB_SHA}
-          fi
-          echo "main=${SHA}" | tee -a "$GITHUB_OUTPUT"
-
       - name: Checkout
         uses: actions/checkout@v6
         with:
           submodules: recursive
-          ref: ${{ steps.sha.outputs.main }}
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Update MCore submodule (if triggered from MCore)
         if: ${{ github.event.inputs.mcore_ref != '' }}
@@ -386,37 +388,6 @@ jobs:
         with:
           python-version: 3.12
 
-      - name: Install GH CLI
-        shell: bash
-        run: |
-          for i in 1 2 3; do
-            apt-get update && apt-get install -y gh && break
-            echo "Attempt $i failed, retrying in 10s..."
-            sleep 10
-          done
-
-      - name: Get last merged PR
-        id: cache_from
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          LAST_PRS=$(gh api graphql -f query='
-            query {
-              repository(owner: "NVIDIA-NeMo", name: "Megatron-Bridge") {
-                pullRequests(states: MERGED, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
-                  nodes {
-                    number
-                  }
-                }
-              }
-            }' | jq -r '.data.repository.pullRequests.nodes[].number' | while read -r number; do
-              echo "type=registry,ref=${{ matrix.registry }}/megatron-bridge:$number-buildcache,mode=max"
-            done)
-
-          echo "LAST_PRS<<EOF" | tee -a $GITHUB_OUTPUT
-          echo "$LAST_PRS" | tee -a $GITHUB_OUTPUT
-          echo "EOF" | tee -a $GITHUB_OUTPUT
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -433,7 +404,21 @@ jobs:
           else
             KEY="$BRANCH_SANITIZED"
           fi
+
+          # Single coherent cache donor. Dockerfile.ci builds non-reproducible
+          # from-source layers (DeepEP): same BuildKit cache key, different result
+          # digest on every cold build. Listing more than one cache-from donor lets
+          # BuildKit chain from a conflicting copy of such a layer and miss every
+          # layer downstream — a ~40 min cold rebuild even when a warm cache exists.
+          # So read EXACTLY ONE donor: PR builds integrate into main, so they seed
+          # from main; main/branch builds seed from their own chain.
+          if [[ -n "$PR_NUMBER" && "${{ github.ref }}" != "refs/heads/main" ]]; then
+            SEED="main"
+          else
+            SEED="$KEY"
+          fi
           echo "key=$KEY" | tee -a "$GITHUB_OUTPUT"
+          echo "seed=$SEED" | tee -a "$GITHUB_OUTPUT"
           echo "cache-to=type=registry,ref=${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache,mode=max" | tee -a "$GITHUB_OUTPUT"
 
       - name: Compute platform
@@ -456,17 +441,45 @@ jobs:
             FROM_IMAGE_NAME=nvcr.io/nvidia/pytorch:25.09-py3
             MCORE_TRIGGERED_TESTING=${{ env.MCORE_TRIGGERED_TESTING || 'false' }}
             MCORE_COMMIT_SHA=${{ env.MCORE_COMMIT_SHA || 'unknown' }}
-          cache-from: |
-            type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}-buildcache,mode=max
-            type=registry,ref=${{ matrix.registry }}/megatron-bridge:main-buildcache,mode=max
-            ${{ steps.cache_from.outputs.LAST_PRS }}
+          cache-from: type=registry,ref=${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.seed }}-buildcache,mode=max
           cache-to: ${{ steps.cache_keys.outputs.cache-to }}
           no-cache: false
           tags: |
             ${{ matrix.registry }}/megatron-bridge:${{ steps.cache_keys.outputs.key }}
-            ${{ matrix.registry }}/megatron-bridge:${{ github.sha }}
+            ${{ matrix.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           secrets: |
             GH_TOKEN=${{ secrets.PAT }}
+
+  cicd-import-check:
+    if: |
+      (
+        success()
+        || needs.pre-flight.outputs.is_ci_workload == 'true'
+        || needs.pre-flight.outputs.force_run_all == 'true'
+        || github.event_name == 'merge_group'
+      )
+      && !cancelled()
+      && needs.configure.outputs.perf_scripts_only != 'true'
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    name: Launch_Import_Check
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.configure.outputs.merge_sha }}
+
+      - name: Run venv import check
+        shell: bash -e -u -o pipefail {0}
+        env:
+          IMAGE: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/docker/common:/opt/import-check:ro" \
+            "$IMAGE" \
+            python /opt/import-check/import_check.py \
+              --jobs 16 \
+              --skip-file /opt/import-check/import_check_skip.txt
 
   cicd-unit-tests-core:
     if: |
@@ -478,7 +491,7 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Core
     env:
@@ -489,6 +502,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -497,7 +511,7 @@ jobs:
           timeout: 18
           is_unit_test: "true"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
@@ -511,7 +525,7 @@ jobs:
       )
       && !cancelled()
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'unit-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
-    needs: [pre-flight, cicd-wait-in-queue, cicd-container-build]
+    needs: [pre-flight, configure, cicd-wait-in-queue, cicd-container-build]
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
     name: Launch_Unit_Tests_Diffusion
     env:
@@ -522,6 +536,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -530,12 +545,12 @@ jobs:
           timeout: 18
           is_unit_test: "true"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ needs.pre-flight.outputs.runner_prefix }}
 
   generate-test-matrix:
-    needs: [pre-flight, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ubuntu-latest
     outputs:
       matrix_l0: ${{ steps.scan.outputs.matrix_l0 }}
@@ -552,6 +567,8 @@ jobs:
       && !cancelled()
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.configure.outputs.merge_sha }}
       - id: scan
         shell: bash
         env:
@@ -600,7 +617,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_l0) }}
-    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ matrix.runner }}
     if: |
       (
@@ -621,6 +638,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -629,7 +647,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -661,6 +679,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -669,7 +688,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -701,6 +720,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -709,7 +729,7 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -719,7 +739,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-test-matrix.outputs.matrix_flaky) }}
-    needs: [pre-flight, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ matrix.runner }}
     name: ${{ matrix.script }}
     env:
@@ -731,6 +751,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -740,12 +761,12 @@ jobs:
           timeout: ${{ fromJSON(matrix.timeout || '30') }}
           is_unit_test: "false"
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ needs.pre-flight.outputs.registry }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
   generate-gb200-test-matrix:
-    needs: [pre-flight, cicd-container-build]
+    needs: [pre-flight, configure, cicd-container-build]
     runs-on: ubuntu-latest
     outputs:
       matrix_gb200_l0:    ${{ steps.scan.outputs.matrix_gb200_l0 }}
@@ -763,6 +784,8 @@ jobs:
       && needs.pre-flight.outputs.is_member == 'true'
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.configure.outputs.merge_sha }}
       - id: scan
         shell: bash
         run: |
@@ -809,7 +832,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_l0) }}
-    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ matrix.runner }}
     if: |
       (
@@ -832,6 +855,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -845,7 +869,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -879,6 +903,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -892,7 +917,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -926,6 +951,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -939,7 +965,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -949,7 +975,7 @@ jobs:
       fail-fast: false
       max-parallel: 16
       matrix: ${{ fromJSON(needs.generate-gb200-test-matrix.outputs.matrix_gb200_flaky) }}
-    needs: [pre-flight, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
+    needs: [pre-flight, configure, generate-gb200-test-matrix, cicd-unit-tests-core, cicd-unit-tests-diffusion]
     runs-on: ${{ matrix.runner }}
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -962,6 +988,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           submodules: recursive
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: main
         uses: ./.github/actions/test-template
@@ -975,7 +1002,7 @@ jobs:
           azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           azure-subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           PAT: ${{ secrets.PAT }}
-          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ github.sha }}
+          container-image: ${{ env.container-registry-gb200 }}/megatron-bridge:${{ needs.configure.outputs.merge_sha }}
           test-data-path: ${{ needs.pre-flight.outputs.test_data_path }}
           runner: ${{ matrix.runner }}
 
@@ -983,6 +1010,7 @@ jobs:
     needs:
       - pre-flight
       - configure
+      - cicd-import-check
       - cicd-unit-tests-core
       - cicd-unit-tests-diffusion
       - cicd-functional-tests-l0
@@ -997,30 +1025,38 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Get workflow result
         id: result
         shell: bash -e -u -o pipefail {0}
         env:
           GH_TOKEN:  ${{ github.token }}
+          GH_REPO:   ${{ github.repository }}
           EXPECT_L0: ${{ needs.configure.outputs.expect_l0 }}
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length') || echo 0
+          # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
+          # any failure (e.g. "failed to determine base repo" when git context is
+          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
+          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
+          # repository, and `set -e -o pipefail` makes any failure here abort the job.
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped")] | length')
 
           UNEXPECTED_SKIPS=0
           check_tier_skips() {
             local tier="$1" expect="$2"
             [ "$expect" != "true" ] && return
             local n
-            n=$(gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-              '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length') || n=0
+            n=$(gh run view $GITHUB_RUN_ID --json jobs \
+              | jq --arg p "${tier}_" '[.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped")] | length')
             if [ "${n:-0}" -gt 0 ]; then
               echo "❌ Found $n unexpectedly skipped ${tier} job(s):"
-              gh run view $GITHUB_RUN_ID --json jobs --jq --arg p "${tier}_" \
-                '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
+              gh run view $GITHUB_RUN_ID --json jobs \
+                | jq -r --arg p "${tier}_" '.jobs[] | select(.name | startswith($p)) | select(.conclusion == "skipped") | .name'
               UNEXPECTED_SKIPS=$((UNEXPECTED_SKIPS + n))
             fi
           }
@@ -1096,6 +1132,8 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.configure.outputs.merge_sha }}
 
       - name: Download coverage reports of current branch
         uses: actions/download-artifact@v7

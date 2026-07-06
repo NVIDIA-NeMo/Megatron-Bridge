@@ -28,14 +28,25 @@ from megatron.bridge.peft import canonical_lora as canonical_lora_module
 from megatron.bridge.peft import lora as lora_module
 from megatron.bridge.peft import utils as peft_utils
 from megatron.bridge.peft.canonical_lora import CanonicalLoRA
-from megatron.bridge.peft.lora import LoRA, LoRAMerge, VLMLoRA
+from megatron.bridge.peft.lora import LoRA, VLMLoRA
 from megatron.bridge.peft.lora_layers import LinearAdapter, LoRALinear
+from megatron.bridge.peft.lora_merge import LoRAMerge
 from megatron.bridge.peft.utils import (
     AdapterAttributes,
     GroupedExpertLinearAdapter,
     get_adapter_attributes_from_linear,
     is_modelopt_linear,
 )
+
+
+class MockProcessGroup:
+    """Process group test double exposing the size used by LoRAMerge."""
+
+    def __init__(self, size: int) -> None:
+        self._size = size
+
+    def size(self) -> int:
+        return self._size
 
 
 class SimpleModel(nn.Module):
@@ -202,6 +213,7 @@ class TestLoRA:
         assert lora.alpha == 32
         assert lora.dropout == 0.0
         assert lora.dropout_position == "pre"
+        assert lora.sequence_parallel_input_regather is False
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
         assert lora.share_expert_adapters is True
@@ -213,6 +225,7 @@ class TestLoRA:
             alpha=16,
             dropout=0.1,
             dropout_position="post",
+            sequence_parallel_input_regather=True,
             lora_A_init_method="uniform",
             share_expert_adapters=False,
         )
@@ -221,6 +234,7 @@ class TestLoRA:
         assert custom_lora.alpha == 16
         assert custom_lora.dropout == 0.1
         assert custom_lora.dropout_position == "post"
+        assert custom_lora.sequence_parallel_input_regather is True
         assert custom_lora.lora_A_init_method == "uniform"
         assert custom_lora.share_expert_adapters is False
 
@@ -284,12 +298,42 @@ class TestLoRA:
             assert isinstance(layer["mlp"]["linear_fc1"], LinearAdapter)
             assert isinstance(layer["mlp"]["linear_fc2"], LinearAdapter)
 
+    def test_lora_grouped_expert_transform_uses_shared_adapter_by_default(self):
+        """Grouped expert linears should keep the cheaper shared adapter path by default."""
+        model = GroupedExpertModel()
+        lora = LoRA(target_modules=["linear_fc2"])
+
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
+            return AdapterAttributes(
+                input_is_parallel=True,
+                in_features=module.in_features,
+                out_features=module.out_features,
+                disable_tensor_parallel_comm=False,
+                disable_sequence_parallel_comm=True,
+                base_linear_is_parallel=True,
+            )
+
+        with (
+            patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
+            patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_parallel_adapter,
+            patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_grouped_adapter,
+        ):
+            mock_parallel_adapter.return_value = nn.Identity()
+            transformed_model = lora(model, training=True)
+
+        adapted = transformed_model.decoder.layers[0].mlp.experts.linear_fc2
+        assert isinstance(adapted, LoRALinear)
+        mock_parallel_adapter.assert_called_once()
+        mock_grouped_adapter.assert_not_called()
+
     def test_lora_grouped_expert_transform_can_use_per_expert_adapters(self):
         """Grouped expert linears should get one LoRA adapter per local expert when requested."""
         model = GroupedExpertModel()
         lora = LoRA(target_modules=["linear_fc2"], share_expert_adapters=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=True,
                 in_features=module.in_features,
@@ -552,7 +596,12 @@ class TestModelOptLinear:
     def test_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
         parallel_adapter = nn.Identity()
-        lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+        lora = LoRA(
+            target_modules=["linear_proj"],
+            dim=2,
+            alpha=4,
+            sequence_parallel_input_regather=True,
+        )
 
         with (
             patch.object(lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
@@ -568,6 +617,7 @@ class TestModelOptLinear:
         mock_adapter.assert_called_once()
         assert mock_adapter.call_args.args[:3] == (5, 7, 2)
         assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+        assert mock_adapter.call_args.kwargs["sequence_parallel_input_regather"] is True
 
     def test_canonical_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
@@ -601,7 +651,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1", "linear_fc2", "linear_proj"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -640,7 +691,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -664,7 +716,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=3)
         lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -685,7 +738,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -709,9 +763,13 @@ class TestLoRANormalizeMoE:
     def test_normalize_moe_lora_aligns_shared_expert_dim_to_expert_tp(self):
         """Normalized expert fc1 adapters should round up to the expert-TP granularity when needed."""
         model = MoEModel(moe_router_topk=8)
+        for module in model.modules():
+            if hasattr(module, "config"):
+                module.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -723,10 +781,6 @@ class TestLoRANormalizeMoE:
 
         with (
             patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
-            patch(
-                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
-            ),
             patch("megatron.bridge.peft.lora.ParallelLinearAdapter") as mock_adapter,
         ):
             mock_adapter.return_value = nn.Linear(1, 1)
@@ -747,9 +801,11 @@ class TestLoRANormalizeMoE:
         """Per-expert grouped adapters should round normalized dims up to expert-TP granularity."""
         model = GroupedExpertModel()
         model.decoder.layers[0].mlp.experts.linear_fc2.config.moe_router_topk = 8
+        model.decoder.layers[0].mlp.experts.linear_fc2.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc2"], dim=8, normalize_moe_lora=True, share_expert_adapters=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -761,10 +817,6 @@ class TestLoRANormalizeMoE:
 
         with (
             patch("megatron.bridge.peft.lora.get_adapter_attributes_from_linear", side_effect=mock_get_attrs),
-            patch(
-                "megatron.bridge.peft.lora.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
-            ),
             patch("megatron.bridge.peft.lora.GroupedExpertLinearAdapter") as mock_adapter,
         ):
             mock_adapter.return_value = nn.Identity()
@@ -828,7 +880,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -870,7 +921,6 @@ class TestLoRAMerge:
             adapter.linear_in.weight,
             adapter.alpha,
             adapter.dim,
-            tp_size=1,
             tp_group=None,
         )
 
@@ -909,7 +959,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -926,8 +979,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights
@@ -966,7 +1018,10 @@ class TestLoRAMerge:
 
         # Mock the distributed environment for TP=2
         tp_size = 2
-        with patch("megatron.bridge.peft.lora.dist") as mock_dist:
+        with (
+            patch("megatron.bridge.peft.lora_merge.dist") as mock_dist,
+            patch("megatron.bridge.peft.lora_merge.get_pg_size", return_value=tp_size),
+        ):
             # Mock all_gather to simulate gathering from 2 ranks
             def mock_all_gather(tensor_list, tensor, group=None):
                 # Simulate gathering: each rank has identical shards for this test
@@ -983,8 +1038,7 @@ class TestLoRAMerge:
                 adapter.linear_in.weight,
                 adapter.alpha,
                 adapter.dim,
-                tp_size=tp_size,
-                tp_group=None,
+                tp_group=MockProcessGroup(tp_size),
             )
 
         # Verify the merge used gathered weights

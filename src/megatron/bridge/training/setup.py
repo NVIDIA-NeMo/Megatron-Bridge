@@ -18,11 +18,6 @@ import time
 from functools import partial
 from typing import Any, Callable, NamedTuple, Optional
 
-from megatron.bridge.models.common import ModelBuilder, ModelConfig
-from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
-from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.models.transformer_config import TransformerConfig
 import torch
 from megatron.core.config import set_experimental_flag
 from megatron.core.distributed import DistributedDataParallel, DistributedDataParallelConfig, finalize_model_grads
@@ -34,26 +29,30 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
 
-from megatron.bridge.data.loaders import setup_data_iterators
-from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
-from megatron.bridge.models import GPTModelProvider, T5ModelProvider
+from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
+from megatron.training.models.base import ModelConfig
+from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training import fault_tolerance
+from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
 from megatron.bridge.training.checkpointing import (
-    _load_checkpoint_from_path,
-    checkpoint_exists,
     CheckpointLoadContext,
     CheckpointManager,
+    _load_checkpoint_from_path,
     create_checkpoint_manager,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer
+from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
     initialize_tensor_inspect_pre_model_initialization,
 )
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 from megatron.bridge.training.utils.log_utils import append_to_progress_log, barrier_and_log, setup_logging
 from megatron.bridge.training.utils.train_utils import start_memory_history_recording
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
@@ -85,6 +84,20 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpoint_manager: CheckpointManager
     pg_collection: ProcessGroupCollection
+
+
+def _bind_dataset_provider_context(
+    provider: Callable,
+    *,
+    tokenizer: Any,
+    pg_collection: ProcessGroupCollection,
+) -> Callable:
+    signature_params = inspect.signature(provider).parameters
+    if "tokenizer" in signature_params:
+        provider = partial(provider, tokenizer=tokenizer)
+    if "pg_collection" in signature_params:
+        provider = partial(provider, pg_collection=pg_collection)
+    return provider
 
 
 def setup(
@@ -204,6 +217,22 @@ def setup(
 
             cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
 
+    if cfg.train.num_epochs is not None:
+        if should_fire(callback_manager, "on_data_init_start"):
+            raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
+        epoch_datasets_provider = _bind_dataset_provider_context(
+            train_valid_test_datasets_provider,
+            tokenizer=tokenizer,
+            pg_collection=pg_collection,
+        )
+        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, epoch_datasets_provider)
+
+        def cached_datasets_provider(_train_val_test_num_samples, _dataset_config):
+            """Return datasets built before optimizer and scheduler initialization."""
+            return datasets
+
+        train_valid_test_datasets_provider = cached_datasets_provider
+
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
 
@@ -268,36 +297,52 @@ def setup(
     # find them.
     _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
     has_local_checkpoint = (
-        "local_checkpoint_manager" in _ckpt_ctx
-        and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
+        "local_checkpoint_manager" in _ckpt_ctx and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
     )
 
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
     if cfg.peft is not None:
-        should_load_checkpoint = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
+        # HF full-model directories enter the load flow only to produce the
+        # targeted checkpoint.load error in checkpointing.
+        should_load_checkpoint = cfg.checkpoint.load is not None and (
+            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+        )
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
     else:
-        should_load_checkpoint = (
-            (cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load))
-            or (
-                cfg.checkpoint.pretrained_checkpoint is not None
-                and checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-            )
-            or has_local_checkpoint
+        # ``checkpoint.load`` resumes from native Megatron checkpoints. ``pretrained_checkpoint``
+        # may also point at a HuggingFace full-model directory for initialization.
+        # HF directories are included in load detection only to route to the
+        # targeted checkpoint.load error in checkpointing.
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
+            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        has_pretrained_checkpoint = cfg.checkpoint.pretrained_checkpoint is not None and (
+            checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+            or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
+        )
+        should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(CheckpointLoadContext(
-            state=state,
-            model=model,
-            optimizer=optimizer,
-            opt_param_scheduler=scheduler,
-            skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
-        ))
+        checkpoint_manager.load(
+            CheckpointLoadContext(
+                state=state,
+                model=model,
+                optimizer=optimizer,
+                opt_param_scheduler=scheduler,
+                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+            )
+        )
+        # Workaround for upstream mcore: reload_model_params() only refreshes the
+        # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
+        # clones and level-3 FP32 working copies retain their random init.  Without
+        # this sync, the first optimizer step on (optimizer_cpu_offload=True + dist
+        # optimizer + BF16 + HF init) regresses the BF16 model to fresh random init.
+        # No-op when CPU offload is not enabled.  See NVIDIA-NeMo/RL PR #2372.
+        sync_hybrid_device_optimizer_fp32_master_copies(optimizer)
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])
 
@@ -313,7 +358,7 @@ def setup(
 
     _update_model_config_funcs(
         model,
-        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, MambaModelConfig)) else cfg.model,
+        cfg.model.transformer if isinstance(cfg.model, (GPTModelConfig, HybridModelConfig)) else cfg.model,
         cfg.ddp,
         optimizer,
         align_grad_reduce=cfg.dist.align_grad_reduce,
@@ -335,11 +380,11 @@ def setup(
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
-    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
-    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
-
+    train_valid_test_datasets_provider = _bind_dataset_provider_context(
+        train_valid_test_datasets_provider,
+        tokenizer=tokenizer,
+        pg_collection=pg_collection,
+    )
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,
@@ -469,7 +514,10 @@ def _create_peft_pre_wrap_hook(
         print_rank_0("Applying PEFT pre-wrap hook...")
 
         # Load pretrained checkpoint if available
-        if cfg.checkpoint.pretrained_checkpoint is None or not checkpoint_exists(cfg.checkpoint.pretrained_checkpoint):
+        if cfg.checkpoint.pretrained_checkpoint is None or not (
+            checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+            or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
+        ):
             raise ValueError(f"Invalid pretrained checkpoint directory found: {cfg.checkpoint.pretrained_checkpoint}")
 
         # Explicitly set finetune to avoid loading optimizer and RNG states

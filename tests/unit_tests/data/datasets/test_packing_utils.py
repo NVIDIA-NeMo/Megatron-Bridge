@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 from typing import List
 
 import numpy as np
 import pytest
 
-from megatron.bridge.data.datasets.packing_utils import first_fit, first_fit_decreasing
+from megatron.bridge.data.datasets.packing_utils import create_hist, first_fit, first_fit_decreasing
 
 
 def _first_fit_linear(seqlens: List[int], pack_size: int) -> List[List[int]]:
@@ -59,6 +60,21 @@ class TestFirstFitPacking:
         result = first_fit(seqlens, pack_size)
         for bin_contents in result:
             assert sum(bin_contents) <= pack_size
+
+
+def test_create_hist_skips_oversize_sequences(caplog):
+    """Oversize samples should be skipped without changing in-range histogram entries."""
+    in_range = {"input_ids": [1, 2, 3, 4]}
+    oversize = {"input_ids": [1, 2, 3, 4, 5]}
+    dataset = np.array([in_range, oversize], dtype=object)
+
+    with caplog.at_level(logging.WARNING):
+        sequences, histogram = create_hist(dataset, truncate_seq_len=3)
+
+    assert histogram == [0, 0, 0, 1]
+    assert sequences[3] == [in_range]
+    assert 4 not in sequences
+    assert "Skipped 1 sequences longer than the maximum packed sequence length 3" in caplog.text
 
 
 class TestSegmentTreeMatchesLinearScan:

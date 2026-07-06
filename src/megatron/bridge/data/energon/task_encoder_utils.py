@@ -15,15 +15,16 @@
 """Shared utilities for Energon-based VLM task encoders.
 
 Contains helpers extracted from the Qwen-VL task encoder so they can be
-reused by the generic ``HFEncoderVLMTaskEncoder`` and any future
+reused by the generic ``HFTaskEncoder`` and any future
 model-specific encoders.
 """
 
 import json
 import logging
 import re
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -209,12 +210,13 @@ def _videos_to_pil(videos):
 # ---------------------------------------------------------------------------
 @dataclass
 class ChatMLSample(Sample):
-    """Multi-turn complex samples with images, videos, and audio."""
+    """Multi-turn samples with optional media and chat-template tools."""
 
     conversation: str  # JSON string of GPT-format conversations
     imgs: Optional[List[torch.Tensor]] = None
     videos: Optional[List[List[torch.Tensor]]] = None
     audio: Optional[torch.Tensor] = None  # Raw waveform tensor [num_samples] or pre-computed mel [frames, mel_bins]
+    tools: Optional[List[Dict[str, Any]]] = None
 
 
 class videohandler:
@@ -306,62 +308,66 @@ class ChatMLWebdataset(DefaultDecoderWebdatasetFactory[ChatMLSample]):
 # ---------------------------------------------------------------------------
 # Conversation parsing
 # ---------------------------------------------------------------------------
-def cook_chatml_sample(conversation) -> List[Dict]:
+def _load_chatml_payload(conversation: Any) -> Any:
+    if isinstance(conversation, (str, bytes)):
+        return json.loads(conversation)
+    return conversation
+
+
+def extract_chatml_tools(conversation: Any) -> Optional[List[Dict[str, Any]]]:
+    """Extract top-level chat-template tools from a wrapped ChatML payload."""
+    payload = _load_chatml_payload(conversation)
+    if not isinstance(payload, dict):
+        return None
+    tools = payload.get("tools")
+    if tools is None:
+        return None
+    if not isinstance(tools, list) or not all(isinstance(tool, dict) for tool in tools):
+        raise ValueError("ChatML tools must be a list of tool-definition dictionaries.")
+    return deepcopy(tools)
+
+
+def cook_chatml_sample(conversation: Any) -> List[Dict]:
     """Normalize a ChatML conversation to ``[{"role": ..., "content": ...}, ...]``.
 
     Accepts both ``from``/``value`` (GPT-style) and ``role``/``content``
-    (OpenAI-style) formats, with an optional leading system turn when the
-    total number of turns is odd.
+    (OpenAI-style) formats. OpenAI message fields such as ``tool_calls``,
+    ``tool_call_id``, and ``name`` are preserved.
 
     Args:
         conversation: A JSON string, bytes, list of turn dicts, or a dict
-            with a ``"conversations"`` key.
+            with a ``"conversation"``, ``"conversations"``, or ``"messages"`` key.
 
     Returns:
-        A list of dicts with ``role`` in ``{"system", "user", "assistant"}``
-        and ``content`` as a plain string.
+        A list of OpenAI-style message dictionaries.
+
+    Raises:
+        ValueError: If the payload is empty or does not contain a conversation list.
     """
-    if isinstance(conversation, (str, bytes)):
-        conversation = json.loads(conversation)
-
-    conversation = conversation if not isinstance(conversation, dict) else conversation.get("conversations", [])
-
-    _from_system_ = "from" in conversation[0]
-    role_key = "from" if _from_system_ else "role"
-    content_key = "value" if _from_system_ else "content"
+    payload = _load_chatml_payload(conversation)
+    if isinstance(payload, dict):
+        payload = payload.get("conversations", payload.get("messages", payload.get("conversation")))
+    if not isinstance(payload, list) or not payload:
+        raise ValueError("ChatML payload must contain a non-empty conversation list.")
 
     converted: List[Dict] = []
+    for turn_idx, turn in enumerate(payload):
+        if not isinstance(turn, dict):
+            raise ValueError(f"ChatML turn {turn_idx} must be a dictionary.")
 
-    # Handle optional system turn (odd number of messages)
-    if len(conversation) % 2 != 0:
-        converted.append({"role": "system", "content": conversation[0][content_key]})
-        conversation = conversation[1:]
-
-    if _from_system_:
-        EXPECTED_ROLE = ["human", "gpt"]
-        for turn_idx, turn in enumerate(conversation):
-            role = turn[role_key]
-            if role != EXPECTED_ROLE[turn_idx % len(EXPECTED_ROLE)]:
-                logging.warning(
-                    f"Expect conversation organized in order: [sys] human gpt human gpt...,"
-                    f"but got role '{role}' in turn {turn_idx}"
-                )
-            content = turn[content_key]
+        converted_turn = deepcopy(turn)
+        if "from" in converted_turn:
+            role = converted_turn.pop("from")
+            content = converted_turn.pop("value", "")
             if role == "human":
                 role = "user"
             elif role == "gpt":
                 role = "assistant"
-            converted.append({"role": role, "content": content})
-    else:
-        EXPECTED_ROLE = ["user", "assistant"]
-        for turn_idx, turn in enumerate(conversation):
-            role = turn[role_key]
-            if role != EXPECTED_ROLE[turn_idx % len(EXPECTED_ROLE)]:
-                logging.warning(
-                    f"Expect conversation organized in order: [sys] user assistant user assistant...,"
-                    f" but got role '{role}' in turn {turn_idx}"
-                )
-            content = turn[content_key]
-            converted.append({"role": role, "content": content})
+            converted_turn["role"] = role
+            converted_turn["content"] = content
+        elif "role" not in converted_turn:
+            raise ValueError(f"ChatML turn {turn_idx} must contain either 'role' or 'from'.")
+
+        converted.append(converted_turn)
 
     return converted
