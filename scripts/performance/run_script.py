@@ -28,7 +28,7 @@ from utils.overrides import set_cli_overrides, set_user_overrides
 
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.training.config import ConfigContainer, runtime_config_update
+from megatron.bridge.training.config import ConfigContainer, apply_environment_variables, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -136,9 +136,6 @@ def main():
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
 
-    if args.dump_env:
-        _dump_env_rank0()
-
     recipe = get_perf_recipe_by_name(
         model_recipe_name=args.model_recipe_name,
         task=args.task,
@@ -150,6 +147,10 @@ def main():
 
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
+    apply_environment_variables(recipe)
+
+    if args.dump_env:
+        _dump_env_rank0()
 
     # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
     # optimizer-step overlap is encoded directly in the flat perf recipes.

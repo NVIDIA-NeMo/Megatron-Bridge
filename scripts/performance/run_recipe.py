@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -31,6 +31,7 @@ from utils.datasets import (
 from utils.utils import get_library_recipe
 
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+from megatron.bridge.training.config import apply_environment_variables
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import get_rank_safe
 
@@ -234,6 +235,8 @@ def main():
     if cli_overrides:
         logging.info("Applying %d CLI config override(s)", len(cli_overrides))
         recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
+
+    apply_environment_variables(recipe)
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
