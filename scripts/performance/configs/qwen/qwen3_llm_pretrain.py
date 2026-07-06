@@ -45,6 +45,12 @@ def set_qwen3_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_force_load_balancing = True  # required for token dropless
 
 
+def set_qwen3_30b_common_configs(cfg: ConfigContainer) -> None:
+    """Set common performance configurations for Qwen3 30B-A3B."""
+    set_qwen3_common_configs(cfg)
+    cfg.model.moe_router_force_load_balancing = False
+
+
 def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     """Apply MoE defaults required by full-iteration CUDA graph capture."""
     cfg.model.offload_modules = []
@@ -239,7 +245,7 @@ def qwen3_30b_a3b_pretrain_config_gb300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
@@ -267,7 +273,7 @@ def qwen3_30b_a3b_pretrain_config_gb200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
@@ -295,7 +301,7 @@ def qwen3_30b_a3b_pretrain_config_vr200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
@@ -321,7 +327,7 @@ def qwen3_30b_a3b_pretrain_config_b300(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
@@ -349,7 +355,7 @@ def qwen3_30b_a3b_pretrain_config_b200(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
     if precision == "fp8_mx" and is_full_iteration_cuda_graph(cfg.model):
         set_full_iter_cg_configs(cfg)
@@ -377,7 +383,7 @@ def qwen3_30b_a3b_pretrain_config_h100(
     cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     cfg.model.moe_token_dispatcher_type = "flex"
 
-    set_qwen3_common_configs(cfg)
+    set_qwen3_30b_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
 
     return cfg
