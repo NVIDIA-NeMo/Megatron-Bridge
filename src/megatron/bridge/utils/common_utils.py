@@ -22,7 +22,19 @@ import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
 from megatron.core._rank_utils import safe_get_rank as get_rank_safe  # noqa: F401
-from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
+
+try:
+    from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
+except ImportError:
+
+    def get_world_size_safe() -> int:
+        """Compatibility fallback for the pre-safe_get_world_size MCore A/B revision."""
+        if torch.distributed.is_initialized():
+            return torch.distributed.get_world_size()
+        try:
+            return int(os.environ.get("WORLD_SIZE", 1))
+        except (TypeError, ValueError):
+            return 1
 from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
 from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
