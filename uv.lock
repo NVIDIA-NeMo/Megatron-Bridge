@@ -14,6 +14,7 @@ overrides = [
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
+    { name = "mcp", specifier = ">=1.15,<2" },
     { name = "mlflow", specifier = ">=3.9.0" },
     { name = "nvidia-cudnn-frontend", specifier = "==1.24.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
