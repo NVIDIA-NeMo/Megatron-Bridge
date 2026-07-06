@@ -23,6 +23,7 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
+from megatron.bridge.recipes.utils.environment_utils import set_common_recipe_environment_defaults
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -33,6 +34,7 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
+    set_common_recipe_environment_defaults(cfg)
 
 
 def _enable_deepseek_full_iteration_mxfp8(

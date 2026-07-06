@@ -55,3 +55,42 @@ def test_set_determinism_env_vars_writes_three_keys():
     assert executor.env_vars["NCCL_ALGO"] == "Ring"
     assert executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
     assert executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+
+
+def test_recipe_environment_defaults_preserve_explicit_executor_values(monkeypatch):
+    """Recipe defaults and plugin fallbacks must not replace explicit launcher values."""
+    plugin = PerfEnvPlugin(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v3",
+        gpu="gb200",
+        compute_dtype="bf16",
+        train_task="pretrain",
+    )
+    executor = MagicMock()
+    executor.env_vars = {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": "48",
+        "USE_MNNVL": "custom",
+    }
+    workload_config = MagicMock()
+    workload_config.env_vars = {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
+    workload_config.tensor_model_parallel_size = 1
+    workload_config.pipeline_model_parallel_size = 1
+    workload_config.context_parallel_size = 1
+    workload_config.expert_model_parallel_size = 64
+    workload_config.moe_flex_dispatcher_backend = "hybridep"
+    monkeypatch.setattr("perf_plugins.get_workload_base_config", lambda *args: workload_config)
+    monkeypatch.setattr(plugin, "_set_num_cuda_device_max_connections", MagicMock())
+    monkeypatch.setattr(plugin, "_set_manual_gc", MagicMock())
+    monkeypatch.setattr(plugin, "_set_vboost", MagicMock())
+    monkeypatch.setattr(plugin, "_set_lock_gpu_freq", MagicMock())
+    monkeypatch.setattr(plugin, "_set_model_specific_environment_variables", MagicMock())
+
+    plugin.setup(MagicMock(), executor)
+
+    assert executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "48"
+    assert executor.env_vars["TORCHINDUCTOR_WORKER_START"] == "fork"
+    assert executor.env_vars["USE_MNNVL"] == "custom"
+    assert executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "64"

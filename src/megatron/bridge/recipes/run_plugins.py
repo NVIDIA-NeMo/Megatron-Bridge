@@ -674,8 +674,8 @@ class PerfEnvPlugin(Plugin):
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
         if self.enable_layernorm_sm_margin:
-            executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin)
-            executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin)
+            executor.env_vars.setdefault("NVTE_FWD_LAYERNORM_SM_MARGIN", str(self.layernorm_sm_margin))
+            executor.env_vars.setdefault("NVTE_BWD_LAYERNORM_SM_MARGIN", str(self.layernorm_sm_margin))
 
         # Set the chunk size of P2P communications
         if self.pp_size > 1 and self.nccl_pp_comm_chunksize is not None:
