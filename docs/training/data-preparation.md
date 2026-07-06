@@ -7,11 +7,11 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Workflow | Data format | Config or provider | Required path fields |
 |----------|-------------|--------------------|----------------------|
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
-| LLM SFT or PEFT from local files | JSONL split files | `FinetuningDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `HFTextSFTDatasetProvider` | `maker_name`, `maker_kwargs` |
+| LLM SFT or PEFT from local files | JSONL split files | `GPTSFTDatasetConfig` | `dataset_root` |
+| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `GPTSFTDatasetConfig` | `hf_dataset.maker_name`, `hf_dataset.maker_kwargs`, optional `hf_dataset.output_root` |
 | VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
 
-Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, but `FinetuningDatasetConfig` uses `seq_length`.
+Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
 
 ## LLM Pretraining Data
 
@@ -67,12 +67,12 @@ The default text SFT dataset expects each JSONL record to contain prompt and ans
 {"input": "Question: What is Megatron Bridge?", "output": "A PyTorch-native bridge for Megatron-Core workflows."}
 ```
 
-Configure local JSONL data with `FinetuningDatasetConfig.dataset_root`:
+Configure local JSONL data with `GPTSFTDatasetConfig.dataset_root`:
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 
-dataset = FinetuningDatasetConfig(
+dataset = GPTSFTDatasetConfig(
     dataset_root="/data/sft_jsonl",
     seq_length=4096,
 )
@@ -93,17 +93,20 @@ For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same.
 
 ## Hugging Face Datasets for SFT and PEFT
 
-`HFTextSFTDatasetProvider` downloads or reads a Hugging Face dataset, converts rows into chat JSONL, and builds the result through the standard SFT dataset builder. This is the text-only Hugging Face path to use when offline packed sequences are needed.
+Select a registered Hugging Face maker with `HFDatasetSourceConfig`. The builder downloads or reads the source dataset, converts rows into chat JSONL, and builds the result through the same SFT path used for local files. Maker inputs default to the tokenizer's Hugging Face chat template and support the same offline packed-sequence options.
 
 ```python
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
+from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
 
-dataset = HFTextSFTDatasetProvider(
+dataset = GPTSFTDatasetConfig(
     seq_length=512,
-    maker_name="squad",
-    maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
-    val_proportion=0.1,
+    hf_dataset=HFDatasetSourceConfig(
+        maker_name="squad",
+        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
+        val_proportion=0.1,
+    ),
+    seed=5678,
     do_validation=True,
     do_test=False,
     dataset_kwargs={"pad_to_max_length": True},
@@ -111,6 +114,10 @@ dataset = HFTextSFTDatasetProvider(
     offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
 )
 ```
+
+If `hf_dataset.output_root` is omitted, the generated JSONL is cached under the NeMo datasets cache for the maker source. Keep `hf_dataset.rewrite=False` when later runs should reuse those files.
+
+`FinetuningDatasetConfig`, `FinetuningDatasetBuilder`, and `HFTextSFTDatasetProvider` remain as deprecated compatibility adapters. New code should use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
 
 The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
 
@@ -124,7 +131,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 ## VLM Fine-Tuning Data
 
-VLM recipes usually use a dataset provider instead of `FinetuningDatasetConfig`. The provider owns both the storage format and the processor needed to turn image, video, audio, and text records into batches.
+VLM recipes use their model-appropriate dataset provider. That provider owns both the storage format and the processor needed to turn image, video, audio, and text records into batches.
 
 For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
 

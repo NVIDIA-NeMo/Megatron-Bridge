@@ -16,11 +16,10 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, GPTSFTDatasetConfig, HFDatasetSourceConfig
 
 
 def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
@@ -653,20 +652,23 @@ def qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config() -> ConfigContainer:
 
     # 128K sequence length with chat-format HF dataset input.
     cfg.model.seq_length = 128 * 1024
-    cfg.dataset = HFTextSFTDatasetProvider(
+    cfg.dataset = GPTSFTDatasetConfig(
         seq_length=cfg.model.seq_length,
-        maker_name="text_chat",
-        maker_kwargs={
-            "path_or_dataset": "nvidia/Nemotron-Cascade-2-SFT-Data",
-            "subset": "math",
-            "split": "train",
-            "data_files": {"train": "math/math_notool.jsonl"},
-        },
-        val_maker_kwargs={
-            "split": "train[:1%]",
-        },
+        hf_dataset=HFDatasetSourceConfig(
+            maker_name="text_chat",
+            maker_kwargs={
+                "path_or_dataset": "nvidia/Nemotron-Cascade-2-SFT-Data",
+                "subset": "math",
+                "split": "train",
+                "data_files": {"train": "math/math_notool.jsonl"},
+            },
+            val_maker_kwargs={
+                "split": "train[:1%]",
+            },
+        ),
         do_validation=True,
         do_test=False,
+        seed=5678,
         dataloader_type="single",
         num_workers=2,
         data_sharding=True,

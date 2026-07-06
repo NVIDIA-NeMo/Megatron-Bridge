@@ -178,7 +178,7 @@ pretrain(cfg, forward_step_func=forward_step)
 
 ### Fine-Tuning Migration Example (SFT/PEFT)
 
-For fine-tuning, use {py:class}`bridge.training.config.FinetuningDatasetConfig` for data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
+For fine-tuning, use {py:class}`bridge.training.config.GPTSFTDatasetConfig` for local JSONL or Hugging Face maker data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
 
 #### Before: NeMo 2.0
 ```python
@@ -226,6 +226,7 @@ llm.finetune(
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
 from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
@@ -239,7 +240,7 @@ def create_finetune_config():
             train_iters=500,
         ),
         # Finetuning dataset instead of pretraining dataset
-        dataset=FinetuningDatasetConfig(
+        dataset=GPTSFTDatasetConfig(
             dataset_root="/path/to/sft/data",
             seq_length=2048,
             do_validation=True,
@@ -519,7 +520,7 @@ logger_config = LoggerConfig(log_interval=10)  # was log_every_n_steps
 
 ### Data Configuration Migration
 
-NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses configuration objects: {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.training.config.FinetuningDatasetConfig` for fine-tuning.
+NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.training.config.GPTSFTDatasetConfig` for text fine-tuning.
 
 #### Pretraining Data
 
@@ -611,12 +612,13 @@ data = FineTuningDataModule(
 )
 ```
 
-##### Now: Megatron Bridge FinetuningDatasetConfig
+##### Now: Megatron Bridge GPTSFTDatasetConfig
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig, TrainingConfig
+from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.training.config import TrainingConfig
 
-dataset_config = FinetuningDatasetConfig(
+dataset_config = GPTSFTDatasetConfig(
     dataset_root="/path/to/instruction_data",
     seq_length=2048,
     do_validation=True,
@@ -635,7 +637,7 @@ train_config = TrainingConfig(
 **Key differences:**
 - Batch sizes move to `TrainingConfig`
 - Explicit control over finetuning validation/test splits via `do_validation` and `do_test`
-- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `FinetuningDatasetConfig`
+- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `GPTSFTDatasetConfig`
 
 
 ### Tokenizer Migration
@@ -1316,7 +1318,7 @@ pretrain(config, forward_step_func=forward_step)
 
 ### `finetune`
 
-Use `finetune()` with `FinetuningDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
+Use `finetune()` with `GPTSFTDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
 
 #### Supervised Fine-Tuning (SFT)
 
@@ -1325,6 +1327,7 @@ Full fine-tuning without PEFT - all model parameters are updated:
 ```python
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 
 config = ConfigContainer(
     model=GPTModelProvider(),
@@ -1334,7 +1337,7 @@ config = ConfigContainer(
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
         do_validation=True,
@@ -1365,7 +1368,7 @@ config = ConfigContainer(
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
         do_validation=True,

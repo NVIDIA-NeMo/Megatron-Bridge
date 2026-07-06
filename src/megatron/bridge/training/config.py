@@ -301,6 +301,95 @@ class DatasetProvider(DataloaderConfig, ABC):
         pass
 
 
+@dataclass(kw_only=True)
+class HFDatasetSourceConfig:
+    """Declarative Hugging Face maker source for a GPT SFT dataset.
+
+    The source describes how registered dataset makers should be invoked and
+    where their normalized JSONL output should be materialized. Runtime maker
+    lookup and file creation are owned by
+    :class:`~megatron.bridge.data.builders.finetuning_dataset.GPTSFTDatasetBuilder`.
+    """
+
+    maker_name: str
+    maker_kwargs: dict[str, Any] | None = None
+    val_maker_kwargs: dict[str, Any] | None = None
+    test_maker_kwargs: dict[str, Any] | None = None
+    output_root: str | Path | None = None
+    val_proportion: float | None = None
+    rewrite: bool = False
+
+    def validate(self) -> None:
+        """Validate declarative Hugging Face source settings."""
+        if not self.maker_name:
+            raise ValueError("hf_dataset.maker_name must be a non-empty string.")
+        if self.output_root is not None and not str(self.output_root).strip():
+            raise ValueError("hf_dataset.output_root must be a non-empty path.")
+        if self.val_proportion is not None and not 0.0 < self.val_proportion < 1.0:
+            raise ValueError("hf_dataset.val_proportion must be between 0 and 1.")
+
+
+@dataclass(kw_only=True)
+class GPTSFTDatasetConfig(DataloaderConfig):
+    """Serializable configuration for GPT supervised-finetuning datasets.
+
+    Exactly one source must be selected: ``dataset_root`` for an existing
+    local JSONL directory, or ``hf_dataset`` for registered Hugging Face maker
+    materialization. This object contains declarative data only; runtime
+    construction is handled by
+    :class:`~megatron.bridge.data.builders.finetuning_dataset.GPTSFTDatasetBuilder`.
+    """
+
+    seq_length: int
+    dataset_root: str | Path | None = None
+    hf_dataset: HFDatasetSourceConfig | None = None
+    seed: int = 1234
+    memmap_workers: int = 1
+    max_train_samples: int | None = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: PackedSequenceSpecs | None = None
+    dataset_kwargs: dict[str, Any] | None = None
+    do_validation: bool = True
+    do_test: bool = True
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "batch"
+
+    def validate(self) -> None:
+        """Validate source selection and dataset settings."""
+        has_local_source = self.dataset_root is not None
+        has_hf_source = self.hf_dataset is not None
+        if has_local_source == has_hf_source:
+            raise ValueError("Exactly one GPT SFT source must be set: dataset_root or hf_dataset.")
+        if has_local_source and not str(self.dataset_root).strip():
+            raise ValueError("dataset_root must be a non-empty path.")
+        if self.hf_dataset is not None:
+            self.hf_dataset.validate()
+        if self.seq_length <= 0:
+            raise ValueError("seq_length must be greater than 0.")
+        if self.enable_offline_packing and self.offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if self.offline_packing_specs is not None and not self.enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+        if self.offline_packing_specs is not None and self.offline_packing_specs.packed_sequence_size <= 0:
+            raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+
+    def finalize(self) -> None:
+        """Finalize dataloader settings and validate this config."""
+        super().finalize()
+        self.validate()
+
+
+@dataclass(kw_only=True)
+class FinetuningDatasetConfig(GPTSFTDatasetConfig):
+    """Deprecated compatibility name for :class:`GPTSFTDatasetConfig`."""
+
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "FinetuningDatasetConfig is deprecated; use GPTSFTDatasetConfig instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+
+
 @dataclass
 class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     """Megatron Core GPTDatasetConfig with deferred post-init.
@@ -461,29 +550,6 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
         self.__dict__.pop("blend_per_split", None)
 
         return super().finalize()
-
-
-@dataclass(kw_only=True)
-class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
-
-    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
-    within each global batch are padded to the same length.
-    """
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
-    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
-
-    dataset_root: Optional[Union[str, Path]] = None
-    seq_length: int
-    seed: int = 1234
-    memmap_workers: int = 1
-    max_train_samples: Optional[int] = None
-    enable_offline_packing: bool = False
-    offline_packing_specs: Optional[PackedSequenceSpecs] = None
-    dataset_kwargs: Optional[dict[str, Any]] = None
-    do_validation: bool = True
-    do_test: bool = True
 
 
 @dataclass(kw_only=True)
@@ -1064,7 +1130,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1209,9 +1275,9 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
-        if self.train.num_epochs is not None and not isinstance(self.dataset, FinetuningDatasetConfig):
+        if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
-                "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+                "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
                 "providers may build a requested number of samples instead of exposing their true dataset size."
             )
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
@@ -1401,7 +1467,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, FinetuningDatasetConfig):
+            if isinstance(self.dataset, GPTSFTDatasetConfig):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1445,14 +1511,10 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
+            # Only validate sequence length for GPTDatasetConfig or GPTSFTDatasetConfig.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, FinetuningDatasetConfig)):
-                data_seq_length = (
-                    self.dataset.seq_length
-                    if isinstance(self.dataset, FinetuningDatasetConfig)
-                    else self.dataset.seq_length
-                )
+            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig)):
+                data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (
                     f"Please ensure sequence length configuration in model config and "

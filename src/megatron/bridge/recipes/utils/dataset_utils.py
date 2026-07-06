@@ -28,8 +28,8 @@ from megatron.bridge.recipes.utils.finetune_utils import (
 )
 from megatron.bridge.training.config import (
     ConfigContainer,
-    FinetuningDatasetConfig,
     GPTDatasetConfig,
+    GPTSFTDatasetConfig,
     MockGPTDatasetConfig,
 )
 
@@ -216,9 +216,14 @@ def apply_dataset_override(
         config.dataset = factory(**kwargs)
 
     elif dataset_type == "llm-finetune-preloaded":
-        config.dataset = FinetuningDatasetConfig(
+        dataset_root = extract_and_remove_override(cli_overrides, "dataset.dataset_root")
+        if not dataset_root:
+            raise ValueError(
+                "llm-finetune-preloaded requires dataset.dataset_root=<path> to select the local JSONL source."
+            )
+        config.dataset = GPTSFTDatasetConfig(
             seq_length=resolved_seq_length,
-            dataset_root=None,
+            dataset_root=dataset_root,
             dataloader_type="batch",
             seed=5678,
         )

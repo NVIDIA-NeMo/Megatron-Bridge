@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_pretrain_config, llama32_1b_sft_config
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -129,7 +129,7 @@ class TestPeftSftExample:
         cfg.logger.tensorboard_dir = sft_tensorboard_dir
 
         # Use a small packed local SFT dataset to exercise THD/context-parallel slicing
-        cfg.dataset = FinetuningDatasetConfig(
+        cfg.dataset = GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=256,
             dataloader_type="batch",

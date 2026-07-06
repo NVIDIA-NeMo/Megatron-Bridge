@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import logging
 import warnings
 from pathlib import Path
 from typing import Any, Optional, Union
 
 import torch
+from datasets import Dataset
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
@@ -26,59 +28,207 @@ from megatron.bridge.data.datasets.packed_parquet import (
     resolve_packed_parquet_paths,
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.datasets.sft import create_sft_dataset
+from megatron.bridge.data.datasets.sft import create_sft_dataset, get_dataset_root
+from megatron.bridge.data.hf_datasets.makers import get_hf_dataset_maker
+from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
 
 
-class FinetuningDatasetBuilder:
-    """Builder class for fine-tuning datasets.
+def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
+    """Resolve the local JSONL root for the configured source."""
+    config.validate()
+    if config.dataset_root is not None:
+        return config.dataset_root
 
-    This class provides methods to build datasets for fine-tuning large language models.
-    It follows a builder pattern similar to BlendedMegatronDatasetBuilder but adapted for
-    fine-tuning scenarios.
+    source = config.hf_dataset
+    assert source is not None
+    if source.output_root is not None:
+        return Path(source.output_root)
+    dataset_name = str((source.maker_kwargs or {}).get("path_or_dataset", source.maker_name))
+    return get_dataset_root(f"{dataset_name}-{source.maker_name}")
+
+
+def normalize_gpt_sft_dataset_kwargs(config: GPTSFTDatasetConfig) -> dict[str, Any]:
+    """Return dataset-construction kwargs normalized for the selected source."""
+    dataset_kwargs = dict(config.dataset_kwargs or {})
+    if config.hf_dataset is not None:
+        return {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            **dataset_kwargs,
+        }
+    return dataset_kwargs
+
+
+def _load_hf_examples(
+    source: HFDatasetSourceConfig,
+    *,
+    split: str,
+    extra_kwargs: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    kwargs = dict(source.maker_kwargs or {})
+    if extra_kwargs:
+        kwargs.update(extra_kwargs)
+    kwargs.setdefault("split", split)
+    examples = get_hf_dataset_maker(source.maker_name)(**kwargs)
+    if not isinstance(examples, list) or not examples:
+        raise ValueError(f"Maker '{source.maker_name}' returned no examples for split='{split}'")
+    return examples
+
+
+def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, Any]]) -> None:
+    output_path = root / f"{output_name}.jsonl"
+    root.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as output_file:
+        for example in examples:
+            output_file.write(json.dumps(example, ensure_ascii=False) + "\n")
+    print_rank_0(f"Prepared Hugging Face text SFT {output_name} data at {output_path}")
+
+
+def _needs_hf_write(source: HFDatasetSourceConfig, root: Path, output_name: str) -> bool:
+    output_path = root / f"{output_name}.jsonl"
+    if output_path.exists() and not source.rewrite:
+        print_rank_0(f"Skipping Hugging Face text SFT {output_name} preparation - already exists: {output_path}")
+        return False
+    return True
+
+
+def _materialize_hf_split(
+    source: HFDatasetSourceConfig,
+    root: Path,
+    *,
+    output_name: str,
+    split: str,
+    extra_kwargs: dict[str, Any] | None,
+) -> None:
+    if _needs_hf_write(source, root, output_name):
+        _write_hf_examples(
+            root,
+            output_name,
+            _load_hf_examples(source, split=split, extra_kwargs=extra_kwargs),
+        )
+
+
+def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
+    """Materialize and normalize a Hugging Face maker source as JSONL splits."""
+    source = config.hf_dataset
+    if source is None:
+        raise ValueError("materialize_hf_dataset requires an hf_dataset source.")
+
+    derive_validation = config.do_validation and source.val_proportion is not None and source.val_maker_kwargs is None
+    if derive_validation:
+        write_train = _needs_hf_write(source, root, "training")
+        write_validation = _needs_hf_write(source, root, "validation")
+        if write_train or write_validation:
+            examples = _load_hf_examples(source, split="train", extra_kwargs=None)
+            split_dataset = Dataset.from_list(examples).train_test_split(
+                test_size=source.val_proportion,
+                seed=config.seed,
+            )
+            if write_train:
+                _write_hf_examples(root, "training", list(split_dataset["train"]))
+            if write_validation:
+                _write_hf_examples(root, "validation", list(split_dataset["test"]))
+    else:
+        _materialize_hf_split(source, root, output_name="training", split="train", extra_kwargs=None)
+
+    if config.do_validation and not derive_validation:
+        _materialize_hf_split(
+            source,
+            root,
+            output_name="validation",
+            split="validation",
+            extra_kwargs=source.val_maker_kwargs,
+        )
+    if config.do_test:
+        _materialize_hf_split(
+            source,
+            root,
+            output_name="test",
+            split="test",
+            extra_kwargs=source.test_maker_kwargs,
+        )
+
+
+def build_gpt_sft_dataset(
+    path: str | Path,
+    *,
+    tokenizer: MegatronTokenizer,
+    seq_length: int,
+    memmap_workers: int,
+    seed: int,
+    packed_sequence_size: int,
+    pack_metadata_path: str | Path | None = None,
+    pad_cu_seqlens: bool = False,
+    pad_seq_to_mult: int | None = None,
+    is_test: bool = False,
+    dataset_kwargs: dict[str, Any] | None = None,
+) -> Any | None:
+    """Build one GPT SFT split from a local JSONL or packed-data path."""
+    path_str = str(path)
+    if is_packed_parquet_spec(path_str):
+        try:
+            path_exists = bool(resolve_packed_parquet_paths(path_str))
+        except ValueError:
+            path_exists = False
+    elif MultiStorageClientFeature.is_enabled():
+        msc = MultiStorageClientFeature.import_package()
+        path_exists = msc.Path(path_str).exists()
+    else:
+        path_exists = Path(path_str).exists()
+
+    if not path_exists:
+        print_rank_0(f"Warning: Dataset path {path} does not exist")
+        return None
+
+    is_not_packing = packed_sequence_size <= 0
+    effective_metadata_path = None
+    if not is_not_packing:
+        if pad_cu_seqlens:
+            effective_metadata_path = pack_metadata_path
+        elif not is_packed_parquet_spec(path_str):
+            effective_metadata_path = pack_metadata_path
+
+    return create_sft_dataset(
+        path,
+        tokenizer=tokenizer,
+        seq_length=seq_length if is_not_packing else packed_sequence_size,
+        memmap_workers=memmap_workers,
+        seed=seed,
+        is_test=is_test,
+        pack_metadata_file_path=effective_metadata_path,
+        pad_cu_seqlens=False if is_not_packing else pad_cu_seqlens,
+        pad_seq_to_mult=1 if is_not_packing else pad_seq_to_mult,
+        **(dataset_kwargs or {}),
+    )
+
+
+class GPTSFTDatasetBuilder:
+    """Runtime builder for :class:`GPTSFTDatasetConfig`.
+
+    The config remains serializable and declarative. This builder resolves the
+    selected source, performs any Hugging Face materialization or offline
+    packing, and constructs the runtime GPT SFT datasets.
 
     Args:
-        dataset_root (Union[str, Path]): The root directory containing training, validation, and test data.
-        tokenizer: The tokenizer to use for preprocessing text.
-        is_built_on_rank (Callable): Function that returns True if the dataset should be built on current rank.
-        seq_length (int, optional): The maximum sequence length. Defaults to 2048.
-        seed (int, optional): Random seed for data shuffling. Defaults to 1234.
-        memmap_workers (int, optional): Number of worker processes for memmap datasets. Defaults to 1.
-        max_train_samples (int, optional): Maximum number of training samples. Defaults to None.
-        enable_offline_packing (bool, optional): Whether to prepare and load offline packed sequences.
-            Defaults to False.
-        offline_packing_specs (Optional[PackedSequenceSpecs], optional): Specifications for offline packed
-            sequences. Required when enable_offline_packing is True. Defaults to None.
-        dataset_kwargs (Optional[dict[str, Any]], optional): Additional dataset creation arguments. Defaults to None.
-        do_validation (bool, optional): Whether to build the validation dataset. Defaults to True.
-        do_test (bool, optional): Whether to build the test dataset. Defaults to True.
+        config: Serializable GPT SFT dataset configuration.
+        tokenizer: Tokenizer used to preprocess text.
     """
 
     def __init__(
         self,
-        dataset_root: Union[str, Path],
-        tokenizer,
-        seq_length: int = 2048,
-        seed: int = 1234,
-        memmap_workers: int = 1,
-        max_train_samples: Optional[int] = None,
-        enable_offline_packing: bool = False,
-        offline_packing_specs: Optional[PackedSequenceSpecs] = None,
-        dataset_kwargs: Optional[dict[str, Any]] = None,
-        do_validation: bool = True,
-        do_test: bool = True,
-    ):
-        if enable_offline_packing and offline_packing_specs is None:
-            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
-        if offline_packing_specs is not None and not enable_offline_packing:
-            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
-        if enable_offline_packing:
-            assert offline_packing_specs is not None
-            if offline_packing_specs.packed_sequence_size <= 0:
-                raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+        config: GPTSFTDatasetConfig,
+        tokenizer: MegatronTokenizer,
+    ) -> None:
+        if tokenizer is None:
+            raise ValueError("GPTSFTDatasetBuilder requires an initialized tokenizer.")
+        config.validate()
+        dataset_root = resolve_gpt_sft_dataset_root(config)
+        self._source_root = Path(dataset_root) if config.hf_dataset is not None else None
 
         if MultiStorageClientFeature.is_enabled():
             msc = MultiStorageClientFeature.import_package()
@@ -86,28 +236,44 @@ class FinetuningDatasetBuilder:
         else:
             self.dataset_root = Path(dataset_root)
         self.tokenizer = tokenizer
-        self.seq_length = seq_length
-        self.seed = seed
-        self.memmap_workers = memmap_workers
-        self.max_train_samples = max_train_samples
-        self.enable_offline_packing = enable_offline_packing
-        self.offline_packing_specs = offline_packing_specs
-        self.packed_sequence_size = -1 if not offline_packing_specs else offline_packing_specs.packed_sequence_size
-        self.dataset_kwargs = dataset_kwargs or {}
-        self._pad_cu_seqlens = False if not offline_packing_specs else offline_packing_specs.pad_cu_seqlens
-        self._pad_seq_to_mult = None if not offline_packing_specs else offline_packing_specs.pad_seq_to_mult
-        self._num_tokenizer_workers = -1 if not offline_packing_specs else offline_packing_specs.num_tokenizer_workers
+        self.config = config
+        self.seq_length = config.seq_length
+        self.seed = config.seed
+        self.memmap_workers = config.memmap_workers
+        self.max_train_samples = config.max_train_samples
+        self.enable_offline_packing = config.enable_offline_packing
+        self.offline_packing_specs = config.offline_packing_specs
+        self.packed_sequence_size = (
+            -1 if config.offline_packing_specs is None else config.offline_packing_specs.packed_sequence_size
+        )
+        self.dataset_kwargs = normalize_gpt_sft_dataset_kwargs(config)
+        self._pad_cu_seqlens = (
+            False if config.offline_packing_specs is None else config.offline_packing_specs.pad_cu_seqlens
+        )
+        self._pad_seq_to_mult = (
+            None if config.offline_packing_specs is None else config.offline_packing_specs.pad_seq_to_mult
+        )
+        self._num_tokenizer_workers = (
+            -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
+        )
 
-        self.do_validation = do_validation
-        self.do_test = do_test
+        self.do_validation = config.do_validation
+        self.do_test = config.do_test
 
-        print_rank_0(f"Building FinetuningDatasetBuilder with root={self.dataset_root}")
+        print_rank_0(f"Building GPTSFTDatasetBuilder with root={self.dataset_root}")
 
         if self.packed_sequence_size > 0:
             print_rank_0(f"Using packed sequences with size {self.packed_sequence_size}")
 
     def prepare_data(self) -> None:
-        """Prepare data if needed."""
+        """Materialize the selected source and prepare packed data if needed.
+
+        Call this entry point on one rank before dataset construction. It is
+        also used by the standalone pre-packing script.
+        """
+        if self.config.hf_dataset is not None:
+            assert self._source_root is not None
+            materialize_hf_dataset(self.config, self._source_root)
         self.prepare_packed_data()
 
     def prepare_packed_data(self) -> None:
@@ -236,102 +402,51 @@ class FinetuningDatasetBuilder:
         Returns:
             list[Optional[Any]]: The train, validation, and test datasets.
         """
-        train_ds = self._create_dataset(
+        train_ds = build_gpt_sft_dataset(
             self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
+            tokenizer=self.tokenizer,
+            seq_length=self.seq_length,
+            memmap_workers=self.memmap_workers,
+            seed=self.seed,
+            packed_sequence_size=self.packed_sequence_size,
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
-            max_num_samples=self.max_train_samples,
-            **self.dataset_kwargs,
+            pad_cu_seqlens=self._pad_cu_seqlens,
+            pad_seq_to_mult=self._pad_seq_to_mult,
+            dataset_kwargs={"max_num_samples": self.max_train_samples, **self.dataset_kwargs},
         )
 
         if self.do_validation:
-            valid_ds = self._create_dataset(
+            valid_ds = build_gpt_sft_dataset(
                 self.validation_path if self.packed_sequence_size <= 0 else self.validation_path_packed,
+                tokenizer=self.tokenizer,
+                seq_length=self.seq_length,
+                memmap_workers=self.memmap_workers,
+                seed=self.seed,
+                packed_sequence_size=self.packed_sequence_size,
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+                pad_cu_seqlens=self._pad_cu_seqlens,
+                pad_seq_to_mult=self._pad_seq_to_mult,
                 is_test=True,
-                **self.dataset_kwargs,
+                dataset_kwargs=self.dataset_kwargs,
             )
         else:
             valid_ds = None
 
         if self.do_test:
-            test_ds = self._create_dataset(
+            test_ds = build_gpt_sft_dataset(
                 self.test_path,
+                tokenizer=self.tokenizer,
+                seq_length=self.seq_length,
+                memmap_workers=self.memmap_workers,
+                seed=self.seed,
+                packed_sequence_size=-1,
                 is_test=True,
-                **self.dataset_kwargs,
+                dataset_kwargs=self.dataset_kwargs,
             )
         else:
             test_ds = None
 
         return [train_ds, valid_ds, test_ds]
-
-    def _create_dataset(
-        self,
-        path: Union[str, Path],
-        pack_metadata_path: Optional[Union[str, Path]] = None,
-        is_test: bool = False,
-        **kwargs: Any,
-    ) -> Optional[Any]:
-        """Create a single dataset instance (train, validation, or test).
-
-        Args:
-            path: Path to the dataset file or packed parquet spec
-            pack_metadata_path: Path to the packed sequence metadata
-            is_test: Whether this is a test dataset
-            **kwargs: Additional arguments to pass to the dataset constructor
-
-        Returns:
-            The created dataset
-        """
-        path_str = str(path)
-
-        # Check if path exists - handle packed parquet specs differently
-        if is_packed_parquet_spec(path_str):
-            # For packed parquet specs, check via resolution
-            try:
-                resolved = resolve_packed_parquet_paths(path_str)
-                path_exists = len(resolved) > 0
-            except ValueError:
-                path_exists = False
-        else:
-            # Standard file/path existence check
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                path_exists = msc.Path(path_str).exists()
-            else:
-                path_exists = Path(path_str).exists()
-
-        if not path_exists:
-            print_rank_0(f"Warning: Dataset path {path} does not exist")
-            return None
-
-        is_not_packing = self.packed_sequence_size <= 0
-
-        # For packed parquet from external sources, only pass metadata if pad_cu_seqlens is True
-        # This avoids "missing metadata" errors when using externally prepared packed data
-        effective_metadata_path = None
-        if not is_not_packing:
-            if self._pad_cu_seqlens:
-                # pad_cu_seqlens requires metadata
-                effective_metadata_path = pack_metadata_path
-            elif is_packed_parquet_spec(path_str):
-                # Externally prepared packed parquet without pad_cu_seqlens doesn't need metadata
-                effective_metadata_path = None
-            else:
-                # .npy files prepared by MB include metadata
-                effective_metadata_path = pack_metadata_path
-
-        return create_sft_dataset(
-            path,
-            tokenizer=self.tokenizer,
-            seq_length=(self.seq_length if is_not_packing else self.packed_sequence_size),
-            memmap_workers=self.memmap_workers,
-            seed=self.seed,
-            is_test=is_test,
-            pack_metadata_file_path=effective_metadata_path,
-            pad_cu_seqlens=False if is_not_packing else self._pad_cu_seqlens,
-            pad_seq_to_mult=1 if is_not_packing else self._pad_seq_to_mult,
-            **kwargs,
-        )
 
     @property
     def train_path(self) -> Path:
@@ -455,3 +570,42 @@ class FinetuningDatasetBuilder:
             return tokenizer_model_name
         else:
             return f"unknown_tokenizer_{hash(self.tokenizer)}"
+
+
+class FinetuningDatasetBuilder(GPTSFTDatasetBuilder):
+    """Deprecated constructor-compatible adapter for :class:`GPTSFTDatasetBuilder`."""
+
+    def __init__(
+        self,
+        dataset_root: str | Path,
+        tokenizer: MegatronTokenizer,
+        seq_length: int = 2048,
+        seed: int = 1234,
+        memmap_workers: int = 1,
+        max_train_samples: int | None = None,
+        enable_offline_packing: bool = False,
+        offline_packing_specs: PackedSequenceSpecs | None = None,
+        dataset_kwargs: dict[str, Any] | None = None,
+        do_validation: bool = True,
+        do_test: bool = True,
+    ) -> None:
+        warnings.warn(
+            "FinetuningDatasetBuilder is deprecated; construct GPTSFTDatasetBuilder with GPTSFTDatasetConfig instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            config=GPTSFTDatasetConfig(
+                dataset_root=dataset_root,
+                seq_length=seq_length,
+                seed=seed,
+                memmap_workers=memmap_workers,
+                max_train_samples=max_train_samples,
+                enable_offline_packing=enable_offline_packing,
+                offline_packing_specs=offline_packing_specs,
+                dataset_kwargs=dataset_kwargs,
+                do_validation=do_validation,
+                do_test=do_test,
+            ),
+            tokenizer=tokenizer,
+        )

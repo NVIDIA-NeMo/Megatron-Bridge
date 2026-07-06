@@ -43,7 +43,7 @@ Megatron-Bridge supports three modes for specifying training duration:
 **Important constraints:**
 - You must specify **exactly one** of `train_iters`, `train_samples`, or `num_epochs`.
 - When using `train_samples`, training iterations are automatically calculated as `train_samples // global_batch_size`.
-- Epoch-based training is supported only for finite `FinetuningDatasetConfig` datasets with `dataloader_type="batch"` and calculates total iterations as `ceil(num_epochs * ceil(dataset_size / global_batch_size))`; the final incomplete global batch is padded and kept.
+- Epoch-based training is supported only for finite `GPTSFTDatasetConfig` datasets with `dataloader_type="batch"` and calculates total iterations as `ceil(num_epochs * ceil(dataset_size / global_batch_size))`; the final incomplete global batch is padded and kept.
 - Batch size rampup (`rampup_batch_size`) is not currently supported with sample-based or epoch-based training.
 - Your scheduler configuration should match your training mode (see [Learning Rate Scheduling](optimizer-scheduler.md#learning-rate-scheduling)).
 

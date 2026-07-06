@@ -31,11 +31,6 @@ _SCRIPT_PATH = _REPO_ROOT / "scripts" / "training" / "pack_sft_data.py"
 
 
 @dataclass
-class _DataloaderConfig:
-    micro_batch_size: int = 1
-
-
-@dataclass
 class _PackedSequenceSpecs:
     packed_sequence_size: int = 2048
     pad_seq_to_mult: int = 8
@@ -57,18 +52,23 @@ class _RecipeConfig:
     tokenizer: object = "tokenizer-config"
 
 
-class _FinetuningDatasetBuilder:
+class _GPTSFTDatasetBuilder:
     instances = []
     pack_metadata = Path("default-pack-metadata.json")
 
     def __init__(self, *, tokenizer: object, **kwargs: object) -> None:
         self.tokenizer = tokenizer
         self.kwargs = kwargs
-        self.prepare_packed_data_called = False
+        self.dataset_kwargs = {
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            **(kwargs["config"].dataset_kwargs or {}),
+        }
+        self.prepare_data_called = False
         self.instances.append(self)
 
-    def prepare_packed_data(self) -> None:
-        self.prepare_packed_data_called = True
+    def prepare_data(self) -> None:
+        self.prepare_data_called = True
 
 
 def _load_module():
@@ -84,7 +84,7 @@ def _load_module():
 
 
 def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
-    _FinetuningDatasetBuilder.instances.clear()
+    _GPTSFTDatasetBuilder.instances.clear()
     megatron = sys.modules.get("megatron", types.ModuleType("megatron"))
     bridge = types.ModuleType("megatron.bridge")
     data = types.ModuleType("megatron.bridge.data")
@@ -96,14 +96,14 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     recipes.unit_recipe = recipe_fn
 
     finetuning_dataset = types.ModuleType("megatron.bridge.data.builders.finetuning_dataset")
-    finetuning_dataset.FinetuningDatasetBuilder = _FinetuningDatasetBuilder
+    finetuning_dataset.GPTSFTDatasetBuilder = _GPTSFTDatasetBuilder
 
     packed_sequence = types.ModuleType("megatron.bridge.data.datasets.packed_sequence")
     prepare_packed_sequence_data = Mock()
     packed_sequence.prepare_packed_sequence_data = prepare_packed_sequence_data
 
     training_config = types.ModuleType("megatron.bridge.training.config")
-    training_config.DataloaderConfig = _DataloaderConfig
+    training_config.GPTSFTDatasetConfig = _DatasetConfig
 
     tokenizer_module = types.ModuleType("megatron.bridge.training.tokenizers.tokenizer")
     tokenizer_module.build_tokenizer = Mock(return_value="tokenizer")
@@ -212,6 +212,10 @@ def test_pack_sft_data_forwards_supported_overrides_and_explicit_paths(
     assert kwargs["packed_sequence_size"] == 2048
     assert kwargs["max_seq_length"] == 4096
     assert kwargs["num_tokenizer_workers"] == expected_workers
+    assert kwargs["dataset_kwargs"] == {
+        "chat": "template",
+        "use_hf_tokenizer_chat_template": True,
+    }
 
 
 def test_pack_sft_data_forwards_worker_count_to_default_builder(monkeypatch):
@@ -229,7 +233,7 @@ def test_pack_sft_data_forwards_worker_count_to_default_builder(monkeypatch):
 
     module.main()
 
-    assert len(_FinetuningDatasetBuilder.instances) == 1
-    builder = _FinetuningDatasetBuilder.instances[0]
-    assert builder.kwargs["offline_packing_specs"].num_tokenizer_workers == 8
-    assert builder.prepare_packed_data_called
+    assert len(_GPTSFTDatasetBuilder.instances) == 1
+    builder = _GPTSFTDatasetBuilder.instances[0]
+    assert builder.kwargs["config"].offline_packing_specs.num_tokenizer_workers == 8
+    assert builder.prepare_data_called

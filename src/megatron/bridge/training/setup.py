@@ -28,9 +28,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
-from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -235,7 +235,8 @@ def setup(
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
 
-    cfg.dataset.tokenizer = tokenizer
+    if hasattr(cfg.dataset, "tokenizer"):
+        cfg.dataset.tokenizer = tokenizer
 
     # Compute token_dtype_code for sequences_per_dataset support.
     # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at

@@ -21,7 +21,7 @@ from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig, GPTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, GPTSFTDatasetConfig
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -174,9 +174,9 @@ def build_train_valid_test_datasets_for_num_epochs(
     determine dataset sizes from the data source or ``max_train_samples`` and ignore
     the requested target sample counts, so zero placeholders are sufficient here.
     """
-    if not isinstance(cfg.dataset, FinetuningDatasetConfig):
+    if not isinstance(cfg.dataset, GPTSFTDatasetConfig):
         raise ValueError(
-            "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+            "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
             "providers may build a requested number of samples instead of exposing their true dataset size."
         )
     if cfg.dataset.dataloader_type != "batch":

@@ -17,22 +17,26 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 
 
 @pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
 def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, mkdir_error):
     """Network filesystems can leak mkdir races even with exist_ok=True."""
-    builder = FinetuningDatasetBuilder(
-        dataset_root=tmp_path,
-        tokenizer=MagicMock(),
-        enable_offline_packing=True,
-        offline_packing_specs=PackedSequenceSpecs(
-            packed_sequence_size=128,
-            tokenizer_model_name="mock-tokenizer",
-            pad_seq_to_mult=8,
+    builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=2048,
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
+                packed_sequence_size=128,
+                tokenizer_model_name="mock-tokenizer",
+                pad_seq_to_mult=8,
+            ),
         ),
+        tokenizer=MagicMock(),
     )
     expected_path = tmp_path / "packed" / "mock-tokenizer_pad_seq_to_mult8"
 

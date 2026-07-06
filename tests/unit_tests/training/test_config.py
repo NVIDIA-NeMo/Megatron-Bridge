@@ -26,11 +26,12 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
+    DatasetProvider,
     DistributedDataParallelConfig,
     DistributedInitConfig,
-    FinetuningDatasetConfig,
     GPTDatasetConfig,
     GPTFIMDatasetConfig,
+    GPTSFTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
@@ -152,9 +153,9 @@ def create_test_gpt_dataset_config(sequence_length: int) -> GPTDatasetConfig:
     )
 
 
-def create_test_finetuning_dataset_config(sequence_length: int) -> FinetuningDatasetConfig:
-    """Creates an instance of FinetuningDatasetConfig with defaults for testing."""
-    return FinetuningDatasetConfig(seq_length=sequence_length)
+def create_test_gpt_sft_dataset_config(sequence_length: int) -> GPTSFTDatasetConfig:
+    """Create a GPTSFTDatasetConfig with defaults for testing."""
+    return GPTSFTDatasetConfig(seq_length=sequence_length, dataset_root="/tmp/dataset")
 
 
 def create_test_logger_config(**kwargs: Any) -> LoggerConfig:
@@ -217,7 +218,7 @@ def create_test_config_container(
     train_config: Optional[TrainingConfig] = None,
     optimizer_config: Optional[OptimizerConfig] = None,
     scheduler_config: Optional[SchedulerConfig] = None,
-    dataset_config_override: Optional[Union[GPTDatasetConfig, FinetuningDatasetConfig]] = None,
+    dataset_config_override: GPTDatasetConfig | DatasetProvider | None = None,
     logger_config: Optional[LoggerConfig] = None,
     tokenizer_config: Optional[TokenizerConfig] = None,
     checkpoint_config: Optional[CheckpointConfig] = None,
@@ -249,7 +250,7 @@ def create_test_config_container(
         `get_world_size_safe` function, and the config module reference.
     """
 
-    final_dataset_config: Union[GPTDatasetConfig, FinetuningDatasetConfig]
+    final_dataset_config: GPTDatasetConfig | DatasetProvider
     if dataset_config_override:
         final_dataset_config = dataset_config_override
     elif isinstance(model_config, (GPTModelProvider, T5ModelProvider)):  # T5 also uses GPTDataset for these tests
@@ -306,7 +307,7 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
     )
 
     dataset_cfg = (
-        create_test_finetuning_dataset_config(sequence_length=512)
+        create_test_gpt_sft_dataset_config(sequence_length=512)
         if dataset_type == "finetuning"
         else create_test_gpt_dataset_config(sequence_length=512)
     )
@@ -848,7 +849,7 @@ class TestConfigContainerValidation:
 
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = packed_specs
 
@@ -875,7 +876,7 @@ class TestConfigContainerValidation:
 
         # Create packed sequence specs with packed_sequence_size > 0
         packed_specs = PackedSequenceSpecs(packed_sequence_size=512)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = packed_specs
 
@@ -935,7 +936,7 @@ class TestConfigContainerValidation:
         # Create config with micro_batch_size > 1 but no packed sequences
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         # offline_packing_specs defaults to None
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -951,7 +952,7 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_packed_sequence_validation_skipped_for_gpt_dataset(self, monkeypatch):
-        """Test validation skipped when using GPTDatasetConfig instead of FinetuningDatasetConfig."""
+        """Test validation skipped when using GPTDatasetConfig instead of GPTSFTDatasetConfig."""
         # Create config with micro_batch_size > 1 and GPTDatasetConfig
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
@@ -974,7 +975,7 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1001,7 +1002,7 @@ class TestConfigContainerValidation:
         """Test validation passes when micro_batch_size > 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1048,7 +1049,7 @@ class TestConfigContainerValidation:
         """Test validation error when offline packing is enabled without specs."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = None
 
@@ -1071,7 +1072,7 @@ class TestConfigContainerValidation:
 
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1093,7 +1094,7 @@ class TestConfigContainerValidation:
 
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_offline_packing = True
         dataset_cfg.offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=512)
         dataset_cfg.enable_in_batch_packing = True
@@ -1151,7 +1152,7 @@ class TestConfigContainerValidation:
     @pytest.mark.parametrize(
         "dataset_type, cp_size, calc_per_token_loss, avg_in_collective, expect_error, error_match",
         [
-            # FinetuningDatasetConfig with CP > 1 - both checks should trigger
+            # GPTSFTDatasetConfig with CP > 1 - both checks should trigger
             ("finetuning", 2, False, False, True, "calculate_per_token_loss must be True"),
             ("finetuning", 2, True, True, True, "average_in_collective must be False"),
             ("finetuning", 2, True, False, False, None),  # Valid case
@@ -3238,7 +3239,7 @@ class TestEpochBasedTraining:
 
     def test_epoch_based_training_resolves_fractional_epochs(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.5, global_batch_size=32)
-        dataset_cfg = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        dataset_cfg = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=create_test_gpt_config(),
@@ -3299,7 +3300,7 @@ class TestEpochBasedTraining:
         )
 
         try:
-            with pytest.raises(ValueError, match="num_epochs is only supported for finite FinetuningDatasetConfig"):
+            with pytest.raises(ValueError, match="num_epochs is only supported for finite GPTSFTDatasetConfig"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -3307,7 +3308,7 @@ class TestEpochBasedTraining:
     @pytest.mark.parametrize("dataloader_type", ["single", "cyclic"])
     def test_epoch_based_training_rejects_non_batch_dataloader(self, dataloader_type):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
-        dataset_cfg = FinetuningDatasetConfig(
+        dataset_cfg = GPTSFTDatasetConfig(
             dataset_root="/tmp/dataset",
             seq_length=512,
             dataloader_type=dataloader_type,
@@ -3406,9 +3407,9 @@ class TestDatasetSequenceLengthValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_finetuning_dataset_sequence_length_mismatch_fails(self, monkeypatch):
-        """Test that FinetuningDatasetConfig with mismatched sequence length fails validation."""
+        """Test that GPTSFTDatasetConfig with mismatched sequence length fails validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=1024)  # Mismatch!
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=1024)  # Mismatch!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3425,9 +3426,9 @@ class TestDatasetSequenceLengthValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_finetuning_dataset_sequence_length_match_passes(self, monkeypatch):
-        """Test that FinetuningDatasetConfig with matching sequence length passes validation."""
+        """Test that GPTSFTDatasetConfig with matching sequence length passes validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)  # Match!
+        dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)  # Match!
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3441,27 +3442,20 @@ class TestDatasetSequenceLengthValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_custom_dataset_provider_with_seq_length_validates(self, monkeypatch):
-        """Test that custom DatasetProvider with seq_length attribute is validated if it's a FinetuningDatasetConfig."""
-        # This test ensures that if someone subclasses FinetuningDatasetConfig, it still gets validated
+        """Test that GPTSFTDatasetConfig subclasses retain sequence-length validation."""
         from dataclasses import dataclass
-        from typing import Any, Optional, Tuple
-
-        from megatron.bridge.training.config import DatasetBuildContext, FinetuningDatasetConfig
 
         @dataclass
-        class CustomFinetuningDataset(FinetuningDatasetConfig):
-            """Custom finetuning dataset that extends FinetuningDatasetConfig."""
+        class CustomGPTSFTDatasetConfig(GPTSFTDatasetConfig):
+            """Custom finetuning dataset that extends GPTSFTDatasetConfig."""
 
             custom_field: str = "custom"
 
-            def build_datasets(
-                self, context: DatasetBuildContext
-            ) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-                # Mock implementation
-                return None, None, None
-
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        custom_dataset = CustomFinetuningDataset(seq_length=1024)  # Mismatch!
+        custom_dataset = CustomGPTSFTDatasetConfig(
+            seq_length=1024,
+            dataset_root="/tmp/dataset",
+        )
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3470,7 +3464,7 @@ class TestDatasetSequenceLengthValidation:
         )
 
         try:
-            # Should still validate sequence length since it's a FinetuningDatasetConfig
+            # Should still validate sequence length since it's a GPTSFTDatasetConfig.
             with pytest.raises(
                 AssertionError, match="sequence length configuration in model config and dataset config match"
             ):

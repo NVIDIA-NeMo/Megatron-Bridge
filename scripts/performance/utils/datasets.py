@@ -121,7 +121,7 @@ def create_squad_dataset_config(
 ):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF text SFT data."""
     from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-    from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
+    from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
 
     dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
     offline_packing_specs = None
@@ -129,15 +129,18 @@ def create_squad_dataset_config(
         dataset_kwargs["pad_to_max_length"] = True
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return HFTextSFTDatasetProvider(
+    return GPTSFTDatasetConfig(
         seq_length=seq_length,
-        maker_name="squad",
-        maker_kwargs={
-            "path_or_dataset": "rajpurkar/squad",
-            "split": "train",
-        },
-        dataset_root=dataset_root,
-        val_proportion=0.1,
+        hf_dataset=HFDatasetSourceConfig(
+            maker_name="squad",
+            maker_kwargs={
+                "path_or_dataset": "rajpurkar/squad",
+                "split": "train",
+            },
+            output_root=dataset_root,
+            val_proportion=0.1,
+        ),
+        seed=5678,
         do_validation=True,
         do_test=False,
         dataset_kwargs=dataset_kwargs,

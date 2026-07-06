@@ -18,8 +18,9 @@ from pathlib import PosixPath
 import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
-from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -59,11 +60,14 @@ def get_dataset(
         else None
     )
 
-    dataset = FinetuningDatasetBuilder(
-        dataset_root=path,
+    dataset = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=path,
+            seq_length=2048,
+            enable_offline_packing=enable_offline_packing,
+            offline_packing_specs=offline_packing_specs,
+        ),
         tokenizer=tokenizer,
-        enable_offline_packing=enable_offline_packing,
-        offline_packing_specs=offline_packing_specs,
     )
 
     return dataset, path
@@ -216,8 +220,8 @@ class TestDataFineTuningDataset:
         assert datasets[2] is not None
 
 
-class TestFinetuningDatasetBuilderWithChatTemplates:
-    """Test FinetuningDatasetBuilder with chat template and tool schema support."""
+class TestGPTSFTDatasetBuilderWithChatTemplates:
+    """Test GPTSFTDatasetBuilder with chat template and tool schema support."""
 
     def test_dataset_kwargs_passed_to_packing(self, tmp_path, monkeypatch):
         """Test that dataset_kwargs are passed to prepare_packed_sequence_data."""
@@ -238,12 +242,15 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
             tokenizer_model_name="test_tokenizer",
         )
 
-        builder = FinetuningDatasetBuilder(
-            dataset_root=tmp_path,
+        builder = GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=2048,
+                enable_offline_packing=True,
+                offline_packing_specs=offline_packing_specs,
+                dataset_kwargs=dataset_kwargs,
+            ),
             tokenizer=tokenizer,
-            enable_offline_packing=True,
-            offline_packing_specs=offline_packing_specs,
-            dataset_kwargs=dataset_kwargs,
         )
 
         # Mock prepare_packed_sequence_data to verify it receives dataset_kwargs
@@ -266,8 +273,8 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer = build_tokenizer(tokenizer_config)
 
-        builder = FinetuningDatasetBuilder(
-            dataset_root=tmp_path,
+        builder = GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(dataset_root=tmp_path, seq_length=2048),
             tokenizer=tokenizer,
         )
 
@@ -292,12 +299,15 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
             tokenizer_model_name="test_model",
         )
 
-        builder = FinetuningDatasetBuilder(
-            dataset_root=tmp_path,
+        builder = GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=2048,
+                enable_offline_packing=True,
+                offline_packing_specs=offline_packing_specs,
+                dataset_kwargs=dataset_kwargs,
+            ),
             tokenizer=mock_tokenizer,
-            enable_offline_packing=True,
-            offline_packing_specs=offline_packing_specs,
-            dataset_kwargs=dataset_kwargs,
         )
 
         # Verify dataset_kwargs are stored
@@ -330,12 +340,15 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
             tokenizer_model_name="test_model",
         )
 
-        builder = FinetuningDatasetBuilder(
-            dataset_root=tmp_path,
+        builder = GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=2048,
+                enable_offline_packing=True,
+                offline_packing_specs=offline_packing_specs,
+                dataset_kwargs=dataset_kwargs,
+            ),
             tokenizer=mock_tokenizer,
-            enable_offline_packing=True,
-            offline_packing_specs=offline_packing_specs,
-            dataset_kwargs=dataset_kwargs,
         )
 
         # Verify tool_schemas are stored in dataset_kwargs

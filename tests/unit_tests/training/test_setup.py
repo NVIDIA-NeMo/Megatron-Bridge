@@ -21,7 +21,9 @@ import pytest
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.setup import (
+    _bind_dataset_provider_context,
     _build_distributed_model,
     _register_pre_wrap_hook,
     _should_load_checkpoint,
@@ -49,6 +51,25 @@ def _make_checkpoint_source_config(*, load, pretrained_checkpoint=None, required
         peft=None,
         _checkpoint_load_required=required,
     )
+
+
+def test_gpt_sft_config_receives_tokenizer_through_builder_binding_without_mutation():
+    config = GPTSFTDatasetConfig(seq_length=128, dataset_root="/tmp/data")
+    tokenizer = object()
+    received = []
+
+    def provider(samples, dataset_config, tokenizer=None):
+        received.append((samples, dataset_config, tokenizer))
+
+    bound_provider = _bind_dataset_provider_context(
+        provider,
+        tokenizer=tokenizer,
+        pg_collection=object(),
+    )
+    bound_provider([1, 0, 0], config)
+
+    assert received == [([1, 0, 0], config, tokenizer)]
+    assert not hasattr(config, "tokenizer")
 
 
 class TestShouldLoadCheckpoint:

@@ -30,7 +30,6 @@ Set HF_HOME / NEMO_HOME if your dataset and model caches are not under ~/.cache.
 import argparse
 import inspect
 import sys
-from dataclasses import fields
 from pathlib import Path
 
 
@@ -66,9 +65,9 @@ def main() -> None:
     args = parser.parse_args()
 
     import megatron.bridge.recipes as all_recipes
-    from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
+    from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
     from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
-    from megatron.bridge.training.config import DataloaderConfig
+    from megatron.bridge.training.config import GPTSFTDatasetConfig
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
     recipe_fn = getattr(all_recipes, args.recipe, None)
@@ -94,6 +93,8 @@ def main() -> None:
 
     if cfg.dataset is None:
         sys.exit("Error: recipe has no dataset configuration.")
+    if not isinstance(cfg.dataset, GPTSFTDatasetConfig):
+        sys.exit("Error: recipe does not use GPTSFTDatasetConfig.")
     if not getattr(cfg.dataset, "enable_offline_packing", False):
         sys.exit(f"Error: recipe '{args.recipe}' does not enable offline packed sequences.")
     offline_packing_specs = getattr(cfg.dataset, "offline_packing_specs", None)
@@ -112,16 +113,7 @@ def main() -> None:
 
     print("Packing dataset (skipped if already cached)...")
     dataset_config = cfg.dataset
-    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
-
-    builder = FinetuningDatasetBuilder(
-        tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
-    )
+    builder = GPTSFTDatasetBuilder(config=dataset_config, tokenizer=tokenizer)
 
     custom_pack_paths = [
         args.train_input_path,
@@ -145,7 +137,7 @@ def main() -> None:
             tokenizer=tokenizer,
             max_seq_length=cfg.dataset.seq_length,
             seed=cfg.dataset.seed,
-            dataset_kwargs=cfg.dataset.dataset_kwargs,
+            dataset_kwargs=builder.dataset_kwargs,
             pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
             num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
         )
@@ -159,7 +151,7 @@ def main() -> None:
                 tokenizer=tokenizer,
                 max_seq_length=cfg.dataset.seq_length,
                 seed=cfg.dataset.seed,
-                dataset_kwargs=cfg.dataset.dataset_kwargs,
+                dataset_kwargs=builder.dataset_kwargs,
                 pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
                 num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
             )
@@ -169,7 +161,7 @@ def main() -> None:
         print("Done.")
         return
 
-    builder.prepare_packed_data()
+    builder.prepare_data()
 
     print("Done.")
 

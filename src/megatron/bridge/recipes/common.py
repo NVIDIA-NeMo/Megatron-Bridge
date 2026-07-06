@@ -140,7 +140,7 @@ def _sft_common() -> ConfigContainer:
     before use.
 
     Key differences from pre-training:
-    - Uses HFTextSFTDatasetProvider with SQuAD as default dataset
+    - Uses GPTSFTDatasetConfig with SQuAD as default dataset
     - Lower learning rate (5e-6) suitable for full fine-tuning
     - Fewer training iterations (1000)
     - Smaller batch sizes

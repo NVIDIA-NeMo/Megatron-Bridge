@@ -37,9 +37,9 @@ The [01_quickstart_finetune.py](01_quickstart_finetune.py) recipe finetunes Llam
 To plug in your own JSONL dataset, swap the dataset config in that script:
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.training.config import GPTSFTDatasetConfig
 
-config.dataset = FinetuningDatasetConfig(
+config.dataset = GPTSFTDatasetConfig(
     dataset_root="/path/to/dataset_dir",  # contains training/validation/test jsonl files
     seq_length=config.model.seq_length,
 )
@@ -121,7 +121,7 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 
 ```yaml
 # Each section maps to a ConfigContainer field
-dataset:                           # FinetuningDatasetConfig
+dataset:                           # GPTSFTDatasetConfig
   dataset_root: /path/to/finetuning_dataset_dir
   seq_length: 4096
 

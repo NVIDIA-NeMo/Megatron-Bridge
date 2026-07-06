@@ -27,7 +27,7 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    FinetuningDatasetConfig,
+    GPTSFTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -209,7 +209,7 @@ class TestDoRAFinetune:
 
     def _create_sft_dataset_config(self, dataset_root, seq_length, seed=5678):
         """Create a local SFT dataset configuration."""
-        return FinetuningDatasetConfig(
+        return GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,

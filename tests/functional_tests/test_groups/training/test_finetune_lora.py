@@ -28,7 +28,7 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    FinetuningDatasetConfig,
+    GPTSFTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -393,7 +393,7 @@ class TestLoRAFinetune:
             dataset_kwargs = {}
             offline_packing_specs = None
 
-        config = FinetuningDatasetConfig(
+        config = GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,

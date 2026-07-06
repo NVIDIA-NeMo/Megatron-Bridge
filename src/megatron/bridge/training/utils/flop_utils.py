@@ -627,20 +627,26 @@ def num_floating_point_operations(
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
+        dataset_cfg = getattr(cfg, "dataset", None)
+        hf_dataset_cfg = getattr(dataset_cfg, "hf_dataset", None)
+        hf_dataset_name = getattr(hf_dataset_cfg, "maker_name", None)
+        if hf_dataset_cfg is not None:
+            hf_dataset_name = (getattr(hf_dataset_cfg, "maker_kwargs", None) or {}).get(
+                "path_or_dataset", hf_dataset_name
+            )
+        is_squad = getattr(dataset_cfg, "dataset_name", hf_dataset_name) in ("squad", "rajpurkar/squad")
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
-        dataset_cfg = getattr(cfg, "dataset", None)
         packed_specs = (
             getattr(dataset_cfg, "offline_packing_specs", None)
             if getattr(dataset_cfg, "enable_offline_packing", False)
             else None
         )
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
-        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # If not explicitly set, try to find the file via dataset_root (the GPTSFTDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).
         if packed_data_path is None and packed_specs is not None:
-            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(hf_dataset_cfg, "output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
                 matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
