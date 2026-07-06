@@ -1574,9 +1574,16 @@ def cleanup_old_non_persistent_checkpoint(
     sorted_iter_ckpts = sorted(iter_ckpts, key=lambda ckpt_name: int(ckpt_name.name[len(iter_prefix) :]))
     if not sorted_iter_ckpts:
         return
-    rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+    # `leave_ckpt_num == 0` means keep none: slice with `[:-0]` would be `[:0]` (empty),
+    # so nothing would be removed. Guard it explicitly to remove all instead.
+    if leave_ckpt_num > 0:
+        rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+        keep_iter_ckpts = sorted_iter_ckpts[-leave_ckpt_num:]
+    else:
+        rm_iter_ckpts = sorted_iter_ckpts
+        keep_iter_ckpts = []
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
-    print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
+    print_rank_0(f"Non-persistent checkpoints to be kept: {keep_iter_ckpts}")
 
     def remove_iter_ckpts(_iter_ckpts):
         for ckpt in _iter_ckpts:
