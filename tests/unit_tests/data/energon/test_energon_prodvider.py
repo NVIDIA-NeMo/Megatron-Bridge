@@ -251,3 +251,22 @@ class TestParseValBlendEntries:
         )
         with pytest.raises(ValueError, match="No splits.val.blend"):
             _parse_val_blend_entries(meta)
+
+    def test_subflavor_loss_name_overrides_stem(self, tmp_path: Path) -> None:
+        """An entry's ``subflavors.loss_name`` sets the val-loss name, giving a meaningful label
+        to a delta-versioned gold-layer path (stem ``delta0_v123``). Entries without a
+        ``loss_name`` fall back to the path stem."""
+        meta = self._write(
+            tmp_path,
+            """
+            splits:
+              val:
+                blend:
+                  - path: /abs/gold/some_WD_name/delta0_v123
+                    subflavors:
+                      loss_name: some_WD_name
+                  - path: ./qa_blend.yaml
+            """,
+        )
+        entries = _parse_val_blend_entries(meta)
+        assert [name for name, _ in entries] == ["some_WD_name", "qa_blend"]

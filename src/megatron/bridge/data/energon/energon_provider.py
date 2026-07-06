@@ -26,9 +26,11 @@ from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 def _parse_val_blend_entries(metadataset_path: str) -> list[tuple[str, str]]:
     """Extract validation sub-blend ``(name, absolute_path)`` pairs from a MetadatasetV2 YAML.
 
-    Returns one entry per ``splits.val.blend[]`` item. Names are the sub-blend path stems
-    (e.g. ``qa_blend`` from ``./qa_blend.yaml``); relative paths are resolved against the
-    metadataset's directory, absolute paths kept as-is.
+    Returns one entry per ``splits.val.blend[]`` item. The name is the entry's
+    ``subflavors.loss_name`` when set, otherwise the path stem (e.g. ``qa_blend`` from
+    ``./qa_blend.yaml``); ``loss_name`` lets a blend override the label when the stem is not
+    descriptive. Relative paths are resolved against the metadataset's directory; absolute
+    paths are kept as-is.
 
     Raises:
         ValueError: if the metadataset has no ``splits.val.blend`` entries.
@@ -45,7 +47,8 @@ def _parse_val_blend_entries(metadataset_path: str) -> list[tuple[str, str]]:
     for entry in val_blend:
         raw_path = entry["path"]
         resolved = str(base_dir / raw_path) if not Path(raw_path).is_absolute() else raw_path
-        entries.append((Path(raw_path).stem, resolved))
+        name = (entry.get("subflavors") or {}).get("loss_name") or Path(raw_path).stem
+        entries.append((name, resolved))
     return entries
 
 
