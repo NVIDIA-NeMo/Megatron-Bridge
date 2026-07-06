@@ -17,6 +17,10 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import (
+    set_common_recipe_environment_defaults,
+    set_hybridep_environment_defaults,
+)
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -237,6 +241,8 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
+    set_common_recipe_environment_defaults(cfg)
+    set_hybridep_environment_defaults(cfg, ranks_per_nvlink_domain=8, use_mnnvl=False)
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
@@ -379,6 +385,8 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
+    set_common_recipe_environment_defaults(cfg)
+    set_hybridep_environment_defaults(cfg, ranks_per_nvlink_domain=8, use_mnnvl=False)
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
     return cfg
