@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge training workflows, including configuring offline packed SFT for LLMs and in-batch packing for VLMs with correct context-parallelism constraints. <br>
+Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge training workflows, or investigating commits that change packing behavior. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,25 +27,23 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Multi-Token Prediction](docs/training/multi-token-prediction.md) <br>
-- [Hierarchical Context Parallel](docs/training/hierarchical-context-parallel.md) <br>
-- [Megatron-Bridge Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Code] <br>
-**Output Format:** [Markdown with inline Python code blocks] <br>
+**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- claude-code <br>
+- codex <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 positive skill-activation task in the NVSkills-Eval external profile, testing sequence packing configuration correctness including micro-batch rules, PackedSequenceSpecs fields, CP padding formula, CUDA-graphs metadata requirements, and finetuning CP settings. <br>
+1 positive skill-activation task evaluated under NVSkills-Eval external profile in astra-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -70,13 +68,13 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 84% (+9%) |
-| Discoverability | 1 | 100% (+100%) | 84% (+51%) |
-| Effectiveness | 1 | 98% (+98%) | 94% (+2%) |
-| Efficiency | 1 | 94% (+67%) | 90% (+56%) |
+| Correctness | 1 | 100% (+100%) | 97% (+42%) |
+| Discoverability | 1 | 100% (+100%) | 84% (+56%) |
+| Effectiveness | 1 | 98% (+98%) | 84% (+43%) |
+| Efficiency | 1 | 94% (+67%) | 78% (+56%) |
 
 ## Skill Version(s): <br>
-1.0.0+9edee0c (source: pyproject.toml) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>
