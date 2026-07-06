@@ -842,6 +842,22 @@ class TestPerfEnvPlugin:
         assert executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "32"
         assert executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] == "2048"
 
+    def test_setup_preserves_explicit_layernorm_environment(self):
+        """Explicit executor values should take precedence over plugin defaults."""
+        plugin = PerfEnvPlugin(enable_layernorm_sm_margin=True, layernorm_sm_margin=32)
+        task = MagicMock(spec=run.Script)
+        task.args = []
+        executor = MagicMock()
+        executor.env_vars = {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": "48",
+            "NVTE_BWD_LAYERNORM_SM_MARGIN": "48",
+        }
+
+        plugin.setup(task, executor)
+
+        assert executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "48"
+        assert executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "48"
+
     def test_setup_with_older_gpu(self):
         """Test setup with older GPU architecture."""
         plugin = PerfEnvPlugin(gpu_sm100_or_newer=False, tp_size=2, cp_size=1)

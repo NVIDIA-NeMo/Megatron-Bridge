@@ -23,6 +23,16 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
+from megatron.bridge.recipes.utils.environment_utils import set_hybridep_environment_defaults
+
+
+def _set_gb200_hybridep_environment(cfg: ConfigContainer) -> None:
+    """Set NVL72 HybridEP environment defaults from the configured EP size."""
+    set_hybridep_environment_defaults(
+        cfg,
+        ranks_per_nvlink_domain=cfg.model.expert_model_parallel_size,
+        use_mnnvl=True,
+    )
 
 
 def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
@@ -50,6 +60,7 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
+    _set_gb200_hybridep_environment(cfg)
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
@@ -80,6 +91,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
+    _set_gb200_hybridep_environment(cfg)
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
     return cfg
@@ -110,6 +122,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
+    _set_gb200_hybridep_environment(cfg)
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_output_proj=True)
     return cfg
@@ -150,6 +163,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
 
     set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
 
+    _set_gb200_hybridep_environment(cfg)
     _benchmark_common(cfg)
     cfg.model.fp8_output_proj = True
     return cfg

@@ -23,7 +23,7 @@ import re
 import select
 import sys
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 
@@ -92,6 +92,8 @@ class WorkloadBaseConfig:
 
     global_batch_size: int = 1
     micro_batch_size: int = 1
+
+    env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
 
     use_megatron_fsdp: bool | None = None
     nccl_ub: bool | None = None

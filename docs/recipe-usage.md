@@ -297,6 +297,30 @@ multi-GPU job. The multiprocessing module will create new Python processes that 
 script). If you did not add `__name__== "__main__"`,  then your module will spawn new processes which import the
 module and then each spawn new processes. This results in an infinite loop of process spawning.
 
+## Recipe environment variables
+
+Library and performance recipes can declare process environment defaults in the top-level `env_vars` mapping. Megatron Bridge applies them before runtime configuration is finalized and before training setup starts:
+
+```python
+cfg.env_vars.update(
+    {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "USE_MNNVL": 1,
+        # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    }
+)
+```
+
+Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for library recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
+
+Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={TORCHINDUCTOR_WORKER_START:fork,QUANTIZATION_TYPE_DEBUG:1}'`. Do not store credentials or other secrets in recipe configs.
+
+When overriding topology fields such as `model.expert_model_parallel_size`, also override any topology-dependent environment value, such as `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN`.
+
 ## Resources
 
 - [OmegaConf documentation](https://omegaconf.readthedocs.io/en/2.3_branch/)
