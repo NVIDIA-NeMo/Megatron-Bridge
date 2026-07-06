@@ -763,6 +763,7 @@ def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
         num_layers=2,
         hidden_size=256,
         seq_length=4096,
+        vocab_size=262_144,
         final_logit_softcapping=17.0,
         vision_config={"model_type": "gemma4_vision", "hidden_size": 128},
         audio_config={"model_type": "gemma4_audio", "hidden_size": 64},

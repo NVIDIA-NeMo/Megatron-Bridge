@@ -407,6 +407,22 @@ class TestGemma4ModelProviderDefaults:
 
         assert provider.rotary_base == (10_000, 1_000_000)
 
+    def test_provide_does_not_double_softcap_existing_output_layer(self, provider):
+        model = _ModelWithOutputLayer(provider)
+        extend_instance(model.output_layer, Gemma4OutputLayer)
+        model.setup_embeddings_and_output_layer = Mock()
+
+        with (
+            patch.object(GPTModelProvider, "provide", return_value=model),
+            patch("megatron.bridge.models.gemma.gemma4_provider.Gemma4RotaryEmbedding"),
+            patch("megatron.bridge.models.gemma.gemma4_provider._install_tied_kv"),
+        ):
+            built = provider.provide(pre_process=True, post_process=True)
+
+        raw_logits = torch.tensor([[-120.0, 120.0]])
+        logits, _ = built.output_layer(raw_logits)
+        torch.testing.assert_close(logits, 30.0 * torch.tanh(raw_logits / 30.0))
+
 
 class TestInstallTiedKV:
     def test_skips_when_attention_k_eq_v_false(self):

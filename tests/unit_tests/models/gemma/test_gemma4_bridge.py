@@ -280,6 +280,7 @@ def test_megatron_to_hf_config_preserves_attention_and_softcap(provider_cls):
 def test_megatron_to_hf_config_canonicalizes_real_moe_last_layer():
     provider = Gemma4ModelProvider(
         num_layers=62,
+        vocab_size=262_144,
         window_size=1024,
         interleaved_attn_pattern=(5, 1),
     )
