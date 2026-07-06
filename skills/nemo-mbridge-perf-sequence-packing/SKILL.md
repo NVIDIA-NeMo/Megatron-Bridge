@@ -38,10 +38,11 @@ cfg.model.calculate_per_token_loss = True
 cfg.ddp.average_in_collective = False
 cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
-# If sequence_parallel is also enabled, use lcm(2*CP, CP*TP):
+# Offline packing is not finalized by ConfigContainer. If sequence_parallel is
+# also enabled, align offline samples to both constraints explicitly:
 # import math
 # cfg.dataset.offline_packing_specs.pad_seq_to_mult = math.lcm(2 * CP, CP * TP)
-# See src/megatron/bridge/training/config.py for the finalized padding multiple.
+# ConfigContainer computes this CP/SP LCM automatically for in-batch packing only.
 ```
 
 If CUDA graphs are enabled for this packed path:
@@ -112,6 +113,7 @@ if enable_in_batch_packing:
 
 ```1399:1441:src/megatron/bridge/training/config.py
 if self.model.context_parallel_size > 1:
+    assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, ...
     if isinstance(self.dataset, FinetuningDatasetConfig):
         assert self.model.calculate_per_token_loss, ...
         assert not self.ddp.average_in_collective, ...
@@ -177,8 +179,9 @@ Use the checked-in unit coverage:
 
 ```bash
 uv run python -m pytest tests/unit_tests/training/utils/test_packed_seq_utils.py -v && \
-uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
-uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "packing or packed_metadata" -v
+uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequence or enable_in_batch_packing or offline_and_in_batch_packing_are_mutually_exclusive or context_parallel_seq_length_divisibility or context_parallel_finetuning_validations" -v && \
+uv run python -m pytest tests/unit_tests/data/vlm_datasets/test_batching.py -v && \
+uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v
 ```
 
 Success criteria:

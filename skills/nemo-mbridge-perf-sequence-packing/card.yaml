@@ -1,5 +1,5 @@
 title: packed_sequences_long_context
-validated_on: "2026-03-15"
+validated_on: "2026-07-06"
 summary: >
   Megatron-Bridge currently supports two distinct packing paths: offline packed
   SFT for text-only finetuning and in-batch packing for some VLM finetuning
@@ -74,6 +74,7 @@ evidence:
   - src/megatron/bridge/training/utils/packed_seq_utils.py
   - src/megatron/bridge/training/gpt_step.py
   - src/megatron/bridge/data/sequence_batching.py
+  - src/megatron/bridge/training/vlm_step.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/recipes/utils/finetune_utils.py
   - src/megatron/bridge/recipes/common.py
@@ -82,7 +83,8 @@ evidence:
   - src/megatron/bridge/recipes/glm/glm45.py
   - src/megatron/bridge/recipes/qwen_vl/qwen35_vl.py
   - src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/model.py
-  - tests/functional_tests/training/test_seqpacking_cp_example.py
+  - tests/functional_tests/test_groups/training/test_seqpacking_cp_example.py
+  - tests/unit_tests/data/vlm_datasets/test_batching.py
   - tests/unit_tests/training/utils/test_packed_seq_utils.py
   - tests/unit_tests/training/test_config.py
   - tests/unit_tests/training/test_vlm_step.py
