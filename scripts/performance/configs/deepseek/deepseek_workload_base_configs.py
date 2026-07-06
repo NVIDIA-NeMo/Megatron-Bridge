@@ -77,7 +77,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_NVFP4_V1 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
     moe_a2a_overlap=False,
-    fp8_dot_product_attention=True,
+    fp8_dot_product_attention=False,
 )
 
 
@@ -110,7 +110,7 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_NVFP4_V1 = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_V1,
     moe_a2a_overlap=False,
-    fp8_dot_product_attention=True,
+    fp8_dot_product_attention=False,
 )
 
 
