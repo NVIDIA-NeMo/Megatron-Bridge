@@ -1044,7 +1044,15 @@ def training_log(
         num_layers = getattr(config.model, "num_layers", None)
         moe_layer_freq = getattr(config.model, "moe_layer_freq", None)
         pattern = getattr(config.model, "hybrid_layer_pattern", "") or ""
-        if moe_layer_freq is None and pattern:                 # per-layer averaging denominator
+        # For hybrid models the MoE layers are defined by the hybrid pattern
+        # ("E" == MoE layer), not by ``moe_layer_freq`` — which defaults to 1 on
+        # the inherited TransformerConfig/MambaModelProvider path and would
+        # otherwise make ``_count_moe_layers`` average aux/z-loss over *every*
+        # layer instead of only the MoE ones. The pattern is authoritative
+        # whenever present, so always derive the per-layer averaging denominator
+        # from it. ``num_layers`` stays at full depth for the tracker storage
+        # size (the NCCL-deadlock fix).
+        if pattern:
             moe_layer_freq = [1 if c == "E" else 0 for c in pattern]
 
         # Wrap the TB writer so MoE/MTP metrics also reach MLFlow / Comet (issue #2989).
