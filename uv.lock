@@ -15,7 +15,7 @@ overrides = [
     { name = "langchain", specifier = ">=0.3.28" },
     { name = "langchain-core", specifier = ">=0.3.80" },
     { name = "mlflow", specifier = ">=3.9.0" },
-    { name = "nvidia-cudnn-frontend", specifier = "==1.24.0" },
+    { name = "nvidia-cudnn-frontend", specifier = "==1.23.0" },
     { name = "nvidia-cutlass-dsl", extras = ["cu13"], marker = "sys_platform == 'never'" },
     { name = "nvidia-modelopt", specifier = "==0.44.0rc5", index = "https://pypi.nvidia.com/" },
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
@@ -2821,12 +2821,12 @@ wheels = [
 
 [[package]]
 name = "nvidia-cudnn-frontend"
-version = "1.24.0"
+version = "1.23.0"
 source = { registry = "https://pypi.nvidia.com/" }
 wheels = [
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.24.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:3b4398cecbaa555baa73a9b8716233632e3c16259c6ab999d83c51ca3b8fd09c" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.24.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:144bfe09098d681d4c793c867fff53b1fb7c49f845324d5d0c52d824b14b74f5" },
-    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.24.0-cp312-cp312-win_amd64.whl", hash = "sha256:5476d6a51ebaf5ef04e462e0052f1d9bca1af6274f738cb509715b4cf443a8df" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.23.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:32b2ba9ef8e2c97536dd7fed3985f22e93c2c13d30a3d12543bd3c1ef8b25cdd" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.23.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:36c9bbaeae94e40157c6119cdd9eb52dbdfdb0cedb195984910ea32827029198" },
+    { url = "https://pypi.nvidia.com/nvidia-cudnn-frontend/nvidia_cudnn_frontend-1.23.0-cp312-cp312-win_amd64.whl", hash = "sha256:b864b498c1330979b54e6509c1d69a064cc47622661408837dc872cb6bb7ea1c" },
 ]
 
 [[package]]
