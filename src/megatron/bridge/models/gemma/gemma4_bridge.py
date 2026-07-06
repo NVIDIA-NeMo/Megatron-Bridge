@@ -172,6 +172,7 @@ class Gemma4Bridge(MegatronModelBridge):
             vocab_size=hf_config.vocab_size,
             normalization="RMSNorm",
             layernorm_epsilon=hf_config.rms_norm_eps,
+            window_size=(getattr(hf_config, "sliding_window", 512) - 1, 0),
             window_attn_skip_freq=layer_types if layer_types is not None else 6,
             sliding_window_rope_base=sliding_rope.get("rope_theta", 10000.0),
             full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
@@ -180,6 +181,7 @@ class Gemma4Bridge(MegatronModelBridge):
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
             bf16=True,
+            final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", 30.0),
         )
 
     def _build_moe_provider(self, hf_config) -> Gemma4ModelProvider:

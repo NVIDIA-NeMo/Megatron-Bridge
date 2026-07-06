@@ -146,6 +146,8 @@ class Gemma4DenseProvider(GPTModelProvider):
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
 
+    final_logit_softcapping: float = 30.0
+
     num_moe_experts: Optional[int] = None
     moe_router_topk: Optional[int] = None
     moe_ffn_hidden_size: Optional[int] = None
@@ -214,6 +216,9 @@ class Gemma4DenseProvider(GPTModelProvider):
                 setattr(config, attr, value)
 
         model.rotary_pos_emb = Gemma4DenseRotaryEmbedding(config)
+
+        if hasattr(model, "output_layer") and self.final_logit_softcapping:
+            extend_instance(model.output_layer, Gemma4OutputLayer)
 
         if pre_process:
             _attach_ple_modules(model, config, self)
