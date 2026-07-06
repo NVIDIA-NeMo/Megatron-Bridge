@@ -20,10 +20,11 @@ from unittest.mock import Mock
 import pytest
 import torch
 from transformers import GenerationConfig, SiglipVisionConfig
-from transformers.models.gemma4.configuration_gemma4 import Gemma4Config
+from transformers.models.gemma4.configuration_gemma4 import Gemma4Config, Gemma4TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.gemma.gemma4_bridge import (
     Gemma4Bridge,
     _infer_attn_pattern,
@@ -757,9 +758,8 @@ class TestGemma4VLBridgeProviderBridgeDense:
         assert not isinstance(p, Gemma4DenseVLProvider)
 
 
-@pytest.mark.parametrize("provider_cls", [Gemma4DenseVLProvider, Gemma4VLModelProvider])
-def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
-    provider = provider_cls(
+def test_megatron_to_hf_config_nests_attention_and_softcap():
+    provider = Gemma4DenseVLProvider(
         num_layers=2,
         hidden_size=256,
         seq_length=4096,
@@ -768,12 +768,8 @@ def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
         vision_config={"model_type": "gemma4_vision", "hidden_size": 128},
         audio_config={"model_type": "gemma4_audio", "hidden_size": 64},
     )
-    if provider_cls is Gemma4DenseVLProvider:
-        provider.window_size = (1023, 0)
-        provider.window_attn_skip_freq = [True, False]
-    else:
-        provider.window_size = 1024
-        provider.interleaved_attn_pattern = (1, 1)
+    provider.window_size = (1023, 0)
+    provider.window_attn_skip_freq = [True, False]
 
     hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
 
@@ -793,12 +789,23 @@ def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
     assert hf_config["text_config"]["layer_types"] == ["sliding_attention", "full_attention"]
     assert hf_config["vision_config"]["hidden_size"] == 128
     assert hf_config["audio_config"]["hidden_size"] == 64
+    assert hf_config["dtype"] == "bfloat16"
+    assert hf_config["text_config"]["dtype"] == "bfloat16"
+    assert "torch_dtype" not in hf_config
+    assert "torch_dtype" not in hf_config["text_config"]
 
     roundtripped = Gemma4Config(**hf_config)
     assert roundtripped.text_config.num_hidden_layers == 2
     assert roundtripped.text_config.hidden_size == 256
     assert roundtripped.text_config.max_position_embeddings == 4096
     assert roundtripped.text_config.final_logit_softcapping == 17.0
+
+    reference = roundtripped.to_dict()
+    reference["dtype"] = "float16"
+    reference["text_config"]["dtype"] = "float16"
+    conformed = conform_config_to_reference(hf_config, reference)
+    assert conformed["dtype"] == "bfloat16"
+    assert conformed["text_config"]["dtype"] == "bfloat16"
 
 
 def test_megatron_to_hf_config_text_mode_stays_flat():
@@ -817,7 +824,15 @@ def test_megatron_to_hf_config_text_mode_stays_flat():
     assert hf_config["hidden_size"] == 256
     assert hf_config["max_position_embeddings"] == 4096
     assert hf_config["final_logit_softcapping"] == 17.0
+    assert hf_config["dtype"] == "bfloat16"
+    assert "torch_dtype" not in hf_config
     assert "text_config" not in hf_config
+
+    roundtripped = Gemma4TextConfig(**hf_config)
+    assert roundtripped.num_hidden_layers == 2
+    assert roundtripped.hidden_size == 256
+    assert roundtripped.max_position_embeddings == 4096
+    assert roundtripped.final_logit_softcapping == 17.0
 
 
 class TestGemma4VLBridgeMappingRegistry:

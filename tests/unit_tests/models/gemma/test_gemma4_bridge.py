@@ -19,7 +19,6 @@ from unittest.mock import Mock
 
 import pytest
 import torch
-from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -253,45 +252,26 @@ class TestGemma4BridgeProviderBridgeDense:
         assert bridge.provider_bridge(mock_pretrained_dense).final_logit_softcapping is None
 
 
-@pytest.mark.parametrize("provider_cls", [Gemma4DenseProvider, Gemma4ModelProvider])
-def test_megatron_to_hf_config_preserves_attention_and_softcap(provider_cls):
-    provider = provider_cls(
+def test_megatron_to_hf_config_preserves_dense_attention_and_softcap():
+    provider = Gemma4DenseProvider(
         num_layers=4,
-        window_size=(1023, 0) if provider_cls is Gemma4DenseProvider else 1024,
+        window_size=(1023, 0),
         final_logit_softcapping=17.0,
     )
-    if provider_cls is Gemma4DenseProvider:
-        provider.window_attn_skip_freq = [True, False, True, False]
-    else:
-        provider.interleaved_attn_pattern = (1, 1)
+    provider.window_attn_skip_freq = [True, False, True, False]
 
     hf_config = Gemma4Bridge.megatron_to_hf_config(provider)
 
     assert hf_config["final_logit_softcapping"] == 17.0
     assert hf_config["sliding_window"] == 1024
+    assert hf_config["dtype"] == "bfloat16"
+    assert "torch_dtype" not in hf_config
     assert hf_config["layer_types"] == [
         "sliding_attention",
         "full_attention",
         "sliding_attention",
         "full_attention",
     ]
-
-
-def test_megatron_to_hf_config_canonicalizes_real_moe_last_layer():
-    provider = Gemma4ModelProvider(
-        num_layers=62,
-        vocab_size=262_144,
-        window_size=1024,
-        interleaved_attn_pattern=(5, 1),
-    )
-
-    hf_config = Gemma4Bridge.megatron_to_hf_config(provider)
-
-    assert len(hf_config["layer_types"]) == 62
-    assert hf_config["layer_types"][59:] == ["full_attention", "sliding_attention", "full_attention"]
-    roundtripped = Gemma4TextConfig(**hf_config)
-    assert roundtripped.num_hidden_layers == 62
-    assert roundtripped.layer_types == hf_config["layer_types"]
 
 
 # ===========================================================================

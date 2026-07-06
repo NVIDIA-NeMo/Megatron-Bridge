@@ -157,8 +157,15 @@ class Gemma4VLBridge(Gemma4Bridge):
     def megatron_to_hf_config(
         cls, provider: Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider
     ) -> dict:
-        """Convert a Gemma 4 VL or text-mode provider config back to Hugging Face config."""
+        """Convert a dense Gemma 4 VL or text-mode provider config back to Hugging Face config."""
         text_config = super().megatron_to_hf_config(provider)
+
+        # This PR only changes the dense path. Preserve the existing MoE export
+        # behavior rather than synthesizing a per-layer pattern from its lossy
+        # ``interleaved_attn_pattern`` tuple.
+        if isinstance(provider, Gemma4VLModelProvider):
+            return text_config
+
         text_config.pop("architectures", None)
         text_config["model_type"] = "gemma4_text"
 
@@ -190,7 +197,7 @@ class Gemma4VLBridge(Gemma4Bridge):
             "image_token_id": provider.image_token_id,
             "video_token_id": provider.video_token_id,
             "audio_token_id": provider.audio_token_id,
-            "torch_dtype": text_config["torch_dtype"],
+            "dtype": text_config["dtype"],
         }
 
     def _conversion_mode(self) -> str:
