@@ -498,6 +498,13 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
+        "--custom_post_bash_cmds",
+        nargs="*",
+        action="append",
+        help="List of bash commands to execute after the main command",
+        default=None,
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
