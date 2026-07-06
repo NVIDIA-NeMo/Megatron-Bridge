@@ -20,6 +20,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 from transformers import GenerationConfig, SiglipVisionConfig
+from transformers.models.gemma4.configuration_gemma4 import Gemma4Config
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -758,7 +759,14 @@ class TestGemma4VLBridgeProviderBridgeDense:
 
 @pytest.mark.parametrize("provider_cls", [Gemma4DenseVLProvider, Gemma4VLModelProvider])
 def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
-    provider = provider_cls(num_layers=2, final_logit_softcapping=17.0)
+    provider = provider_cls(
+        num_layers=2,
+        hidden_size=256,
+        seq_length=4096,
+        final_logit_softcapping=17.0,
+        vision_config={"model_type": "gemma4_vision", "hidden_size": 128},
+        audio_config={"model_type": "gemma4_audio", "hidden_size": 64},
+    )
     if provider_cls is Gemma4DenseVLProvider:
         provider.window_size = (1023, 0)
         provider.window_attn_skip_freq = [True, False]
@@ -771,9 +779,44 @@ def test_megatron_to_hf_config_nests_attention_and_softcap(provider_cls):
     assert "final_logit_softcapping" not in hf_config
     assert "sliding_window" not in hf_config
     assert "layer_types" not in hf_config
+    assert "num_hidden_layers" not in hf_config
+    assert "hidden_size" not in hf_config
+    assert "max_position_embeddings" not in hf_config
+    assert hf_config["architectures"] == ["Gemma4ForConditionalGeneration"]
+    assert hf_config["model_type"] == "gemma4"
+    assert hf_config["text_config"]["num_hidden_layers"] == 2
+    assert hf_config["text_config"]["hidden_size"] == 256
+    assert hf_config["text_config"]["max_position_embeddings"] == 4096
     assert hf_config["text_config"]["final_logit_softcapping"] == 17.0
     assert hf_config["text_config"]["sliding_window"] == 1024
     assert hf_config["text_config"]["layer_types"] == ["sliding_attention", "full_attention"]
+    assert hf_config["vision_config"]["hidden_size"] == 128
+    assert hf_config["audio_config"]["hidden_size"] == 64
+
+    roundtripped = Gemma4Config(**hf_config)
+    assert roundtripped.text_config.num_hidden_layers == 2
+    assert roundtripped.text_config.hidden_size == 256
+    assert roundtripped.text_config.max_position_embeddings == 4096
+    assert roundtripped.text_config.final_logit_softcapping == 17.0
+
+
+def test_megatron_to_hf_config_text_mode_stays_flat():
+    provider = Gemma4DenseProvider(
+        num_layers=2,
+        hidden_size=256,
+        seq_length=4096,
+        final_logit_softcapping=17.0,
+    )
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["architectures"] == ["Gemma4ForCausalLM"]
+    assert hf_config["model_type"] == "gemma4_text"
+    assert hf_config["num_hidden_layers"] == 2
+    assert hf_config["hidden_size"] == 256
+    assert hf_config["max_position_embeddings"] == 4096
+    assert hf_config["final_logit_softcapping"] == 17.0
+    assert "text_config" not in hf_config
 
 
 class TestGemma4VLBridgeMappingRegistry:

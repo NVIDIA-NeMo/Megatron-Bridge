@@ -98,21 +98,29 @@ def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvid
     """Reconstruct the Hugging Face per-layer attention pattern."""
     pattern = getattr(provider, "window_attn_skip_freq", None)
     if isinstance(pattern, list):
-        return [
+        layer_types = [
             value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
             for value in pattern
         ]
-    if isinstance(pattern, int) and pattern > 0:
-        return [
+    elif isinstance(pattern, int) and pattern > 0:
+        layer_types = [
             "sliding_attention" if layer_number % pattern else "full_attention"
             for layer_number in range(1, provider.num_layers + 1)
         ]
+    else:
+        sliding_count, full_count = getattr(provider, "interleaved_attn_pattern", (provider.num_layers, 0))
+        cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+        layer_types = (
+            [cycle[index % len(cycle)] for index in range(provider.num_layers)]
+            if cycle
+            else ["full_attention"] * provider.num_layers
+        )
 
-    sliding_count, full_count = getattr(provider, "interleaved_attn_pattern", (provider.num_layers, 0))
-    cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
-    if not cycle:
-        return ["full_attention"] * provider.num_layers
-    return [cycle[index % len(cycle)] for index in range(provider.num_layers)]
+    # Gemma4TextConfig requires the final layer to use full attention and
+    # canonicalizes user-provided patterns the same way.
+    if layer_types:
+        layer_types[-1] = "full_attention"
+    return layer_types
 
 
 def _sliding_window_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> int | None:

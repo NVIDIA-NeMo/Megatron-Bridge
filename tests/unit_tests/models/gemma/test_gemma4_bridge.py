@@ -19,6 +19,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers.models.gemma4.configuration_gemma4 import Gemma4TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -274,6 +275,22 @@ def test_megatron_to_hf_config_preserves_attention_and_softcap(provider_cls):
         "sliding_attention",
         "full_attention",
     ]
+
+
+def test_megatron_to_hf_config_canonicalizes_real_moe_last_layer():
+    provider = Gemma4ModelProvider(
+        num_layers=62,
+        window_size=1024,
+        interleaved_attn_pattern=(5, 1),
+    )
+
+    hf_config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+    assert len(hf_config["layer_types"]) == 62
+    assert hf_config["layer_types"][59:] == ["full_attention", "sliding_attention", "full_attention"]
+    roundtripped = Gemma4TextConfig(**hf_config)
+    assert roundtripped.num_hidden_layers == 62
+    assert roundtripped.layer_types == hf_config["layer_types"]
 
 
 # ===========================================================================
