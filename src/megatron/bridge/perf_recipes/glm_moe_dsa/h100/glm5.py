@@ -21,7 +21,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
-    """GLM-5.1 SFT: 416x H100, BF16, 128K packed THD, CP=4, cuDNN DSA."""
+    """GLM-5.1 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()
 
     cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1").to_megatron_provider(load_weights=False)
@@ -35,17 +35,17 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.num_workers = 1
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
     cfg.dataset.offline_packing_specs.packed_sequence_size = 131072
-    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 8
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 64
     cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
 
     cfg.model.seq_length = 131072
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 26
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 4
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 13
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
@@ -93,7 +93,7 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
-    """GLM-5.2 SFT: 416x H100, BF16, 128K packed THD, PP=13, CP=4, cuDNN DSA."""
+    """GLM-5.2 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()
 
     cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-5.2").to_megatron_provider(load_weights=False)
@@ -107,33 +107,21 @@ def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset.num_workers = 1
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
     cfg.dataset.offline_packing_specs.packed_sequence_size = 131072
-    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 8
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 64
     cfg.dataset.offline_packing_specs.tokenizer_model_name = "glm5"
 
     cfg.model.seq_length = 131072
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 13
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 4
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.context_parallel_size = 32
+    cfg.model.expert_model_parallel_size = 32
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
-    # Keep every four-layer DSA index-sharing group within one PP stage.
-    cfg.model.pipeline_model_parallel_layout = [
-        ["embedding"] + ["decoder"] * 6,
-        ["decoder"] * 8,
-        ["decoder"] * 8,
-        ["decoder"] * 8,
-        ["decoder"] * 8,
-        ["decoder"] * 8,
-        ["decoder"] * 8,
-        ["decoder"] * 4,
-        ["decoder"] * 4,
-        ["decoder"] * 4,
-        ["decoder"] * 4,
-        ["decoder"] * 4,
-        ["decoder"] * 4 + ["mtp", "loss"],
-    ]
+    cfg.model.sequence_parallel = False
+    # Empty VPP chunks keep every four-layer DSA index-sharing group intact.
+    cfg.model.pipeline_model_parallel_layout = (
+        "Et|t||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|tttt|tttt||tttt|tttt|ttttmL"
+    )
     cfg.model.account_for_embedding_in_pipeline_split = False
     cfg.model.account_for_loss_in_pipeline_split = False
     cfg.model.num_layers_in_first_pipeline_stage = None

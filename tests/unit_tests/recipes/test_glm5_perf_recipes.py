@@ -23,6 +23,7 @@ import pytest
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     _validate_dsa_index_share_pipeline_split,
 )
+from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.perf_recipes.glm_moe_dsa import (
@@ -39,6 +40,11 @@ pytestmark = pytest.mark.unit
 _RECIPES = [
     glm51_sft_192gpu_gb200_bf16_config,
     glm52_sft_192gpu_gb200_bf16_config,
+    glm51_sft_416gpu_h100_bf16_config,
+    glm52_sft_416gpu_h100_bf16_config,
+]
+
+_H100_RECIPES = [
     glm51_sft_416gpu_h100_bf16_config,
     glm52_sft_416gpu_h100_bf16_config,
 ]
@@ -108,13 +114,22 @@ def test_glm5_perf_recipes_are_flat_and_preserve_bridge_dsa_fields(
         assert getattr(cfg.model, field) == expected
 
 
-def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_stage(
+@pytest.mark.parametrize("recipe_func", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_glm5_h100_parallel_topology(
+    recipe_func: Callable[[], ConfigContainer],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The 416-GPU GLM-5.2 layout never shares DSA indices across PP stages."""
-    cfg = _build_recipe(glm52_sft_416gpu_h100_bf16_config, monkeypatch)
+    """Both 416-GPU H100 recipes use the TP1/PP13/VPP2/CP32 topology."""
+    cfg = _build_recipe(recipe_func, monkeypatch)
 
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
+    assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 13
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.context_parallel_size == 32
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.mtp_num_layers == 1
     assert (
         416
         // (
@@ -122,7 +137,7 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_stage(
             * cfg.model.pipeline_model_parallel_size
             * cfg.model.context_parallel_size
         )
-        == 2
+        == 1
     )
     assert (
         416
@@ -131,18 +146,44 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_stage(
             * cfg.model.expert_model_parallel_size
             * cfg.model.expert_tensor_parallel_size
         )
-        == 2
+        == 1
     )
+
+
+def test_glm51_h100_uses_balanced_default_pipeline_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GLM-5.1 needs no custom layout because it does not share DSA indices."""
+    cfg = _build_recipe(glm51_sft_416gpu_h100_bf16_config, monkeypatch)
+
+    assert cfg.model.dsa_indexer_topk_freq == 1
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert (
+        cfg.model.num_layers
+        // cfg.model.pipeline_model_parallel_size
+        // cfg.model.virtual_pipeline_model_parallel_size
+        == 3
+    )
+
+
+def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The GLM-5.2 layout never shares DSA indices across PP/VPP chunks."""
+    cfg = _build_recipe(glm52_sft_416gpu_h100_bf16_config, monkeypatch)
 
     layout = cfg.model.pipeline_model_parallel_layout
     parsed_layout = PipelineParallelLayerLayout(layout, cfg.model.pipeline_model_parallel_size)
     parsed_layout.validate_layer_layout(cfg.model.num_layers, cfg.model.mtp_num_layers)
+    assert parsed_layout.virtual_pipeline_model_parallel_size == 2
+    assert parsed_layout.layout[-1][-1][-2:] == [LayerType.mtp, LayerType.loss]
 
     decoder_offset = 0
-    for stage in layout:
-        decoder_count = stage.count("decoder")
-        local_layer_ids = range(decoder_offset, decoder_offset + decoder_count)
-        _validate_dsa_index_share_pipeline_split(cfg.model, local_layer_ids)
-        decoder_offset += decoder_count
+    for vpp_rank in range(parsed_layout.virtual_pipeline_model_parallel_size):
+        for pp_rank in range(parsed_layout.pipeline_model_parallel_size):
+            stage = parsed_layout.layout[pp_rank][vpp_rank]
+            decoder_count = stage.count(LayerType.decoder)
+            if decoder_count:
+                local_layer_ids = range(decoder_offset, decoder_offset + decoder_count)
+                _validate_dsa_index_share_pipeline_split(cfg.model, local_layer_ids)
+                decoder_offset += decoder_count
 
     assert decoder_offset == cfg.model.num_layers
