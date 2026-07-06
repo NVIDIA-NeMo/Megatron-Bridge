@@ -47,7 +47,7 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
     cfg.checkpoint.async_save = False
 
     _benchmark_common(cfg)

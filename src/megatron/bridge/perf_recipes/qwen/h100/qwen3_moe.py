@@ -37,7 +37,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -72,7 +72,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_fusion = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

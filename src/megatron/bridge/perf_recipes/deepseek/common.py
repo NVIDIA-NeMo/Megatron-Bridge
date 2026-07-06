@@ -32,7 +32,7 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
 
 def _enable_deepseek_full_iteration_mxfp8(

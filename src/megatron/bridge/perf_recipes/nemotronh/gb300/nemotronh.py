@@ -144,7 +144,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 4
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
@@ -171,7 +171,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 4
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
@@ -198,7 +198,7 @@ def nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 4
 
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_force_load_balancing = False
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
