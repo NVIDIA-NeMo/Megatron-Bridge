@@ -1527,6 +1527,17 @@ def save_checkpoint(
         else:
             fire_callback()
 
+    # Do not remove the tracker-selected checkpoint until its async replacement is durable.
+    if ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+
+        def cleanup_old_checkpoints_finalize_fn() -> None:
+            cleanup_old_non_persistent_checkpoint(
+                save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+            )
+
+        assert async_save_request is not None
+        async_save_request.add_finalize_fn(cleanup_old_checkpoints_finalize_fn)
+
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
@@ -1538,12 +1549,10 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
-    # keep only last k checkpoints
+    # Keep synchronous cleanup after the fault-tolerance checkpointing section.
     # Skip for LOCAL checkpoints — LocalCheckpointManager manages its own cleanup.
-    if ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
-        cleanup_old_non_persistent_checkpoint(
-            save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
-        )
+    if not ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=False)
 
     # Wait so everyone is done (not necessary)
     if torch.distributed.is_initialized():
