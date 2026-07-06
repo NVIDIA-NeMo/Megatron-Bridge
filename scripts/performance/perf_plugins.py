@@ -231,6 +231,7 @@ class PerfEnvPlugin(Plugin):
     pp_size: int | None = None
     ep_size: int | None = None
     script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
+
     moe_a2a_overlap: bool = False
     model_family_name: str
     model_recipe_name: str
@@ -239,6 +240,12 @@ class PerfEnvPlugin(Plugin):
     train_task: str
     config_variant: str | None = None
     deterministic: bool = False
+
+    @staticmethod
+    def _sync_slurm_container_env(executor: "run.Executor") -> None:
+        """Make plugin-added variables override matching container-image values."""
+        if isinstance(executor, SlurmExecutor):
+            executor.container_env = sorted(executor.env_vars)
 
     def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
         """Set env vars required for bit-exact reproducibility."""
@@ -573,6 +580,8 @@ class PerfEnvPlugin(Plugin):
 
         if self.deterministic:
             self._set_determinism_env_vars(executor)
+
+        self._sync_slurm_container_env(executor)
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Apply launcher-only settings without importing Megatron-Bridge on the login node."""
