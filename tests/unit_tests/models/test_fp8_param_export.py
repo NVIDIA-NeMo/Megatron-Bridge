@@ -47,6 +47,9 @@ def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
         def resolve(self, _captures):
             return MegatronQkvMapping()
 
+        def set_process_groups_from_pg_collection(self, _pg_collection):
+            pass
+
         def hf_to_megatron(self, hf_weights, _module):
             return hf_weights
 
