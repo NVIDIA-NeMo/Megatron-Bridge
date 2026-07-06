@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import logging
+from dataclasses import fields as dataclass_fields
+from dataclasses import is_dataclass
 from typing import Any, Mapping
 
-from megatron.training.config.container import ConfigContainerBase as _ConfigContainerBase  # noqa: F401
+from megatron.training.config.container import ConfigContainerBase as _MCoreConfigContainerBase
 from megatron.training.config.utils import (
     _get_init_false_fields,  # noqa: F401
     _resolve_target_class,  # noqa: F401
@@ -23,9 +25,59 @@ from megatron.training.config.utils import (
 from megatron.training.config.utils import (
     sanitize_dataclass_config as _sanitize_dataclass_config,
 )
+from transformers import PreTrainedConfig
 
 
 logger = logging.getLogger(__name__)
+
+
+class _ConfigContainerBase(_MCoreConfigContainerBase):
+    """Bridge config container that lets composite HF configs construct their children.
+
+    Nested ``PreTrainedConfig`` values are emitted as plain mappings because their
+    parent config owns child construction. Other dataclasses retain MCore's recursive
+    ``_target_`` serialization.
+    """
+
+    @classmethod
+    def _convert_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PreTrainedConfig) and not hasattr(value, "to_cfg_dict"):
+            return cls._convert_pretrained_config_to_dict(value, include_target=True)
+        return super()._convert_value_to_dict(value)
+
+    @classmethod
+    def _convert_pretrained_config_to_dict(
+        cls,
+        value: PreTrainedConfig,
+        *,
+        include_target: bool,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if include_target:
+            result["_target_"] = f"{value.__class__.__module__}.{value.__class__.__qualname__}"
+
+        if include_target and is_dataclass(value):
+            config_items = (
+                (field.name, getattr(value, field.name))
+                for field in dataclass_fields(value)
+                if not field.name.startswith("_")
+            )
+        else:
+            config_items = ((key, item) for key, item in value.to_dict().items() if not key.startswith("_"))
+
+        for key, item in config_items:
+            result[key] = cls._convert_pretrained_config_value_to_dict(item)
+        return result
+
+    @classmethod
+    def _convert_pretrained_config_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PreTrainedConfig):
+            return cls._convert_pretrained_config_to_dict(value, include_target=False)
+        if isinstance(value, (list, tuple)):
+            return [cls._convert_pretrained_config_value_to_dict(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._convert_pretrained_config_value_to_dict(item) for key, item in value.items()}
+        return cls._convert_value_to_dict(value)
 
 
 def create_ddp_config(

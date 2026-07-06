@@ -829,7 +829,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -901,6 +901,14 @@ class SafeTensorsStateSource(StateSource):
 
         # Final check on whether all original tensors were written.
         unsaved_keys = all_expected_keys - all_saved_keys
+        if unsaved_keys and strict:
+            print(f"\nError: {len(unsaved_keys)} tensors from the original checkpoint were not written:")
+            for key in sorted(unsaved_keys):
+                print(f"  - {key}")
+            raise RuntimeError(
+                f"{len(unsaved_keys)} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
         if not unsaved_keys:
             extra_keys = all_yielded_keys - all_expected_keys
             if extra_keys:
@@ -1038,7 +1046,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -1073,6 +1081,35 @@ class SafeTensorsStateSource(StateSource):
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
                 save_file(tensors_to_save, output_file_path)
                 actually_saved_keys.update(tensors_to_save.keys())
+
+        # Strict-mode check: ensure all expected tensors were written. Aggregate
+        # per-rank missing counts so all ranks raise consistently (avoids hangs
+        # on the trailing barriers).
+        if is_saver_rank:
+            local_unsaved_keys = assigned_expected_keys - actually_saved_keys
+        else:
+            local_unsaved_keys = set()
+
+        if is_distributed:
+            gathered_counts: list[int | None] = [None] * world_size
+            torch.distributed.all_gather_object(gathered_counts, len(local_unsaved_keys))
+            total_unsaved_count = sum(c for c in gathered_counts if c is not None)
+        else:
+            total_unsaved_count = len(local_unsaved_keys)
+
+        if total_unsaved_count and strict:
+            if local_unsaved_keys:
+                keys_sorted = sorted(local_unsaved_keys)
+                preview = ", ".join(keys_sorted[:20])
+                suffix = f", ... (+{len(keys_sorted) - 20} more)" if len(keys_sorted) > 20 else ""
+                print(
+                    f"Rank {rank}: Error: {len(keys_sorted)} tensors not written: {preview}{suffix}",
+                    flush=True,
+                )
+            raise RuntimeError(
+                f"{total_unsaved_count} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
 
         # Rank 0 builds the index from the files that were actually written.
         # This avoids all_gather_object on very large key lists, which can

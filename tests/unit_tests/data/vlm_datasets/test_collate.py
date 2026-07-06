@@ -17,7 +17,9 @@ import torch
 
 import megatron.bridge.data.vlm_datasets.collate as collate
 import megatron.bridge.models.gemma_vl.data.collate_fn as gemma_vl_collate
+import megatron.bridge.models.glm_vl.data.collate_fn as glm_vl_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
+import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
@@ -52,12 +54,14 @@ class _DummyProcessor:
             mapping = {
                 "<|im_start|>assistant\n": [102],
                 "<|im_end|>": [103],
+                "<|im_end|>\n": [103, 104],
             }
             return {"input_ids": mapping.get(text, [1])}
 
     def __init__(self):
         self.tokenizer = self._Tok()
         self.template_kwargs = []
+        self.processor_kwargs = []
 
     def apply_chat_template(self, conversation, tokenize=False, **kwargs):
         self.template_kwargs.append(kwargs)
@@ -81,6 +85,7 @@ class _DummyProcessor:
         return "dummy"
 
     def __call__(self, text=None, images=None, videos=None, padding=True, return_tensors="pt", **kwargs):
+        self.processor_kwargs.append(kwargs)
         # Minimal shape/value outputs used by qwen2_5_collate_fn
         input_ids = torch.tensor([[1, 2, 3]])
         out = {"input_ids": input_ids}
@@ -133,6 +138,46 @@ def test_gemma3_vl_collate_honors_visual_keys_and_pixel_constraints():
     assert "image_sizes" not in batch
 
 
+def test_gemma3_vl_collate_forwards_shared_tools_to_chat_template():
+    proc = _DummyProcessor()
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": "Sunny."},
+            ],
+            "tools": tools,
+        }
+    ]
+
+    collate.gemma3_vl_collate_fn(examples, proc)
+
+    assert proc.template_kwargs[0]["tools"] == tools
+
+
+def test_gemma3_packed_collate_processes_unpadded_rows_directly():
+    processor = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": text}]}]}
+        for text in ("first", "second")
+    ]
+
+    batch = collate.gemma3_vl_collate_fn(
+        examples,
+        processor,
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    processor_calls = [kwargs for kwargs in processor.template_kwargs if kwargs.get("return_tensors") == "pt"]
+    assert [kwargs["padding"] for kwargs in processor_calls] == [False, False]
+    assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 0]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 6]
+    assert batch["visual_inputs"].pixel_values.shape[0] == 2
+
+
 def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
     # Stub process_vision_info to return (None, None)
@@ -145,6 +190,21 @@ def test_qwen2_5_collate_fn_handles_no_images(monkeypatch):
     batch = collate.qwen2_5_collate_fn(examples, proc)
     assert "input_ids" in batch and "labels" in batch and "loss_mask" in batch
     assert "visual_inputs" in batch
+
+
+def test_qwen2_5_collate_fn_uses_shared_pixel_defaults(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: ([object()], None))
+
+    proc = _DummyProcessor()
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hi"}]}]},
+    ]
+
+    collate.qwen2_5_collate_fn(examples, proc)
+
+    assert proc.processor_kwargs[-1]["min_pixels"] == qwen_vl_collate.QWEN_VL_MIN_PIXELS
+    assert proc.processor_kwargs[-1]["max_pixels"] == qwen_vl_collate.QWEN_VL_MAX_PIXELS
 
 
 def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
@@ -224,13 +284,16 @@ def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
         {"conversation": [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]},
     ]
 
-    batch = collate.qwen2_audio_collate_fn(
-        examples, _AudioProcessor(), sequence_length=128, enable_in_batch_packing=True
-    )
+    with pytest.warns(UserWarning, match="defers in-batch packing to audio_lm_step"):
+        batch = collate.qwen2_audio_collate_fn(
+            examples, _AudioProcessor(), sequence_length=128, enable_in_batch_packing=True
+        )
 
     assert batch["input_ids"].shape == (2, 128)
     assert "cu_seqlens" not in batch
     assert "max_seqlen" not in batch
+    assert "cu_seqlens_q" not in batch
+    assert "max_seqlen_q" not in batch
 
 
 def test_qwen2_5_collate_fn_handles_with_images(monkeypatch):
@@ -291,6 +354,7 @@ def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
+            padding_side = "left"
             added_tokens_decoder = {}
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -358,18 +422,21 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
     monkeypatch.setattr(qwen_vl_collate, "process_vision_info", lambda conv: (None, None))
 
     class _ChatMLProcessor:
-        chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+        chat_template = "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
 
         class _Tok:
             pad_token_id = 0
             pad_token = "<pad>"
-            added_tokens_decoder = {}
-            chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+            added_tokens_decoder = {103: "<|im_end|>"}
+            chat_template = (
+                "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
+            )
 
             def __call__(self, text, add_special_tokens=False):
                 mapping = {
                     "<|im_start|>assistant\n": [102],
                     "<|im_end|>": [103],
+                    "<|im_end|>\n": [103, 104],
                 }
                 return {"input_ids": mapping.get(text, [42])}
 
@@ -380,7 +447,7 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
             return "rendered"
 
         def __call__(self, text=None, padding=True, return_tensors="pt", **kwargs):
-            return {"input_ids": torch.tensor([[100, 7, 101, 102, 3, 4, 103]])}
+            return {"input_ids": torch.tensor([[100, 7, 103, 104, 102, 3, 4, 103, 104]])}
 
     examples = [
         {
@@ -393,8 +460,8 @@ def test_qwen2_5_collate_fn_uses_declared_chatml_boundary_config_without_generat
 
     batch = collate.qwen2_5_collate_fn(examples, _ChatMLProcessor())
 
-    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]]
-    assert batch["labels"].tolist() == [[-100, -100, -100, 3, 4, 103, -100]]
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 3, 4, 103, 104, -100]]
 
 
 def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
@@ -407,6 +474,7 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         class _Tok:
             pad_token_id = 99
             pad_token = "<pad>"
+            padding_side = "left"
             added_tokens_decoder = {}
             chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
 
@@ -415,6 +483,7 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
 
         def __init__(self):
             self.tokenizer = self._Tok()
+            self.padding_values = []
 
         def apply_chat_template(self, conversation, tokenize=False, **kwargs):
             rendered = conversation[0]["content"][-1]["text"]
@@ -427,14 +496,19 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
             return rendered
 
         def __call__(self, text=None, images=None, padding=True, return_tensors="pt", **kwargs):
+            self.padding_values.append(padding)
             texts = text if isinstance(text, list) else [text]
             lengths = [3 if "short" in item else 5 for item in texts]
             max_len = max(lengths)
             input_ids = torch.full((len(texts), max_len), self.tokenizer.pad_token_id)
             attention_mask = torch.zeros((len(texts), max_len), dtype=torch.long)
             for row, length in enumerate(lengths):
-                input_ids[row, :length] = torch.arange(1, length + 1)
-                attention_mask[row, :length] = 1
+                if self.tokenizer.padding_side == "left":
+                    input_ids[row, max_len - length :] = torch.arange(1, length + 1)
+                    attention_mask[row, max_len - length :] = 1
+                else:
+                    input_ids[row, :length] = torch.arange(1, length + 1)
+                    attention_mask[row, :length] = 1
             return {"input_ids": input_ids, "attention_mask": attention_mask}
 
     examples = [
@@ -452,19 +526,151 @@ def test_qwen2_5_collate_fn_packs_vlm_batch(monkeypatch):
         },
     ]
 
+    processor = _PackableProcessor()
     batch = collate.qwen2_5_collate_fn(
         examples,
-        _PackableProcessor(),
+        processor,
         sequence_length=16,
+        pad_to_max_length=True,
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=4,
     )
 
     assert batch["input_ids"].tolist() == [[1, 2, 3, 0, 1, 2, 3, 4, 5, 0, 0, 0]]
+    assert batch["input_ids"].shape[1] != 16
+    assert processor.padding_values == [False, False]
+    assert processor.tokenizer.padding_side == "left"
     assert batch["attention_mask"] is None
-    assert batch["cu_seqlens"].tolist() == [[0, 4, 12]]
-    assert batch["max_seqlen"].tolist() == [[8]]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert batch["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
+    assert batch["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert batch["max_seqlen_q"].item() == 8
+    assert batch["max_seqlen_kv"].item() == 8
+    assert "cu_seqlens" not in batch
+    assert "cu_seqlens_unpadded" not in batch
     assert batch["visual_inputs"] is not None
+
+
+def test_qwen2_5_packed_collate_preserves_flat_media_and_video_timing(monkeypatch):
+    image_a, image_b, video = object(), object(), object()
+
+    def _process_vision_info(conversation):
+        marker = conversation[0]["content"][0]["text"]
+        if marker == "images":
+            return [image_a, image_b], None
+        return None, [video]
+
+    class _MediaProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+            pad_token_id = 0
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+
+        def apply_chat_template(self, conversation, **kwargs):
+            return conversation[0]["content"][0]["text"]
+
+        def __call__(self, *, text, padding, return_tensors, images=None, videos=None, **kwargs):
+            assert padding is False
+            output = {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "attention_mask": torch.ones((1, 3), dtype=torch.long),
+            }
+            if images is not None:
+                assert images == [image_a, image_b]
+                output["pixel_values"] = torch.ones(2, 3, 4, 4)
+                output["image_grid_thw"] = torch.tensor([[1, 2, 2], [1, 2, 2]])
+            if videos is not None:
+                assert videos == [video]
+                output["pixel_values_videos"] = torch.ones(1, 3, 4, 4)
+                output["video_grid_thw"] = torch.tensor([[2, 2, 2]])
+                output["second_per_grid_ts"] = torch.tensor([0.5])
+            return output
+
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _process_vision_info)
+    monkeypatch.setattr(
+        qwen_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(qwen_vl_collate, "assistant_mask_boundary_config_from_markers", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        qwen_vl_collate,
+        "build_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.ones_like(input_ids, dtype=torch.float32),
+    )
+    examples = [
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "images"}]}]},
+        {"conversation": [{"role": "user", "content": [{"type": "text", "text": "video"}]}]},
+    ]
+
+    batch = qwen_vl_collate.qwen2_5_collate_fn(
+        examples,
+        _MediaProcessor(),
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    visual_inputs = batch["visual_inputs"]
+    assert visual_inputs.pixel_values.shape == (2, 3, 4, 4)
+    assert visual_inputs.pixel_values_videos.shape == (1, 3, 4, 4)
+    assert visual_inputs.second_per_grid_ts.tolist() == [0.5]
+
+
+def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch):
+    class _GlmProcessor:
+        class _Tokenizer:
+            padding_side = "left"
+
+        def __init__(self):
+            self.tokenizer = self._Tokenizer()
+            self.padding_values = []
+
+        def apply_chat_template(self, conversations, **kwargs):
+            assert self.tokenizer.padding_side == "right"
+            self.padding_values.append(kwargs["padding"])
+            marker = conversations[0][0]["content"]
+            if marker == "short":
+                return {
+                    "input_ids": torch.tensor([[1, 2]]),
+                    "attention_mask": torch.tensor([[1, 1]]),
+                    "mm_token_type_ids": torch.tensor([[0, 1]]),
+                }
+            return {
+                "input_ids": torch.tensor([[3, 4, 5, 6]]),
+                "attention_mask": torch.tensor([[1, 1, 1, 1]]),
+                "mm_token_type_ids": torch.tensor([[0, 2, 2, 0]]),
+            }
+
+    monkeypatch.setattr(
+        glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(glm_vl_collate, "infer_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        glm_vl_collate,
+        "build_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: (input_ids != 0).to(dtype=torch.float32),
+    )
+    examples = [
+        {"conversation": [{"role": "user", "content": "short"}]},
+        {"conversation": [{"role": "user", "content": "long"}]},
+    ]
+    processor = _GlmProcessor()
+
+    batch = glm_vl_collate.glm4v_collate_fn(
+        examples,
+        processor,
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [[1, 2, 0, 0, 3, 4, 5, 6]]
+    assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0, 0, 0, 2, 2, 0]]
+    assert processor.padding_values == [False, False]
+    assert processor.tokenizer.padding_side == "left"
 
 
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
@@ -652,6 +858,31 @@ def test_kimi_k25_vl_collate_fn_text_only():
     assert batch["labels"].shape == (B, L)
     assert batch["loss_mask"].shape == (B, L)
     assert batch["position_ids"].shape == (B, L)
+
+
+def test_kimi_k25_packed_collate_builds_direct_rows():
+    processor = _KimiDummyProcessor(include_image=False)
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": text}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+        for text in ("first", "second")
+    ]
+
+    batch = collate.kimi_k25_vl_collate_fn(
+        examples,
+        processor,
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == (1, 16)
+    assert batch["cu_seqlens_q"].tolist() == [0, 5, 10]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 8, 16]
 
 
 def test_kimi_k25_vl_collate_fn_with_image():
@@ -1075,10 +1306,13 @@ class _Ministral3InstructionProcessor:
 
     def __init__(self):
         self.tokenizer = self._Tok()
+        self.padding_values = []
 
     def apply_chat_template(self, conversations, tokenize=False, **kwargs):
         if not tokenize:
             return "<s>[INST]question[/INST]answer</s>"
+        if kwargs.get("return_tensors") == "pt":
+            self.padding_values.append(kwargs["padding"])
         return {"input_ids": torch.tensor([[1, 11, 30, 31, 2]], dtype=torch.long)}
 
 
@@ -1097,6 +1331,66 @@ def test_ministral3_collate_uses_declared_instruction_boundaries_without_generat
 
     assert batch["loss_mask"].tolist() == [[0.0, 0.0, 1.0, 1.0, 0.0]]
     assert batch["labels"].tolist() == [[-100, -100, 31, 2, -100]]
+
+
+def test_ministral3_packed_collate_processes_unpadded_rows_directly():
+    processor = _Ministral3InstructionProcessor()
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": text}]},
+                {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+            ]
+        }
+        for text in ("first", "second")
+    ]
+
+    batch = collate.ministral3_collate_fn(
+        examples,
+        processor,
+        sequence_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert processor.padding_values == [False, False]
+    assert batch["input_ids"].shape == (1, 16)
+    assert batch["cu_seqlens_q"].tolist() == [0, 5, 10]
+
+
+def test_ministral3_nonpacked_collate_supervises_each_rows_last_real_token(monkeypatch):
+    class _MixedLengthProcessor(_Ministral3InstructionProcessor):
+        def apply_chat_template(self, conversations, tokenize=False, **kwargs):
+            if not tokenize:
+                return "rendered"
+            return {
+                "input_ids": torch.tensor([[1, 11, 30, 31, 2], [1, 30, 2, 0, 0]]),
+                "attention_mask": torch.tensor([[1, 1, 1, 1, 1], [1, 1, 1, 0, 0]]),
+            }
+
+    monkeypatch.setattr(
+        ministral3_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
+    )
+    monkeypatch.setattr(ministral3_collate, "_has_generation_chat_template", lambda processor: True)
+    monkeypatch.setattr(ministral3_collate, "infer_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(
+        ministral3_collate,
+        "build_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.zeros_like(input_ids, dtype=torch.float32),
+    )
+    examples = [{"conversation": [{"role": "user", "content": text}]} for text in ("long", "short")]
+
+    batch = ministral3_collate.ministral3_collate_fn(examples, _MixedLengthProcessor())
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 0.0, 0.0]]
+    assert batch["labels"][1].tolist() == [-100, 2, -100, -100, -100]
+
+
+def test_nemotron_vl_video_collate_rejects_in_batch_packing():
+    examples = [{"conversation": [{"role": "user", "content": [{"type": "video", "path": "video.mp4"}]}]}]
+
+    with pytest.raises(ValueError, match="video collation does not support in-batch packing"):
+        collate.nemotron_nano_v2_vl_collate_fn(examples, object(), enable_in_batch_packing=True)
 
 
 class _Gemma4ProcessorBase:
@@ -1206,6 +1500,7 @@ class _NemotronOmniTokenizer:
             marker_tokens = {
                 "<|im_start|>assistant\n": [101],
                 "<|im_end|>": [102],
+                "<|im_end|>\n": [102, 103],
             }
             return {"input_ids": marker_tokens.get(texts, [1])}
         self.tokenized_texts = list(texts)
@@ -1254,6 +1549,29 @@ def _zero_assistant_loss_mask(
     **kwargs,
 ):  # noqa: ARG001 - test helper signature
     return torch.zeros(int(input_ids.shape[0]), dtype=torch.float32)
+
+
+def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
+    proc = _NemotronOmniProcessor(tokenized_rows=[[100, 10, 102, 103, 101, 21, 22, 102, 103]])
+    proc.tokenizer.added_tokens_decoder = {102: "<|im_end|>"}
+    examples = [
+        {
+            "conversation": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ],
+        }
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(examples, proc)
+
+    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
+    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
+
+
+def test_nemotron_omni_hf_collate_rejects_in_batch_packing():
+    with pytest.raises(ValueError, match="use the Energon task encoder"):
+        collate.nemotron_omni_collate_fn([], object(), enable_in_batch_packing=True)
 
 
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):

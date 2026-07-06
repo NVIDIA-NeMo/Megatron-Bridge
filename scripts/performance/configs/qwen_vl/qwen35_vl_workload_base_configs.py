@@ -267,7 +267,7 @@ QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_BF16 = replace(
     num_gpus=128,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=16,
     moe_a2a_overlap=True,
 )
@@ -278,7 +278,7 @@ QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_FP8_CS = replace(
     num_gpus=128,
     tensor_model_parallel_size=2,
     pipeline_model_parallel_size=8,
-    virtual_pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=2,
     expert_model_parallel_size=16,
     moe_a2a_overlap=True,
 )

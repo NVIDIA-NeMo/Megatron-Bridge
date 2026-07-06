@@ -69,6 +69,7 @@ class TestTensorInspectInitialization:
             enabled=True,
             features="/tmp/conf.yaml",
             feature_dirs=["/tmp/features"],
+            allow_custom_feature_dirs=True,
             log_dir="/tmp/logs",
             init_training_step=12,
         )
@@ -87,6 +88,19 @@ class TestTensorInspectInitialization:
             init_training_step=12,
             default_logging_enabled=True,
         )
+
+    def test_initialize_rejects_custom_feature_dirs_without_opt_in(self, mock_nvinspect_api):
+        """Test that custom feature dirs require explicit trust."""
+        cfg = TensorInspectConfig(enabled=True, feature_dirs=["/tmp/features"])
+
+        with (
+            patch("megatron.bridge.training.tensor_inspect.HAVE_NVINSPECT", True),
+            patch("megatron.bridge.training.tensor_inspect.nvinspect_api", mock_nvinspect_api),
+        ):
+            with pytest.raises(ValueError, match="allow_custom_feature_dirs=True"):
+                initialize_tensor_inspect_pre_model_initialization(cfg)
+
+        mock_nvinspect_api.initialize.assert_not_called()
 
 
 class TestTensorInspectFinalize:

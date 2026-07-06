@@ -39,12 +39,10 @@ def is_safe_repo(hf_path: str, trust_remote_code: bool | None) -> bool:
     Decide whether remote code execution should be enabled for a Hugging Face
     model or dataset repository.
 
-    This function follows three rules:
+    This function follows two rules:
         1. If `trust_remote_code` is explicitly provided (True/False), its value
             takes precedence.
-        2. If `trust_remote_code` is None, the function checks whether the repo
-            belongs to a predefined list of trusted repositories (`SAFE_REPOS`).
-        3. Otherwise, remote code execution is disabled.
+        2. If `trust_remote_code` is None, remote code execution is disabled.
 
     Args:
         hf_path (str):
@@ -52,7 +50,7 @@ def is_safe_repo(hf_path: str, trust_remote_code: bool | None) -> bool:
         trust_remote_code (bool | None):
             If True, always allow remote code execution.
             If False, always disable it.
-            If None, fall back to internal safety rules and trusted repo list.
+            If None, disable remote code execution.
 
     Returns:
         bool: Whether remote code execution should be enabled.
@@ -65,8 +63,9 @@ def is_safe_repo(hf_path: str, trust_remote_code: bool | None) -> bool:
             )
         return trust_remote_code
 
-    hf_repo = hf_path.split("/")[0]
-    if hf_repo in SAFE_REPOS:
-        return True
-
+    logger.warning(
+        "`trust_remote_code` was not explicitly set for %s. Remote code execution is disabled by default. "
+        "Set `trust_remote_code=True` only if you fully trust the Hugging Face repository.",
+        hf_path,
+    )
     return False
