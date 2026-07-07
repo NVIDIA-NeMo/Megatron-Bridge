@@ -155,7 +155,7 @@ class TestPostTrainingStepHelpers:
             should_toggle_forward_pre_hook=True,
         )
 
-        mock_disable.assert_called_once_with(model)
+        mock_disable.assert_called_once_with(model, optimizer=optimizer)
         mock_check.assert_called_once_with(model, cross_check=True)
         mock_barrier.assert_called_once()
         mock_enable.assert_called_once_with(model)
