@@ -27,10 +27,6 @@ on:
         required: false
         type: string
         default: main
-  # TEMPORARY (revert before merge): smoke-test on the copy-pr-bot mirror branch
-  push:
-    branches:
-      - "pull-request/[0-9]+"
 
 concurrency:
   group: ${{ github.workflow }}
@@ -53,8 +49,7 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           RUNNER_PREFIX: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-          # TEMPORARY (revert before merge): restrict the PR smoke-test to the cheapest script
-          SINGLE: ${{ github.event.inputs.script || (startsWith(github.ref, 'refs/heads/pull-request/') && 'run_megatron_qwen3' || '') }}
+          SINGLE: ${{ github.event.inputs.script }}
         run: |
           get_header() {
             grep -m1 "^# $1=" "$2" | cut -d= -f2
