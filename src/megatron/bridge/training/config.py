@@ -301,6 +301,31 @@ class DatasetProvider(DataloaderConfig, ABC):
         pass
 
 
+def _validate_declarative_mapping(value: dict[str, Any] | None, *, field_name: str) -> None:
+    """Reject runtime objects from mappings stored in serializable configs."""
+
+    def _validate(item: Any, path: str) -> None:
+        if item is None or isinstance(item, (bool, int, float, str, Path)):
+            return
+        if isinstance(item, (list, tuple)):
+            for index, child in enumerate(item):
+                _validate(child, f"{path}[{index}]")
+            return
+        if isinstance(item, dict):
+            for key, child in item.items():
+                if not isinstance(key, str):
+                    raise TypeError(f"{path} keys must be strings, got {type(key).__name__}.")
+                _validate(child, f"{path}.{key}")
+            return
+        raise TypeError(
+            f"{path} must contain only declarative values (scalars, paths, lists, tuples, or mappings), "
+            f"got {type(item).__name__}."
+        )
+
+    if value is not None:
+        _validate(value, field_name)
+
+
 @dataclass(kw_only=True)
 class HFDatasetSourceConfig:
     """Declarative Hugging Face maker source for a GPT SFT dataset.
@@ -321,12 +346,15 @@ class HFDatasetSourceConfig:
 
     def validate(self) -> None:
         """Validate declarative Hugging Face source settings."""
-        if not self.maker_name:
+        if not self.maker_name.strip():
             raise ValueError("hf_dataset.maker_name must be a non-empty string.")
         if self.output_root is not None and not str(self.output_root).strip():
             raise ValueError("hf_dataset.output_root must be a non-empty path.")
         if self.val_proportion is not None and not 0.0 < self.val_proportion < 1.0:
             raise ValueError("hf_dataset.val_proportion must be between 0 and 1.")
+        _validate_declarative_mapping(self.maker_kwargs, field_name="hf_dataset.maker_kwargs")
+        _validate_declarative_mapping(self.val_maker_kwargs, field_name="hf_dataset.val_maker_kwargs")
+        _validate_declarative_mapping(self.test_maker_kwargs, field_name="hf_dataset.test_maker_kwargs")
 
 
 @dataclass(kw_only=True)
@@ -371,6 +399,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
         if self.offline_packing_specs is not None and self.offline_packing_specs.packed_sequence_size <= 0:
             raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+        _validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
 
     def finalize(self) -> None:
         """Finalize dataloader settings and validate this config."""
@@ -388,6 +417,54 @@ class FinetuningDatasetConfig(GPTSFTDatasetConfig):
             DeprecationWarning,
             stacklevel=2,
         )
+
+
+@dataclass(kw_only=True)
+class HFConversationDatasetConfig(DataloaderConfig):
+    """Serializable configuration for direct Hugging Face conversation datasets.
+
+    Registered makers normalize Hugging Face rows into text, vision, or audio
+    conversation examples. Runtime maker lookup, processor loading, collate
+    selection, and dataset construction are owned by
+    :class:`~megatron.bridge.data.builders.hf_conversation_dataset.HFConversationDatasetBuilder`.
+    """
+
+    seq_length: int
+    maker_name: str
+    hf_processor_path: str | None = None
+    maker_kwargs: dict[str, Any] | None = None
+    val_maker_kwargs: dict[str, Any] | None = None
+    test_maker_kwargs: dict[str, Any] | None = None
+    do_validation: bool = True
+    do_test: bool = True
+    skip_getting_attention_mask_from_dataset: bool = True
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "single"
+    enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
+
+    def validate(self) -> None:
+        """Validate declarative source and dataset settings."""
+        if self.seq_length <= 0:
+            raise ValueError("seq_length must be greater than 0.")
+        if not self.maker_name.strip():
+            raise ValueError("maker_name must be a non-empty string.")
+        if self.hf_processor_path is not None and not self.hf_processor_path.strip():
+            raise ValueError("hf_processor_path must be a non-empty string when set.")
+        if self.pad_to_multiple_of <= 0:
+            raise ValueError("pad_to_multiple_of must be greater than 0.")
+        if self.in_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+        _validate_declarative_mapping(self.maker_kwargs, field_name="maker_kwargs")
+        _validate_declarative_mapping(self.val_maker_kwargs, field_name="val_maker_kwargs")
+        _validate_declarative_mapping(self.test_maker_kwargs, field_name="test_maker_kwargs")
+
+    def finalize(self) -> None:
+        """Finalize dataloader settings and validate this config."""
+        super().finalize()
+        self.validate()
 
 
 @dataclass
@@ -1130,7 +1207,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | HFConversationDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1467,7 +1544,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, GPTSFTDatasetConfig):
+            if isinstance(self.dataset, (GPTSFTDatasetConfig, HFConversationDatasetConfig)):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1511,9 +1588,9 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            # Only validate sequence length for GPTDatasetConfig or GPTSFTDatasetConfig.
+            # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig)):
+            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, HFConversationDatasetConfig)):
                 data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (

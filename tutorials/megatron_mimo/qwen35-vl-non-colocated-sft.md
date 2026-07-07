@@ -347,7 +347,7 @@ supported or tested, so you can avoid paths that are not expected to work:
 - **MoE variants** — only dense Qwen3.5-VL is wired up.
 - **MTP** — the example disables Multi-Token Prediction layers.
 - **Packed sequences** — MIMO packed-sequence behavior is untested.
-- **Energon datasets** — use the HF conversation provider.
+- **Energon datasets** — use the HF conversation Config + Builder path.
 - **Colocated layouts** — only non-colocated (disjoint ranks) is covered here.
 
 ## 7. References

@@ -160,13 +160,13 @@ class TestQwen2AudioFinetuneConfig:
 
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
-    def test_finetune_config_uses_hf_conversation_provider(self):
-        """Dataset is HFConversationDatasetProvider with the audio maker."""
-        from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    def test_finetune_config_uses_hf_conversation_config(self):
+        """Dataset is HFConversationDatasetConfig with the audio maker."""
+        from megatron.bridge.training.config import HFConversationDatasetConfig
 
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
-        assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+        assert isinstance(cfg.dataset, HFConversationDatasetConfig)
         assert cfg.dataset.maker_name == "make_cv17_dataset"
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
         assert cfg.dataset.maker_kwargs["path_or_dataset"] == "ysdede/commonvoice_17_tr_fixed"

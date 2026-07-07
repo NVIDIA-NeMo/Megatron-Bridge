@@ -45,6 +45,8 @@ config.dataset = GPTSFTDatasetConfig(
 )
 ```
 
+See the [GPT SFT Dataset Tutorial](../../data/gpt-sft/README.md) for supported JSONL schemas, Hugging Face maker materialization, offline packing, and all dataset knobs.
+
 ## Configuration
 
 Megatron Bridge recipes are standard Python scripts, giving you full flexibility in how you configure your training. You can:

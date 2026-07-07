@@ -9,7 +9,8 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
 | LLM SFT or PEFT from local files | JSONL split files | `GPTSFTDatasetConfig` | `dataset_root` |
 | LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `GPTSFTDatasetConfig` | `hf_dataset.maker_name`, `hf_dataset.maker_kwargs`, optional `hf_dataset.output_root` |
-| VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
+| Direct Hugging Face conversations for text, vision, or audio | Maker-normalized rows processed at runtime | `HFConversationDatasetConfig` | `maker_name`, optional `hf_processor_path`, split maker kwargs |
+| VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | `HFConversationDatasetConfig`, Energon, or a specialized provider | `maker_name`, `hf_processor_path`, or provider-specific storage fields |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
 
@@ -91,6 +92,8 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 
+For preparation schemas, offline packing, finite epochs, and a complete knob reference, see the [GPT SFT Dataset Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/gpt-sft/README.md).
+
 ## Hugging Face Datasets for SFT and PEFT
 
 Select a registered Hugging Face maker with `HFDatasetSourceConfig`. The builder downloads or reads the source dataset, converts rows into chat JSONL, and builds the result through the same SFT path used for local files. Maker inputs default to the tokenizer's Hugging Face chat template and support the same offline packed-sequence options.
@@ -129,9 +132,38 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
+## Direct Hugging Face Conversation Data
+
+`HFConversationDatasetConfig` is the direct maker path shared by text chat, VLM, and audio/omni recipes. Unlike the GPT SFT Hugging Face source above, it does not materialize rows into GPT SFT JSONL. `HFConversationDatasetBuilder` loads the maker and processor/tokenizer at runtime, selects the text or model collator, and repeats examples to the sample counts requested by the iteration schedule.
+
+```python
+from megatron.bridge.training.config import HFConversationDatasetConfig
+
+dataset = HFConversationDatasetConfig(
+    seq_length=4096,
+    hf_processor_path=None,  # Reuse the recipe tokenizer for text chat.
+    maker_name="text_chat",
+    maker_kwargs={
+        "path_or_dataset": "json",
+        "data_files": {"train": "/data/chat/training.jsonl"},
+        "split": "train",
+    },
+    val_maker_kwargs={
+        "data_files": {"validation": "/data/chat/validation.jsonl"},
+        "split": "validation",
+    },
+    do_test=False,
+    enable_in_batch_packing=True,
+)
+```
+
+Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields. `HFConversationDatasetProvider` remains only as a deprecated compatibility adapter.
+
+For text and multimodal schemas, split maker settings, in-batch packing, processor selection, and all available knobs, see the [Hugging Face Conversation Dataset Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-conversation/README.md).
+
 ## VLM Fine-Tuning Data
 
-VLM recipes use their model-appropriate dataset provider. That provider owns both the storage format and the processor needed to turn image, video, audio, and text records into batches.
+VLM recipes use either the canonical HF conversation Config + Builder path, Energon, or a specialized compatibility provider. The runtime builder or provider owns the processor needed to turn image, video, audio, and text records into batches.
 
 For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
 

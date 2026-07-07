@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import os
+from unittest.mock import patch
 
 import pytest
 import torch
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.training.config import DatasetBuildContext
+from megatron.bridge.data.utils import get_dataset_provider
+from megatron.bridge.training.config import HFConversationDatasetConfig
 
 
 @pytest.mark.run_only_on("GPU")
@@ -49,11 +50,7 @@ class TestVLMHFMasking:
                 },
             ]
 
-        class _ShortConversationProvider(HFConversationDatasetProvider):
-            def _get_maker(self):
-                return make_short_conversations
-
-        provider = _ShortConversationProvider(
+        config = HFConversationDatasetConfig(
             seq_length=256,
             hf_processor_path=hf_processor,
             maker_name="rdr",
@@ -64,8 +61,12 @@ class TestVLMHFMasking:
             persistent_workers=False,
         )
 
-        context = DatasetBuildContext(train_samples=2, valid_samples=0, test_samples=0, tokenizer=None)
-        train_ds, _, _ = provider.build_datasets(context)
+        provider = get_dataset_provider(config)
+        with patch(
+            "megatron.bridge.data.builders.hf_conversation_dataset.get_hf_dataset_maker",
+            return_value=make_short_conversations,
+        ):
+            train_ds, _, _ = provider([2, 0, 0], config, tokenizer=None)
         assert train_ds is not None
 
         def _collate_with_capture(batch_examples):

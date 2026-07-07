@@ -18,7 +18,6 @@ from typing import Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -27,6 +26,7 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
+    HFConversationDatasetConfig,
     LoggerConfig,
     RNGConfig,
     TokenizerConfig,
@@ -136,7 +136,7 @@ def _qwen2_audio_common(
     # PEFT config
     peft_config = default_peft_config(peft)
 
-    # Dataset: HF conversation provider with audio maker
+    # Dataset: HF conversation config with audio maker
     if maker_kwargs is None:
         maker_kwargs = {
             "path_or_dataset": "ysdede/commonvoice_17_tr_fixed",
@@ -146,7 +146,7 @@ def _qwen2_audio_common(
         val_maker_kwargs = {
             "split": "validation",
         }
-    dataset_cfg = HFConversationDatasetProvider(
+    dataset_cfg = HFConversationDatasetConfig(
         seq_length=seq_length,
         hf_processor_path=hf_path,
         maker_name=maker_name,

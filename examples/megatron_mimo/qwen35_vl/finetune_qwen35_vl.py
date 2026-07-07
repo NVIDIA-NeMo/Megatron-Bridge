@@ -44,8 +44,8 @@ from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders.hf_conversation_dataset import HFConversationDatasetBuilder
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
@@ -67,6 +67,7 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DatasetBuildContext,
+    HFConversationDatasetConfig,
     LoggerConfig,
     OptimizerConfig,
     ProfilingConfig,
@@ -355,11 +356,11 @@ def _build_mimo_provider(
     return provider
 
 
-def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvider:
+def _build_dataset_config(args: argparse.Namespace) -> HFConversationDatasetConfig:
     maker_name = args.dataset_maker
     if not maker_name.startswith("make_"):
         maker_name = f"make_{maker_name}_dataset"
-    provider = HFConversationDatasetProvider(
+    dataset_config = HFConversationDatasetConfig(
         seq_length=args.seq_length,
         hf_processor_path=args.processor_path or args.hf_model,
         maker_name=maker_name,
@@ -373,8 +374,8 @@ def _build_data_provider(args: argparse.Namespace) -> HFConversationDatasetProvi
         do_test=False,
         trust_remote_code=args.trust_remote_code,
     )
-    provider.drop_last = True
-    return provider
+    dataset_config.drop_last = True
+    return dataset_config
 
 
 def _pad_or_truncate_2d(tensor: torch.Tensor | None, target_len: int, pad_value: int | float) -> torch.Tensor | None:
@@ -811,9 +812,11 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
             test_samples=0,
             tokenizer=None,
         )
-        train_ds, _, _ = cfg.dataset.build_datasets(context)
+        if not isinstance(cfg.dataset, HFConversationDatasetConfig):
+            raise TypeError("MegatronMIMO Qwen3.5-VL requires HFConversationDatasetConfig.")
+        train_ds, _, _ = HFConversationDatasetBuilder(cfg.dataset).build(context)
         if train_ds is None:
-            raise ValueError("HF conversation provider did not build a train dataset.")
+            raise ValueError("HF conversation builder did not build a train dataset.")
         base_collate = getattr(train_ds, "collate_fn", None)
         if base_collate is None:
             raise ValueError("HF conversation train dataset does not expose collate_fn.")
@@ -953,7 +956,7 @@ def _register_converted_checkpoint_pre_wrap_hook(
 def _build_config(
     *,
     model_provider: MegatronMIMOProvider,
-    data_provider: HFConversationDatasetProvider,
+    dataset_config: HFConversationDatasetConfig,
     args: argparse.Namespace,
 ) -> ConfigContainer:
     optimizer_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -1010,7 +1013,7 @@ def _build_config(
         model=model_provider,
         optimizer=optimizer_cfg,
         scheduler=scheduler_cfg,
-        dataset=data_provider,
+        dataset=dataset_config,
         logger=logger_cfg,
         tokenizer=TokenizerConfig(),
         checkpoint=_build_checkpoint_config(args),
@@ -1200,12 +1203,12 @@ def main() -> None:
         _register_converted_checkpoint_pre_wrap_hook(model_provider, args.pretrained_checkpoint)
 
         _log(f"building HF conversation data provider: maker={args.dataset_maker}")
-        data_provider = _build_data_provider(args)
+        dataset_config = _build_dataset_config(args)
 
         _log(f"pretrained checkpoint: {args.pretrained_checkpoint}")
         _log(f"checkpoint dir: {args.checkpoint_dir}")
         _log("building training config")
-        cfg = _build_config(model_provider=model_provider, data_provider=data_provider, args=args)
+        cfg = _build_config(model_provider=model_provider, dataset_config=dataset_config, args=args)
 
         _log("launching pretrain_megatron_mimo")
         pretrain_megatron_mimo(

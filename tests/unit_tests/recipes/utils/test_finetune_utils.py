@@ -29,7 +29,7 @@ from megatron.bridge.training.config import GPTSFTDatasetConfig
 class TestDefaultOpenmathinstruct2Config:
     """Test cases for default_openmathinstruct2_config."""
 
-    def test_returns_hf_conversation_provider(self):
+    def test_returns_gpt_sft_config(self):
         cfg = default_openmathinstruct2_config()
         assert isinstance(cfg, GPTSFTDatasetConfig)
 
@@ -94,7 +94,7 @@ class TestDefaultOpenmathinstruct2Config:
 class TestDefaultGsm8kConfig:
     """Test cases for default_gsm8k_config."""
 
-    def test_returns_hf_conversation_provider(self):
+    def test_returns_gpt_sft_config(self):
         cfg = default_gsm8k_config()
         assert isinstance(cfg, GPTSFTDatasetConfig)
 
@@ -163,7 +163,7 @@ class TestDefaultGsm8kConfig:
 class TestDefaultSquadConfig:
     """Test cases for default_squad_config."""
 
-    def test_returns_hf_conversation_provider(self):
+    def test_returns_gpt_sft_config(self):
         cfg = default_squad_config(seq_length=512)
         assert isinstance(cfg, GPTSFTDatasetConfig)
 
