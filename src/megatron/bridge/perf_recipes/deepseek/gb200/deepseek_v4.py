@@ -23,7 +23,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
 from megatron.bridge.recipes.deepseek.deepseek_v4 import deepseek_v4_flash_pretrain_config
 
 
-def deepseek_v4_flash_pretrain_128gpu_gb200_fp8mx_paged_stash_config() -> ConfigContainer:
+def deepseek_v4_flash_128gpu_gb200_fp8mx_paged_stash_pretrain_config() -> ConfigContainer:
     """DeepSeek V4 Flash pretrain: 64× GB200, MXFP8 and full-iteration CUDA graphs."""
     cfg = deepseek_v4_flash_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")

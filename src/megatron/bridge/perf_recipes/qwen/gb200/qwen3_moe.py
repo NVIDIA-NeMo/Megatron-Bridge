@@ -371,7 +371,7 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
+def qwen3_30b_a3b_16gpu_gb200_bf16_pretrain_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× GB200, BF16, HybridEP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
@@ -394,7 +394,7 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_partial_cg_config() -> ConfigContainer:
+def qwen3_30b_a3b_16gpu_gb200_fp8mx_partial_cg_pretrain_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× GB200, MXFP8 and scoped CUDA graphs."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -423,7 +423,7 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_partial_cg_config() -> ConfigContai
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_config() -> ConfigContainer:
+def qwen3_30b_a3b_16gpu_gb200_fp8mx_paged_stash_pretrain_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× GB200, MXFP8 and paged-stash CUDA graphs."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -460,8 +460,8 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_config() -> ConfigConta
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_paged_stash_config() -> ConfigContainer:
-    """Qwen3 235B-A22B pretrain: 64× GB200, MXFP8 and paged-stash CUDA graphs."""
+def qwen3_235b_a22b_128gpu_gb200_fp8mx_paged_stash_pretrain_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 128× GB200, MXFP8 and paged-stash CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
@@ -504,7 +504,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb200_fp8mx_paged_stash_config() -> ConfigCon
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_partial_cg_config() -> ConfigContainer:
+def qwen3_235b_a22b_128gpu_gb200_fp8mx_partial_cg_pretrain_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 128× GB200, MXFP8 and scoped CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")

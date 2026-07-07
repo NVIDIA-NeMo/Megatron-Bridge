@@ -157,7 +157,7 @@ def deepseek_v3_pretrain_256gpu_b200_fp8mx_large_scale_config() -> ConfigContain
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_b200_fp8mx_deepep_config() -> ConfigContainer:
+def deepseek_v3_256gpu_b200_fp8mx_deepep_pretrain_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× B200, MXFP8, tuned DeepEP overlap."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")

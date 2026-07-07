@@ -136,7 +136,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContai
     return cfg
 
 
-def deepseek_v3_pretrain_1024gpu_h100_bf16_deepep_config() -> ConfigContainer:
+def deepseek_v3_1024gpu_h100_bf16_deepep_pretrain_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, BF16, DeepEP, TP=1, PP=16."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
@@ -165,7 +165,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_deepep_config() -> ConfigContainer:
     return cfg
 
 
-def deepseek_v3_pretrain_1024gpu_h100_fp8sc_deepep_config() -> ConfigContainer:
+def deepseek_v3_1024gpu_h100_fp8sc_deepep_pretrain_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8 subchannel scaling and DeepEP."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
