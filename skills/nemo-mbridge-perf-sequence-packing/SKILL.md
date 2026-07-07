@@ -83,7 +83,7 @@ if packed_sequence:
     dataset_kwargs["pad_to_max_length"] = True
     offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-return _text_hf_dataset_config(
+return _text_hf_dataset_provider(
     ...
     enable_offline_packing=packed_sequence,
     offline_packing_specs=offline_packing_specs,
@@ -94,7 +94,7 @@ return _text_hf_dataset_config(
 
 Bridge validation:
 
-```1109:1137:src/megatron/bridge/training/config.py
+```1220:1248:src/megatron/bridge/training/config.py
 enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
 enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
 offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
@@ -111,10 +111,10 @@ if enable_in_batch_packing:
     self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 ```
 
-```1289:1331:src/megatron/bridge/training/config.py
+```1400:1442:src/megatron/bridge/training/config.py
 if self.model.context_parallel_size > 1:
     assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, ...
-    if isinstance(self.dataset, (GPTSFTDatasetConfig, HFSFTDatasetConfig)):
+    if isinstance(self.dataset, FinetuningDatasetConfig):
         assert self.model.calculate_per_token_loss, ...
         assert not self.ddp.average_in_collective, ...
 ...
