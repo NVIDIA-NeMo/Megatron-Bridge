@@ -535,26 +535,27 @@ def main(
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
-        # Create a simple namespace with the args needed by get_exp_name_config
-        args_for_config = SimpleNamespace(
-            num_gpus=num_gpus,
-            tensor_model_parallel_size=tp_size,
-            pipeline_model_parallel_size=pp_size,
-            context_parallel_size=cp_size,
-            virtual_pipeline_model_parallel_size=vp_size,
-            expert_model_parallel_size=ep_size,
-            expert_tensor_parallel_size=etp_size,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-        )
-        exp_config = get_exp_name_config(
-            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
-        )
+        if wandb_experiment_name is not None:
+            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
+            # login node in this path: recipe imports belong in the training container.
+            exp_name = wandb_experiment_name
+        else:
+            # Create a simple namespace with the args needed by get_exp_name_config
+            args_for_config = SimpleNamespace(
+                num_gpus=num_gpus,
+                tensor_model_parallel_size=tp_size,
+                pipeline_model_parallel_size=pp_size,
+                context_parallel_size=cp_size,
+                virtual_pipeline_model_parallel_size=vp_size,
+                expert_model_parallel_size=ep_size,
+                expert_tensor_parallel_size=etp_size,
+                micro_batch_size=micro_batch_size,
+                global_batch_size=global_batch_size,
+            )
+            exp_config = get_exp_name_config(
+                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            )
+            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
