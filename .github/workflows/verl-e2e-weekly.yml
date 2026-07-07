@@ -27,6 +27,10 @@ on:
         required: false
         type: string
         default: main
+  # TEMPORARY (revert before merge): smoke-test on the copy-pr-bot mirror branch
+  push:
+    branches:
+      - "pull-request/[0-9]+"
 
 concurrency:
   group: ${{ github.workflow }}
@@ -49,7 +53,8 @@ jobs:
         shell: bash -x -e -u -o pipefail {0}
         env:
           RUNNER_PREFIX: ${{ vars.DEFAULT_RUNNER_PREFIX }}
-          SINGLE: ${{ github.event.inputs.script }}
+          # TEMPORARY (revert before merge): restrict the PR smoke-test to the cheapest script
+          SINGLE: ${{ github.event.inputs.script || (startsWith(github.ref, 'refs/heads/pull-request/') && 'run_megatron_qwen3' || '') }}
         run: |
           get_header() {
             grep -m1 "^# $1=" "$2" | cut -d= -f2
@@ -65,7 +70,7 @@ jobs:
             timeout=$(get_header CI_TIMEOUT "$f"); timeout=${timeout:-60}
             gpu_count=$(get_header GPU_COUNT "$f"); gpu_count=${gpu_count:-8}
             # shellcheck disable=SC2001 # regex quantifier not expressible via ${var//}
-            runner=$(echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-${gpu_count}/")
+            runner=$(echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/")
             entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
           done
 
