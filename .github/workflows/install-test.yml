@@ -243,10 +243,27 @@ jobs:
         run: |
           # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
           # any failure (e.g. "failed to determine base repo" when git context is
-          # missing) and silently sets FAILED_JOBS=0, turning the summary green even
-          # when earlier jobs failed. GH_REPO makes `gh` independent of the local git
-          # repository, and `set -e -o pipefail` makes any failure here abort the job.
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --json jobs --jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length')
+          # missing, or a transient 5xx from the GitHub API) and silently sets
+          # FAILED_JOBS=0, turning the summary green even when earlier jobs failed.
+          # GH_REPO makes `gh` independent of the local git repository. We fetch the
+          # job list ONCE, retrying transient API errors, and fail closed (exit 1) if
+          # the API is still unreachable after all retries — a green summary must
+          # never rest on an unread API response.
+          JOBS_JSON=""
+          for attempt in 1 2 3 4 5; do
+            if JOBS_JSON=$(gh run view "$GITHUB_RUN_ID" --json jobs); then
+              break
+            fi
+            echo "::warning::gh run view --json jobs failed (attempt ${attempt}/5)"
+            JOBS_JSON=""
+            [ "$attempt" -lt 5 ] && sleep $((attempt * 5))
+          done
+          if [ -z "$JOBS_JSON" ]; then
+            echo "::error::gh run view --json jobs failed after 5 attempts; GitHub Actions API unreachable"
+            exit 1
+          fi
+
+          FAILED_JOBS=$(jq '[.jobs[] | select(.status == "completed" and .conclusion != "success")] | length' <<< "$JOBS_JSON")
 
           if [ "${FAILED_JOBS:-0}" -eq 0 ] || [ "$SKIPPING_IS_ALLOWED" == "true" ]; then
               echo "✅ All previous jobs completed successfully"
@@ -254,6 +271,6 @@ jobs:
           else
               echo "❌ Found $FAILED_JOBS failed job(s)"
               # Show which jobs failed
-              gh run view $GITHUB_RUN_ID --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name'
+              jq -r '.jobs[] | select(.status == "completed" and .conclusion != "success") | .name' <<< "$JOBS_JSON"
               exit 1
           fi

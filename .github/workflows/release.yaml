@@ -120,13 +120,31 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
+          # Fetch the job list ONCE, retrying transient GitHub API errors (5xx), and
+          # fail closed (exit 1) if the API is still unreachable after all retries.
+          # Never wrap this in `|| echo 0` — that silently sets FAILED_JOBS=0 and turns
+          # the summary green even when earlier jobs failed.
+          JOBS_JSON=""
+          for attempt in 1 2 3 4 5; do
+            if JOBS_JSON=$(gh run view "$GITHUB_RUN_ID" --repo "${{ github.repository }}" --json jobs); then
+              break
+            fi
+            echo "::warning::gh run view --json jobs failed (attempt ${attempt}/5)"
+            JOBS_JSON=""
+            [ "$attempt" -lt 5 ] && sleep $((attempt * 5))
+          done
+          if [ -z "$JOBS_JSON" ]; then
+            echo "::error::gh run view --json jobs failed after 5 attempts; GitHub Actions API unreachable"
+            exit 1
+          fi
+
+          FAILED_JOBS=$(jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")] | length' <<< "$JOBS_JSON")
 
           if [ "${FAILED_JOBS:-0}" -eq 0 ]; then
               echo "✅ All previous jobs completed successfully"
               exit 0
           else
               echo "❌ Found $FAILED_JOBS failed job(s)"
-              gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name'
+              jq -r '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name' <<< "$JOBS_JSON"
               exit 1
           fi
