@@ -64,7 +64,7 @@ class TestStrToCallable:
         assert str_to_callable("gelu_pytorch_tanh") is fast_gelu
 
     def test_quick_gelu(self):
-        """'quick_gelu' resolves to a callable (mcore quick_gelu or F.gelu fallback)."""
+        """'quick_gelu' resolves to the MCore callable."""
         result = str_to_callable("quick_gelu")
         assert callable(result)
 

@@ -642,6 +642,10 @@ class TestSaveCheckpoint:
         mock_ft.on_checkpointing_start.assert_called_once()
         mock_gen_state.assert_called_once()
         mock_dist_ckpt.save.assert_called_once()
+        assert (
+            mock_dist_ckpt.save.call_args.kwargs["async_strategy"]
+            == save_checkpoint_fixtures["mock_state"].cfg.checkpoint.async_strategy
+        )
 
         # Verify that the tracker file was written with the correct iteration
         tracker_calls = [
