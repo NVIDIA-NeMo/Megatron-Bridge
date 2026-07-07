@@ -138,7 +138,8 @@ override-dependencies = [
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
     "nvidia-cudnn-frontend==1.24.0",
-    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
+    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
 ]
 
 [[tool.uv.index]]
