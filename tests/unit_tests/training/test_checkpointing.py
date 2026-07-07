@@ -1668,6 +1668,24 @@ class TestCleanupNonPersistentCheckpoints:
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
+    @patch("shutil.rmtree")
+    def test_cleanup_old_non_persistent_checkpoint_leave_zero(self, mock_rmtree, mock_get_rank, mock_dist_init):
+        """leave_ckpt_num=0 should remove all checkpoints, not keep them (guards the [:-0] pitfall)."""
+        mock_dist_init.return_value = True
+        mock_get_rank.return_value = 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_dir = Path(temp_dir)
+            for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
+                (save_dir / name).mkdir()
+
+            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=0, do_async=False)
+
+            # All three checkpoints must be scheduled for removal.
+            assert mock_rmtree.call_count == 3
+
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
     def test_cleanup_old_non_persistent_checkpoint_retain_interval(self, mock_get_rank, mock_dist_init):
         """Test cleanup of old checkpoints."""
         mock_dist_init.return_value = True
