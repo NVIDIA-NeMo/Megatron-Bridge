@@ -211,6 +211,11 @@ nemotron-3-ultra-nsys-compare/24n-baseline/
     └── nondet-nonsys/  log-*_4188765_0.out                                     # nondet, no-nsys (clean arm)
 ```
 
+> **Rev-1 provenance**: the superseded *cross-allocation* data (jobs 3745946 / 3712403 — the
+> pre-correction §2 source, different nodes per arm) is preserved alongside at
+> `nemotron-3-ultra-nsys-compare/24n-baseline-rev1/` (same `processed/` + `raw/` layout), so the
+> before/after of the methodology fix is auditable.
+
 | Role | job | notes |
 |---|---|---|
 | det + no-nsys (clean, §Runs/§3) | 4188572 | clean determinism arm; mean 8972 / med 8891 (spiky, std 217) |
