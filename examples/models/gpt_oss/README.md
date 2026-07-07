@@ -81,7 +81,7 @@ Before training, ensure the following are configured:
 3. **Environment Variables**:
    - `HF_TOKEN`: to download models from HF Hub (if required)
    - `HF_HOME`: (optional) to avoid re-downloading models and datasets
-   - `NEMO_HOME`: required for multi-node SFT/PEFT; use shared storage mounted at the same path on every node
+   - `NEMO_DATASETS_CACHE` or `NEMO_HOME`: required for multi-node SFT/PEFT; use shared storage mounted at the same path on every node
    - `WANDB_API_KEY`: (optional) to enable WandB logging
 
 All training scripts use SLURM for containerized multi-node training.
@@ -132,15 +132,17 @@ sbatch pack_data_job.sh   # pre-pack once; skipped automatically on subsequent r
 sbatch slurm_sft.sh
 ```
 
-Packing and training must use the same shared `NEMO_HOME`. The default
-`/root/.cache/nemo` is container-local; in a multi-node job, data prepared by
-global rank 0 would otherwise be invisible to ranks on the other nodes.
+Packing and training must use the same shared dataset cache. Set
+`NEMO_DATASETS_CACHE` directly, or set `NEMO_HOME` to its parent cache directory.
+The default `/root/.cache/nemo/datasets` is container-local; in a multi-node job,
+data prepared by global rank 0 would otherwise be invisible to other nodes.
 
 Squad and other datasets that do not use packed sequences do not require this step.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default.
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default,
+so multi-node jobs require the same shared dataset-cache configuration described above.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.

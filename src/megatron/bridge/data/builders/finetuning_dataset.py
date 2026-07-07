@@ -16,6 +16,7 @@ import logging
 import os
 import socket
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Optional, TypedDict, Union
 
@@ -36,8 +37,21 @@ class _PathVisibility(TypedDict):
     rank: int
     local_rank: str
     hostname: str
+    error: Optional[str]
+    paths: dict[str, "_PathProbe"]
+
+
+class _PathProbe(TypedDict):
     path: str
     exists: bool
+    error: Optional[str]
+    required_if: Optional[str]
+
+
+class _PathRequirement(TypedDict):
+    label: str
+    path: Union[str, Path]
+    required_if: Optional[str]
 
 
 class FinetuningDatasetBuilder:
@@ -228,39 +242,176 @@ class FinetuningDatasetBuilder:
             return bool(msc.Path(path_str).exists())
         return Path(path_str).exists()
 
-    def _validate_path_visibility(self, path: Union[str, Path], path_exists: bool) -> None:
-        """Raise when a prepared dataset path is visible to only some distributed ranks."""
-        if not torch.distributed.is_initialized() or torch.distributed.get_world_size() <= 1:
-            return
+    def _effective_metadata_path(
+        self,
+        path: Union[str, Path],
+        pack_metadata_path: Optional[Union[str, Path]],
+    ) -> Optional[Union[str, Path]]:
+        """Resolve metadata required to load a packed dataset path."""
+        if self.packed_sequence_size <= 0:
+            return None
+        if self._pad_cu_seqlens:
+            return pack_metadata_path
+        if is_packed_parquet_spec(str(path)):
+            return None
+        return pack_metadata_path
 
-        local_state: _PathVisibility = {
-            "rank": torch.distributed.get_rank(),
-            "local_rank": os.getenv("LOCAL_RANK", os.getenv("SLURM_LOCALID", "unknown")),
-            "hostname": socket.gethostname(),
-            "path": str(path),
-            "exists": path_exists,
-        }
-        visibility = [local_state.copy() for _ in range(torch.distributed.get_world_size())]
-        torch.distributed.all_gather_object(visibility, local_state)
+    def _dataset_path_requirements(self) -> list[_PathRequirement]:
+        """Return all paths that must be probed before any dataset is constructed."""
+        is_packing = self.packed_sequence_size > 0
+        train_path = self.train_path_packed if is_packing else self.train_path
+        pack_metadata_path = self.pack_metadata if is_packing else None
 
-        visible = [state for state in visibility if state["exists"]]
-        missing = [state for state in visibility if not state["exists"]]
-        if not visible or not missing:
-            return
-
-        def describe(states: list[_PathVisibility]) -> str:
-            return "; ".join(
-                f"rank {state['rank']} (local rank {state['local_rank']}, host {state['hostname']}, "
-                f"path {state['path']})"
-                for state in states
+        requirements: list[_PathRequirement] = [{"label": "training data", "path": train_path, "required_if": None}]
+        train_metadata_path = self._effective_metadata_path(train_path, pack_metadata_path)
+        if train_metadata_path is not None:
+            requirements.append(
+                {
+                    "label": "training packed metadata",
+                    "path": train_metadata_path,
+                    "required_if": "training data",
+                }
             )
 
-        raise RuntimeError(
-            "Dataset path visibility is inconsistent across distributed ranks after rank-0 preparation. "
-            f"Visible on: {describe(visible)}. Missing on: {describe(missing)}. "
-            "Set NEMO_HOME or dataset_root to shared storage mounted at the same path on every node, "
-            "or prepare the dataset on every node."
-        )
+        if self.do_validation:
+            validation_path = self.validation_path_packed if is_packing else self.validation_path
+            requirements.append({"label": "validation data", "path": validation_path, "required_if": None})
+            validation_metadata_path = self._effective_metadata_path(validation_path, pack_metadata_path)
+            if validation_metadata_path is not None:
+                requirements.append(
+                    {
+                        "label": "validation packed metadata",
+                        "path": validation_metadata_path,
+                        "required_if": "validation data",
+                    }
+                )
+
+        if self.do_test:
+            requirements.append({"label": "test data", "path": self.test_path, "required_if": None})
+        return requirements
+
+    @staticmethod
+    def _describe_path_states(
+        states: Sequence[tuple[_PathVisibility, Optional[_PathProbe]]],
+        *,
+        limit: int = 8,
+    ) -> str:
+        """Format a bounded sample of per-rank path states."""
+        descriptions = []
+        for state, probe in states[:limit]:
+            path = "not configured" if probe is None else probe["path"]
+            error = state["error"] if probe is None else probe["error"]
+            detail = "" if error is None else f", error {error}"
+            descriptions.append(
+                f"rank {state['rank']} (local rank {state['local_rank']}, host {state['hostname']}, "
+                f"path {path}{detail})"
+            )
+        omitted = len(states) - limit
+        if omitted > 0:
+            descriptions.append(f"... and {omitted} more rank(s)")
+        return "; ".join(descriptions)
+
+    def _preflight_dataset_paths(self) -> dict[str, bool]:
+        """Probe every dataset path once and validate distributed visibility before loading."""
+        is_distributed = torch.distributed.is_initialized()
+        local_state: _PathVisibility = {
+            "rank": torch.distributed.get_rank() if is_distributed else get_rank_safe(),
+            "local_rank": os.getenv("LOCAL_RANK", os.getenv("SLURM_LOCALID", "unknown")),
+            "hostname": socket.gethostname(),
+            "error": None,
+            "paths": {},
+        }
+
+        try:
+            requirements = self._dataset_path_requirements()
+        except Exception as error:
+            requirements = []
+            local_state["error"] = f"{type(error).__name__}: {error}"
+
+        for requirement in requirements:
+            path_str = str(requirement["path"])
+            try:
+                path_exists = self._path_exists(path_str)
+                probe_error = None
+            except Exception as error:
+                path_exists = False
+                probe_error = f"{type(error).__name__}: {error}"
+            local_state["paths"][requirement["label"]] = {
+                "path": path_str,
+                "exists": path_exists,
+                "error": probe_error,
+                "required_if": requirement["required_if"],
+            }
+
+        if is_distributed and torch.distributed.get_world_size() > 1:
+            visibility: list[_PathVisibility] = [local_state.copy() for _ in range(torch.distributed.get_world_size())]
+            torch.distributed.all_gather_object(visibility, local_state)
+        else:
+            visibility = [local_state]
+
+        issues = []
+        state_errors = [(state, None) for state in visibility if state["error"] is not None]
+        if state_errors:
+            issues.append(f"Path configuration failed on: {self._describe_path_states(state_errors)}.")
+
+        labels = sorted({label for state in visibility for label in state["paths"]})
+        for label in labels:
+            states_and_probes = [(state, state["paths"].get(label)) for state in visibility]
+            unconfigured = [(state, probe) for state, probe in states_and_probes if probe is None]
+            if unconfigured:
+                issues.append(
+                    f"Path requirement '{label}' is not configured on every rank: "
+                    f"{self._describe_path_states(unconfigured)}."
+                )
+                continue
+
+            probe_errors = [
+                (state, probe)
+                for state, probe in states_and_probes
+                if probe is not None and probe["error"] is not None
+            ]
+            if probe_errors:
+                issues.append(
+                    f"Path requirement '{label}' could not be probed on: {self._describe_path_states(probe_errors)}."
+                )
+                continue
+
+            visible = [(state, probe) for state, probe in states_and_probes if probe is not None and probe["exists"]]
+            missing = [
+                (state, probe) for state, probe in states_and_probes if probe is not None and not probe["exists"]
+            ]
+            if visible and missing:
+                issues.append(
+                    f"Dataset path visibility is inconsistent for '{label}'. "
+                    f"Visible on {len(visible)} rank(s): {self._describe_path_states(visible)}. "
+                    f"Missing on {len(missing)} rank(s): {self._describe_path_states(missing)}."
+                )
+                continue
+
+            required_if = states_and_probes[0][1]["required_if"] if states_and_probes[0][1] is not None else None
+            if required_if is not None and not visible:
+                parent_visible = any(
+                    (parent_probe := state["paths"].get(required_if)) is not None and parent_probe["exists"]
+                    for state in visibility
+                )
+                if parent_visible:
+                    issues.append(
+                        f"Required path '{label}' is missing on every rank while '{required_if}' exists. "
+                        f"Missing on {len(missing)} rank(s): {self._describe_path_states(missing)}."
+                    )
+
+        if issues:
+            current_paths = [(local_state, probe) for probe in local_state["paths"].values()]
+            current_description = self._describe_path_states(current_paths) if current_paths else "none"
+            raise RuntimeError(
+                "Dataset path preflight failed across distributed ranks after rank-0 preparation. "
+                + " ".join(issues)
+                + f" Current rank state: {current_description}. "
+                "Set NEMO_HOME, NEMO_DATASETS_CACHE, or dataset_root to shared storage mounted at the same path "
+                "on every node, or prepare the dataset on every node."
+            )
+
+        return {label: probe["exists"] for label, probe in local_state["paths"].items()}
 
     def build(self) -> list[Optional[Any]]:
         """Build train, validation, and test datasets.
@@ -281,11 +432,13 @@ class FinetuningDatasetBuilder:
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
 
+        path_exists = self._preflight_dataset_paths()
+
         # This needs to be called on all ranks
-        datasets: list[Optional[Any]] = self._build_datasets()
+        datasets: list[Optional[Any]] = self._build_datasets(path_exists)
         return datasets
 
-    def _build_datasets(self) -> list[Optional[Any]]:
+    def _build_datasets(self, path_exists: dict[str, bool]) -> list[Optional[Any]]:
         """Internal method to build all datasets.
 
         Returns:
@@ -294,6 +447,7 @@ class FinetuningDatasetBuilder:
         train_ds = self._create_dataset(
             self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
             pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+            path_exists=path_exists["training data"],
             max_num_samples=self.max_train_samples,
             **self.dataset_kwargs,
         )
@@ -302,6 +456,7 @@ class FinetuningDatasetBuilder:
             valid_ds = self._create_dataset(
                 self.validation_path if self.packed_sequence_size <= 0 else self.validation_path_packed,
                 pack_metadata_path=None if self.packed_sequence_size <= 0 else self.pack_metadata,
+                path_exists=path_exists["validation data"],
                 is_test=True,
                 **self.dataset_kwargs,
             )
@@ -311,6 +466,7 @@ class FinetuningDatasetBuilder:
         if self.do_test:
             test_ds = self._create_dataset(
                 self.test_path,
+                path_exists=path_exists["test data"],
                 is_test=True,
                 **self.dataset_kwargs,
             )
@@ -324,6 +480,7 @@ class FinetuningDatasetBuilder:
         path: Union[str, Path],
         pack_metadata_path: Optional[Union[str, Path]] = None,
         is_test: bool = False,
+        path_exists: Optional[bool] = None,
         **kwargs: Any,
     ) -> Optional[Any]:
         """Create a single dataset instance (train, validation, or test).
@@ -332,14 +489,14 @@ class FinetuningDatasetBuilder:
             path: Path to the dataset file or packed parquet spec
             pack_metadata_path: Path to the packed sequence metadata
             is_test: Whether this is a test dataset
+            path_exists: Result from the pre-construction path preflight, if available
             **kwargs: Additional arguments to pass to the dataset constructor
 
         Returns:
             The created dataset
         """
-        path_str = str(path)
-        path_exists = self._path_exists(path)
-        self._validate_path_visibility(path, path_exists)
+        if path_exists is None:
+            path_exists = self._path_exists(path)
 
         if not path_exists:
             print_rank_0(f"Warning: Dataset path {path} does not exist")
@@ -349,17 +506,7 @@ class FinetuningDatasetBuilder:
 
         # For packed parquet from external sources, only pass metadata if pad_cu_seqlens is True
         # This avoids "missing metadata" errors when using externally prepared packed data
-        effective_metadata_path = None
-        if not is_not_packing:
-            if self._pad_cu_seqlens:
-                # pad_cu_seqlens requires metadata
-                effective_metadata_path = pack_metadata_path
-            elif is_packed_parquet_spec(path_str):
-                # Externally prepared packed parquet without pad_cu_seqlens doesn't need metadata
-                effective_metadata_path = None
-            else:
-                # .npy files prepared by MB include metadata
-                effective_metadata_path = pack_metadata_path
+        effective_metadata_path = self._effective_metadata_path(path, pack_metadata_path)
 
         return create_sft_dataset(
             path,
