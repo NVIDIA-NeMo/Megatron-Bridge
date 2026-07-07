@@ -139,7 +139,7 @@ class TestDistillationProvider:
         mock_calc_vocab,
         mock_mtd_parallel_state,
     ):
-        """Test provide method creates a ModelOpt DistillationModel."""
+        """Test the KD conversion runs (in the deferred pre-wrap hook) and yields a DistillationModel."""
         mock_mtd_parallel_state.is_pipeline_first_stage.return_value = True
         mock_mtd_parallel_state.is_pipeline_last_stage.return_value = True
 
@@ -186,7 +186,12 @@ class TestDistillationProvider:
 
         # Set the side effects for the model provider - student first, then teacher
         mock_mcore_gpt.side_effect = [mock_student_model, mock_teacher_model]
-        with patch("megatron.bridge.models.distillation_provider.mtd.convert", return_value=mock_kd_model):
+        # The KD conversion is deferred to the ``_convert_hook`` pre-wrap hook, which unwraps the
+        # (mocked) student/teacher chunks; make ``unwrap_model`` an identity for the Mock chunks.
+        with (
+            patch("megatron.bridge.models.distillation_provider.mtd.convert", return_value=mock_kd_model),
+            patch("megatron.bridge.models.distillation_provider.unwrap_model", side_effect=lambda m: m),
+        ):
             result = student.provide_distributed_model(wrap_with_ddp=False, mixed_precision_wrapper=None)
 
         # Verify that both student and teacher models were created
