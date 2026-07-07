@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import math
 import re
 from dataclasses import dataclass, fields
+from functools import cache
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
@@ -84,6 +86,15 @@ HAVE_TE = all(
         HAVE_TE_ROW_GRP_LINEAR,
     )
 )
+
+
+@cache
+def _te_grouped_linear_uses_explicit_m_splits(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE passes grouped-linear splits outside ``non_tensor_args``."""
+
+    return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
@@ -1983,8 +1994,7 @@ class GroupedExpertLinearAdapter(nn.Module):
                 grad_weight_quantizers,
                 grad_output_quantizers,
             ) = helper._get_quantizers()
-            non_tensor_args = (
-                m_splits,
+            common_non_tensor_args = (
                 helper.apply_bias,
                 None,
                 helper.fp8,
@@ -2001,26 +2011,27 @@ class GroupedExpertLinearAdapter(nn.Module):
                 helper.sequence_parallel,
                 helper.activation_dtype,
                 torch.is_grad_enabled(),
-                helper,
+                [None] * weight.shape[0],
+                False,
                 None,
                 helper.save_original_input,
                 False,
             )
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
+            weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
+            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+                te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
+                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+            else:
+                non_tensor_args = (m_splits, *common_non_tensor_args)
+                autograd_args = (x, non_tensor_args, *weights_and_biases)
+
+            output: torch.Tensor
             if torch.is_grad_enabled():
-                return TEPytorchGroupedLinearAutograd.apply(
-                    x,
-                    non_tensor_args,
-                    *[weight[i] for i in range(weight.shape[0])],
-                    *empty_biases,
-                )
-            return TEPytorchGroupedLinearAutograd.forward(
-                None,
-                x,
-                non_tensor_args,
-                *[weight[i] for i in range(weight.shape[0])],
-                *empty_biases,
-            )
+                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+            else:
+                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            return output
         finally:
             helper.end_forward()
 
