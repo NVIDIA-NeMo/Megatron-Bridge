@@ -217,6 +217,9 @@ def _get_modelopt_weight_amax(weight_quantizer: object) -> tuple[torch.Tensor | 
     value = getattr(weight_quantizer, "global_amax", None)
     if isinstance(value, torch.Tensor):
         return value, True
+    value = getattr(weight_quantizer, "_global_amax", None)
+    if isinstance(value, torch.Tensor):
+        return value, True
     value = getattr(weight_quantizer, "_amax", None)
     return (value, False) if isinstance(value, torch.Tensor) else (None, False)
 
@@ -688,6 +691,19 @@ def _format_nvfp4_input_scale_for_export(
     input_scale: torch.Tensor,
 ) -> torch.Tensor:
     """Shape static activation scales for dense and fused-MoE vLLM loaders."""
+    if weight_name.endswith(".experts.up_proj"):
+        num_experts = weight.shape[0]
+        if input_scale.numel() == 1:
+            return input_scale.reshape(1, 1).expand(num_experts, 1).contiguous()
+        if input_scale.shape == (num_experts,):
+            return input_scale[:, None].contiguous()
+        if input_scale.shape == (num_experts, 1):
+            return input_scale.contiguous()
+        raise RuntimeError(
+            f"Expected one non-gated up-projection input scale per expert for "
+            f"{weight_name}, got shape {tuple(input_scale.shape)}"
+        )
+
     if weight_name.endswith("w13_weight"):
         num_experts = weight.shape[0]
         if input_scale.numel() == 1:
@@ -731,12 +747,6 @@ def quantize_nvfp4_weight(
 ) -> Iterator[tuple[str, torch.Tensor]]:
     """Yield NVFP4 quantized weight tensors and associated scale tensors."""
     from modelopt.torch.export.quant_utils import QUANTIZATION_NVFP4, to_quantized_weight
-
-    if meta.qformat == QUANTIZATION_NVFP4 and name.endswith(".experts.up_proj"):
-        raise RuntimeError(
-            "Fused non-gated expert W4A4 export has no supported input-scale transport; "
-            "use the regular per-expert export path"
-        )
 
     weight_name, weight_scale_name, weight_scale_2_name, input_scale_name = _nvfp4_export_names(name)
     weight_scale, weight_scale_2 = compute_nvfp4_weight_scale(

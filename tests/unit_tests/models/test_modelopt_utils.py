@@ -28,7 +28,6 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _fuse_grouped_projection_names,
     _grouped_expert_projection_name,
     _modelopt_pre_ep_mapping,
-    _modelopt_pre_ep_transport_supported,
     _stage_tensor_for_collective,
 )
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
@@ -89,7 +88,7 @@ def _bridge_for_export(conversion_tasks, exported_weights):
                 (
                     task._export_hf_weight
                     for task in kwargs.get("conversion_tasks", ())
-                    if task is not None and getattr(task, "_export_hf_weight", None) is not None
+                    if getattr(task, "_export_hf_weight", None) is not None
                 ),
                 None,
             )
@@ -361,7 +360,7 @@ def test_collect_modelopt_quant_metadata_rejects_static_nvfp4(monkeypatch):
         )
 
 
-def test_modelopt_weight_amax_uses_public_static_property_only():
+def test_modelopt_weight_amax_prefers_live_then_restored_static_amax():
     public_amax = torch.tensor([2688.0])
     private_amax = torch.tensor([5376.0])
     block_amax = torch.tensor([1.0, 2.0])
@@ -382,8 +381,8 @@ def test_modelopt_weight_amax_uses_public_static_property_only():
             _amax=block_amax,
         )
     )
-    assert value is block_amax
-    assert not is_static
+    assert value is private_amax
+    assert is_static
 
 
 def test_collect_modelopt_quant_metadata_max_reduces_scalars_per_tp_projection(monkeypatch):
@@ -946,27 +945,58 @@ def test_quantize_w4a16_weight_keeps_non_gated_fused_up_proj_transport_names_and
     assert captured["weight_scale_2"].shape == (2, 1, 1)
 
 
-def test_quantize_nvfp4_weight_rejects_non_gated_fused_w4a4_transport(monkeypatch):
-    monkeypatch.setattr(
-        quant_utils,
-        "to_quantized_weight",
-        lambda *_args, **_kwargs: pytest.fail("unsupported W4A4 transport must fail before packing"),
+@pytest.mark.parametrize(
+    "input_amax",
+    [
+        torch.tensor([2688.0, 1344.0]),
+        torch.tensor([[2688.0], [1344.0]]),
+    ],
+    ids=("one_dimensional", "column"),
+)
+def test_quantize_nvfp4_weight_exports_non_gated_fused_w4a4_transport(monkeypatch, input_amax):
+    captured = {}
+
+    def fake_to_quantized_weight(
+        weight,
+        weight_scale,
+        qformat,
+        weight_scale_2,
+        block_size,
+    ):
+        captured["weight_scale_2"] = weight_scale_2
+        return torch.zeros(weight.shape, dtype=torch.uint8, device=weight.device)
+
+    monkeypatch.setattr(quant_utils, "to_quantized_weight", fake_to_quantized_weight)
+
+    tensors = dict(
+        quantize_nvfp4_weight(
+            "model.layers.0.mlp.experts.up_proj",
+            torch.ones(2, 4, 4, dtype=torch.float32),
+            QuantMeta(
+                qformat=QUANTIZATION_NVFP4,
+                block_size=4,
+                weight_amax=torch.tensor([[2688.0], [1344.0]]),
+                weight_scale_2=torch.tensor([[1.0], [0.5]]),
+                input_amax=input_amax,
+            ),
+        )
     )
 
-    with pytest.raises(RuntimeError, match="no supported input-scale transport"):
-        list(
-            quantize_nvfp4_weight(
-                "model.layers.0.mlp.experts.up_proj",
-                torch.ones(2, 4, 4, dtype=torch.float32),
-                QuantMeta(
-                    qformat=QUANTIZATION_NVFP4,
-                    block_size=4,
-                    weight_amax=torch.tensor([[2688.0], [1344.0]]),
-                    weight_scale_2=torch.tensor([[1.0], [0.5]]),
-                    input_amax=torch.tensor([[2688.0], [1344.0]]),
-                ),
-            )
-        )
+    assert set(tensors) == {
+        "model.layers.0.mlp.experts.up_proj",
+        "model.layers.0.mlp.experts.up_proj_scale",
+        "model.layers.0.mlp.experts.up_proj_scale_2",
+        "model.layers.0.mlp.experts.up_proj_input_scale",
+    }
+    torch.testing.assert_close(
+        tensors["model.layers.0.mlp.experts.up_proj_scale_2"],
+        torch.tensor([1.0, 0.5]),
+    )
+    torch.testing.assert_close(
+        tensors["model.layers.0.mlp.experts.up_proj_input_scale"],
+        torch.tensor([[1.0], [0.5]]),
+    )
+    assert captured["weight_scale_2"].shape == (2, 1, 1)
 
 
 def test_quantize_nvfp4_weight_exports_fused_moe_w2_names_and_squeezes_scale_2(monkeypatch):
@@ -1731,16 +1761,81 @@ def test_modelopt_pre_ep_mapping_supports_nemotron_h_expert_projections(
         assert getattr(replacement, attr) is group
 
 
-def test_modelopt_pre_ep_transport_falls_back_for_nemotron_h_w4a4_input_scale():
-    replacement, _ = _modelopt_pre_ep_mapping(
-        AutoMapping(
-            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
-            "backbone.layers.0.mixer.experts.0.up_proj.weight",
+@pytest.mark.parametrize(
+    ("quant_mode", "qformat"),
+    [
+        ("nvfp4", QUANTIZATION_NVFP4),
+        ("w4a16_nvfp4", "modelopt_w4a16_nvfp4"),
+    ],
+    ids=("w4a4", "w4a16"),
+)
+def test_auto_bridge_modelopt_export_selects_nemotron_h_pre_ep_family(
+    monkeypatch,
+    quant_mode,
+    qformat,
+):
+    conversion_tasks = [
+        WeightConversionTask(
+            param_name=f"decoder.layers.0.mlp.experts.linear_fc1.weight{expert}",
+            global_param_name=f"decoder.layers.0.mlp.experts.linear_fc1.weight{expert}",
+            mapping=AutoMapping(
+                f"decoder.layers.0.mlp.experts.linear_fc1.weight{expert}",
+                f"backbone.layers.0.mixer.experts.{expert}.up_proj.weight",
+            ),
+            param_weight=torch.ones(1, 2),
         )
+        for expert in range(2)
+    ]
+    metadata = {task.global_param_name: _quant_meta(qformat) for task in conversion_tasks}
+    captured_export_tasks = []
+
+    class FakeBridge:
+        hf_pretrained = object()
+        _model_bridge = SimpleNamespace()
+
+        def export_hf_weights(self, _model, **kwargs):
+            captured_export_tasks.extend(kwargs["conversion_tasks"])
+            return iter(())
+
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.auto_bridge.model_bridge.unwrap_model",
+        lambda _model: [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
+    )
+    monkeypatch.setattr(
+        modelopt_utils,
+        "collect_modelopt_quant_metadata",
+        lambda _tasks: metadata.copy(),
     )
 
-    assert not _modelopt_pre_ep_transport_supported(replacement, "nvfp4")
-    assert _modelopt_pre_ep_transport_supported(replacement, "w4a16_nvfp4")
+    def fake_get_modelopt_quant_exporter(requested_mode):
+        assert requested_mode == quant_mode
+        return qformat, lambda *_args: iter(())
+
+    monkeypatch.setattr(
+        modelopt_utils,
+        "get_modelopt_quant_exporter",
+        fake_get_modelopt_quant_exporter,
+    )
+
+    assert (
+        list(
+            AutoBridge.export_hf_weights_modelopt(
+                FakeBridge(),
+                [object()],
+                quant_mode=quant_mode,
+                cpu=True,
+                conversion_tasks=conversion_tasks,
+            )
+        )
+        == []
+    )
+    assert len(captured_export_tasks) == 2
+    assert all(getattr(task.mapping, "is_modelopt_pre_ep_export", False) for task in captured_export_tasks)
+    assert {task.mapping.hf_param for task in captured_export_tasks} == {"backbone.layers.0.mixer.experts.up_proj"}
 
 
 def test_modelopt_pre_ep_mapping_fuses_qwen3_gate_and_up_experts():

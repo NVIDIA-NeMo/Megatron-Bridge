@@ -231,15 +231,6 @@ def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tens
     )
 
 
-def _modelopt_pre_ep_transport_supported(mapping: Any, quant_mode: str) -> bool:
-    """Return whether a fused local-expert payload has a downstream route."""
-    return not (
-        quant_mode.lower() == "nvfp4"
-        and isinstance(mapping.hf_param, str)
-        and mapping.hf_param.endswith(".experts.up_proj")
-    )
-
-
 def _get_config_field(config: Any, field: str) -> Any:
     if isinstance(config, dict):
         return config.get(field, _MISSING)
@@ -897,7 +888,6 @@ class AutoBridge(Generic[MegatronModelT]):
             task_is_eligible = (
                 meta is not None
                 and meta.qformat == expected_qformat
-                and _modelopt_pre_ep_transport_supported(replacement, quant_mode)
                 and not any(matches_quant_ignore_pattern(name, ignore_patterns) for name in original_hf_names)
             )
             eligible_groups[group_key] = eligible_groups.get(group_key, True) and task_is_eligible
@@ -1055,8 +1045,6 @@ class AutoBridge(Generic[MegatronModelT]):
                     modelopt_finalize_ep_weight if getattr(task.mapping, "is_modelopt_pre_ep_export", False) else None
                 ),
             )
-            if task is not None
-            else None
             for task in mapped_tasks
         ]
         hf_weights = self.export_hf_weights(
