@@ -10,6 +10,7 @@ overrides = [
     { name = "av", marker = "sys_platform == 'never'" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "cryptography", specifier = ">=43.0.0,<47" },
+    { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
     { name = "langchain", specifier = ">=0.3.28" },
@@ -1009,8 +1010,8 @@ wheels = [
 
 [[package]]
 name = "fast-hadamard-transform"
-version = "1.0.4.post1"
-source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=f134af63deb2df17e1171a9ec1ea4a7d8604d5ca#f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" }
+version = "1.1.0"
+source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git#e7706faf8d1c3b9f241e36860640ad1dac644ede" }
 dependencies = [
     { name = "ninja" },
     { name = "packaging" },
