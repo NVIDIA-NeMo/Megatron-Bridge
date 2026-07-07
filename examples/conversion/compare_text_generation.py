@@ -445,7 +445,9 @@ def megatron_generate_from_checkpoint(
 
     # Initialize and load the model and tokenizer
     megatron_model = build_and_load_model(str(checkpoint_path), model_provider)
-    tokenizer = load_tokenizer(str(checkpoint_path))
+    # The checkpoint was imported with trust_remote_code=True (as all HF loads in
+    # this example are), so the tokenizer load must opt in as well.
+    tokenizer = load_tokenizer(str(checkpoint_path), trust_remote_code=True)
 
     generated = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
 
