@@ -52,7 +52,7 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script.py"
+ENTRYPOINT_PEFORMANCE = "run_script_with_env.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
