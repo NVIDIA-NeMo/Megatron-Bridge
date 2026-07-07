@@ -92,8 +92,10 @@ class TestGptOssBridge:
         assert moe_mapping.megatron_param == "decoder.layers.7.pre_mlp_layernorm.weight"
         assert expert_mapping.megatron_param == "decoder.layers.7.mlp.experts.linear_fc2.weight*"
 
-    def test_mapping_registry_resolves_hybrid_final_norm(self):
-        registry = GPTOSSBridge().mapping_registry()
+    def test_mapping_registry_resolves_hybrid_final_norm(self, mock_pretrained):
+        bridge = GPTOSSBridge()
+        bridge.hf_config = mock_pretrained.config
+        registry = bridge.mapping_registry()
 
         final_norm_mapping = registry.megatron_to_hf_lookup("decoder.final_norm.weight")
         final_layernorm_mapping = registry.megatron_to_hf_lookup("decoder.final_layernorm.weight")
