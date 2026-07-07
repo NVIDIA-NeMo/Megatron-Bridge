@@ -25,6 +25,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v2_lite_pretrain_config as deepseek_v2_lite_config,
 )
 from megatron.bridge.recipes.deepseek import (
+    deepseek_v4_flash_pretrain_config,
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
 )
@@ -82,15 +83,15 @@ DEEPSEEK_PRETRAIN_RECIPES = [
     # ),
 ]
 
+# On HybridModel, DeepSeek-V4's layer count, per-layer compression ratios, and MoE
+# placement are all derived from the toy HF config via the hybrid layer pattern, so we
+# must NOT override num_layers / csa_compress_ratios / moe_layer_freq here (they would
+# conflict with the pattern-derived values and trip finalize()'s consistency check).
+# We only disable the Blackwell-only fused kernels and any explicit pipeline layout so
+# the smoke test runs unfused on a single rank.
 DEEPSEEK_V4_MODEL_OVERRIDES = {
-    "num_layers": 2,
     "mtp_num_layers": None,
     "pipeline_model_parallel_layout": None,
-    "num_moe_experts": 8,
-    "moe_router_topk": 1,
-    "moe_layer_freq": [0, 1],
-    "csa_compress_ratios": [0, 0],
-    "csa_backend": "unfused",
     "use_fused_mhc": False,
     "apply_rope_fusion": False,
     "dsa_indexer_loss_coeff": 0.0,
@@ -101,6 +102,12 @@ DEEPSEEK_V4_MODEL_OVERRIDES = {
 
 DEEPSEEK_V4_PRETRAIN_RECIPES = [
     # (config_func, name, requires_blackwell, checkpoint_overrides)
+    (
+        deepseek_v4_flash_pretrain_config,
+        "deepseek_v4_flash_adam_bf16",
+        False,
+        None,
+    ),
     (
         deepseek_v4_flash_pretrain_muon_config,
         "deepseek_v4_flash_muon_bf16",
