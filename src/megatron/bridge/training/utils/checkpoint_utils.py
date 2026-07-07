@@ -505,7 +505,11 @@ def _sanitize_run_config_object(obj: Any) -> Any:
         target = obj.get("_target_")
         if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
             return None
-        if target == _RECIPE_CONFIG_TARGET and set(obj).issubset({"_target_", "_call_"}):
+        if (
+            target == _RECIPE_CONFIG_TARGET
+            and obj.get("_call_", True) is True
+            and set(obj).issubset({"_target_", "_call_"})
+        ):
             logger.warning(
                 "Ignoring a legacy quantization recipe whose state was not preserved in run_config.yaml. "
                 "The checkpoint can still be loaded, but the original per-module quantization settings "

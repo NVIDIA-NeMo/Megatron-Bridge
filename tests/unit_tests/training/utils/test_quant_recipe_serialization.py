@@ -6,7 +6,9 @@ from megatron.core.quantization.quant_config import GlobMatcher, MatchContext, M
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.model_load_save import load_model_config
+from megatron.bridge.training.utils.checkpoint_utils import read_run_config
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.utils.instantiate_utils import instantiate, target_allowlist
 
 
 pytestmark = pytest.mark.unit
@@ -20,6 +22,35 @@ class _RunConfig(_ConfigContainerBase):
 class _UnsupportedMatcher(Matcher):
     def match(self, context: MatchContext) -> str | None:
         return None
+
+
+class _SerializableMatcher(Matcher):
+    def __init__(self, pattern: str, config_key: str):
+        self.pattern = pattern
+        self.config_key = config_key
+
+    def match(self, context: MatchContext) -> str | None:
+        return self.config_key if context.module_path == self.pattern else None
+
+    def to_cfg_dict(self) -> dict[str, str]:
+        return {
+            "_target_": "megatron.core.quantization.quant_config.GlobMatcher",
+            "pattern": self.pattern,
+            "config_key": self.config_key,
+        }
+
+
+@dataclass
+class SerializableDataclassMatcher(Matcher):
+    pattern: str
+    config_key: str
+
+    def match(self, context: MatchContext) -> str | None:
+        return self.config_key if context.module_path == self.pattern else None
+
+
+class _RecipeConfigSubclass(RecipeConfig):
+    pass
 
 
 def _quant_recipe() -> RecipeConfig:
@@ -91,14 +122,17 @@ def test_quant_recipe_round_trips_through_run_config(tmp_path) -> None:
     )
 
 
-def test_legacy_stateless_quant_recipe_is_ignored(tmp_path, caplog) -> None:
+@pytest.mark.parametrize("include_call_flag", [False, True])
+def test_legacy_stateless_quant_recipe_is_ignored(tmp_path, caplog, include_call_flag) -> None:
     run_config_path = tmp_path / "run_config.yaml"
     _RunConfig(model=_model_provider()).to_yaml(str(run_config_path))
     run_config = yaml.safe_load(run_config_path.read_text())
-    run_config["model"]["quant_recipe"] = {
-        "_call_": True,
+    legacy_recipe = {
         "_target_": "megatron.core.quantization.quant_config.RecipeConfig",
     }
+    if include_call_flag:
+        legacy_recipe["_call_"] = True
+    run_config["model"]["quant_recipe"] = legacy_recipe
     run_config_path.write_text(yaml.safe_dump(run_config))
 
     with caplog.at_level("WARNING"):
@@ -116,8 +150,60 @@ def test_unsupported_quant_recipe_matcher_fails_loudly() -> None:
         _ConfigContainerBase._convert_value_to_dict(recipe)
 
 
+def test_custom_serializable_matcher_uses_its_config_mapping() -> None:
+    recipe = RecipeConfig(
+        matchers=[_SerializableMatcher("decoder.layers.0.*", "custom")],
+        config_dict={"custom": {}},
+    )
+
+    serialized = _ConfigContainerBase._convert_value_to_dict(recipe)
+    restored = instantiate(serialized)
+
+    assert isinstance(restored.matchers[0], GlobMatcher)
+    assert restored.matchers[0].pattern == "decoder.layers.0.*"
+    assert restored.matchers[0].config_key == "custom"
+
+
+def test_dataclass_matcher_uses_base_config_serialization() -> None:
+    recipe = RecipeConfig(
+        matchers=[SerializableDataclassMatcher("decoder.layers.0.*", "custom")],
+        config_dict={"custom": {}},
+    )
+    serialized = _ConfigContainerBase._convert_value_to_dict(recipe)
+    matcher_target = serialized["matchers"][0]["_target_"]
+    target_allowlist.add_exact(matcher_target)
+    try:
+        restored = instantiate(serialized)
+    finally:
+        target_allowlist.remove_exact(matcher_target)
+
+    assert isinstance(restored.matchers[0], SerializableDataclassMatcher)
+    assert restored.matchers[0].pattern == "decoder.layers.0.*"
+    assert restored.matchers[0].config_key == "custom"
+
+
+def test_recipe_subclass_without_serializer_fails_loudly() -> None:
+    recipe = _RecipeConfigSubclass(matchers=[], config_dict={})
+
+    with pytest.raises(TypeError, match="RecipeConfig subclasses must implement to_cfg_dict"):
+        _ConfigContainerBase._convert_value_to_dict(recipe)
+
+
 def test_upstream_recipe_serializer_takes_precedence(monkeypatch) -> None:
     recipe = _quant_recipe()
     monkeypatch.setattr(recipe, "to_cfg_dict", lambda: {"serializer": "upstream"}, raising=False)
 
     assert _ConfigContainerBase._convert_value_to_dict(recipe) == {"serializer": "upstream"}
+
+
+def test_recipe_class_reference_is_not_treated_as_legacy_stub(tmp_path) -> None:
+    run_config_path = tmp_path / "run_config.yaml"
+    recipe_class_reference = {
+        "_target_": "megatron.core.quantization.quant_config.RecipeConfig",
+        "_call_": False,
+    }
+    run_config_path.write_text(yaml.safe_dump({"recipe_class": recipe_class_reference}))
+
+    loaded = read_run_config(str(run_config_path))
+
+    assert loaded["recipe_class"] == recipe_class_reference
