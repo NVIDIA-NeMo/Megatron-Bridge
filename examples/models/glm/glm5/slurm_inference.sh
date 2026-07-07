@@ -14,11 +14,11 @@
 # limitations under the License.
 
 # ==============================================================================
-# GLM-5 / GLM-5.1 Multi-Node Inference (Slurm)
+# GLM-5 / GLM-5.1 / GLM-5.2 Multi-Node Inference (Slurm)
 #
-# GLM-5 and GLM-5.1 share the same GlmMoeDsaForCausalLM architecture
-# (MoE + MLA + DSA: 256 routed experts, top-8, ~800B+ params, BF16),
-# so this script handles both. Set MODEL_NAME=GLM-5.1 to run the 5.1 checkpoint.
+# The GLM-5 family shares the same GlmMoeDsaForCausalLM architecture
+# (MoE + MLA + DSA: 256 routed experts, top-8, ~750-800B params, BF16),
+# so this script handles GLM-5, GLM-5.1, and GLM-5.2.
 #
 # Full model requires 8 nodes (64 GPUs) minimum.
 # TP does NOT reduce expert memory — increase EP instead.
@@ -35,6 +35,7 @@
 # Usage:
 #   sbatch examples/models/glm/glm5/slurm_inference.sh                  # GLM-5
 #   MODEL_NAME=GLM-5.1 sbatch examples/models/glm/glm5/slurm_inference.sh
+#   MODEL_NAME=GLM-5.2 sbatch examples/models/glm/glm5/slurm_inference.sh
 # ==============================================================================
 
 #SBATCH --job-name=glm5-infer
@@ -59,7 +60,7 @@ export HF_HOME="${HF_HOME:?Set HF_HOME to your HuggingFace cache directory}"
 export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv_cache}"
 
 # ── Model / Parallelism ──────────────────────────────────────────────────
-# MODEL_NAME selects between GLM-5 and GLM-5.1 (same architecture).
+# MODEL_NAME selects a GLM-5-family checkpoint.
 MODEL_NAME="${MODEL_NAME:-GLM-5}"
 # Use the direct local snapshot path to avoid 64 processes calling
 # snapshot_download simultaneously (causes Lustre race conditions).

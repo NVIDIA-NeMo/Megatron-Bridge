@@ -548,9 +548,9 @@ class MegatronModelBridge(
 
         # Handle rope scaling: extract params from rope_scaling dict
         # HF configs use either "type" or "rope_type" key for the scaling type
-        from megatron.bridge.models.mla_provider import MLAModelProvider
+        from megatron.bridge.models.transformer_config import MLATransformerConfig
 
-        is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLAModelProvider)
+        is_mla_provider = self.PROVIDER_CLASS is not None and issubclass(self.PROVIDER_CLASS, MLATransformerConfig)
         rope_scaling = getattr(hf_config, "rope_scaling", None)
 
         rope_type = None
@@ -630,7 +630,7 @@ class MegatronModelBridge(
             ModelProviderTarget: A configured model provider instance
         """
         from megatron.bridge.models.gpt_provider import GPTModelProvider
-        from megatron.bridge.models.mla_provider import MLAModelProvider
+        from megatron.bridge.models.transformer_config import MLATransformerConfig
 
         hf_config = hf_pretrained.config
 
@@ -641,7 +641,7 @@ class MegatronModelBridge(
 
         # Use specified provider class, defaulting to GPTModelProvider
         provider_class = self.PROVIDER_CLASS if self.PROVIDER_CLASS is not None else GPTModelProvider
-        is_mla_provider = issubclass(provider_class, MLAModelProvider)
+        is_mla_provider = issubclass(provider_class, MLATransformerConfig)
         # Filter kwargs to only fields the provider dataclass accepts, so that MLA-only None
         # values (q_lora_rank, kv_lora_rank, …) are silently dropped for non-MLA providers
         # while still being passed through for MLA providers that declare them as fields.
