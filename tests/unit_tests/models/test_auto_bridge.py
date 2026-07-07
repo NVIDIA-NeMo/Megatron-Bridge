@@ -23,7 +23,8 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 import torch
-from transformers import LlamaConfig
+from tokenizers import Tokenizer, models, pre_tokenizers
+from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
@@ -47,6 +48,30 @@ def create_mock_pretrained_causal_lm():
             pass  # Skip actual initialization
 
     return MockPreTrainedCausalLM()
+
+
+def _save_minimal_fast_tokenizer(path: Path) -> None:
+    backend = Tokenizer(
+        models.WordLevel(
+            {
+                "<unk>": 0,
+                "<bos>": 1,
+                "<eos>": 2,
+                "<pad>": 3,
+                "hello": 4,
+            },
+            unk_token="<unk>",
+        )
+    )
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        bos_token="<bos>",
+        eos_token="<eos>",
+        pad_token="<pad>",
+    )
+    tokenizer.save_pretrained(path)
 
 
 def _make_fake_source(present):
@@ -869,18 +894,94 @@ class TestAutoBridge:
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
-        """Config-only save writes config.json, calls save_hf_weights, and tolerates missing hub files."""
+        """Config-only save without a reference writes config.json and calls save_hf_weights."""
         bridge = AutoBridge(PretrainedConfig())
-        bridge.hf_model_id = "some-org/some-model"
 
         with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
-            with patch("huggingface_hub.list_repo_files", return_value=["config.json", "README.md"]):
-                with patch("huggingface_hub.hf_hub_download") as mock_download:
-                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
+            bridge.save_hf_pretrained([Mock()], str(tmp_path))
 
         assert (tmp_path / "config.json").exists()
-        mock_download.assert_not_called()
         mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_saves_reference_artifacts(
+        self, _mock_dist_avail, _mock_dist_init, tmp_path
+    ):
+        """Config-only save preserves tokenizer artifacts without loading reference weights."""
+        source_path = tmp_path / "source"
+        output_path = tmp_path / "output"
+        source_path.mkdir()
+
+        source_config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            max_position_embeddings=2048,
+            vocab_size=5,
+        )
+        source_config.save_pretrained(source_path)
+        _save_minimal_fast_tokenizer(source_path)
+
+        synthesized_config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            max_position_embeddings=4096,
+            vocab_size=5,
+        )
+        bridge = AutoBridge(synthesized_config)
+        bridge.hf_model_id = str(source_path)
+
+        with patch(
+            "megatron.bridge.models.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained"
+        ) as mock_load_weights:
+            with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
+                bridge.save_hf_pretrained([Mock()], output_path)
+
+        exported_tokenizer = AutoTokenizer.from_pretrained(output_path, local_files_only=True)
+        assert exported_tokenizer("hello")["input_ids"] == [4]
+        assert (output_path / "tokenizer.json").is_file()
+        assert json.loads((output_path / "config.json").read_text())["max_position_embeddings"] == 4096
+        mock_load_weights.assert_not_called()
+        mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(self, _mock_dist_avail, _mock_dist_init):
+        """Config-only save delegates all artifacts and model-specific options to the lazy HF wrapper."""
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
+        bridge = AutoBridge(config)
+        bridge.hf_model_id = "some-org/some-model"
+
+        mock_artifact_source = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock(ADDITIONAL_FILE_PATTERNS=["chat_template.jinja"])
+        mock_model_bridge.get_hf_tokenizer_kwargs.return_value = {"use_fast": True}
+
+        with patch.object(
+            type(bridge),
+            "_model_bridge",
+            PropertyMock(return_value=mock_model_bridge),
+        ):
+            with patch.object(
+                PreTrainedCausalLM,
+                "from_pretrained",
+                return_value=mock_artifact_source,
+            ) as mock_from_pretrained:
+                with patch.object(AutoBridge, "save_hf_weights"):
+                    bridge.save_hf_pretrained(
+                        [Mock()],
+                        "./output_dir",
+                        source_path="./custom_files",
+                    )
+
+        mock_from_pretrained.assert_called_once_with(
+            "some-org/some-model",
+            use_fast=True,
+            trust_remote_code=False,
+        )
+        assert mock_artifact_source.config is config
+        mock_artifact_source.save_artifacts.assert_called_once_with(
+            "./output_dir",
+            original_source_path="./custom_files",
+            additional_files=["chat_template.jinja"],
+        )
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
@@ -888,21 +989,18 @@ class TestAutoBridge:
         self, _mock_dist_avail, _mock_dist_init, tmp_path
     ):
         """Config-only save omits stale remote-code metadata when remote code is not preserved."""
-        config = PretrainedConfig()
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
         config.auto_map = {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
         bridge = AutoBridge(config)
-        bridge.hf_model_id = "some-org/some-model"
 
         with patch.object(AutoBridge, "save_hf_weights"):
-            with patch("huggingface_hub.list_repo_files") as mock_list_repo_files:
-                bridge.save_hf_pretrained([Mock()], str(tmp_path))
+            bridge.save_hf_pretrained([Mock()], str(tmp_path))
 
         saved_config = json.loads((tmp_path / "config.json").read_text())
         assert "auto_map" not in saved_config
-        mock_list_repo_files.assert_not_called()
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
@@ -910,40 +1008,38 @@ class TestAutoBridge:
         self, _mock_dist_avail, _mock_dist_init, tmp_path
     ):
         """Config-only save keeps auto_map and copies code when remote code is preserved."""
-        config = PretrainedConfig()
+        source_path = tmp_path / "source"
+        output_path = tmp_path / "output"
+        source_path.mkdir()
+        _save_minimal_fast_tokenizer(source_path)
+        (source_path / "modeling_custom.py").write_text("# custom modeling code\n")
+
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
         config.auto_map = {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
         bridge = AutoBridge(config)
-        bridge.hf_model_id = "some-org/some-model"
+        bridge.hf_model_id = str(source_path)
         bridge.trust_remote_code = True
 
-        def fake_hf_hub_download(repo_id, filename, local_dir):
-            del repo_id
-            local_dir = Path(local_dir)
-            (local_dir / filename).write_text("# custom modeling code")
-            metadata_dir = local_dir / ".cache" / "huggingface" / "download"
-            metadata_dir.mkdir(parents=True)
-            (metadata_dir / f"{filename}.metadata").write_text("metadata")
+        mock_model_bridge = Mock(ADDITIONAL_FILE_PATTERNS=None)
+        mock_model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+        with patch.object(
+            type(bridge),
+            "_model_bridge",
+            PropertyMock(return_value=mock_model_bridge),
+        ):
+            with patch.object(AutoBridge, "save_hf_weights"):
+                bridge.save_hf_pretrained([Mock()], output_path)
 
-        with patch.object(AutoBridge, "save_hf_weights"):
-            with patch("huggingface_hub.list_repo_files", return_value=["modeling_custom.py", "README.md"]):
-                with patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download) as mock_download:
-                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
-
-        saved_config = json.loads((tmp_path / "config.json").read_text())
+        saved_config = json.loads((output_path / "config.json").read_text())
         assert saved_config["auto_map"] == {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
-        assert (tmp_path / "modeling_custom.py").exists()
-        assert not (tmp_path / ".cache").exists()
-        mock_download.assert_called_once_with(
-            repo_id="some-org/some-model",
-            filename="modeling_custom.py",
-            local_dir=str(tmp_path),
-        )
+        assert (output_path / "modeling_custom.py").exists()
+        assert not (output_path / ".cache").exists()
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
