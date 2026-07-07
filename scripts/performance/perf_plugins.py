@@ -237,7 +237,6 @@ class PerfEnvPlugin(Plugin):
     gpu: str
     compute_dtype: str
     train_task: str
-    num_gpus: int | None = None
     config_variant: str | None = None
     deterministic: bool = False
 

@@ -681,7 +681,6 @@ def main(
                 gpu=gpu,
                 compute_dtype=compute_dtype,
                 train_task=task,
-                num_gpus=num_gpus,
                 config_variant=config_variant,
                 deterministic=deterministic,
             )
