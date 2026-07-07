@@ -457,6 +457,7 @@ class GPTSFTDataset(Dataset):
         if isinstance(idx, np.int64):
             idx = idx.item()
 
+        auto_gen_idx = idx < 0
         if self.samples_mapping is not None:
             assert idx < len(self.samples_mapping)
             idx, _, _ = self.samples_mapping[idx]
@@ -468,8 +469,6 @@ class GPTSFTDataset(Dataset):
         if idx < 0:
             idx = len(self) + idx
             auto_gen_idx = True
-        else:
-            auto_gen_idx = False
         try:
             example = self.indexed_dataset[idx]
             if auto_gen_idx:
@@ -846,6 +845,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
                     self.pack_metadata = json.load(f)
 
     def __getitem__(self, idx):
+        is_padding = idx < 0
         if self.samples_mapping is not None:
             # assert idx < len(self.samples_mapping)
             idx = self.samples_mapping[idx]
@@ -853,7 +853,7 @@ class GPTSFTPackedDataset(GPTSFTDataset):
         input_ids = self.indexed_dataset[idx]["input_ids"]
         seq_boundaries = self.indexed_dataset[idx]["seq_start_id"] + [len(input_ids)]
         loss_mask = self.indexed_dataset[idx]["loss_mask"]
-        if idx < 0:
+        if is_padding or idx < 0:
             loss_mask = [0] * len(loss_mask)
         return {"input_ids": input_ids, "seq_boundaries": seq_boundaries, "loss_mask": loss_mask}
 

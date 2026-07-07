@@ -153,7 +153,6 @@ CLI_OVERRIDES="\
 
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --hf_path $HF_MODEL_ID \
     --step_func nemotron_omni_step \
     $CLI_OVERRIDES"
 

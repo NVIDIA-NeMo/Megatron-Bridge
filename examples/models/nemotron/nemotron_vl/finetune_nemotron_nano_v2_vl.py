@@ -50,6 +50,22 @@ SCRIPT_DIR: Path = Path(__file__).parent.resolve()
 DEFAULT_CONFIG_FILENAME: str = "nemotron_nano_v2_vl_override_example.yaml"
 DEFAULT_CONFIG_FILE_PATH: Path = SCRIPT_DIR / "conf" / DEFAULT_CONFIG_FILENAME
 
+_ALL_COMPONENT_LORA_TARGET_MODULES = ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2"]
+_LANGUAGE_LORA_TARGET_MODULES = [
+    "*language_model*.linear_qkv",
+    "*language_model*.linear_proj",
+    "*language_model*.linear_fc1",
+    "*language_model*.linear_fc2",
+]
+_VISION_LORA_TARGET_MODULES = [
+    "*vision_model*.linear_qkv",
+    "*vision_model*.linear_proj",
+    "*vision_model*.linear_fc1",
+    "*vision_model*.linear_fc2",
+    "*vision_projection*.linear_fc1",
+    "*vision_projection*.linear_fc2",
+]
+
 
 def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     """Parse command-line flags and return `(argparse.Namespace, overrides)`."""
@@ -96,6 +112,32 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
     return args, cli_dotlist_overrides
 
 
+def _apply_lora_component_selection(
+    cfg: ConfigContainer,
+    *,
+    lora_on_language_model: bool,
+    lora_on_vision_model: bool,
+) -> None:
+    """Apply the example script's component-level LoRA target selection."""
+    if not hasattr(cfg.peft, "target_modules"):
+        raise ValueError("The selected PEFT config does not expose target_modules.")
+
+    if lora_on_language_model and lora_on_vision_model:
+        cfg.peft.target_modules = _ALL_COMPONENT_LORA_TARGET_MODULES.copy()
+    elif lora_on_language_model:
+        cfg.peft.target_modules = _LANGUAGE_LORA_TARGET_MODULES.copy()
+        if hasattr(cfg.peft, "freeze_vision_model"):
+            cfg.peft.freeze_vision_model = False
+        if hasattr(cfg.peft, "freeze_vision_projection"):
+            cfg.peft.freeze_vision_projection = False
+    elif lora_on_vision_model:
+        cfg.peft.target_modules = _VISION_LORA_TARGET_MODULES.copy()
+        if hasattr(cfg.peft, "freeze_language_model"):
+            cfg.peft.freeze_language_model = False
+    else:
+        raise ValueError("At least one of --lora-on-language-model or --lora-on-vision-model must be set.")
+
+
 def main() -> None:
     """Main function to finetune Nemotron Nano V2 VL."""
     args, cli_overrides = parse_cli_args()
@@ -109,20 +151,20 @@ def main() -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    config_kwargs = {
-        "hf_model_path": args.hf_model_path,
-        "pretrained_checkpoint": args.pretrained_checkpoint,
-    }
     if args.lora_on_language_model or args.lora_on_vision_model:
-        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config(
-            **config_kwargs,
+        cfg: ConfigContainer = nemotron_nano_v2_vl_12b_peft_config()
+        _apply_lora_component_selection(
+            cfg,
             lora_on_language_model=args.lora_on_language_model,
             lora_on_vision_model=args.lora_on_vision_model,
         )
         logger.info("Loaded base configuration for PEFT")
     else:
-        cfg = nemotron_nano_v2_vl_12b_sft_config(**config_kwargs)
+        cfg = nemotron_nano_v2_vl_12b_sft_config()
         logger.info("Loaded base configuration for SFT")
+
+    cfg.dataset.hf_processor_path = args.hf_model_path
+    cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
 
     if get_rank_safe() == 0:
         cfg.print_yaml()
