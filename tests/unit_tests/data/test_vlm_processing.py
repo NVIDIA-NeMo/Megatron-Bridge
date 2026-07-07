@@ -254,6 +254,29 @@ class _JinjaSeparatedChatMLBoundaryProcessor(_ChatMLBoundaryProcessor):
         self.tokenizer = self._Tok()
 
 
+class _LlamaBoundaryProcessor(_ChatMLBoundaryProcessor):
+    class _Tok(_ChatMLBoundaryTokenizer):
+        chat_template = (
+            "{{ '<|start_header_id|>' + message['role'] + '<|end_header_id|>\\n\\n' }}"
+            "{{ message['content'] }}{{ '<|eot_id|>' }}"
+        )
+
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {
+                "<|start_header_id|>assistant<|end_header_id|>\n\n": [302],
+                "<|start_header_id|>system<|end_header_id|>\n\n": [305],
+                "<|start_header_id|>developer<|end_header_id|>\n\n": [306],
+                "<|start_header_id|>user<|end_header_id|>\n\n": [300],
+                "<|start_header_id|>tool<|end_header_id|>\n\n": [307],
+                "<|eot_id|>": [303],
+            }
+            return {"input_ids": mapping.get(text, [42])}
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = self._Tok()
+
+
 class _ZeroGenerationMaskTokenizer(_ChatMLBoundaryTokenizer):
     chat_template = (
         "<|im_start|>user\n{{ content }}<|im_end|>\n"
@@ -449,6 +472,20 @@ def test_infer_assistant_mask_boundary_config_handles_jinja_separated_chatml_new
 
     assert boundary_config is not None
     assert boundary_config.role_end_tokens["assistant"] == [103, 104]
+
+
+def test_infer_assistant_mask_boundary_config_from_llama_template():
+    boundary_config = infer_assistant_mask_boundary_config(_LlamaBoundaryProcessor())
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {
+        "assistant": [302],
+        "system": [305],
+        "developer": [306],
+        "user": [300],
+        "tool": [307],
+    }
+    assert all(token_ids == [303] for token_ids in boundary_config.role_end_tokens.values())
 
 
 def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers():

@@ -269,6 +269,21 @@ def test_hf_builder_defaults_trust_remote_code_false(monkeypatch):
     assert seen["processor"] == ("Qwen/attacker_processor", False)
 
 
+def test_hf_builder_normalizes_missing_pad_token_to_eos():
+    from megatron.bridge.data.builders.hf_conversation_dataset import normalize_hf_conversation_processor
+
+    class _Tokenizer:
+        pad_token_id = None
+        pad_token = None
+        eos_token_id = 2
+        eos_token = "</s>"
+
+    tokenizer = _Tokenizer()
+
+    assert normalize_hf_conversation_processor(tokenizer) is tokenizer
+    assert tokenizer.pad_token == tokenizer.eos_token
+
+
 def test_hf_builder_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, caplog):
     import logging
 

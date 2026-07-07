@@ -490,18 +490,29 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
     if template is None:
         return None
 
-    candidates: tuple[tuple[str, str, tuple[str, ...], Mapping[str, str]], ...] = (
+    candidates: tuple[tuple[tuple[str, ...], str, str, tuple[str, ...], Mapping[str, str]], ...] = (
         (
+            ("<|im_start|>assistant", "<|im_end|>"),
             "<|im_start|>assistant\n",
             "<|im_end|>\n",
             ("<|im_end|>",),
             {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")},
         ),
-        ("<|turn>model\n", "<turn|>", (), {}),
-        ("<start_of_turn>model\n", "<end_of_turn>", (), {}),
+        (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", (), {}),
+        (("<start_of_turn>model", "<end_of_turn>"), "<start_of_turn>model\n", "<end_of_turn>", (), {}),
+        (
+            ("<|start_header_id|>", "<|end_header_id|>", "<|eot_id|>"),
+            "<|start_header_id|>assistant<|end_header_id|>\n\n",
+            "<|eot_id|>",
+            (),
+            {
+                role: f"<|start_header_id|>{role}<|end_header_id|>\n\n"
+                for role in ("system", "developer", "user", "tool")
+            },
+        ),
     )
-    for assistant_start, assistant_end, assistant_end_fallbacks, other_role_starts in candidates:
-        if assistant_start.rstrip("\n") not in template or assistant_end.rstrip("\n") not in template:
+    for required_markers, assistant_start, assistant_end, assistant_end_fallbacks, other_role_starts in candidates:
+        if not all(marker in template for marker in required_markers):
             continue
         start_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_start)
         end_tokens = tokenize_text_without_special_tokens(tokenizer, assistant_end)

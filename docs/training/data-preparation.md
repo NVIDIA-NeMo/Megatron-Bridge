@@ -141,7 +141,7 @@ from megatron.bridge.training.config import HFConversationDatasetConfig
 
 dataset = HFConversationDatasetConfig(
     seq_length=4096,
-    hf_processor_path=None,  # Reuse the recipe tokenizer for text chat.
+    hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
     maker_name="text_chat",
     maker_kwargs={
         "path_or_dataset": "json",
@@ -158,6 +158,8 @@ dataset = HFConversationDatasetConfig(
 ```
 
 Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields. `HFConversationDatasetProvider` remains only as a deprecated compatibility adapter.
+
+For text chat, `hf_processor_path=None` reuses the training tokenizer only when that tokenizer already defines the intended chat template. Otherwise select a vocabulary-compatible instruction processor explicitly, as above.
 
 For text and multimodal schemas, split maker settings, in-batch packing, processor selection, and all available knobs, see the [Hugging Face Conversation Dataset Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-conversation/README.md).
 

@@ -35,21 +35,39 @@ DatasetMaker = Callable[..., list[dict[str, Any]]]
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
 
+def normalize_hf_conversation_processor(processor: Any) -> Any:
+    """Ensure the runtime tokenizer can pad batched conversation text."""
+    tokenizer = get_processor_tokenizer(processor)
+    if getattr(tokenizer, "pad_token_id", None) is not None:
+        return processor
+
+    eos_token = getattr(tokenizer, "eos_token", None)
+    if eos_token is not None:
+        tokenizer.pad_token = eos_token
+    else:
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        if eos_token_id is not None:
+            tokenizer.pad_token_id = eos_token_id
+    return processor
+
+
 def load_hf_conversation_processor(config: HFConversationDatasetConfig, tokenizer: Any | None) -> Any:
     """Load the configured HF processor or adapt the training tokenizer."""
     if config.hf_processor_path is None:
         if tokenizer is None:
             raise ValueError("hf_processor_path must be set when no tokenizer is available in build context.")
-        return get_processor_tokenizer(tokenizer)
+        return normalize_hf_conversation_processor(get_processor_tokenizer(tokenizer))
 
     trust_remote_code = is_safe_repo(
         trust_remote_code=config.trust_remote_code,
         hf_path=config.hf_processor_path,
     )
     try:
-        return AutoProcessor.from_pretrained(
-            config.hf_processor_path,
-            trust_remote_code=trust_remote_code,
+        return normalize_hf_conversation_processor(
+            AutoProcessor.from_pretrained(
+                config.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
         )
     except (OSError, ValueError):
         logger.debug(
@@ -57,9 +75,11 @@ def load_hf_conversation_processor(config: HFConversationDatasetConfig, tokenize
             config.hf_processor_path,
             exc_info=True,
         )
-        return AutoTokenizer.from_pretrained(
-            config.hf_processor_path,
-            trust_remote_code=trust_remote_code,
+        return normalize_hf_conversation_processor(
+            AutoTokenizer.from_pretrained(
+                config.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
         )
 
 

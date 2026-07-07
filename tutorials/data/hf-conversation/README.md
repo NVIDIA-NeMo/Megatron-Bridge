@@ -25,7 +25,7 @@ The legacy `conversations` key is also recognized for text. Multimodal makers no
 
 ## Connect text chat to training
 
-Use the Hugging Face `json` loader through the registered `text_chat` maker. Leave `hf_processor_path=None` to reuse the training recipe's tokenizer:
+Use the Hugging Face `json` loader through the registered `text_chat` maker. Set an instruction-tuned processor with a chat template:
 
 ```python
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
@@ -34,11 +34,11 @@ from megatron.bridge.training.config import HFConversationDatasetConfig
 from megatron.bridge.training.gpt_step import forward_step
 
 cfg = llama32_1b_sft_config()
-cfg.checkpoint.pretrained_checkpoint = "/checkpoints/llama32-1b"
+cfg.checkpoint.pretrained_checkpoint = "/checkpoints/llama32-1b-instruct"
 cfg.checkpoint.load = None
 cfg.dataset = HFConversationDatasetConfig(
     seq_length=cfg.model.seq_length,
-    hf_processor_path=None,
+    hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
     maker_name="text_chat",
     maker_kwargs={
         "path_or_dataset": "json",
@@ -61,7 +61,7 @@ cfg.dataset = HFConversationDatasetConfig(
 finetune(config=cfg, forward_step_func=forward_step)
 ```
 
-The base checkpoint must be a native Megatron checkpoint or a local Hugging Face full-model directory accepted by Bridge. Keep `cfg.model.seq_length` equal to `cfg.dataset.seq_length`. The builder repeats normalized examples to the sample counts requested by the training schedule, so iteration-based training remains the supported duration model.
+The base checkpoint must be a native Megatron checkpoint or a local Hugging Face full-model directory accepted by Bridge, and its vocabulary must match the selected processor. Set `hf_processor_path=None` only when the recipe's training tokenizer already defines the intended chat template. Keep `cfg.model.seq_length` equal to `cfg.dataset.seq_length`. The builder repeats normalized examples to the sample counts requested by the training schedule, so iteration-based training remains the supported duration model.
 
 ## Connect multimodal data
 
