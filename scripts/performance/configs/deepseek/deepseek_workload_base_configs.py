@@ -302,6 +302,10 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_H100_FP8_SC_V2 = replace(
 DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE = replace(
     DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_V1,
     global_batch_size=256,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    recompute_modules=["moe_act"],
 )
 
 
