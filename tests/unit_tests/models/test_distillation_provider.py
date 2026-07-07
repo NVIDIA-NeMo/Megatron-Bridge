@@ -198,6 +198,66 @@ class TestDistillationProvider:
         assert mock_mcore_gpt.call_count == 2
         assert result[0] is mock_kd_model
 
+    def _make_pair(self):
+        kwargs = dict(
+            hidden_size=4096,
+            num_attention_heads=32,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            seq_length=1024,
+            pipeline_dtype=None,
+        )
+        teacher = GPTModelProvider(num_layers=24, **kwargs)
+        student_base = GPTModelProvider(num_layers=12, **kwargs)
+        return student_base, teacher
+
+    def test_convert_hook_registered_last_for_qad_ordering(self):
+        """_convert_hook is appended last so a prepend=True QAD hook runs before the KD conversion."""
+        student_base, teacher = self._make_pair()
+        student = convert_to_distillation_provider(student_base, teacher)
+
+        assert student._pre_wrap_hooks[-1] == student._convert_hook
+
+        def restore_hook(model_chunks):
+            return model_chunks
+
+        student.register_pre_wrap_hook(restore_hook, prepend=True)
+        assert student._pre_wrap_hooks[0] is restore_hook
+        assert student._pre_wrap_hooks[-1] == student._convert_hook
+
+    def test_convert_hook_distill_submodule(self):
+        """distill_submodule distills only the submodule; full_model is retained for export."""
+        student_base, teacher = self._make_pair()
+        student = convert_to_distillation_provider(
+            student_base, teacher, kd_config=ModelOptDistillConfig(), distill_submodule="language_model"
+        )
+
+        # Full (VLM-like) models: each carries a ``.language_model`` submodule with a config.
+        student_full, teacher_full = Mock(), Mock()
+        student_full.language_model.config = Mock()
+        teacher_full.language_model.config = Mock()
+        student_full.language_model.config.hidden_size = teacher_full.language_model.config.hidden_size = 4096
+        student_full.language_model.parameters.return_value = iter(())
+        teacher_full.language_model.parameters.return_value = iter(())
+        # The teacher's full model is built inside _convert_hook.
+        teacher.provide_distributed_model = Mock(return_value=[teacher_full])
+
+        with (
+            patch("modelopt.torch.distill.plugins.megatron.parallel_state") as mock_ps,
+            patch("megatron.bridge.models.distillation_provider.unwrap_model", side_effect=lambda m: m),
+            # mtd.convert mutates in place -> return the same submodule object.
+            patch("megatron.bridge.models.distillation_provider.mtd.convert", side_effect=lambda m, mode: m),
+        ):
+            mock_ps.is_pipeline_first_stage.return_value = True
+            mock_ps.is_pipeline_last_stage.return_value = True
+            result = student._convert_hook([student_full])
+
+        # The full model is retained for export; only the distilled submodule is returned as the model.
+        assert student.full_model is student_full
+        assert result[0] is student_full.language_model
+
     def test_setattr_mirrors_to_teacher(self):
         """Test __setattr__ mirrors attributes to teacher when teacher has that attribute."""
         teacher = GPTModelProvider(

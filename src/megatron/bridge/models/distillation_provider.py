@@ -43,7 +43,8 @@ class DistillationProvider(TransformerConfig):
         teacher: The teacher model provider.
         kd_config: Knowledge-distillation configuration.
         distill_submodule: If set, distill only this submodule of the built model (e.g.
-            ``"language_model"`` for VLMs); the rest of the model is trained/exported unchanged.
+            ``"language_model"`` for VLMs); the rest of the model is exported unchanged (only the
+            submodule is trained).
             ``None`` distills the whole model.
     """
 
@@ -122,6 +123,9 @@ class DistillationProvider(TransformerConfig):
         # ``mtd.convert`` mutates in place, so for the submodule case ``full_model`` already holds the
         # distilled submodule for export.
         kd_model = mtd.convert(student_model, mode=[("kd_loss", modelopt_cfg)])
+        if self.distill_submodule is not None:
+            # Export reads the distilled submodule from ``full_model``; enforce the in-place contract.
+            assert getattr(self.full_model, self.distill_submodule) is kd_model
         mtd_mcore.adjust_distillation_model_for_mcore(kd_model, kd_cfg)
         return [kd_model]
 
@@ -174,7 +178,8 @@ def convert_to_distillation_provider(
         teacher_provider: The teacher model provider.
         kd_config: Knowledge-distillation configuration.
         distill_submodule: If set, distill only this submodule of the built model (e.g.
-            ``"language_model"`` for VLMs); the rest of the model is trained/exported unchanged.
+            ``"language_model"`` for VLMs); the rest of the model is exported unchanged (only the
+            submodule is trained).
     """
 
     assert isinstance(student_provider, (GPTModelProvider, HybridModelProvider)), (
