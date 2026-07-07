@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.quantization_utils import (
     quantize_to_int4,
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.hf_pretrained.causal_lm import ProviderBridgeInput
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
@@ -58,7 +58,7 @@ class KimiK25VLBridge(MegatronModelBridge):
     The language backbone shares the same architecture as Kimi K2 (MoE with MLA).
     """
 
-    def provider_bridge(self, hf_pretrained: ProviderBridgeInput) -> KimiK25VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config

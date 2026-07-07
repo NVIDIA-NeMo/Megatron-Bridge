@@ -16,7 +16,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from transformers.configuration_utils import PretrainedConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -150,6 +152,25 @@ class TestKimiK25VLBridgeInitialization:
 
 class TestKimiK25VLBridgeProviderBridge:
     """Test provider_bridge method."""
+
+    def test_autobridge_config_only_provider_flow(self, mock_hf_config):
+        """Test AutoBridge passes a config-backed causal wrapper through the real VLM bridge."""
+        model_id = "moonshotai/Kimi-K2.5"
+        config = PretrainedConfig(name_or_path=model_id)
+        config.architectures = ["KimiK25ForConditionalGeneration"]
+        config.text_config = mock_hf_config.text_config
+        config.vision_config = mock_hf_config.vision_config
+        config.media_placeholder_token_id = mock_hf_config.media_placeholder_token_id
+        config.pad_token_id = mock_hf_config.pad_token_id
+        config.ignore_index = mock_hf_config.ignore_index
+        config.torch_dtype = mock_hf_config.torch_dtype
+
+        provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+
+        assert isinstance(provider, KimiK25VLModelProvider)
+        assert provider.hf_model_path == model_id
+        assert provider.num_layers == 61
+        assert provider.vision_config is mock_hf_config.vision_config
 
     def test_provider_bridge_basic_config(self, kimi_bridge, mock_hf_pretrained):
         """Test provider_bridge creates correct provider with basic config."""

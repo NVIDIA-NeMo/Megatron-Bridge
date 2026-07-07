@@ -395,8 +395,8 @@ class TestAutoBridge:
         assert bridge.hf_pretrained.config is vlm_config
         mock_model_bridge.provider_bridge.assert_called_once_with(wrapper)
 
-    def test_from_hf_config_passes_config_shim_to_vlm_provider_bridge(self):
-        """Test config-only VLM provider construction receives the shared input contract."""
+    def test_from_hf_config_passes_causal_wrapper_to_vlm_provider_bridge(self):
+        """Test config-only VLM provider construction receives a config-backed causal wrapper."""
         model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
         vlm_config = PretrainedConfig(name_or_path=model_id)
         vlm_config.architectures = ["Qwen2_5_VLForConditionalGeneration"]
@@ -411,7 +411,9 @@ class TestAutoBridge:
 
         provider_input = mock_model_bridge.provider_bridge.call_args.args[0]
         assert provider is mock_provider
-        assert not isinstance(provider_input, PreTrainedCausalLM)
+        assert isinstance(provider_input, PreTrainedCausalLM)
+        assert not provider_input.has_model
+        assert not hasattr(provider_input, "state")
         assert provider_input.config is vlm_config
         assert provider_input.model_name_or_path == model_id
 

@@ -48,7 +48,6 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.causal_lm import (
     PreTrainedCausalLM,
-    ProviderBridgeInput,
     _ConfigOnlyPretrainedShim,
 )
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -1791,7 +1790,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return bridge
 
     @property
-    def _provider_bridge_input(self) -> ProviderBridgeInput:
+    def _provider_bridge_input(self) -> PreTrainedCausalLM:
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
             return self.hf_pretrained
         return self._config_only_pretrained
@@ -1951,7 +1950,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return target_dataclass(**kwargs)
 
     @cached_property
-    def _config_only_pretrained(self) -> _ConfigOnlyPretrainedShim:
+    def _config_only_pretrained(self) -> PreTrainedCausalLM:
         if not isinstance(self.hf_pretrained, PretrainedConfig):
             raise ValueError("Config-only shim accessed when hf_pretrained is not a PretrainedConfig instance.")
         return _ConfigOnlyPretrainedShim(self.hf_pretrained)

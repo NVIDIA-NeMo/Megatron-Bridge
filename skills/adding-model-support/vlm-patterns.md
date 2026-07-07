@@ -69,7 +69,7 @@ Read these from the correct config level:
     model_type="my_model",                       # HF model_type for export
 )
 class MyVLBridge(MegatronModelBridge):
-    def provider_bridge(self, hf_pretrained: ProviderBridgeInput) -> MyVLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MyVLModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -113,7 +113,7 @@ class MyVLBridge(MegatronModelBridge):
 ### Import types
 
 ```python
-from megatron.bridge.models.hf_pretrained.causal_lm import ProviderBridgeInput
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 ```
 
 ## VLM Model Class Patterns

@@ -27,7 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.hf_pretrained.causal_lm import ProviderBridgeInput
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
 
@@ -59,7 +59,7 @@ class Qwen3VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: ProviderBridgeInput) -> Qwen3VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLModelProvider:
         """
         Create a Qwen3VLModelProvider from a HuggingFace pretrained model.
 
@@ -227,7 +227,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: ProviderBridgeInput) -> Qwen3VLMoEModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLMoEModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
