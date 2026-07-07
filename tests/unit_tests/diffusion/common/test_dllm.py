@@ -22,9 +22,9 @@ no model, no checkpoint, no GPU.
 import pytest
 import torch
 
-from megatron.bridge.diffusion.common.dllm import compute_block_bias
-from megatron.bridge.diffusion.common.dllm_sampling import (
+from megatron.bridge.diffusion.common.dllm import (
     add_gumbel_noise,
+    compute_block_bias,
     get_num_transfer_tokens,
     get_transfer_index,
 )

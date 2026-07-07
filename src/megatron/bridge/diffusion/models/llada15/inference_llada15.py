@@ -32,7 +32,7 @@ from typing import Optional
 
 import torch
 
-from megatron.bridge.diffusion.common.dllm_sampling import get_num_transfer_tokens, get_transfer_index
+from megatron.bridge.diffusion.common.dllm import get_num_transfer_tokens, get_transfer_index
 from megatron.bridge.diffusion.models.llada15.llada15_attention import LLaDA15TEDotProductAttention
 
 
