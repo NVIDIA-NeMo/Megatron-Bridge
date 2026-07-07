@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
-from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
+from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
 

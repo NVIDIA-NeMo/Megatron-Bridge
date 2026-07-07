@@ -19,7 +19,7 @@ import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
-from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
+from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
@@ -73,7 +73,7 @@ def get_dataset(
     return dataset, path
 
 
-class TestDataFineTuningDataset:
+class TestGPTSFTDatasetBuilder:
     def test_extract_tokenizer_model_name(self, ensure_test_data):
         dataset, _ = get_dataset(ensure_test_data)
         tokenizer_name = dataset._extract_tokenizer_model_name()

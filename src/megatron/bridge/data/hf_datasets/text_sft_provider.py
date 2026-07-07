@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetConfig
+from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.hf_source import HFDatasetSourceConfig
 
@@ -42,7 +42,7 @@ _LEGACY_TEXT_MAKER_DEFAULTS: dict[str, dict[str, Any]] = {
 
 
 def _get_gpt_sft_dataset_builder() -> type[Any]:
-    from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
+    from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetBuilder
 
     return GPTSFTDatasetBuilder
 

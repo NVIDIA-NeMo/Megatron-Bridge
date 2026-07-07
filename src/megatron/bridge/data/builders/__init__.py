@@ -1,7 +1,7 @@
 """Canonical dataset Config + Builder APIs."""
 
-from megatron.bridge.data.builders import finetuning_dataset as _finetuning_dataset
-from megatron.bridge.data.builders.finetuning_dataset import (
+from megatron.bridge.data.builders import gpt_sft_dataset as _gpt_sft_dataset
+from megatron.bridge.data.builders.gpt_sft_dataset import (
     GPTSFTDatasetBuilder,
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
@@ -17,8 +17,8 @@ from megatron.bridge.data.hf_source import HFDatasetSourceConfig
 # =============================================================================
 # Deprecated compatibility exports
 # =============================================================================
-FinetuningDatasetBuilder = _finetuning_dataset.FinetuningDatasetBuilder
-FinetuningDatasetConfig = _finetuning_dataset.FinetuningDatasetConfig
+FinetuningDatasetBuilder = _gpt_sft_dataset.FinetuningDatasetBuilder
+FinetuningDatasetConfig = _gpt_sft_dataset.FinetuningDatasetConfig
 
 
 __all__ = [

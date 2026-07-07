@@ -10,8 +10,8 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
 )
-from megatron.bridge.data.builders import finetuning_dataset as builder_mod
-from megatron.bridge.data.builders.finetuning_dataset import (
+from megatron.bridge.data.builders import gpt_sft_dataset as builder_mod
+from megatron.bridge.data.builders.gpt_sft_dataset import (
     FinetuningDatasetBuilder,
     GPTSFTDatasetBuilder,
     materialize_hf_dataset,

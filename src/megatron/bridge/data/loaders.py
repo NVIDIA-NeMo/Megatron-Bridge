@@ -168,10 +168,10 @@ def build_train_valid_test_datasets(
 def build_train_valid_test_datasets_for_num_epochs(
     cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
 ) -> tuple[Any, Any, Any]:
-    """Build a finite finetuning dataset and resolve epoch-based training iterations.
+    """Build a finite GPT SFT dataset and resolve epoch-based training iterations.
 
     This cannot use :func:`build_train_valid_test_datasets` because that function
-    requires ``train_iters`` to already be resolved. Finetuning dataset providers
+    requires ``train_iters`` to already be resolved. GPT SFT dataset builders
     determine dataset sizes from the data source or ``max_train_samples`` and ignore
     the requested target sample counts, so zero placeholders are sufficient here.
     """

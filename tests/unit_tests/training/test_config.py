@@ -3302,7 +3302,7 @@ class TestEpochBasedTraining:
         with pytest.raises(AssertionError, match="num_epochs must be a positive number"):
             train_cfg.finalize()
 
-    def test_epoch_based_training_requires_finite_finetuning_dataset(self):
+    def test_epoch_based_training_requires_finite_gpt_sft_dataset(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3432,7 +3432,7 @@ class TestDatasetSequenceLengthValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_finetuning_dataset_sequence_length_mismatch_fails(self, monkeypatch):
+    def test_gpt_sft_dataset_sequence_length_mismatch_fails(self, monkeypatch):
         """Test that GPTSFTDatasetConfig with mismatched sequence length fails validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
         dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=1024)  # Mismatch!
@@ -3451,7 +3451,7 @@ class TestDatasetSequenceLengthValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_finetuning_dataset_sequence_length_match_passes(self, monkeypatch):
+    def test_gpt_sft_dataset_sequence_length_match_passes(self, monkeypatch):
         """Test that GPTSFTDatasetConfig with matching sequence length passes validation."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
         dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)  # Match!
@@ -3508,7 +3508,7 @@ class TestDatasetSequenceLengthValidation:
 
         @dataclass
         class CustomGPTSFTDatasetConfig(GPTSFTDatasetConfig):
-            """Custom finetuning dataset that extends GPTSFTDatasetConfig."""
+            """Custom GPT SFT dataset that extends GPTSFTDatasetConfig."""
 
             custom_field: str = "custom"
 

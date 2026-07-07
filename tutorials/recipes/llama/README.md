@@ -124,7 +124,7 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 ```yaml
 # Each section maps to a ConfigContainer field
 dataset:                           # GPTSFTDatasetConfig
-  dataset_root: /path/to/finetuning_dataset_dir
+  dataset_root: /path/to/gpt_sft_dataset_dir
   seq_length: 4096
 
 train:                             # TrainingConfig

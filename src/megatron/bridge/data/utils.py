@@ -21,7 +21,7 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.builders.finetuning_dataset import (
+from megatron.bridge.data.builders.gpt_sft_dataset import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
 )

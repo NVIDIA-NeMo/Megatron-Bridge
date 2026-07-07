@@ -53,10 +53,10 @@ from megatron.bridge.data.base import (
 
 # Deprecated training.config import compatibility. New code imports dataset
 # Config + Builder APIs from megatron.bridge.data.builders.
-from megatron.bridge.data.builders.finetuning_dataset import (
+from megatron.bridge.data.builders.gpt_sft_dataset import (
     FinetuningDatasetConfig as FinetuningDatasetConfig,
 )
-from megatron.bridge.data.builders.finetuning_dataset import (
+from megatron.bridge.data.builders.gpt_sft_dataset import (
     GPTSFTDatasetConfig,
 )
 from megatron.bridge.data.builders.hf_sft_dataset import HFSFTDatasetConfig
