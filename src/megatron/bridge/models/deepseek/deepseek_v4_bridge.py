@@ -65,8 +65,18 @@ from typing import Dict, Mapping
 
 import torch
 from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
-from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
 from megatron.core.models.hybrid.hybrid_model import HybridModel
+
+
+try:
+    from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
+except ImportError:
+    # DeepSeek-V4 on HybridModel needs the DSv4 hybrid stack spec that megatron-core adds in
+    # its "Enable DeepSeek-v4 hybrid_model" series. Older pinned megatron-core lacks it: keep
+    # this module importable (the DSv4 hybrid tests are gated on that capability, and the real
+    # model build fails loudly on an unsupported core) rather than breaking the whole
+    # models package at import time.
+    hybrid_dsv4_stack_spec = None
 
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry

@@ -576,7 +576,9 @@ class TestDeepSeekV4ProviderBridgeHybridConfig:
     """provider_bridge must translate the DSv4 HF config into the hybrid layer pattern."""
 
     def test_provider_bridge_builds_hybrid_pattern(self):
-        from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_dsv4_stack_spec
+        # Import via the bridge module so this resolves to None on an older megatron-core
+        # (which lacks hybrid_dsv4_stack_spec) instead of raising at import.
+        from megatron.bridge.models.deepseek.deepseek_v4_bridge import hybrid_dsv4_stack_spec
 
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
