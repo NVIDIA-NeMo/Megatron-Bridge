@@ -479,10 +479,6 @@ class TestGetBatch:
                 "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_group",
                 return_value=None,
             ),
-            patch(
-                "megatron.bridge.diffusion.models.common.dgpt_step.get_batch_on_this_cp_rank",
-                side_effect=lambda x, **kwargs: x,
-            ),
         ):
             cfg = MagicMock()
             cfg.dataset.skip_getting_attention_mask_from_dataset = True
@@ -652,6 +648,7 @@ def _make_call_context(batch_size=2, seq_len=8, vocab_size=20, different_seed=Fa
 
     config = types.SimpleNamespace(
         mtp_num_layers=0,
+        context_parallel_size=1,  # accessed by DGPTStep for CP sharding (cp=1 -> no-op)
         different_seed_per_dp=different_seed,
         ar_loss_weight=1.0,
         dlm_loss_weight=1.0,

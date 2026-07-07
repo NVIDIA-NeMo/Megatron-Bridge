@@ -98,7 +98,7 @@ def _make_attention(
     apply_llama4: bool = True,
     apply_qk_scaling: bool = False,
 ):
-    """Instantiate NemotronLabsDiffusionAttention with compute_block_mask mocked."""
+    """Instantiate NemotronLabsDiffusionAttention with compute_block_bias mocked."""
     cfg = _make_config(
         num_heads=num_heads,
         num_kv_heads=num_kv_heads,
@@ -113,7 +113,7 @@ def _make_attention(
     )
 
     with patch(
-        "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_mask",
+        "megatron.bridge.diffusion.models.common.nemotron_labs_diffusion_attention.compute_block_bias",
         return_value=MagicMock(),
     ):
         return NemotronLabsDiffusionAttention(

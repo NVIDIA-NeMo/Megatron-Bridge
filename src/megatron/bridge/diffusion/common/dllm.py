@@ -82,26 +82,6 @@ def compute_block_mask(block_size, max_seq_length):
     return create_block_mask(sbd_block_diff_mask, B=None, H=None, Q_LEN=q_len, KV_LEN=q_len)
 
 
-def compute_active_block_bidirectional_mask(block_starts, block_ends, q_len, kv_len, offset=0):
-    """Build a causal mask with bidirectional attention inside each row's active block."""
-    if block_starts.ndim != 1 or block_ends.ndim != 1:
-        raise ValueError("block_starts and block_ends must be 1D tensors")
-    if block_starts.shape != block_ends.shape:
-        raise ValueError(f"block_starts shape {block_starts.shape} must match block_ends shape {block_ends.shape}")
-
-    q_pos = torch.arange(offset, offset + q_len, device=block_starts.device)
-    kv_pos = torch.arange(kv_len, device=block_starts.device)
-    causal_mask = kv_pos.unsqueeze(0) <= q_pos.unsqueeze(1)
-
-    block_starts = block_starts.view(-1, 1, 1)
-    block_ends = block_ends.view(-1, 1, 1)
-    q_pos = q_pos.view(1, -1, 1)
-    kv_pos = kv_pos.view(1, 1, -1)
-    q_in_block = (q_pos >= block_starts) & (q_pos < block_ends)
-    block_mask = q_in_block & (kv_pos < block_ends)
-    return causal_mask.unsqueeze(0) | block_mask
-
-
 def compute_block_bias(block_size, max_seq_length, dtype, device):
     """Dense additive ``post_scale_bias`` equivalent of the sbd_block_diff mask.
 

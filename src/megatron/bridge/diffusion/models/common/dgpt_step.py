@@ -176,10 +176,6 @@ class DGPTStep:
         (noisy_tokens, labels, loss_mask, attention_mask, position_ids, masked_indices, p_mask, input_ids_len) = (
             self._apply_noise(tokens, labels, loss_mask, attention_mask, position_ids)
         )
-        # position_ids for the doubled sequence: [b, 2L] of the right shape (the
-        # attention recomputes per-half RoPE positions internally).
-        position_ids_2l = torch.cat([position_ids, position_ids], dim=1)
-
         if cu_seqlens is not None:
             raise ValueError("Packed sequence support is not currently implemented for DGPTStep")
 
@@ -190,10 +186,14 @@ class DGPTStep:
         cp_rank = parallel_state.get_context_parallel_rank() if cp_size > 1 else 0
         if cp_size > 1:
             input_ids_local = zigzag_slice(noisy_tokens, cp_rank, cp_size, seq_dim=1)
-            position_ids_local = zigzag_slice(position_ids_2l, cp_rank, cp_size, seq_dim=1)
         else:
             input_ids_local = noisy_tokens
-            position_ids_local = position_ids_2l
+
+        # position_ids are shape-only here: this model uses position_embedding_type="none",
+        # and the attention recomputes RoPE from an internal arange (per half of the doubled
+        # sequence, after the CP all-gather), so the *values* passed in are never consumed.
+        # We only need a tensor whose shape matches input_ids_local.
+        position_ids_local = torch.zeros_like(input_ids_local)
 
         forward_args = {
             "input_ids": input_ids_local,

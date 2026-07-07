@@ -48,8 +48,8 @@ Approach used here ("cuDNN core in cp=1 mode + manual CP collectives"):
 Trade-offs: each rank runs the full-2L attention (cp_size x attention FLOPs; no
 comm/compute overlap), and the bias is a dense ``[1,1,2L,2L]`` tensor (O((2L)^2)
 memory -- fine at short context, costly at 128k). Verified bit-exact forward and
-numerically-equivalent gradients (cp=1 vs cp=2 vs cp=4) in
-``tests/unit_tests/diffusion/`` (TODO: add test_cp_parity_suite.py).
+numerically-equivalent gradients (cp=1 vs cp=2 vs cp=4) via the CP-sharding round-trip
+tests in ``tests/unit_tests/diffusion/common/test_cp_utils.py``.
 """
 
 import copy
@@ -279,7 +279,12 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         # global mpu parallel-state at runtime, and the CP group is overridden per
         # forward by packed_seq_params.cp_group. (Avoids depending on a CP-populated
         # pg_collection at construction.)
-        self._ar_core_attention = TEDotProductAttention(
+        # Constructed LAZILY on first use (see `_get_ar_core_attention`): only the AR /
+        # causal inference path needs it; the pure diffusion-training path never does.
+        # TEDotProductAttention has no learnable parameters, so late construction has no
+        # optimizer / checkpoint / .to() implications.
+        self._ar_core_attention = None
+        self._ar_core_attention_kwargs = dict(
             config=config,
             layer_number=self.layer_number,
             attn_mask_type=AttnMaskType.causal,
@@ -315,6 +320,17 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_k = None
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
+
+    def _get_ar_core_attention(self):
+        """Lazily build the CP-capable causal TE core on first use (AR/causal path only).
+
+        Kept out of ``__init__`` so the pure diffusion-training path never constructs it.
+        ``TEDotProductAttention`` holds no learnable parameters, so late construction is
+        safe (no optimizer/checkpoint/.to() implications).
+        """
+        if self._ar_core_attention is None:
+            self._ar_core_attention = TEDotProductAttention(**self._ar_core_attention_kwargs)
+        return self._ar_core_attention
 
     def forward(
         self,
@@ -442,12 +458,9 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         """
         if packed_seq_params is not None:
             assert self._inference_causal, (
-                "Packed-sequence AR path requires causal attention "
-                "(set_inference_params(causal=True))."
+                "Packed-sequence AR path requires causal attention (set_inference_params(causal=True))."
             )
-            assert not self._cache_enabled, (
-                "KV cache is not supported on the packed-sequence path."
-            )
+            assert not self._cache_enabled, "KV cache is not supported on the packed-sequence path."
             return self._packed_causal_forward(query, key, value, packed_seq_params)
 
         # Transpose to [b, np, s, hn]
@@ -602,8 +615,10 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             bwd = (2 * cp_size - cp_rank - 1) * cp_seg
             chunks.append(torch.arange(fwd, fwd + cp_seg, device=device))
             chunks.append(torch.arange(bwd, bwd + cp_seg, device=device))
-        pos = torch.cat(chunks).to(torch.long).unsqueeze(0) if chunks else torch.zeros(
-            1, total_tokens, dtype=torch.long, device=device
+        pos = (
+            torch.cat(chunks).to(torch.long).unsqueeze(0)
+            if chunks
+            else torch.zeros(1, total_tokens, dtype=torch.long, device=device)
         )
         return pos
 
@@ -635,31 +650,27 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         # Per-pack RoPE (positions reset at each cu_seqlens boundary). Under CP the
         # local tokens are a zigzag slice of the full sequence, so positions must be
         # the true global within-pack positions (see _packed_position_ids).
-        cp_group = (
-            parallel_state.get_context_parallel_group() if self.cp_size > 1 else None
-        )
-        position_ids = self._packed_position_ids(
-            packed_seq_params, total, query.device, cp_group
-        )  # [1, total]
+        cp_group = parallel_state.get_context_parallel_group() if self.cp_size > 1 else None
+        position_ids = self._packed_position_ids(packed_seq_params, total, query.device, cp_group)  # [1, total]
         cos, sin = self.rope_embedding_module(query, position_ids)
         cos = cos.squeeze(0).unsqueeze(1)
         sin = sin.squeeze(0).unsqueeze(1)
         q = (query * cos) + (rotate_half(query) * sin)  # [total, np, hn]
-        k = (key * cos) + (rotate_half(key) * sin)      # [total, n_kv, hn]
+        k = (key * cos) + (rotate_half(key) * sin)  # [total, n_kv, hn]
         v = value
 
         # Llama-4 query scaling (per-pack positions); scale [total, 1] -> [total, 1, 1]
         # to broadcast over [total, np, hn].
         if self.beta is not None:
-            scale = _get_llama_4_attn_scale(
-                position_ids.squeeze(0), self.beta, self.max_position_embeddings
-            ).to(q.dtype)
+            scale = _get_llama_4_attn_scale(position_ids.squeeze(0), self.beta, self.max_position_embeddings).to(
+                q.dtype
+            )
             q = q * scale.unsqueeze(-1)
 
         # q/k/v are already 3D [total, heads, hn] == TE's thd layout. GQA is handled
         # inside TE (num_gqa_groups). TE converts AttnMaskType.causal -> padding_causal
         # for thd and applies per-pack causal masking via cu_seqlens in packed_seq_params.
-        context = self._ar_core_attention(
+        context = self._get_ar_core_attention()(
             q.contiguous(),
             k.contiguous(),
             v.contiguous(),
