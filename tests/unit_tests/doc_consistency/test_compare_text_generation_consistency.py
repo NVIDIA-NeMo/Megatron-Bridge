@@ -13,9 +13,10 @@
 # limitations under the License.
 """Consistency checks for examples/conversion/compare_text_generation.py.
 
-The example imports checkpoints with trust_remote_code=True, so every
-tokenizer/model load in the same pipeline must opt in as well — a bare
-load_tokenizer() call trips the checkpoint trust gate and aborts the run.
+trust_remote_code is a single --trust-remote-code CLI flag (default off) threaded
+through every HF load in the pipeline. The checkpoint tokenizer load must forward
+that flag rather than issue a bare load_tokenizer(), which would trip the checkpoint
+trust gate whenever the checkpoint's tokenizer config requires remote code.
 
 Deliberately stdlib-only (ast over the script source) so it runs without
 torch/GPU.
