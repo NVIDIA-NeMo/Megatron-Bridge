@@ -24,7 +24,14 @@ from unittest.mock import Mock, PropertyMock, patch
 import pytest
 import torch
 from tokenizers import Tokenizer, models, pre_tokenizers
-from transformers import AutoTokenizer, LlamaConfig, PreTrainedTokenizerFast
+from transformers import (
+    AutoProcessor,
+    AutoTokenizer,
+    CLIPImageProcessor,
+    LlamaConfig,
+    LlavaProcessor,
+    PreTrainedTokenizerFast,
+)
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
@@ -50,7 +57,7 @@ def create_mock_pretrained_causal_lm():
     return MockPreTrainedCausalLM()
 
 
-def _save_minimal_fast_tokenizer(path: Path) -> None:
+def _save_minimal_fast_tokenizer(path: Path) -> PreTrainedTokenizerFast:
     backend = Tokenizer(
         models.WordLevel(
             {
@@ -72,6 +79,7 @@ def _save_minimal_fast_tokenizer(path: Path) -> None:
         pad_token="<pad>",
     )
     tokenizer.save_pretrained(path)
+    return tokenizer
 
 
 def _make_fake_source(present):
@@ -903,12 +911,13 @@ class TestAutoBridge:
         assert (tmp_path / "config.json").exists()
         mock_save_hf_weights.assert_called_once()
 
+    @pytest.mark.parametrize("artifact_source", ["hf_model_id", "source_path"])
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only_saves_reference_artifacts(
-        self, _mock_dist_avail, _mock_dist_init, tmp_path
+        self, _mock_dist_avail, _mock_dist_init, tmp_path, artifact_source
     ):
-        """Config-only save preserves tokenizer artifacts without loading reference weights."""
+        """Config-only save preserves processor artifacts without loading reference weights."""
         source_path = tmp_path / "source"
         output_path = tmp_path / "output"
         source_path.mkdir()
@@ -919,7 +928,9 @@ class TestAutoBridge:
             vocab_size=5,
         )
         source_config.save_pretrained(source_path)
-        _save_minimal_fast_tokenizer(source_path)
+        tokenizer = _save_minimal_fast_tokenizer(source_path)
+        processor = LlavaProcessor(image_processor=CLIPImageProcessor(), tokenizer=tokenizer)
+        processor.save_pretrained(source_path)
 
         synthesized_config = LlamaConfig(
             architectures=["LlamaForCausalLM"],
@@ -927,17 +938,24 @@ class TestAutoBridge:
             vocab_size=5,
         )
         bridge = AutoBridge(synthesized_config)
-        bridge.hf_model_id = str(source_path)
+        save_kwargs = {}
+        if artifact_source == "hf_model_id":
+            bridge.hf_model_id = str(source_path)
+        else:
+            save_kwargs["source_path"] = source_path
 
         with patch(
             "megatron.bridge.models.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained"
         ) as mock_load_weights:
             with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
-                bridge.save_hf_pretrained([Mock()], output_path)
+                bridge.save_hf_pretrained([Mock()], output_path, **save_kwargs)
 
         exported_tokenizer = AutoTokenizer.from_pretrained(output_path, local_files_only=True)
+        exported_processor = AutoProcessor.from_pretrained(output_path, local_files_only=True)
         assert exported_tokenizer("hello")["input_ids"] == [4]
+        assert isinstance(exported_processor, LlavaProcessor)
         assert (output_path / "tokenizer.json").is_file()
+        assert (output_path / "processor_config.json").is_file()
         assert json.loads((output_path / "config.json").read_text())["max_position_embeddings"] == 4096
         mock_load_weights.assert_not_called()
         mock_save_hf_weights.assert_called_once()
