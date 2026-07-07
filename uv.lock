@@ -10,7 +10,7 @@ overrides = [
     { name = "av", marker = "sys_platform == 'never'" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "cryptography", specifier = ">=43.0.0,<47" },
-    { name = "fast-hadamard-transform", specifier = "==1.1.0" },
+    { name = "fast-hadamard-transform", git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
     { name = "langchain", specifier = ">=0.3.28" },
@@ -1011,13 +1011,12 @@ wheels = [
 [[package]]
 name = "fast-hadamard-transform"
 version = "1.1.0"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git?rev=v1.1.0#1cc807efbd6cc001df359822d60bf6052dd66859" }
 dependencies = [
     { name = "ninja" },
     { name = "packaging" },
     { name = "torch", marker = "sys_platform == 'never'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/dc/7afa54b951cac690742247d153e2e992e30677b944d7330bb7280903fb11/fast_hadamard_transform-1.1.0.tar.gz", hash = "sha256:7c03daf825dc74c7200605a5b758f2d5a3bc47ef3b817bf02e97b24076a83906", size = 7545, upload-time = "2026-03-10T09:23:56.028Z" }
 
 [[package]]
 name = "fastapi"
