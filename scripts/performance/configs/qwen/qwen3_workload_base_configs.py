@@ -388,8 +388,8 @@ QWEN3_30B_A3B_PRETRAIN_CONFIG_GB200_FP8_MX_V1 = replace(
     micro_batch_size=4,
     moe_flex_dispatcher_backend="hybridep",
     moe_a2a_overlap=True,
-    cuda_graph_impl="full_iteration",
-    cuda_graph_scope=[],
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["attn", "moe_router", "moe_preprocess"],
     cutedsl_fused_grouped_mlp=True,
     fp8_dot_product_attention=True,
 )

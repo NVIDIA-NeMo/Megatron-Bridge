@@ -18,6 +18,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
     ConfigContainer,
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
+    _enable_hybridep_partial_mxfp8,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -220,7 +221,10 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
 
     _benchmark_common(cfg)
-    _enable_hybridep_full_iteration_mxfp8(cfg)
+    # Natural routing makes expert token shapes dynamic. Keep this measured GB200
+    # fix targeted; sibling GPU presets retain full-iteration graphs until they
+    # are validated independently on their own topology.
+    _enable_hybridep_partial_mxfp8(cfg)
     return cfg
 
 
