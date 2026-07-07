@@ -1648,51 +1648,10 @@ class TestGroupedExpertLinearAdapter:
         assert mock_te_backend.call_args_list[0].kwargs["m_splits"] == [1, 2]
         assert mock_te_backend.call_args_list[1].kwargs["m_splits"] == [1, 2]
 
-    @pytest.mark.parametrize("te_version", ["2.16", "2.17"])
-    @pytest.mark.parametrize("grad_enabled", [False, True])
-    def test_grouped_expert_linear_adapter_matches_te_autograd_call_contract(self, te_version, grad_enabled):
-        """The private TE grouped-linear call should match both supported signatures."""
-        calls = []
-
-        class TE216GroupedLinearAutograd:
-            @staticmethod
-            def apply(inp, non_tensor_args, *weights_and_biases):
-                calls.append(("apply", inp, None, non_tensor_args, weights_and_biases))
-                return inp + 1, [None, None]
-
-            @staticmethod
-            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
-                calls.append(("forward", inp, None, non_tensor_args, weights_and_biases))
-                return inp + 1, [None, None]
-
-        class TE217GroupedLinearAutograd:
-            @staticmethod
-            def apply(inp, m_splits, non_tensor_args, *weights_and_biases):
-                calls.append(("apply", inp, m_splits, non_tensor_args, weights_and_biases))
-                return inp + 1, [None, None]
-
-            @staticmethod
-            def forward(ctx, inp, m_splits, non_tensor_args, *weights_and_biases):
-                calls.append(("forward", inp, m_splits, non_tensor_args, weights_and_biases))
-                return inp + 1, [None, None]
-
-        autograd_cls = TE216GroupedLinearAutograd if te_version == "2.16" else TE217GroupedLinearAutograd
-        x = torch.arange(6, dtype=torch.float32).reshape(3, 2)
-        weight = torch.arange(8, dtype=torch.float32).reshape(2, 2, 2)
-        quantizers = tuple([None, None] for _ in range(6))
-        helper = SimpleNamespace(
-            activation_dtype=x.dtype,
-            apply_bias=False,
-            fp8=False,
-            fp8_calibration=False,
-            fuse_wgrad_accumulation=False,
-            save_original_input=False,
-            sequence_parallel=False,
-            wgrad_store=object(),
-            prepare_forward=Mock(return_value=x),
-            _get_quantizers=Mock(return_value=quantizers),
-            end_forward=Mock(),
-        )
+    @pytest.mark.run_only_on("GPU")
+    def test_grouped_expert_linear_adapter_runs_te_grouped_linear(self):
+        """Per-expert LoRA should train and infer through a real TE grouped-linear helper."""
+        device = torch.device("cuda")
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -1702,45 +1661,31 @@ class TestGroupedExpertLinearAdapter:
             activation="identity",
             input_is_parallel=False,
             model_parallel_config=MockModelParallelConfig(),
+            params_device=device,
+            params_dtype=torch.bfloat16,
         )
 
-        with (
-            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
-            patch("megatron.bridge.peft.utils.TEPytorchGroupedLinearAutograd", autograd_cls),
-            torch.set_grad_enabled(grad_enabled),
-        ):
-            output = adapter._forward_te_grouped_linear(x, weight=weight, m_splits=[1, 2])
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2, device=device, dtype=torch.bfloat16))
+            adapter.linear_out.weight[0].copy_(torch.eye(2, device=device, dtype=torch.bfloat16))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2, device=device, dtype=torch.bfloat16))
+            adapter.linear_out.weight[1].copy_(torch.eye(2, device=device, dtype=torch.bfloat16))
 
-        torch.testing.assert_close(output, x + 1)
-        helper.prepare_forward.assert_called_once_with(x, num_gemms=2)
-        helper.end_forward.assert_called_once_with()
-        assert len(calls) == 1
-        call_kind, actual_input, explicit_m_splits, non_tensor_args, weights_and_biases = calls[0]
-        assert call_kind == ("apply" if grad_enabled else "forward")
-        assert actual_input is x
+        x = torch.tensor([[1, 2], [3, 4], [5, 6]], device=device, dtype=torch.bfloat16, requires_grad=True)
+        expected = torch.tensor([[1, 2], [6, 8], [10, 12]], device=device, dtype=torch.bfloat16)
 
-        if te_version == "2.16":
-            assert explicit_m_splits is None
-            assert non_tensor_args[0] == [1, 2]
-            common_non_tensor_args = non_tensor_args[1:]
-        else:
-            assert explicit_m_splits.dtype == torch.int64
-            assert explicit_m_splits.device.type == "cpu"
-            assert explicit_m_splits.tolist() == [1, 2]
-            common_non_tensor_args = non_tensor_args
+        output = adapter(x, [1, 2])
 
-        assert len(common_non_tensor_args) == 21
-        assert common_non_tensor_args[15] is grad_enabled
-        assert common_non_tensor_args[16] == [None, None]
-        assert common_non_tensor_args[17] is False
-        assert common_non_tensor_args[18] is None
-        assert common_non_tensor_args[19] is False
-        assert common_non_tensor_args[20] is False
-        assert len(weights_and_biases) == 4
-        torch.testing.assert_close(weights_and_biases[0], weight[0])
-        torch.testing.assert_close(weights_and_biases[1], weight[1])
-        assert weights_and_biases[2].numel() == 0
-        assert weights_and_biases[3].numel() == 0
+        torch.testing.assert_close(output, expected)
+        assert adapter._te_grouped_linear_helpers
+        output.float().sum().backward()
+        assert x.grad is not None
+        assert adapter.linear_in.weight.grad is not None
+        assert adapter.linear_out.weight.grad is not None
+
+        with torch.no_grad():
+            inference_output = adapter(x.detach(), [1, 2])
+        torch.testing.assert_close(inference_output, expected)
 
     def test_grouped_expert_linear_adapter_requires_expert_tp_group_for_gather(self):
         """Per-expert LoRA should fail clearly when expert TP is configured without initialized groups."""
