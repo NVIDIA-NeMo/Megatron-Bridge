@@ -23,6 +23,8 @@ deep_ep_cpp
 hybrid_ep_cpp
 torch_tensorrt
 quack  # imports nvidia-cutlass-dsl MLIR libs, which dlopen libcuda at import
+transformer_engine  # TE >=2.17 dlopens libcuda at import (its C extension links CUDA driver symbols eagerly)
+peft  # transitively imports transformer_engine, which dlopens libcuda at import
 
 # Requires the libfuse system library (multi-storage-client FUSE backend; optional):
 mfusepy
