@@ -79,7 +79,7 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 | `_peft_common_vlm()` | VLM PEFT |
 
 VLM variants additionally set:
-- `cfg.dataset` to `HFConversationDatasetConfig` (e.g., CORD-v2)
+- `cfg.dataset` to `HFSFTDatasetConfig` with an explicit `HFDatasetSourceConfig` (e.g., CORD-v2)
 - `cfg.dataset.hf_processor_path` for the vision processor
 - `NullTokenizer` (tokenization handled by processor)
 - DDP without overlap (for vision model compatibility)

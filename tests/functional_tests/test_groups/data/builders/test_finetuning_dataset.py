@@ -18,9 +18,9 @@ from pathlib import PosixPath
 import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 

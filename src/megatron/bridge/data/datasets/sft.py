@@ -1177,11 +1177,12 @@ class GPTSFTChatDataset(GPTSFTDataset):
             result = _chat_preprocess(example, self.tokenizer, self.tool_schemas)
 
         # store metadata in dataset, in case user may have keys required in the prediction json files
-        metadata = {k: v for k, v in example.items() if k not in ["conversations", "messages"]}
+        conversation_keys = ("conversation", "conversations", "messages")
+        metadata = {k: v for k, v in example.items() if k not in conversation_keys}
         result["metadata"] = metadata
         if self.output_original_text:
-            # Store original conversation/messages for both formats
-            for key in ["conversations", "messages"]:
+            # Store the original chat field for each supported schema.
+            for key in conversation_keys:
                 if key in example:
                     result["metadata"][key] = example[key]
 

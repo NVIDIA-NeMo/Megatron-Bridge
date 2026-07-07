@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.loaders import (
     build_train_valid_test_data_loaders,
     build_train_valid_test_datasets_for_num_epochs,
@@ -34,7 +35,6 @@ from megatron.bridge.training.config import (
     ConfigContainer,
     DistributedDataParallelConfig,
     DistributedInitConfig,
-    GPTSFTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,

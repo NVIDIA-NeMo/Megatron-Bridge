@@ -17,10 +17,7 @@ import json
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
-from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
-from megatron.bridge.data.vlm_processing import (
+from megatron.bridge.data.conversation_processing import (
     AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
     apply_assistant_labels_to_batch,
@@ -30,11 +27,17 @@ from megatron.bridge.data.vlm_processing import (
     gather_assistant_text_segments,
     get_processor_tokenizer,
     infer_assistant_mask_boundary_config,
+    normalize_chat_conversation,
     normalize_energon_vlm_sample,
     normalize_hf_vlm_example,
     normalized_vlm_sample_to_hf_example,
     shared_chat_template_kwargs_from_examples,
+    tokenize_chat_example,
 )
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _chat_preprocess
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
+from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
 
 pytestmark = pytest.mark.unit
@@ -123,6 +126,19 @@ def test_get_processor_tokenizer_unwraps_megatron_layers_but_keeps_hf_backend_pr
         _tokenizer = MegatronHFTokenizerWrapper()
 
     assert get_processor_tokenizer(MegatronTokenizerTextWrapper()) is raw_tokenizer
+
+
+def test_get_processor_tokenizer_does_not_probe_dynamic_wrapper_attributes():
+    class DynamicWrapper:
+        def __init__(self, tokenizer):
+            self._tokenizer = tokenizer
+
+        def __getattr__(self, name):
+            raise AssertionError(f"unexpected dynamic attribute probe: {name}")
+
+    raw_tokenizer = _Tokenizer()
+
+    assert get_processor_tokenizer(DynamicWrapper(raw_tokenizer)) is raw_tokenizer
 
 
 class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
@@ -275,6 +291,13 @@ class _LlamaBoundaryProcessor(_ChatMLBoundaryProcessor):
     def __init__(self):
         super().__init__()
         self.tokenizer = self._Tok()
+
+
+class _LlamaPreprocessingTokenizer(_LlamaBoundaryProcessor._Tok):
+    def apply_chat_template(self, conversation, tokenize=True, **kwargs):
+        assert tokenize is True
+        assert [turn["role"] for turn in conversation] == ["user", "assistant"]
+        return {"input_ids": [300, 42, 303, 302, 42, 303]}
 
 
 class _ZeroGenerationMaskTokenizer(_ChatMLBoundaryTokenizer):
@@ -486,6 +509,45 @@ def test_infer_assistant_mask_boundary_config_from_llama_template():
         "tool": [307],
     }
     assert all(token_ids == [303] for token_ids in boundary_config.role_end_tokens.values())
+
+
+@pytest.mark.parametrize("column", ["messages", "conversation", "conversations"])
+def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(column):
+    turns = [
+        {"role": "user", "content": "question"},
+        {"role": "assistant", "content": "answer"},
+    ]
+    if column == "conversations":
+        row = {column: [{"from": turn["role"], "value": turn["content"]} for turn in turns]}
+    else:
+        row = {column: turns}
+
+    assert normalize_chat_conversation(row) == turns
+
+
+def test_gpt_sft_and_direct_hf_share_llama_preprocessing():
+    tokenizer = _LlamaPreprocessingTokenizer()
+    row = {
+        "messages": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+
+    shared = tokenize_chat_example(row, tokenizer)
+
+    class _MegatronTokenizerWrapper:
+        _tokenizer = tokenizer
+
+    gpt_sft = _chat_preprocess(row, _MegatronTokenizerWrapper())
+    direct_hf = text_chat_collate_fn([row], tokenizer)
+
+    assert shared.input_ids.tolist() == [300, 42, 303, 302, 42, 303]
+    assert shared.assistant_mask.tolist() == [False, False, False, False, True, True]
+    assert gpt_sft["input_ids"].tolist() == shared.input_ids.tolist()
+    assert gpt_sft["loss_mask"].tolist() == shared.assistant_mask.tolist()
+    assert direct_hf["input_ids"].tolist() == [shared.input_ids.tolist()]
+    assert direct_hf["loss_mask"].tolist() == [[False, False, False, True, True, False]]
 
 
 def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers():

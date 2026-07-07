@@ -89,21 +89,17 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     bridge = types.ModuleType("megatron.bridge")
     data = types.ModuleType("megatron.bridge.data")
     builders = types.ModuleType("megatron.bridge.data.builders")
+    builders.GPTSFTDatasetBuilder = _GPTSFTDatasetBuilder
+    builders.GPTSFTDatasetConfig = _DatasetConfig
     datasets = types.ModuleType("megatron.bridge.data.datasets")
     training = types.ModuleType("megatron.bridge.training")
     tokenizers = types.ModuleType("megatron.bridge.training.tokenizers")
     recipes = types.ModuleType("megatron.bridge.recipes")
     recipes.unit_recipe = recipe_fn
 
-    finetuning_dataset = types.ModuleType("megatron.bridge.data.builders.finetuning_dataset")
-    finetuning_dataset.GPTSFTDatasetBuilder = _GPTSFTDatasetBuilder
-
     packed_sequence = types.ModuleType("megatron.bridge.data.datasets.packed_sequence")
     prepare_packed_sequence_data = Mock()
     packed_sequence.prepare_packed_sequence_data = prepare_packed_sequence_data
-
-    training_config = types.ModuleType("megatron.bridge.training.config")
-    training_config.GPTSFTDatasetConfig = _DatasetConfig
 
     tokenizer_module = types.ModuleType("megatron.bridge.training.tokenizers.tokenizer")
     tokenizer_module.build_tokenizer = Mock(return_value="tokenizer")
@@ -116,19 +112,15 @@ def _install_pack_sft_stubs(monkeypatch: pytest.MonkeyPatch, recipe_fn) -> Mock:
     monkeypatch.setitem(sys.modules, "megatron.bridge.training", training)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers", tokenizers)
     monkeypatch.setitem(sys.modules, "megatron.bridge.recipes", recipes)
-    monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders.finetuning_dataset", finetuning_dataset)
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.datasets.packed_sequence", packed_sequence)
-    monkeypatch.setitem(sys.modules, "megatron.bridge.training.config", training_config)
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.tokenizers.tokenizer", tokenizer_module)
     monkeypatch.setattr(megatron, "bridge", bridge, raising=False)
     monkeypatch.setattr(bridge, "recipes", recipes, raising=False)
     monkeypatch.setattr(bridge, "data", data, raising=False)
     monkeypatch.setattr(data, "builders", builders, raising=False)
     monkeypatch.setattr(data, "datasets", datasets, raising=False)
-    monkeypatch.setattr(builders, "finetuning_dataset", finetuning_dataset, raising=False)
     monkeypatch.setattr(datasets, "packed_sequence", packed_sequence, raising=False)
     monkeypatch.setattr(bridge, "training", training, raising=False)
-    monkeypatch.setattr(training, "config", training_config, raising=False)
     monkeypatch.setattr(training, "tokenizers", tokenizers, raising=False)
     monkeypatch.setattr(tokenizers, "tokenizer", tokenizer_module, raising=False)
     return prepare_packed_sequence_data

@@ -19,10 +19,11 @@ from typing import Callable
 import pytest
 import torch
 
+from megatron.bridge.data.builders import HFSFTDatasetConfig
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
 from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS, nemotron_omni_collate_fn
-from megatron.bridge.training.config import ConfigContainer, HFConversationDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -133,9 +134,9 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_sft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
-    assert cfg.dataset.maker_name == "cord_v2"
+    assert cfg.dataset.source.schema_adapter == "cord_v2"
     assert COLLATE_FNS["NemotronH_Nano_Omni_Reasoning_V3Processor"] is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1
@@ -147,7 +148,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_peft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
     assert cfg.peft is not None
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
     assert cfg.peft.dim == 16

@@ -330,35 +330,35 @@ class TestApplyDatasetOverride:
     # -- LLM finetune ---------------------------------------------------------
 
     def test_llm_finetune_defaults_to_squad(self):
-        from megatron.bridge.training.config import GPTSFTDatasetConfig
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
         result = apply_dataset_override(config, "llm-finetune", seq_length=512)
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.maker_name == "squad"
-        assert result.dataset.hf_dataset.maker_kwargs["path_or_dataset"] == "rajpurkar/squad"
+        assert result.dataset.hf_dataset.schema_adapter == "squad"
+        assert result.dataset.hf_dataset.path_or_dataset == "rajpurkar/squad"
 
     def test_llm_finetune_extracts_dataset_name_from_cli(self):
-        from megatron.bridge.training.config import GPTSFTDatasetConfig
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
         overrides = ["dataset.dataset_name=gsm8k", "train.train_iters=10"]
         result = apply_dataset_override(config, "llm-finetune", seq_length=2048, cli_overrides=overrides)
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.maker_name == "gsm8k"
-        assert result.dataset.hf_dataset.maker_kwargs["path_or_dataset"] == "openai/gsm8k"
+        assert result.dataset.hf_dataset.schema_adapter == "gsm8k"
+        assert result.dataset.hf_dataset.path_or_dataset == "openai/gsm8k"
         assert "dataset.dataset_name=gsm8k" not in overrides
         assert "train.train_iters=10" in overrides
 
     def test_llm_finetune_openmathinstruct2(self):
-        from megatron.bridge.training.config import GPTSFTDatasetConfig
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
         overrides = ["dataset.dataset_name=openmathinstruct2"]
         result = apply_dataset_override(config, "llm-finetune", seq_length=4096, cli_overrides=overrides)
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.maker_name == "openmathinstruct2"
-        assert result.dataset.hf_dataset.maker_kwargs["path_or_dataset"] == "nvidia/OpenMathInstruct-2"
+        assert result.dataset.hf_dataset.schema_adapter == "openmathinstruct2"
+        assert result.dataset.hf_dataset.path_or_dataset == "nvidia/OpenMathInstruct-2"
 
     def test_llm_finetune_unknown_preset_raises(self):
         config = _make_mock_config()
@@ -369,7 +369,7 @@ class TestApplyDatasetOverride:
     # -- LLM finetune preloaded -----------------------------------------------
 
     def test_llm_finetune_preloaded_creates_finetuning_config(self):
-        from megatron.bridge.training.config import GPTSFTDatasetConfig
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
         overrides = ["dataset.dataset_root=/data/sft", "train.train_iters=10"]
@@ -416,13 +416,13 @@ class TestApplyDatasetOverride:
     # -- VLM HF ---------------------------------------------------------------
 
     def test_vlm_hf_creates_config(self):
-        from megatron.bridge.training.config import HFConversationDatasetConfig
+        from megatron.bridge.data.builders import HFSFTDatasetConfig
 
         config = _make_mock_config()
         result = apply_dataset_override(config, "vlm-hf", seq_length=4096)
-        assert isinstance(result.dataset, HFConversationDatasetConfig)
+        assert isinstance(result.dataset, HFSFTDatasetConfig)
         assert result.dataset.seq_length == 4096
-        assert result.dataset.maker_name == "make_cord_v2_dataset"
+        assert result.dataset.source.schema_adapter == "cord_v2"
 
     # -- VLM preloaded --------------------------------------------------------
 

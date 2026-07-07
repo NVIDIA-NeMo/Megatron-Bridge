@@ -46,6 +46,7 @@ from typing import Any, Literal, Optional, Tuple
 
 import torch
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.vlm_datasets.step37_flickr8k.flickr8k_loader import (
     Step37Flickr8kDataset,
     prepare_flickr8k_samples,
@@ -62,7 +63,6 @@ from megatron.bridge.data.vlm_datasets.step37_flickr8k.template import (
     PATCH_TOKEN_COUNT,
     Step37MultimodalTemplate,
 )
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 class _FixedPackDataset(torch.utils.data.Dataset):

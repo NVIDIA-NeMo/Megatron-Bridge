@@ -41,6 +41,7 @@ WORKSPACE=${WORKSPACE:-/workspace}
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A4B}
 PEFT_SCHEME=${PEFT_SCHEME:-lora}
 DATASET_NAME=${DATASET_NAME:-cord_v2}
+DATASET_PATH=${DATASET_PATH:-naver-clova-ix/cord-v2}
 SEQ_LENGTH=${SEQ_LENGTH:-4096}
 TRAIN_ITERS=${TRAIN_ITERS:-50}
 GBS=${GBS:-32}
@@ -114,7 +115,8 @@ CMD="${CMD} optimizer.lr=${LR}"
 CMD="${CMD} optimizer.min_lr=${MIN_LR}"
 CMD="${CMD} scheduler.lr_warmup_iters=${LR_WARMUP_ITERS}"
 CMD="${CMD} checkpoint.save=${SAVE_DIR}"
-CMD="${CMD} dataset.maker_name=make_${DATASET_NAME}_dataset"
+CMD="${CMD} dataset.source.path_or_dataset=${DATASET_PATH}"
+CMD="${CMD} dataset.source.schema_adapter=${DATASET_NAME}"
 CMD="${CMD} dataset.seq_length=${SEQ_LENGTH}"
 
 echo "Running training..."

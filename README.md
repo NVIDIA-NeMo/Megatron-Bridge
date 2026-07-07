@@ -183,7 +183,7 @@ only reads the architecture configuration.
 
 For runnable recipe, data preparation, and training examples, see the repository
 [`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
-The [data tutorial index](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md) compares pretraining, GPT SFT, direct Hugging Face conversation, and Energon workflows.
+The [data tutorial index](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md) compares pretraining, text-only SFT, direct Hugging Face SFT, and Energon workflows.
 
 More examples:
 
@@ -245,7 +245,7 @@ Runnable tutorials live in `tutorials/recipes/llama` that covers:
 - `01_quickstart_finetune.py` + LoRA configs
 - YAML-driven flows and launch helpers
 
-Dataset preparation tutorials live in [`tutorials/data`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data), including local/Hugging Face GPT SFT and direct Hugging Face conversation examples.
+Dataset preparation tutorials live in [`tutorials/data`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data), including local/materialized text-only SFT and direct Hugging Face SFT examples.
 
 ## Performance Benchmarks
 

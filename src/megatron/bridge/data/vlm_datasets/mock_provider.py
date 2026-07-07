@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy
 from PIL import Image
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)

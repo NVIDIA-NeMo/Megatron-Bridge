@@ -16,13 +16,13 @@
 
 import pytest
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
     default_openmathinstruct2_thinking_packed_config,
     default_squad_config,
 )
-from megatron.bridge.training.config import GPTSFTDatasetConfig
 
 
 @pytest.mark.unit
@@ -35,11 +35,11 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_default_dataset_name(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.maker_kwargs["path_or_dataset"] == "nvidia/OpenMathInstruct-2"
+        assert cfg.hf_dataset.path_or_dataset == "nvidia/OpenMathInstruct-2"
 
     def test_default_split(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.maker_kwargs["split"] == "train_1M"
+        assert cfg.hf_dataset.split == "train_1M"
 
     def test_default_seq_length(self):
         cfg = default_openmathinstruct2_config()
@@ -51,7 +51,7 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_maker_is_openmathinstruct2(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.maker_name == "openmathinstruct2"
+        assert cfg.hf_dataset.schema_adapter == "openmathinstruct2"
 
     def test_dataloader_type_batch(self):
         cfg = default_openmathinstruct2_config()
@@ -59,8 +59,8 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_validation_enabled(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.val_maker_kwargs is None
-        assert cfg.hf_dataset.val_proportion == 0.05
+        assert cfg.hf_validation_dataset is None
+        assert cfg.hf_validation_proportion == 0.05
         assert cfg.do_validation is True
         assert cfg.do_test is False
 
@@ -100,15 +100,15 @@ class TestDefaultGsm8kConfig:
 
     def test_default_dataset_name(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.maker_kwargs["path_or_dataset"] == "openai/gsm8k"
+        assert cfg.hf_dataset.path_or_dataset == "openai/gsm8k"
 
     def test_default_dataset_subset(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.maker_kwargs["subset"] == "main"
+        assert cfg.hf_dataset.subset == "main"
 
     def test_no_split_restriction(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.maker_kwargs["split"] == "train"
+        assert cfg.hf_dataset.split == "train"
 
     def test_default_seq_length(self):
         cfg = default_gsm8k_config()
@@ -120,7 +120,7 @@ class TestDefaultGsm8kConfig:
 
     def test_maker_is_gsm8k(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.maker_name == "gsm8k"
+        assert cfg.hf_dataset.schema_adapter == "gsm8k"
 
     def test_dataloader_type_batch(self):
         cfg = default_gsm8k_config()
@@ -128,8 +128,8 @@ class TestDefaultGsm8kConfig:
 
     def test_uses_published_test_split(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.val_maker_kwargs is None
-        assert cfg.hf_dataset.test_maker_kwargs["split"] == "test"
+        assert cfg.hf_validation_dataset is None
+        assert cfg.hf_test_dataset.split == "test"
         assert cfg.do_validation is False
         assert cfg.do_test is True
 
@@ -169,11 +169,11 @@ class TestDefaultSquadConfig:
 
     def test_default_maker_config(self):
         cfg = default_squad_config(seq_length=512)
-        assert cfg.hf_dataset.maker_name == "squad"
-        assert cfg.hf_dataset.maker_kwargs["path_or_dataset"] == "rajpurkar/squad"
-        assert cfg.hf_dataset.maker_kwargs["split"] == "train"
-        assert cfg.hf_dataset.val_maker_kwargs is None
-        assert cfg.hf_dataset.val_proportion == 0.1
+        assert cfg.hf_dataset.schema_adapter == "squad"
+        assert cfg.hf_dataset.path_or_dataset == "rajpurkar/squad"
+        assert cfg.hf_dataset.split == "train"
+        assert cfg.hf_validation_dataset is None
+        assert cfg.hf_validation_proportion == 0.1
         assert cfg.do_validation is True
         assert cfg.do_test is False
         assert cfg.dataset_kwargs["chat"] is True
@@ -200,29 +200,29 @@ class TestConfigDifferences:
     def test_different_validation_strategies(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.val_maker_kwargs is None
-        assert omi2.hf_dataset.val_proportion == 0.05
+        assert omi2.hf_validation_dataset is None
+        assert omi2.hf_validation_proportion == 0.05
         assert omi2.do_validation is True
         assert omi2.do_test is False
-        assert gsm8k.hf_dataset.val_maker_kwargs is None
-        assert gsm8k.hf_dataset.test_maker_kwargs["split"] == "test"
+        assert gsm8k.hf_validation_dataset is None
+        assert gsm8k.hf_test_dataset.split == "test"
 
     def test_different_dataset_names(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.maker_kwargs["path_or_dataset"] == "nvidia/OpenMathInstruct-2"
-        assert gsm8k.hf_dataset.maker_kwargs["path_or_dataset"] == "openai/gsm8k"
+        assert omi2.hf_dataset.path_or_dataset == "nvidia/OpenMathInstruct-2"
+        assert gsm8k.hf_dataset.path_or_dataset == "openai/gsm8k"
 
     def test_different_makers(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.maker_name != gsm8k.hf_dataset.maker_name
+        assert omi2.hf_dataset.schema_adapter != gsm8k.hf_dataset.schema_adapter
 
     def test_gsm8k_has_subset_omi2_has_split(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert gsm8k.hf_dataset.maker_kwargs["subset"] == "main"
-        assert omi2.hf_dataset.maker_kwargs["split"] == "train_1M"
+        assert gsm8k.hf_dataset.subset == "main"
+        assert omi2.hf_dataset.split == "train_1M"
 
 
 @pytest.mark.unit
@@ -232,8 +232,8 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
     def test_uses_thinking_maker(self):
         cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, packed_sequence=True)
         assert isinstance(cfg, GPTSFTDatasetConfig)
-        assert cfg.hf_dataset.maker_name == "openmathinstruct2_thinking"
-        assert cfg.hf_dataset.maker_kwargs["split"] == "train_1M"
-        assert cfg.hf_dataset.val_proportion == 0.05
+        assert cfg.hf_dataset.schema_adapter == "openmathinstruct2_thinking"
+        assert cfg.hf_dataset.split == "train_1M"
+        assert cfg.hf_validation_proportion == 0.05
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Create tiny chat JSONL files for the HF conversation tutorial."""
+"""Create tiny chat JSONL files for the direct Hugging Face SFT tutorial."""
 
 import argparse
 import json

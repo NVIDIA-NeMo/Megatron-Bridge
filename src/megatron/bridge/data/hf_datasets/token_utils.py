@@ -18,7 +18,7 @@ Tokenizer-related helpers and common special-token utilities.
 
 import torch
 
-from megatron.bridge.data.vlm_processing import get_processor_tokenizer
+from megatron.bridge.data.conversation_processing import get_processor_tokenizer
 
 
 # Common special tokens across VLM models

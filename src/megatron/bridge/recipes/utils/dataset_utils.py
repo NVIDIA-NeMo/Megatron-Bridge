@@ -17,6 +17,7 @@
 import logging
 from typing import Callable, List, Optional, Tuple
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
@@ -28,8 +29,6 @@ from megatron.bridge.recipes.utils.finetune_utils import (
 from megatron.bridge.training.config import (
     ConfigContainer,
     GPTDatasetConfig,
-    GPTSFTDatasetConfig,
-    HFConversationDatasetConfig,
     MockGPTDatasetConfig,
 )
 
@@ -245,10 +244,13 @@ def apply_dataset_override(
             )
 
     elif dataset_type == "vlm-hf":
-        config.dataset = HFConversationDatasetConfig(
+        config.dataset = HFSFTDatasetConfig(
             seq_length=resolved_seq_length,
             hf_processor_path=None,
-            maker_name="make_cord_v2_dataset",
+            source=HFDatasetSourceConfig(
+                path_or_dataset="naver-clova-ix/cord-v2",
+                schema_adapter="cord_v2",
+            ),
             num_workers=2,
             dataloader_type="single",
             data_sharding=True,

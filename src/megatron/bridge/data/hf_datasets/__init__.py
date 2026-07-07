@@ -14,6 +14,8 @@
 
 """Hugging Face conversation dataset providers, makers, and text collators."""
 
+from typing import Any
+
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.data.hf_datasets.makers import (
     make_cord_v2_dataset,
@@ -30,15 +32,27 @@ from megatron.bridge.data.hf_datasets.makers import (
     make_text_chat_dataset,
     make_valor32k_avqa_dataset,
 )
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
-from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
+
+
+# =============================================================================
+# Deprecated provider compatibility exports
+# =============================================================================
+def __getattr__(name: str) -> Any:
+    """Load deprecated provider exports lazily to avoid source/builder import cycles."""
+    if name == "HFConversationDatasetProvider":
+        from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+
+        return HFConversationDatasetProvider
+    if name == "HFTextSFTDatasetProvider":
+        from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
+
+        return HFTextSFTDatasetProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
     "ConversationDataset",
-    "HFConversationDatasetProvider",
-    "HFTextSFTDatasetProvider",
     "make_cord_v2_dataset",
     "make_cv17_dataset",
     "make_default_audio_dataset",
@@ -53,4 +67,7 @@ __all__ = [
     "make_text_chat_dataset",
     "make_valor32k_avqa_dataset",
     "text_chat_collate_fn",
+    # Deprecated provider compatibility exports.
+    "HFConversationDatasetProvider",
+    "HFTextSFTDatasetProvider",
 ]

@@ -18,14 +18,11 @@ from unittest.mock import MagicMock
 import pytest
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.utils import (
     get_dataset_provider,
     pretrain_train_valid_test_datasets_provider,
-)
-from megatron.bridge.training.config import (
-    DatasetBuildContext,
-    DatasetProvider,
-    GPTSFTDatasetConfig,
 )
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer

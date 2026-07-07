@@ -17,10 +17,11 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader
 
+from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.training.config import HFConversationDatasetConfig
 
 
 @pytest.mark.run_only_on("GPU")
@@ -38,22 +39,37 @@ class TestVLMHFMasking:
             return [
                 {
                     "conversation": [
-                        {"role": "user", "content": [{"type": "text", "text": "Answer with the word red."}]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": Image.new("RGB", (16, 16), color="red")},
+                                {"type": "text", "text": "Answer with the word red."},
+                            ],
+                        },
                         {"role": "assistant", "content": [{"type": "text", "text": "red"}]},
                     ]
                 },
                 {
                     "conversation": [
-                        {"role": "user", "content": [{"type": "text", "text": "Answer with the word blue."}]},
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": Image.new("RGB", (16, 16), color="blue")},
+                                {"type": "text", "text": "Answer with the word blue."},
+                            ],
+                        },
                         {"role": "assistant", "content": [{"type": "text", "text": "blue"}]},
                     ]
                 },
             ]
 
-        config = HFConversationDatasetConfig(
-            seq_length=256,
+        config = HFSFTDatasetConfig(
+            # Qwen's default minimum image resolution expands this tiny image
+            # to roughly 256 visual tokens. Leave room for the assistant turn
+            # so this test validates masking rather than truncating all labels.
+            seq_length=512,
             hf_processor_path=hf_processor,
-            maker_name="rdr",
+            source=HFDatasetSourceConfig(path_or_dataset="synthetic/vlm", schema_adapter="rdr"),
             num_workers=0,
             dataloader_type="single",
             data_sharding=True,
@@ -63,8 +79,8 @@ class TestVLMHFMasking:
 
         provider = get_dataset_provider(config)
         with patch(
-            "megatron.bridge.data.builders.hf_conversation_dataset.get_hf_dataset_maker",
-            return_value=make_short_conversations,
+            "megatron.bridge.data.builders.hf_sft_dataset.load_and_adapt_hf_dataset",
+            side_effect=lambda source: make_short_conversations(),
         ):
             train_ds, _, _ = provider([2, 0, 0], config, tokenizer=None)
         assert train_ds is not None
@@ -83,6 +99,9 @@ class TestVLMHFMasking:
         assert "input_ids" in batch
         assert "labels" in batch
         assert "loss_mask" in batch
+        assert batch["visual_inputs"] is not None
+        assert batch["visual_inputs"].pixel_values is not None
+        assert batch["visual_inputs"].pixel_values.numel() > 0
 
         labels = batch["labels"]
         loss_mask = batch["loss_mask"].to(dtype=torch.bool)

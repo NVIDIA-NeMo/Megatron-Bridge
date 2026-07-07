@@ -65,9 +65,8 @@ def main() -> None:
     args = parser.parse_args()
 
     import megatron.bridge.recipes as all_recipes
-    from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
+    from megatron.bridge.data.builders import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
     from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
-    from megatron.bridge.training.config import GPTSFTDatasetConfig
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
     recipe_fn = getattr(all_recipes, args.recipe, None)

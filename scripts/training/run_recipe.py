@@ -67,7 +67,8 @@ Usage:
             --recipe qwen3_vl_8b_peft_config \\
             --dataset vlm-hf \\
             --step_func qwen3_vl_step \\
-            dataset.maker_name=cord_v2 \\
+            dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \\
+            dataset.source.schema_adapter=cord_v2 \\
             dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
@@ -183,7 +184,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
             "VLM datasets:\n"
             "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
-            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
+            "  vlm-hf                 Direct HF SFT (set dataset.source.path_or_dataset=<id>)\n"
             "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
         ),
     )

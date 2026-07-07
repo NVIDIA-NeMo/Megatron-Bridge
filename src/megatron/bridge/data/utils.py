@@ -20,18 +20,17 @@ from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 
-from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
-from megatron.bridge.data.builders.hf_conversation_dataset import HFConversationDatasetBuilder
-from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
-from megatron.bridge.training.config import (
-    DatasetBuildContext,
-    DatasetProvider,
-    GPTDatasetConfig,
-    GPTFIMDatasetConfig,
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders.finetuning_dataset import (
     GPTSFTDatasetConfig,
-    HFConversationDatasetConfig,
-    MockGPTDatasetConfig,
+    gpt_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.hf_sft_dataset import (
+    HFSFTDatasetConfig,
+    hf_sft_train_valid_test_datasets_provider,
+)
+from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
+from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -85,47 +84,17 @@ def pretrain_train_valid_test_datasets_provider(
     return train_ds, valid_ds, test_ds
 
 
-def gpt_sft_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int],
-    dataset_config: GPTSFTDatasetConfig,
-    tokenizer: MegatronTokenizer | None = None,
-    pg_collection: ProcessGroupCollection | None = None,
-) -> tuple[Any | None, Any | None, Any | None]:
-    """Build GPT SFT datasets through the canonical runtime builder."""
-    del train_val_test_num_samples, pg_collection
-    if tokenizer is None:
-        raise ValueError("GPTSFTDatasetBuilder requires an initialized tokenizer.")
-    return tuple(GPTSFTDatasetBuilder(config=dataset_config, tokenizer=tokenizer).build())
-
-
-def hf_conversation_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int],
-    dataset_config: HFConversationDatasetConfig,
-    tokenizer: MegatronTokenizer | None = None,
-    pg_collection: ProcessGroupCollection | None = None,
-) -> tuple[Any | None, Any | None, Any | None]:
-    """Build direct Hugging Face conversation datasets through the canonical builder."""
-    context = DatasetBuildContext(
-        train_samples=train_val_test_num_samples[0],
-        valid_samples=train_val_test_num_samples[1],
-        test_samples=train_val_test_num_samples[2],
-        tokenizer=tokenizer,
-        pg_collection=pg_collection,
-    )
-    return HFConversationDatasetBuilder(dataset_config).build(context)
-
-
 _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTSFTDatasetConfig: gpt_sft_train_valid_test_datasets_provider,
-    HFConversationDatasetConfig: hf_conversation_train_valid_test_datasets_provider,
+    HFSFTDatasetConfig: hf_sft_train_valid_test_datasets_provider,
 }
 
 
 def get_dataset_provider(
-    dataset_config: BlendedMegatronDatasetConfig | GPTSFTDatasetConfig | HFConversationDatasetConfig | DatasetProvider,
+    dataset_config: BlendedMegatronDatasetConfig | GPTSFTDatasetConfig | HFSFTDatasetConfig | DatasetProvider,
 ) -> Callable[..., Any]:
     """Get the appropriate dataset provider function based on the config type.
 
@@ -139,8 +108,8 @@ def get_dataset_provider(
     """
     if isinstance(dataset_config, GPTSFTDatasetConfig):
         return gpt_sft_train_valid_test_datasets_provider
-    if isinstance(dataset_config, HFConversationDatasetConfig):
-        return hf_conversation_train_valid_test_datasets_provider
+    if isinstance(dataset_config, HFSFTDatasetConfig):
+        return hf_sft_train_valid_test_datasets_provider
 
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):

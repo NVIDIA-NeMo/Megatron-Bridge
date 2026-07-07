@@ -68,7 +68,8 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/q
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --recipe qwen25_vl_3b_finetune_config \
 --dataset-type hf \
-dataset.maker_name=make_cord_v2_dataset \
+dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
+dataset.source.schema_adapter=cord_v2 \
 train.global_batch_size=<batch size> \
 train.train_iters=<number of iterations> \
 logger.wandb_project=<optional wandb project name> \
@@ -97,7 +98,8 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/q
 --recipe qwen25_vl_3b_finetune_config \
 --peft_scheme lora \
 --dataset-type hf \
-dataset.maker_name=make_cord_v2_dataset \
+dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
+dataset.source.schema_adapter=cord_v2 \
 train.global_batch_size=<batch size> \
 checkpoint.save=$SAVE_DIR/<experiment name>
 ```
@@ -126,13 +128,13 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 ## Example Datasets
 
 Megatron Bridge supports various vision-language dataset examples which can be used to finetune Qwen 2.5 VL:
-| Dataset | Maker Name | Description |
+| Dataset | Schema adapter | Description |
 |---------|------------|-------------|
-| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
-| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
-| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `cord_v2` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `raven` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 
-To change the dataset, specify `dataset.maker_name=make_raven_dataset`
+To change the dataset, set `dataset.source.path_or_dataset`, optional `dataset.source.subset`, and `dataset.source.schema_adapter`.
 
 
 ## Hugging Face Model Cards
@@ -140,4 +142,3 @@ To change the dataset, specify `dataset.maker_name=make_raven_dataset`
 - Qwen2.5-VL-7B: `https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct`
 - Qwen2.5-VL-32B: `https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct`
 - Qwen2.5-VL-72B: `https://huggingface.co/Qwen/Qwen2.5-VL-72B-Instruct`
-

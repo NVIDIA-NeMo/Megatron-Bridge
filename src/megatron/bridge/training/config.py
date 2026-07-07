@@ -17,7 +17,6 @@ import logging
 import math
 import os
 import warnings
-from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple, Union
@@ -31,7 +30,6 @@ from megatron.core.optimizer import (
     ParamKey,
     get_standard_config_overrides,
 )
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -45,7 +43,24 @@ from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.base import (
+    DataloaderConfig,
+    DatasetProvider,
+)
+from megatron.bridge.data.base import (
+    DatasetBuildContext as DatasetBuildContext,
+)
+
+# Deprecated training.config import compatibility. New code imports dataset
+# Config + Builder APIs from megatron.bridge.data.builders.
+from megatron.bridge.data.builders.finetuning_dataset import (
+    FinetuningDatasetConfig as FinetuningDatasetConfig,
+)
+from megatron.bridge.data.builders.finetuning_dataset import (
+    GPTSFTDatasetConfig,
+)
+from megatron.bridge.data.builders.hf_sft_dataset import HFSFTDatasetConfig
+from megatron.bridge.data.hf_source import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -56,7 +71,6 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -170,61 +184,6 @@ class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     this multiple of the max observed loss over the sample window."""
 
 
-@dataclass(kw_only=True)
-class DataloaderConfig:
-    """Base configuration for data loading."""
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
-    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
-    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
-
-    num_workers: int = 2
-    """Dataloader number of workers."""
-
-    data_sharding: bool = True
-    """Disable data sharding."""
-
-    pin_memory: bool = True
-    """Whether to pin memory during data loading for faster GPU training."""
-
-    drop_last: bool = True
-    """Whether to drop the last incomplete batch."""
-
-    persistent_workers: bool = True
-    """Whether to keep data loading workers persistent across epochs.
-    Automatically set to False when num_workers is 0."""
-
-    trust_remote_code: Optional[bool] = None
-    """Whether remote code execution should be trusted for a given HF path."""
-
-    def finalize(self):
-        """Finalize dataloader config field constraints."""
-        if self.num_workers == 0 and self.persistent_workers:
-            self.persistent_workers = False
-
-
-@dataclass(frozen=True)
-class DatasetBuildContext:
-    """Interface that encapsulates framework internals.
-
-    This context provides metadata needed to build datasets
-    while hiding implementation details of the framework.
-
-    Attributes:
-        train_samples: Number of samples for training dataset
-        valid_samples: Number of samples for validation dataset
-        test_samples: Number of samples for test dataset
-        tokenizer: Optional tokenizer instance for text processing
-        pg_collection: Optional process group collection for distributed training
-    """
-
-    train_samples: int
-    valid_samples: int
-    test_samples: int
-    tokenizer: Optional[MegatronTokenizer] = None
-    pg_collection: Optional[ProcessGroupCollection] = None
-
-
 @dataclass(frozen=True)
 class OptimizerConfigOverrideProviderContext:
     """Context for providing config overrides."""
@@ -252,219 +211,6 @@ class OptimizerConfigOverrideProvider:
         """
         config_overrides = get_standard_config_overrides(config=context.optimizer_config)
         return config_overrides if config_overrides else None
-
-
-@dataclass
-class DatasetProvider(DataloaderConfig, ABC):
-    """Abstract base class for custom dataset configurations.
-
-    Provides an interface for users to implement their own dataset builders
-    while automatically inheriting all DataloaderConfig functionality.
-
-    Users must:
-    1. Inherit from this class
-    2. Implement the build_datasets() method
-
-    Example:
-        @dataclass
-        class S3DatasetConfig(DatasetProvider):
-            bucket_name: str
-            data_prefix: str
-            seq_length: int
-
-            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-                # Custom implementation to load data from S3
-                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
-                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
-                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
-                return train_ds, valid_ds, test_ds
-    """
-
-    @abstractmethod
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-        """Build train, validation, and test datasets.
-
-        This method is called by the framework during dataset initialization.
-        Implementations should use the provided context to create appropriate
-        datasets for each split.
-
-        Args:
-            context: Build context with sample counts and tokenizer
-
-        Returns:
-            Tuple of (train_dataset, valid_dataset, test_dataset)
-            Any element can be None if that split shouldn't be created.
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        pass
-
-
-def _validate_declarative_mapping(value: dict[str, Any] | None, *, field_name: str) -> None:
-    """Reject runtime objects from mappings stored in serializable configs."""
-
-    def _validate(item: Any, path: str) -> None:
-        if item is None or isinstance(item, (bool, int, float, str, Path)):
-            return
-        if isinstance(item, (list, tuple)):
-            for index, child in enumerate(item):
-                _validate(child, f"{path}[{index}]")
-            return
-        if isinstance(item, dict):
-            for key, child in item.items():
-                if not isinstance(key, str):
-                    raise TypeError(f"{path} keys must be strings, got {type(key).__name__}.")
-                _validate(child, f"{path}.{key}")
-            return
-        raise TypeError(
-            f"{path} must contain only declarative values (scalars, paths, lists, tuples, or mappings), "
-            f"got {type(item).__name__}."
-        )
-
-    if value is not None:
-        _validate(value, field_name)
-
-
-@dataclass(kw_only=True)
-class HFDatasetSourceConfig:
-    """Declarative Hugging Face maker source for a GPT SFT dataset.
-
-    The source describes how registered dataset makers should be invoked and
-    where their normalized JSONL output should be materialized. Runtime maker
-    lookup and file creation are owned by
-    :class:`~megatron.bridge.data.builders.finetuning_dataset.GPTSFTDatasetBuilder`.
-    """
-
-    maker_name: str
-    maker_kwargs: dict[str, Any] | None = None
-    val_maker_kwargs: dict[str, Any] | None = None
-    test_maker_kwargs: dict[str, Any] | None = None
-    output_root: str | Path | None = None
-    val_proportion: float | None = None
-    rewrite: bool = False
-
-    def validate(self) -> None:
-        """Validate declarative Hugging Face source settings."""
-        if not self.maker_name.strip():
-            raise ValueError("hf_dataset.maker_name must be a non-empty string.")
-        if self.output_root is not None and not str(self.output_root).strip():
-            raise ValueError("hf_dataset.output_root must be a non-empty path.")
-        if self.val_proportion is not None and not 0.0 < self.val_proportion < 1.0:
-            raise ValueError("hf_dataset.val_proportion must be between 0 and 1.")
-        _validate_declarative_mapping(self.maker_kwargs, field_name="hf_dataset.maker_kwargs")
-        _validate_declarative_mapping(self.val_maker_kwargs, field_name="hf_dataset.val_maker_kwargs")
-        _validate_declarative_mapping(self.test_maker_kwargs, field_name="hf_dataset.test_maker_kwargs")
-
-
-@dataclass(kw_only=True)
-class GPTSFTDatasetConfig(DataloaderConfig):
-    """Serializable configuration for GPT supervised-finetuning datasets.
-
-    Exactly one source must be selected: ``dataset_root`` for an existing
-    local JSONL directory, or ``hf_dataset`` for registered Hugging Face maker
-    materialization. This object contains declarative data only; runtime
-    construction is handled by
-    :class:`~megatron.bridge.data.builders.finetuning_dataset.GPTSFTDatasetBuilder`.
-    """
-
-    seq_length: int
-    dataset_root: str | Path | None = None
-    hf_dataset: HFDatasetSourceConfig | None = None
-    seed: int = 1234
-    memmap_workers: int = 1
-    max_train_samples: int | None = None
-    enable_offline_packing: bool = False
-    offline_packing_specs: PackedSequenceSpecs | None = None
-    dataset_kwargs: dict[str, Any] | None = None
-    do_validation: bool = True
-    do_test: bool = True
-    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "batch"
-
-    def validate(self) -> None:
-        """Validate source selection and dataset settings."""
-        has_local_source = self.dataset_root is not None
-        has_hf_source = self.hf_dataset is not None
-        if has_local_source == has_hf_source:
-            raise ValueError("Exactly one GPT SFT source must be set: dataset_root or hf_dataset.")
-        if has_local_source and not str(self.dataset_root).strip():
-            raise ValueError("dataset_root must be a non-empty path.")
-        if self.hf_dataset is not None:
-            self.hf_dataset.validate()
-        if self.seq_length <= 0:
-            raise ValueError("seq_length must be greater than 0.")
-        if self.enable_offline_packing and self.offline_packing_specs is None:
-            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
-        if self.offline_packing_specs is not None and not self.enable_offline_packing:
-            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
-        if self.offline_packing_specs is not None and self.offline_packing_specs.packed_sequence_size <= 0:
-            raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
-        _validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
-
-    def finalize(self) -> None:
-        """Finalize dataloader settings and validate this config."""
-        super().finalize()
-        self.validate()
-
-
-@dataclass(kw_only=True)
-class FinetuningDatasetConfig(GPTSFTDatasetConfig):
-    """Deprecated compatibility name for :class:`GPTSFTDatasetConfig`."""
-
-    def __post_init__(self) -> None:
-        warnings.warn(
-            "FinetuningDatasetConfig is deprecated; use GPTSFTDatasetConfig instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-
-@dataclass(kw_only=True)
-class HFConversationDatasetConfig(DataloaderConfig):
-    """Serializable configuration for direct Hugging Face conversation datasets.
-
-    Registered makers normalize Hugging Face rows into text, vision, or audio
-    conversation examples. Runtime maker lookup, processor loading, collate
-    selection, and dataset construction are owned by
-    :class:`~megatron.bridge.data.builders.hf_conversation_dataset.HFConversationDatasetBuilder`.
-    """
-
-    seq_length: int
-    maker_name: str
-    hf_processor_path: str | None = None
-    maker_kwargs: dict[str, Any] | None = None
-    val_maker_kwargs: dict[str, Any] | None = None
-    test_maker_kwargs: dict[str, Any] | None = None
-    do_validation: bool = True
-    do_test: bool = True
-    skip_getting_attention_mask_from_dataset: bool = True
-    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "single"
-    enable_in_batch_packing: bool = False
-    defer_in_batch_packing_to_step: bool = False
-    pad_to_max_length: bool = False
-    pad_to_multiple_of: int = 128
-    in_batch_packing_pad_to_multiple_of: int = 1
-
-    def validate(self) -> None:
-        """Validate declarative source and dataset settings."""
-        if self.seq_length <= 0:
-            raise ValueError("seq_length must be greater than 0.")
-        if not self.maker_name.strip():
-            raise ValueError("maker_name must be a non-empty string.")
-        if self.hf_processor_path is not None and not self.hf_processor_path.strip():
-            raise ValueError("hf_processor_path must be a non-empty string when set.")
-        if self.pad_to_multiple_of <= 0:
-            raise ValueError("pad_to_multiple_of must be greater than 0.")
-        if self.in_batch_packing_pad_to_multiple_of <= 0:
-            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
-        _validate_declarative_mapping(self.maker_kwargs, field_name="maker_kwargs")
-        _validate_declarative_mapping(self.val_maker_kwargs, field_name="val_maker_kwargs")
-        _validate_declarative_mapping(self.test_maker_kwargs, field_name="test_maker_kwargs")
-
-    def finalize(self) -> None:
-        """Finalize dataloader settings and validate this config."""
-        super().finalize()
-        self.validate()
 
 
 @dataclass
@@ -1207,7 +953,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | HFConversationDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | HFSFTDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1544,7 +1290,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, (GPTSFTDatasetConfig, HFConversationDatasetConfig)):
+            if isinstance(self.dataset, (GPTSFTDatasetConfig, HFSFTDatasetConfig)):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1590,7 +1336,7 @@ class ConfigContainer(Container):
         if self.dataset is not None:
             # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, HFConversationDatasetConfig)):
+            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, HFSFTDatasetConfig)):
                 data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (

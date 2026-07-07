@@ -21,7 +21,7 @@ Training mode follows the recipe and dataset type:
 | Workflow | Typical config | Entry point | Checkpoint expectation |
 |----------|----------------|-------------|------------------------|
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
-| Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face maker data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
+| Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face source data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
 | VLM SFT or PEFT | VLM dataset provider such as Energon, HF, or preloaded JSON provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
@@ -135,7 +135,7 @@ Common dataset overrides:
 
 ```python
 from megatron.bridge.recipes.llama import llama32_1b_sft_config, llama3_8b_pretrain_config
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
 pretrain_cfg = llama3_8b_pretrain_config()
 finetune_cfg = llama32_1b_sft_config()

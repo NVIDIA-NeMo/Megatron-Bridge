@@ -26,15 +26,15 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.conversation_processing import (
+    normalize_energon_vlm_sample,
+    normalized_vlm_sample_to_hf_example,
+)
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     ChatMLSample,
 )
 from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
-from megatron.bridge.data.vlm_processing import (
-    normalize_energon_vlm_sample,
-    normalized_vlm_sample_to_hf_example,
-)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 

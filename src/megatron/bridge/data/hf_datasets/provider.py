@@ -20,20 +20,23 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 
 import torch
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders.hf_sft_dataset import HFSFTDatasetConfig
 from megatron.bridge.data.hf_datasets.makers import get_hf_dataset_maker
-from megatron.bridge.training.config import (
-    DatasetBuildContext,
-    DatasetProvider,
-    HFConversationDatasetConfig,
-)
+from megatron.bridge.data.hf_source import HFDatasetSourceConfig
+
+
+# =============================================================================
+# Deprecated compatibility API
+# =============================================================================
 
 
 @dataclass(kw_only=True)
 class HFConversationDatasetProvider(DatasetProvider):
     """Deprecated constructor-compatible adapter for HF conversation data.
 
-    Use :class:`HFConversationDatasetConfig` for primary training paths and
-    :class:`HFConversationDatasetBuilder` for explicit runtime construction.
+    Use :class:`HFSFTDatasetConfig` for primary training paths and
+    :class:`HFSFTDatasetBuilder` for explicit runtime construction.
     """
 
     seq_length: int
@@ -55,7 +58,7 @@ class HFConversationDatasetProvider(DatasetProvider):
 
     def __post_init__(self) -> None:
         warnings.warn(
-            "HFConversationDatasetProvider is deprecated; use HFConversationDatasetConfig instead.",
+            "HFConversationDatasetProvider is deprecated; use HFSFTDatasetConfig instead.",
             DeprecationWarning,
             stacklevel=2,
         )
@@ -64,15 +67,33 @@ class HFConversationDatasetProvider(DatasetProvider):
         """Return the configured maker for compatibility subclasses."""
         return get_hf_dataset_maker(self.maker_name)
 
-    def _to_config(self) -> HFConversationDatasetConfig:
+    def _merged_maker_kwargs(self, overrides: dict[str, Any] | None, *, default_split: str) -> dict[str, Any]:
+        values = dict(self.maker_kwargs or {})
+        values.update(overrides or {})
+        values.setdefault("split", default_split)
+        return values
+
+    def _source_from_kwargs(self, kwargs: dict[str, Any], *, default_split: str) -> HFDatasetSourceConfig:
+        """Translate legacy maker kwargs into a declarative source."""
+        return HFDatasetSourceConfig(
+            path_or_dataset=str(kwargs.get("path_or_dataset", self.maker_name)),
+            subset=kwargs.get("subset"),
+            split=str(kwargs.get("split", default_split)),
+        )
+
+    def _to_config(self) -> HFSFTDatasetConfig:
         """Translate legacy declarative fields into the canonical config."""
-        return HFConversationDatasetConfig(
+        train_kwargs = self._merged_maker_kwargs(None, default_split="train")
+        validation_kwargs = self._merged_maker_kwargs(self.val_maker_kwargs, default_split="validation")
+        test_kwargs = self._merged_maker_kwargs(self.test_maker_kwargs, default_split="test")
+        return HFSFTDatasetConfig(
             seq_length=self.seq_length,
-            maker_name=self.maker_name,
+            source=self._source_from_kwargs(train_kwargs, default_split="train"),
+            validation_source=(
+                self._source_from_kwargs(validation_kwargs, default_split="validation") if self.do_validation else None
+            ),
+            test_source=self._source_from_kwargs(test_kwargs, default_split="test") if self.do_test else None,
             hf_processor_path=self.hf_processor_path,
-            maker_kwargs=self.maker_kwargs,
-            val_maker_kwargs=self.val_maker_kwargs,
-            test_maker_kwargs=self.test_maker_kwargs,
             do_validation=self.do_validation,
             do_test=self.do_test,
             skip_getting_attention_mask_from_dataset=self.skip_getting_attention_mask_from_dataset,
@@ -90,12 +111,51 @@ class HFConversationDatasetProvider(DatasetProvider):
             in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
         )
 
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-        """Build datasets through the canonical runtime builder."""
-        from megatron.bridge.data.builders.hf_conversation_dataset import HFConversationDatasetBuilder
+    def _load_processor_or_tokenizer(self, tokenizer: Any | None = None) -> Any:
+        """Load the runtime processor through the canonical builder helper.
 
-        return HFConversationDatasetBuilder(
+        This protected method remains for subclasses of the deprecated provider.
+        """
+        from megatron.bridge.data.builders import hf_sft_dataset as builder_module
+
+        return builder_module.load_hf_sft_processor(self._to_config(), tokenizer)
+
+    def _build_split_dataset(
+        self,
+        split: str,
+        target_length: int,
+        processor: Any,
+        extra_kwargs: Optional[Dict[str, Any]] = None,
+    ) -> Any | None:
+        """Build one split through the canonical helper.
+
+        This protected method remains for subclasses of the deprecated provider.
+        """
+        from megatron.bridge.data.builders import hf_sft_dataset as builder_module
+
+        maker_kwargs = self._merged_maker_kwargs(extra_kwargs, default_split=split)
+        return builder_module.build_hf_sft_split(
             self._to_config(),
+            self._source_from_kwargs(maker_kwargs, default_split=split),
+            target_length,
+            processor,
             maker=self._get_maker(),
+            maker_kwargs=maker_kwargs,
             collate_impl=self.collate_impl,
-        ).build(context)
+        )
+
+    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
+        """Build datasets through compatibility hooks backed by canonical helpers."""
+        processor = self._load_processor_or_tokenizer(context.tokenizer)
+        train_dataset = self._build_split_dataset("train", context.train_samples, processor)
+        valid_dataset = (
+            self._build_split_dataset("validation", context.valid_samples, processor, self.val_maker_kwargs)
+            if self.do_validation
+            else None
+        )
+        test_dataset = (
+            self._build_split_dataset("test", context.test_samples, processor, self.test_maker_kwargs)
+            if self.do_test
+            else None
+        )
+        return train_dataset, valid_dataset, test_dataset

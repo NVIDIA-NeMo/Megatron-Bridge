@@ -101,10 +101,12 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_asr_tp${TP}_pp${PP} \
-        dataset.maker_name=make_cv17_dataset \
-        "dataset.maker_kwargs.path_or_dataset=ysdede/commonvoice_17_tr_fixed" \
-        "dataset.maker_kwargs.split=train" \
-        "dataset.val_maker_kwargs.split=validation" \
+        dataset.source.path_or_dataset=ysdede/commonvoice_17_tr_fixed \
+        dataset.source.split=train \
+        dataset.source.schema_adapter=cv17 \
+        dataset.validation_source.path_or_dataset=ysdede/commonvoice_17_tr_fixed \
+        dataset.validation_source.split=validation \
+        dataset.validation_source.schema_adapter=cv17 \
         dataset.do_test=false \
         dataset.enable_in_batch_packing=true \
         rng.seed=42 \

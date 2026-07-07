@@ -161,17 +161,17 @@ class TestQwen2AudioFinetuneConfig:
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     def test_finetune_config_uses_hf_conversation_config(self):
-        """Dataset is HFConversationDatasetConfig with the audio maker."""
-        from megatron.bridge.training.config import HFConversationDatasetConfig
+        """Dataset is HFSFTDatasetConfig with an explicit audio source adapter."""
+        from megatron.bridge.data.builders import HFSFTDatasetConfig
 
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
-        assert isinstance(cfg.dataset, HFConversationDatasetConfig)
-        assert cfg.dataset.maker_name == "make_cv17_dataset"
+        assert isinstance(cfg.dataset, HFSFTDatasetConfig)
+        assert cfg.dataset.source.schema_adapter == "cv17"
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
-        assert cfg.dataset.maker_kwargs["path_or_dataset"] == "ysdede/commonvoice_17_tr_fixed"
-        assert cfg.dataset.maker_kwargs["split"] == "train"
-        assert cfg.dataset.val_maker_kwargs["split"] == "validation"
+        assert cfg.dataset.source.path_or_dataset == "ysdede/commonvoice_17_tr_fixed"
+        assert cfg.dataset.source.split == "train"
+        assert cfg.dataset.validation_source.split == "validation"
 
     def test_finetune_config_full_sft_uses_low_lr(self):
         """When peft is None (full SFT), the entry point picks lr=5e-6."""
@@ -228,7 +228,7 @@ class TestQwen2AudioFinetuneConfig:
         assert cfg.rng.seed == 1234
 
     def test_finetune_config_has_no_test_split_by_default(self):
-        """The flattened default leaves test maker kwargs unset."""
+        """The default leaves the optional test source unset."""
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
-        assert cfg.dataset.test_maker_kwargs is None
+        assert cfg.dataset.test_source is None

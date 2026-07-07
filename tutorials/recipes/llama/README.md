@@ -37,7 +37,7 @@ The [01_quickstart_finetune.py](01_quickstart_finetune.py) recipe finetunes Llam
 To plug in your own JSONL dataset, swap the dataset config in that script:
 
 ```python
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
 config.dataset = GPTSFTDatasetConfig(
     dataset_root="/path/to/dataset_dir",  # contains training/validation/test jsonl files
@@ -45,7 +45,7 @@ config.dataset = GPTSFTDatasetConfig(
 )
 ```
 
-See the [GPT SFT Dataset Tutorial](../../data/gpt-sft/README.md) for supported JSONL schemas, Hugging Face maker materialization, offline packing, and all dataset knobs.
+See the [text-only SFT dataset tutorial](../../data/text-only-sft/README.md) for supported JSONL schemas, Hugging Face source materialization, offline packing, and all dataset knobs.
 
 ## Configuration
 

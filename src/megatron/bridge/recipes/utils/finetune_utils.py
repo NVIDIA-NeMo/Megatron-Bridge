@@ -16,11 +16,11 @@
 
 from typing import Any
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
 
 
 def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None:
@@ -54,10 +54,10 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
 def _text_hf_dataset_config(
     *,
     seq_length: int,
-    maker_name: str,
-    maker_kwargs: dict[str, Any],
-    val_maker_kwargs: dict[str, Any] | None = None,
-    test_maker_kwargs: dict[str, Any] | None = None,
+    schema_adapter: str,
+    source: HFDatasetSourceConfig,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
     do_validation: bool = True,
     do_test: bool = False,
     enable_offline_packing: bool = False,
@@ -70,12 +70,16 @@ def _text_hf_dataset_config(
     return GPTSFTDatasetConfig(
         seq_length=seq_length,
         hf_dataset=HFDatasetSourceConfig(
-            maker_name=maker_name,
-            maker_kwargs=maker_kwargs,
-            val_maker_kwargs=val_maker_kwargs,
-            test_maker_kwargs=test_maker_kwargs,
-            val_proportion=val_proportion,
+            path_or_dataset=source.path_or_dataset,
+            split=source.split,
+            subset=source.subset,
+            load_kwargs=source.load_kwargs,
+            schema_adapter=schema_adapter,
+            adapter_kwargs=source.adapter_kwargs,
         ),
+        hf_validation_dataset=validation_source,
+        hf_test_dataset=test_source,
+        hf_validation_proportion=val_proportion,
         do_validation=do_validation,
         do_test=do_test,
         enable_offline_packing=enable_offline_packing,
@@ -122,11 +126,8 @@ def default_squad_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        maker_name="squad",
-        maker_kwargs={
-            "path_or_dataset": "rajpurkar/squad",
-            "split": "train",
-        },
+        schema_adapter="squad",
+        source=HFDatasetSourceConfig(path_or_dataset="rajpurkar/squad"),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -147,11 +148,8 @@ def default_openmathinstruct2_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        maker_name="openmathinstruct2",
-        maker_kwargs={
-            "path_or_dataset": "nvidia/OpenMathInstruct-2",
-            "split": "train_1M",
-        },
+        schema_adapter="openmathinstruct2",
+        source=HFDatasetSourceConfig(path_or_dataset="nvidia/OpenMathInstruct-2", split="train_1M"),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -187,13 +185,14 @@ def default_gsm8k_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        maker_name="gsm8k",
-        maker_kwargs={
-            "path_or_dataset": "openai/gsm8k",
-            "subset": "main",
-            "split": "train",
-        },
-        test_maker_kwargs={"split": "test"},
+        schema_adapter="gsm8k",
+        source=HFDatasetSourceConfig(path_or_dataset="openai/gsm8k", subset="main"),
+        test_source=HFDatasetSourceConfig(
+            path_or_dataset="openai/gsm8k",
+            subset="main",
+            split="test",
+            schema_adapter="gsm8k",
+        ),
         do_validation=False,
         do_test=True,
         seq_length=seq_length,
@@ -225,5 +224,5 @@ def default_openmathinstruct2_thinking_packed_config(
         pad_seq_to_mult=pad_seq_to_mult,
     )
     assert cfg.hf_dataset is not None
-    cfg.hf_dataset.maker_name = "openmathinstruct2_thinking"
+    cfg.hf_dataset.schema_adapter = "openmathinstruct2_thinking"
     return cfg

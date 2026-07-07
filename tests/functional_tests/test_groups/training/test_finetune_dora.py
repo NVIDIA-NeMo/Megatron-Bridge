@@ -21,13 +21,13 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    GPTSFTDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,

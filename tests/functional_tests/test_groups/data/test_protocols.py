@@ -20,8 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider, GPTDatasetConfig
+from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 

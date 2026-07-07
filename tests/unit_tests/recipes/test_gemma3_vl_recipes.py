@@ -320,27 +320,27 @@ def test_gemma3_vl_27b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_gemma3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetConfig by default."""
+    """Test that SFT configs use HFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 
-    from megatron.bridge.training.config import HFConversationDatasetConfig
+    from megatron.bridge.data.builders import HFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
 
 
 def test_gemma3_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetConfig by default."""
+    """Test that PEFT configs use HFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config()
 
-    from megatron.bridge.training.config import HFConversationDatasetConfig
+    from megatron.bridge.data.builders import HFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
 
 
 def test_gemma3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):

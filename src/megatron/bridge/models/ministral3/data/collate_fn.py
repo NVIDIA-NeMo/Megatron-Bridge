@@ -17,6 +17,14 @@
 import torch
 from PIL import Image
 
+from megatron.bridge.data.conversation_processing import (
+    AssistantMaskBoundaryConfig,
+    assistant_mask_boundary_config_from_markers,
+    build_assistant_loss_mask,
+    chat_template_kwargs_from_example,
+    infer_assistant_mask_boundary_config,
+    shared_chat_template_kwargs_from_examples,
+)
 from megatron.bridge.data.datasets.utils import GENERATION_REGEX, IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.sequence_batching import (
@@ -25,14 +33,6 @@ from megatron.bridge.data.sequence_batching import (
     use_processor_right_padding,
 )
 from megatron.bridge.data.vlm_datasets.collate_utils import PASSTHROUGH_VISUAL_KEYS
-from megatron.bridge.data.vlm_processing import (
-    AssistantMaskBoundaryConfig,
-    assistant_mask_boundary_config_from_markers,
-    build_assistant_loss_mask,
-    chat_template_kwargs_from_example,
-    infer_assistant_mask_boundary_config,
-    shared_chat_template_kwargs_from_examples,
-)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 

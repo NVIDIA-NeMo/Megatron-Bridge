@@ -18,9 +18,12 @@ import warnings
 
 import torch
 
+from megatron.bridge.data.conversation_processing import (
+    chat_template_kwargs_from_example,
+    gather_assistant_text_segments,
+)
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
-from megatron.bridge.data.vlm_processing import chat_template_kwargs_from_example, gather_assistant_text_segments
 from megatron.bridge.training.utils.visual_inputs import Qwen2AudioInputs
 
 

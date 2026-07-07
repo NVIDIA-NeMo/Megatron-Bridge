@@ -19,7 +19,8 @@ from typing import Iterable
 import torch
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 
-from megatron.bridge.training.config import ConfigContainer, GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 def get_batch_on_this_tp_rank(

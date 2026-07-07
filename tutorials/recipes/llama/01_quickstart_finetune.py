@@ -84,10 +84,10 @@ def main() -> None:
 
     # === Use your own dataset ===
     # Keep the recipe's SQuAD source but select its local materialization directory:
-    # config.dataset.hf_dataset.output_root = "/path/to/materialized/squad"
+    # config.dataset.hf_output_root = "/path/to/materialized/squad"
 
     # Or replace the entire dataset config for custom local JSONL data:
-    # from megatron.bridge.training.config import GPTSFTDatasetConfig
+    # from megatron.bridge.data.builders import GPTSFTDatasetConfig
     # config.dataset = GPTSFTDatasetConfig(
     #     dataset_root="/path/to/your/dataset_dir",  # expects training/validation/test jsonl files
     #     seq_length=config.model.seq_length,

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Create a tiny local JSONL dataset for the GPT SFT tutorial."""
+"""Create a tiny local JSONL dataset for the text-only SFT tutorial."""
 
 import argparse
 import json

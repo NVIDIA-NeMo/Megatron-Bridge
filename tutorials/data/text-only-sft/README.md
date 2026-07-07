@@ -1,19 +1,19 @@
-# GPT SFT Dataset Tutorial
+# Text-only SFT Dataset Tutorial
 
-Use this path for text SFT or PEFT when data already exists as local JSONL, or when a registered Hugging Face maker should first normalize data into reusable JSONL. `GPTSFTDatasetConfig` stores declarative settings; the training framework resolves `GPTSFTDatasetBuilder`, which owns tokenizer binding, Hugging Face materialization, offline packing, and `GPTSFTDataset` construction.
+Use this path for text SFT or PEFT when data already exists as local JSONL, or when a Hugging Face source should first be normalized into reusable JSONL. `GPTSFTDatasetConfig` stores declarative settings; `GPTSFTDatasetBuilder` owns tokenizer binding, source materialization, offline packing, and `GPTSFTDataset` construction.
 
 Choose exactly one source:
 
 - `dataset_root` for local `training.jsonl`, optional `validation.jsonl`, and optional `test.jsonl` files.
-- `hf_dataset` for a registered maker that materializes those files.
+- `hf_dataset` for a declarative Hugging Face source plus an optional schema adapter.
 
 ## Prepare local JSONL
 
 From the repository root, generate a small prompt/completion dataset:
 
 ```bash
-uv run python tutorials/data/gpt-sft/prepare_example_data.py \
-    --output-dir /tmp/bridge-gpt-sft
+uv run python tutorials/data/text-only-sft/prepare_example_data.py \
+    --output-dir /tmp/bridge-text-only-sft
 ```
 
 Each line is a JSON object:
@@ -35,7 +35,7 @@ uv run python - <<'PY'
 import json
 from pathlib import Path
 
-for path in Path("/tmp/bridge-gpt-sft").glob("*.jsonl"):
+for path in Path("/tmp/bridge-text-only-sft").glob("*.jsonl"):
     rows = [json.loads(line) for line in path.read_text().splitlines()]
     print(path.name, len(rows))
 PY
@@ -46,11 +46,11 @@ PY
 Assign the config to any SFT or PEFT recipe before calling `finetune()`:
 
 ```python
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=4096,
-    dataset_root="/tmp/bridge-gpt-sft",
+    dataset_root="/tmp/bridge-text-only-sft",
     dataloader_type="batch",
     do_validation=True,
     do_test=False,
@@ -63,7 +63,7 @@ The generic launcher has a local-data preset:
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_sft_1gpu_h100_bf16_config \
     --dataset llm-finetune-preloaded \
-    dataset.dataset_root=/tmp/bridge-gpt-sft \
+    dataset.dataset_root=/tmp/bridge-text-only-sft \
     dataset.seq_length=4096 \
     checkpoint.pretrained_checkpoint=/checkpoints/base-model
 ```
@@ -75,22 +75,23 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 Use `HFDatasetSourceConfig` instead of `dataset_root`:
 
 ```python
-from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
 
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=2048,
     hf_dataset=HFDatasetSourceConfig(
-        maker_name="squad",
-        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
-        val_proportion=0.1,
-        output_root="/data/materialized-squad",
-        rewrite=False,
+        path_or_dataset="rajpurkar/squad",
+        split="train",
+        schema_adapter="squad",
     ),
+    hf_validation_proportion=0.1,
+    hf_output_root="/data/materialized-squad",
+    hf_rewrite=False,
     do_test=False,
 )
 ```
 
-The builder invokes the maker, normalizes chat rows, writes the standard split files, and then uses the same GPT SFT construction as local mode. Omit `output_root` to use the NeMo dataset cache. Set `rewrite=True` only when existing normalized files should be replaced.
+The builder loads the source, applies the optional row adapter, writes the standard split files, and then uses the same text-only SFT construction as local mode. Omit `hf_output_root` to use the NeMo dataset cache. Set `hf_rewrite=True` only when existing normalized files should be replaced. Native `messages`, `conversation`, or `conversations` rows need no `schema_adapter`.
 
 ## Enable offline packing
 
@@ -114,16 +115,15 @@ The builder prepares packed files automatically on the first training build. To 
 
 ```bash
 uv run python - <<'PY'
-from megatron.bridge.data.builders.finetuning_dataset import GPTSFTDatasetBuilder
+from megatron.bridge.data.builders import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
-from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 recipe = llama32_1b_sft_config()
 dataset = GPTSFTDatasetConfig(
     seq_length=recipe.model.seq_length,
-    dataset_root="/tmp/bridge-gpt-sft",
+    dataset_root="/tmp/bridge-text-only-sft",
     dataset_kwargs={"prompt_template": "{input} {output}"},
     enable_offline_packing=True,
     offline_packing_specs=PackedSequenceSpecs(
@@ -153,14 +153,15 @@ Packed SFT requires micro batch size 1. With context parallelism, sequence lengt
 | Dataset behavior | `dataset_kwargs` | Prompt template, BOS/EOS/SEP, truncation, padding, labels/loss masks, chat template, tools, and advanced `GPTSFTDataset` options |
 | Offline packing | `enable_offline_packing`, `offline_packing_specs` | Prepared packed sequences and metadata |
 | Loader | `dataloader_type`, `num_workers`, `data_sharding`, `pin_memory`, `drop_last`, `persistent_workers` | DataLoader behavior |
-| HF source | `maker_name`, `maker_kwargs`, `val_maker_kwargs`, `test_maker_kwargs`, `output_root`, `val_proportion`, `rewrite` | Maker input, split overrides, cache location, and rematerialization |
+| HF source | `path_or_dataset`, `split`, `subset`, `load_kwargs`, optional `schema_adapter` and `adapter_kwargs` | Dataset loading and row normalization |
+| HF materialization | `hf_validation_dataset`, `hf_test_dataset`, `hf_output_root`, `hf_validation_proportion`, `hf_rewrite` | Split overrides, cache location, and rematerialization |
 | Packing spec | `packed_sequence_size`, `tokenizer_model_name`, `num_tokenizer_workers`, packed paths, metadata path, `pad_cu_seqlens`, `pad_seq_to_mult` | Packed artifact layout and alignment |
 
-Do not repeat config-owned `seed`, `memmap_workers`, or `max_num_samples` inside `dataset_kwargs`. Maker and dataset mappings accept declarative values only; runtime tokenizers and callables belong to the builder.
+Do not repeat config-owned `seed`, `memmap_workers`, or `max_num_samples` inside `dataset_kwargs`. Source, adapter, and dataset mappings accept declarative values only; runtime tokenizers and callables belong to the builder.
 
 ## Troubleshooting
 
-- “Exactly one GPT SFT source” means both source fields, or neither, were set.
+- “Exactly one text-only SFT source” means both source fields, or neither, were set.
 - A missing split file is expected when its `do_*` flag is false; otherwise verify the exact filenames above.
 - Chat-template errors usually mean the tokenizer lacks a template or chat rows were used without the chat dataset settings.
 - Packing validation errors identify incompatible micro-batch, CP, metadata, or packed-size settings before training starts.

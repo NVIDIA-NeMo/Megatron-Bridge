@@ -20,9 +20,10 @@ All recipes use ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``)
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer, HFConversationDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
@@ -37,10 +38,13 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
-    cfg.dataset = HFConversationDatasetConfig(
+    cfg.dataset = HFSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=_DEFAULT_HF_PATH,
-        maker_name="cord_v2",
+        source=HFDatasetSourceConfig(
+            path_or_dataset="naver-clova-ix/cord-v2",
+            schema_adapter="cord_v2",
+        ),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -85,10 +89,13 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = HFConversationDatasetConfig(
+    cfg.dataset = HFSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=_DEFAULT_HF_PATH,
-        maker_name="cord_v2",
+        source=HFDatasetSourceConfig(
+            path_or_dataset="naver-clova-ix/cord-v2",
+            schema_adapter="cord_v2",
+        ),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,

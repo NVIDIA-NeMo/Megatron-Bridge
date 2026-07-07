@@ -46,13 +46,14 @@ logger:
   log_interval: 1
 
 dataset:
-  sequence_length: 4096
-  maker_name: make_raven_dataset
+  seq_length: 4096
+  source:
+    path_or_dataset: HuggingFaceM4/the_cauldron
+    subset: raven
+    schema_adapter: raven
 
 rng:
   seed: 42
 
 ddp:
   grad_reduce_in_fp32: true
-
-

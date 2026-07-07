@@ -281,8 +281,8 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -310,10 +310,11 @@ config = ConfigContainer(
     dataset=GPTSFTDatasetConfig(
         seq_length=512,
         hf_dataset=HFDatasetSourceConfig(
-            maker_name="squad",
-            maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
-            val_proportion=0.1,
+            path_or_dataset="rajpurkar/squad",
+            split="train",
+            schema_adapter="squad",
         ),
+        hf_validation_proportion=0.1,
         seed=5678,
         do_validation=True,
         do_test=False,

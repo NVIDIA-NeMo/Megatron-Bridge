@@ -18,10 +18,10 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
-from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,

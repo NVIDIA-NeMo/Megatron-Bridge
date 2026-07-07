@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 import torch
 
+from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.hf_provider import HFMegatronMIMODatasetProvider
-from megatron.bridge.training.config import DatasetBuildContext
 
 
 class DummyProcessor:

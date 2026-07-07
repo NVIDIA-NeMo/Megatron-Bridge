@@ -16,7 +16,9 @@ import pytest
 import torch
 from megatron.training.config.instantiate_utils import instantiate
 
-from megatron.bridge.training.config import ConfigContainer, DatasetBuildContext, HFConversationDatasetConfig
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetBuilder, HFSFTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 class _DummyTokenizer:
@@ -99,25 +101,33 @@ class _ConversationBuilderHarness:
 
     def __init__(self, **kwargs):
         self.collate_impl = kwargs.pop("collate_impl", None)
-        self.config = HFConversationDatasetConfig(**kwargs)
+        maker_name = kwargs.pop("maker_name")
+        maker_kwargs = kwargs.pop("maker_kwargs", None)
+        self.maker_kwargs = maker_kwargs
+        self.config = HFSFTDatasetConfig(
+            source=HFDatasetSourceConfig(
+                path_or_dataset=(maker_kwargs or {}).get("path_or_dataset", maker_name),
+                schema_adapter=maker_name.removeprefix("make_").removesuffix("_dataset"),
+            ),
+            **kwargs,
+        )
 
     def _get_maker(self):
-        from megatron.bridge.data.builders import hf_conversation_dataset as builder_mod
+        from megatron.bridge.data.hf_datasets.makers import get_hf_dataset_maker
 
-        return builder_mod.get_hf_dataset_maker(self.config.maker_name)
+        return get_hf_dataset_maker(self.config.source.schema_adapter)
 
     def _load_processor_or_tokenizer(self, tokenizer=None):
-        from megatron.bridge.data.builders.hf_conversation_dataset import load_hf_conversation_processor
+        from megatron.bridge.data.builders.hf_sft_dataset import load_hf_sft_processor
 
-        return load_hf_conversation_processor(self.config, tokenizer)
+        return load_hf_sft_processor(self.config, tokenizer)
 
     def build_datasets(self, context):
-        from megatron.bridge.data.builders.hf_conversation_dataset import HFConversationDatasetBuilder
-
-        return HFConversationDatasetBuilder(
+        return HFSFTDatasetBuilder(
             self.config,
             maker=self._get_maker(),
             collate_impl=self.collate_impl,
+            maker_kwargs=self.maker_kwargs,
         ).build(context)
 
 
@@ -166,6 +176,7 @@ def test_conversation_dataset_binds_text_chat_collate_for_messages():
         target_length=1,
         processor=TextTokenizer(),
         collate_impl=text_chat_collate_fn,
+        pad_to_multiple_of=1,
     )
 
     batch = ds.collate_fn([ds[0]])
@@ -246,7 +257,7 @@ def test_hf_builder_builds_splits_and_binds_collate(monkeypatch):
 
 def test_hf_builder_defaults_trust_remote_code_false(monkeypatch):
     """Test that the HF conversation builder disables remote code by default."""
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
+    from megatron.bridge.data.builders import hf_sft_dataset as dp_mod
 
     seen = {}
 
@@ -270,7 +281,7 @@ def test_hf_builder_defaults_trust_remote_code_false(monkeypatch):
 
 
 def test_hf_builder_normalizes_missing_pad_token_to_eos():
-    from megatron.bridge.data.builders.hf_conversation_dataset import normalize_hf_conversation_processor
+    from megatron.bridge.data.builders.hf_sft_dataset import normalize_hf_sft_processor
 
     class _Tokenizer:
         pad_token_id = None
@@ -280,7 +291,7 @@ def test_hf_builder_normalizes_missing_pad_token_to_eos():
 
     tokenizer = _Tokenizer()
 
-    assert normalize_hf_conversation_processor(tokenizer) is tokenizer
+    assert normalize_hf_sft_processor(tokenizer) is tokenizer
     assert tokenizer.pad_token == tokenizer.eos_token
 
 
@@ -289,7 +300,7 @@ def test_hf_builder_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, c
 
     import transformers
 
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
+    from megatron.bridge.data.builders import hf_sft_dataset as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     class TextTokenizer:
@@ -327,13 +338,18 @@ def test_hf_builder_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, c
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
         hf_processor_path="dummy/text-model",
         maker_name="text_chat",
         collate_impl=text_chat_collate_fn,
+        pad_to_multiple_of=1,
     )
 
     caplog.set_level(logging.DEBUG, logger=dp_mod.__name__)
@@ -346,7 +362,6 @@ def test_hf_builder_falls_back_to_tokenizer_for_text_chat_collate(monkeypatch, c
 
 
 def test_hf_builder_uses_context_tokenizer_when_processor_path_is_unset(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     class TextTokenizer:
@@ -380,13 +395,18 @@ def test_hf_builder_uses_context_tokenizer_when_processor_path_is_unset(monkeypa
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
         hf_processor_path=None,
         maker_name="text_chat",
         collate_impl=text_chat_collate_fn,
+        pad_to_multiple_of=1,
     )
 
     ctx = DatasetBuildContext(train_samples=1, valid_samples=0, test_samples=0, tokenizer=WrappedTokenizer())
@@ -397,7 +417,6 @@ def test_hf_builder_uses_context_tokenizer_when_processor_path_is_unset(monkeypa
 
 
 def test_hf_builder_unwraps_megatron_hf_tokenizer_for_text_chat_collate(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     class TextTokenizer:
@@ -437,13 +456,18 @@ def test_hf_builder_unwraps_megatron_hf_tokenizer_for_text_chat_collate(monkeypa
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
         hf_processor_path=None,
         maker_name="text_chat",
         collate_impl=text_chat_collate_fn,
+        pad_to_multiple_of=1,
     )
 
     ctx = DatasetBuildContext(
@@ -497,7 +521,6 @@ def test_text_chat_collate_prefers_unwrapped_tokenizer_over_megatron_wrapper():
 
 
 def test_hf_builder_enables_in_batch_packing_for_text_chat_collate(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     class TextTokenizer:
@@ -531,7 +554,11 @@ def test_hf_builder_enables_in_batch_packing_for_text_chat_collate(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
@@ -558,8 +585,6 @@ def test_hf_builder_enables_in_batch_packing_for_text_chat_collate(monkeypatch):
 
 
 def test_hf_builder_auto_selects_text_chat_collate_for_messages(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
-
     class TextTokenizer:
         pad_token_id = 0
         pad_token = "<pad>"
@@ -591,7 +616,11 @@ def test_hf_builder_auto_selects_text_chat_collate_for_messages(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
@@ -612,7 +641,6 @@ def test_hf_builder_auto_selects_text_chat_collate_for_messages(monkeypatch):
 
 
 def test_hf_builder_forwards_in_batch_packing_padding_multiple(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as dp_mod
     from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
     class TextTokenizer:
@@ -646,7 +674,11 @@ def test_hf_builder_forwards_in_batch_packing_padding_multiple(monkeypatch):
             }
         ]
 
-    monkeypatch.setattr(dp_mod, "get_hf_dataset_maker", _fake_get_maker)
+    monkeypatch.setattr(
+        _ConversationBuilderHarness,
+        "_get_maker",
+        lambda self: _fake_get_maker(self.config.source.schema_adapter),
+    )
 
     provider = _ConversationBuilderHarness(
         seq_length=16,
@@ -745,11 +777,13 @@ def test_hf_builder_can_defer_in_batch_packing_to_training_step(monkeypatch):
     assert train_ds.collate_fn([_example()])["enable_in_batch_packing"] is False
 
 
-def test_hf_conversation_config_round_trip_is_declarative():
-    config = HFConversationDatasetConfig(
+def test_hf_sft_config_round_trip_is_declarative():
+    config = HFSFTDatasetConfig(
         seq_length=128,
-        maker_name="text_chat",
-        maker_kwargs={"path_or_dataset": "json", "data_files": {"train": "training.jsonl"}},
+        source=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            load_kwargs={"data_files": {"train": "training.jsonl"}},
+        ),
         do_test=False,
         enable_in_batch_packing=True,
     )
@@ -757,18 +791,17 @@ def test_hf_conversation_config_round_trip_is_declarative():
     serialized = ConfigContainer._convert_value_to_dict(config)
     restored = instantiate(serialized)
 
-    assert isinstance(restored, HFConversationDatasetConfig)
-    assert restored.maker_kwargs == config.maker_kwargs
+    assert isinstance(restored, HFSFTDatasetConfig)
+    assert restored.source.load_kwargs == config.source.load_kwargs
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
 
 
-def test_hf_conversation_config_rejects_runtime_objects():
-    config = HFConversationDatasetConfig(
+def test_hf_sft_config_rejects_runtime_objects():
+    config = HFSFTDatasetConfig(
         seq_length=128,
-        maker_name="text_chat",
-        maker_kwargs={"transform": lambda row: row},
+        source=HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"transform": lambda row: row}),
     )
 
     with pytest.raises(TypeError, match="declarative values"):
@@ -776,10 +809,10 @@ def test_hf_conversation_config_rejects_runtime_objects():
 
 
 def test_hf_conversation_legacy_provider_is_deprecated_and_delegates(monkeypatch):
-    from megatron.bridge.data.builders import hf_conversation_dataset as builder_mod
+    from megatron.bridge.data.builders import hf_sft_dataset as builder_mod
     from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 
-    with pytest.warns(DeprecationWarning, match="HFConversationDatasetConfig"):
+    with pytest.warns(DeprecationWarning, match="HFSFTDatasetConfig"):
         provider = HFConversationDatasetProvider(
             seq_length=128,
             maker_name="text_chat",
@@ -803,8 +836,8 @@ def test_hf_conversation_legacy_provider_is_deprecated_and_delegates(monkeypatch
         )
 
     config = provider._to_config()  # noqa: SLF001
-    assert isinstance(config, HFConversationDatasetConfig)
-    assert config.maker_name == "text_chat"
+    assert isinstance(config, HFSFTDatasetConfig)
+    assert config.source.path_or_dataset == "json"
     assert config.hf_processor_path == "dummy/model"
     assert config.num_workers == 0
     assert config.data_sharding is False
@@ -822,7 +855,7 @@ def test_hf_conversation_legacy_provider_is_deprecated_and_delegates(monkeypatch
     assert config.do_test is False
 
     monkeypatch.setattr(provider, "_get_maker", lambda: lambda **kwargs: [_example()])
-    monkeypatch.setattr(builder_mod, "load_hf_conversation_processor", lambda config, tokenizer: Gemma3Processor())
+    monkeypatch.setattr(builder_mod, "load_hf_sft_processor", lambda config, tokenizer: Gemma3Processor())
     train_ds, valid_ds, test_ds = provider.build_datasets(
         DatasetBuildContext(train_samples=2, valid_samples=1, test_samples=1)
     )
@@ -832,8 +865,94 @@ def test_hf_conversation_legacy_provider_is_deprecated_and_delegates(monkeypatch
     assert train_ds.collate_fn([train_ds[0]])["enable_in_batch_packing"] is False
 
 
-def test_hf_conversation_config_resolves_canonical_builder(monkeypatch):
+def test_legacy_provider_merges_base_kwargs_for_all_splits(monkeypatch):
+    from megatron.bridge.data.builders import hf_sft_dataset as builder_mod
+    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+
+    with pytest.warns(DeprecationWarning):
+        provider = HFConversationDatasetProvider(
+            seq_length=128,
+            maker_name="text_chat",
+            maker_kwargs={"path_or_dataset": "json", "data_files": {"train": "chat.jsonl"}},
+            val_maker_kwargs={"split": "validation"},
+        )
+    calls = []
+
+    def _maker(**kwargs):
+        calls.append(kwargs)
+        return [_example()]
+
+    monkeypatch.setattr(provider, "_get_maker", lambda: _maker)
+    monkeypatch.setattr(builder_mod, "load_hf_sft_processor", lambda config, tokenizer: Gemma3Processor())
+
+    provider.build_datasets(DatasetBuildContext(1, 1, 1))
+
+    assert [call["path_or_dataset"] for call in calls] == ["json", "json", "json"]
+    assert [call["split"] for call in calls] == ["train", "validation", "test"]
+
+
+def test_legacy_provider_preserves_registered_maker_default_path(monkeypatch):
+    from megatron.bridge.data.builders import hf_sft_dataset as builder_mod
+    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+
+    with pytest.warns(DeprecationWarning):
+        provider = HFConversationDatasetProvider(
+            seq_length=128,
+            maker_name="rdr",
+            do_validation=False,
+            do_test=False,
+        )
+    calls = []
+
+    def _maker(**kwargs):
+        calls.append(kwargs)
+        return [_example()]
+
+    monkeypatch.setattr(provider, "_get_maker", lambda: _maker)
+    monkeypatch.setattr(builder_mod, "load_hf_sft_processor", lambda config, tokenizer: Gemma3Processor())
+
+    provider.build_datasets(DatasetBuildContext(1, 0, 0))
+
+    assert calls == [{"split": "train"}]
+
+
+def test_legacy_provider_build_uses_protected_extension_hooks():
+    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+
+    calls = []
+
+    class _HookedProvider(HFConversationDatasetProvider):
+        def _load_processor_or_tokenizer(self, tokenizer=None):
+            calls.append(("processor", tokenizer))
+            return "processor"
+
+        def _build_split_dataset(self, split, target_length, processor, extra_kwargs=None):
+            calls.append((split, target_length, processor, extra_kwargs))
+            return split
+
+    with pytest.warns(DeprecationWarning):
+        provider = _HookedProvider(
+            seq_length=128,
+            maker_name="text_chat",
+            val_maker_kwargs={"split": "dev"},
+            test_maker_kwargs={"split": "evaluation"},
+        )
+
+    tokenizer = object()
+    datasets = provider.build_datasets(DatasetBuildContext(3, 2, 1, tokenizer=tokenizer))
+
+    assert datasets == ("train", "validation", "test")
+    assert calls == [
+        ("processor", tokenizer),
+        ("train", 3, "processor", None),
+        ("validation", 2, "processor", {"split": "dev"}),
+        ("test", 1, "processor", {"split": "evaluation"}),
+    ]
+
+
+def test_hf_sft_config_resolves_canonical_builder(monkeypatch):
     from megatron.bridge.data import utils as data_utils
+    from megatron.bridge.data.builders import hf_sft_dataset as builder_mod
 
     seen = {}
 
@@ -845,8 +964,11 @@ def test_hf_conversation_config_resolves_canonical_builder(monkeypatch):
             seen["context"] = context
             return "train", "validation", "test"
 
-    monkeypatch.setattr(data_utils, "HFConversationDatasetBuilder", _FakeBuilder)
-    config = HFConversationDatasetConfig(seq_length=128, maker_name="text_chat")
+    monkeypatch.setattr(builder_mod, "HFSFTDatasetBuilder", _FakeBuilder)
+    config = HFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(path_or_dataset="json"),
+    )
     provider = data_utils.get_dataset_provider(config)
     tokenizer = object()
 

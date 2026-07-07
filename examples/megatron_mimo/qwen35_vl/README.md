@@ -24,7 +24,7 @@ The current Qwen3.5-VL example focuses on one validated workflow:
 - Dense Qwen3.5-VL models.
 - Two MegatronMIMO components: `language` and `images`.
 - Hugging Face to MegatronMIMO checkpoint conversion.
-- Full-parameter SFT on Hugging Face conversation data.
+- Full-parameter SFT on direct Hugging Face SFT data.
 - Non-colocated training, where the language model and image encoder run on
   disjoint rank ranges.
 
@@ -32,6 +32,11 @@ The reported performance and loss-parity evidence currently applies to the
 validated 27B non-colocated workflow in the tutorial. Re-measure performance and
 check loss behavior if you adapt the scripts to a different model size, dataset,
 or parallelism layout.
+
+Select source loading and schema adaptation independently with `DATASET_PATH`
+and `DATASET_ADAPTER`. The deprecated `DATASET_NAME`/`--dataset-maker` aliases
+retain the historical CORD-v2, RDR, and MedPix default source paths; new uses
+should pass the canonical source and adapter names explicitly.
 
 
 ## Files
@@ -41,7 +46,7 @@ These files are used by the tutorials:
 | File | Purpose |
 |---|---|
 | `conversion.sh` | Converts dense HF Qwen3.5-VL checkpoints to MegatronMIMO format and exports back to HF for a round-trip check. |
-| `finetune_qwen35_vl.py` | MegatronMIMO SFT runner for HF conversation data. |
+| `finetune_qwen35_vl.py` | MegatronMIMO runner for direct Hugging Face SFT data. |
 | `slurm_sft.sh` | Multi-node Slurm launcher for the validated 27B non-colocated SFT layout. |
 
 

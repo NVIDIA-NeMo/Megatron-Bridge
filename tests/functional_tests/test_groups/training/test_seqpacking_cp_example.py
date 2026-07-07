@@ -19,9 +19,9 @@ import os
 import pytest
 import torch
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_pretrain_config, llama32_1b_sft_config
-from megatron.bridge.training.config import GPTSFTDatasetConfig
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain

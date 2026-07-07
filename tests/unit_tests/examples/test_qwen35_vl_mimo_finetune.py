@@ -20,6 +20,7 @@ import importlib.util
 import pathlib
 import sys
 
+import pytest
 import torch
 from PIL import Image
 
@@ -54,6 +55,34 @@ def test_qwen35_vl_mimo_finetune_example_imports():
     name = "qwen35_vl_mimo_finetune_import_under_test"
     try:
         _load_example_module(name)
+    finally:
+        sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize(
+    ("adapter", "expected_path"),
+    [
+        ("cord_v2", "naver-clova-ix/cord-v2"),
+        ("make_rdr_dataset", "quintend/rdr-items"),
+        ("medpix", "mmoukouba/MedPix-VQA"),
+    ],
+)
+def test_deprecated_dataset_maker_names_keep_matching_default_sources(adapter, expected_path):
+    name = f"qwen35_vl_mimo_dataset_defaults_{adapter}"
+    try:
+        module = _load_example_module(name)
+        assert module._resolve_dataset_path(adapter, None) == expected_path
+        assert module._resolve_dataset_path(adapter, "org/custom") == "org/custom"
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_custom_dataset_adapter_requires_explicit_source():
+    name = "qwen35_vl_mimo_custom_dataset_source"
+    try:
+        module = _load_example_module(name)
+        with pytest.raises(ValueError, match="--dataset-path is required"):
+            module._resolve_dataset_path("custom", None)
     finally:
         sys.modules.pop(name, None)
 

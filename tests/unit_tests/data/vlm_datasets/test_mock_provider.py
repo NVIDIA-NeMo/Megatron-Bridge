@@ -17,7 +17,7 @@ import types
 import torch
 
 import megatron.bridge.data.vlm_datasets.mock_provider as mock
-from megatron.bridge.training.config import DatasetBuildContext
+from megatron.bridge.data.base import DatasetBuildContext
 
 
 class Gemma3Processor:

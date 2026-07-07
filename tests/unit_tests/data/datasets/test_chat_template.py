@@ -236,7 +236,14 @@ class TestChatPreprocess:
 
         assert result["input_ids"].tolist() == [1, 10, 20, 888]
 
-    def test_chat_preprocess_with_tool_schemas(self):
+    @pytest.mark.parametrize(
+        "tool_schemas",
+        [
+            {"type": "function", "function": {"name": "test_func"}},
+            [{"type": "function", "function": {"name": "test_func"}}],
+        ],
+    )
+    def test_chat_preprocess_with_tool_schemas(self, tool_schemas):
         """Test chat preprocessing with tool schemas."""
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
@@ -251,13 +258,27 @@ class TestChatPreprocess:
         }
 
         source = {"conversations": [{"from": "User", "value": "Test"}]}
-        tool_schemas = [{"type": "function", "function": {"name": "test_func"}}]
-
         _chat_preprocess(source, mock_tokenizer, tool_schemas=tool_schemas)
 
         # Verify tools were passed to apply_chat_template
         call_kwargs = mock_hf_tokenizer.apply_chat_template.call_args[1]
         assert call_kwargs["tools"] == tool_schemas
+
+    def test_chat_preprocess_empty_source_tools_fall_back_to_global_schemas(self):
+        mock_tokenizer = MagicMock()
+        mock_tokenizer.eos_id = 2
+        mock_tokenizer.legacy = False
+        mock_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        mock_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 0, 1, 1],
+        }
+        global_schemas = {"type": "function", "function": {"name": "global"}}
+        source = {"conversations": [{"from": "User", "value": "Test"}], "tools": []}
+
+        _chat_preprocess(source, mock_tokenizer, tool_schemas=global_schemas)
+
+        assert mock_tokenizer.apply_chat_template.call_args[1]["tools"] == global_schemas
 
     def test_chat_preprocess_invalid_tokenizer(self):
         """Test that error is raised for tokenizer without apply_chat_template."""
@@ -790,6 +811,45 @@ class TestOutputOriginalText:
         assert "metadata" in result
         assert "conversations" in result["metadata"]
         assert result["metadata"]["conversations"] == example["conversations"]
+
+    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    def test_output_original_text_with_conversation(self, mock_dataset_class):
+        """Test that output_original_text works with singular conversation format."""
+        mock_dataset = MagicMock()
+        mock_dataset.__len__.return_value = 10
+        mock_dataset_class.return_value = mock_dataset
+
+        mock_tokenizer = MagicMock()
+        mock_hf_tokenizer = MagicMock()
+        mock_tokenizer._tokenizer = mock_hf_tokenizer
+        mock_tokenizer.eos_id = 2
+
+        mock_hf_tokenizer.chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        mock_hf_tokenizer.apply_chat_template.return_value = {
+            "input_ids": [1, 10, 20, 2],
+            "assistant_masks": [0, 1, 1, 1],
+        }
+
+        dataset = GPTSFTChatDataset(
+            file_path="test.jsonl",
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            use_hf_tokenizer_chat_template=True,
+            output_original_text=True,
+        )
+
+        example = {
+            "conversation": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi!"},
+            ],
+            "extra_field": "value",
+        }
+
+        result = dataset._process_example(example)
+
+        assert result["metadata"]["conversation"] == example["conversation"]
+        assert result["metadata"]["extra_field"] == "value"
 
 
 class TestToolSchemasEdgeCases:

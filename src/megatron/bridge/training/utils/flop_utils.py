@@ -629,11 +629,7 @@ def num_floating_point_operations(
 
         dataset_cfg = getattr(cfg, "dataset", None)
         hf_dataset_cfg = getattr(dataset_cfg, "hf_dataset", None)
-        hf_dataset_name = getattr(hf_dataset_cfg, "maker_name", None)
-        if hf_dataset_cfg is not None:
-            hf_dataset_name = (getattr(hf_dataset_cfg, "maker_kwargs", None) or {}).get(
-                "path_or_dataset", hf_dataset_name
-            )
+        hf_dataset_name = getattr(hf_dataset_cfg, "path_or_dataset", None)
         is_squad = getattr(dataset_cfg, "dataset_name", hf_dataset_name) in ("squad", "rajpurkar/squad")
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
@@ -646,7 +642,7 @@ def num_floating_point_operations(
         # If not explicitly set, try to find the file via dataset_root (the GPTSFTDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).
         if packed_data_path is None and packed_specs is not None:
-            dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(hf_dataset_cfg, "output_root", None)
+            dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(dataset_cfg, "hf_output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
                 matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))

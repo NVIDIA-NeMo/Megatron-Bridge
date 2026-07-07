@@ -538,25 +538,25 @@ def test_qwen35_vl_397b_a17b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetConfig by default."""
+    """Test that SFT configs use HFSFTDatasetConfig by default."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_sft_config()
 
-    from megatron.bridge.training.config import HFConversationDatasetConfig
+    from megatron.bridge.data.builders import HFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
 
 
 def test_qwen35_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetConfig by default."""
+    """Test that PEFT configs use HFSFTDatasetConfig by default."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_800m_peft_config()
 
-    from megatron.bridge.training.config import HFConversationDatasetConfig
+    from megatron.bridge.data.builders import HFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetConfig)
+    assert isinstance(cfg.dataset, HFSFTDatasetConfig)
 
 
 def test_qwen35_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):

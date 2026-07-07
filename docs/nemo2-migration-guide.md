@@ -178,7 +178,7 @@ pretrain(cfg, forward_step_func=forward_step)
 
 ### Fine-Tuning Migration Example (SFT/PEFT)
 
-For fine-tuning, use {py:class}`bridge.training.config.GPTSFTDatasetConfig` for local JSONL or Hugging Face maker data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
+For fine-tuning, use {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for local JSONL or Hugging Face source data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
 
 #### Before: NeMo 2.0
 ```python
@@ -226,7 +226,7 @@ llm.finetune(
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
 from megatron.bridge.models import GPTModelProvider
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
@@ -520,7 +520,7 @@ logger_config = LoggerConfig(log_interval=10)  # was log_every_n_steps
 
 ### Data Configuration Migration
 
-NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.training.config.GPTSFTDatasetConfig` for text fine-tuning.
+NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for text fine-tuning.
 
 #### Pretraining Data
 
@@ -615,7 +615,7 @@ data = FineTuningDataModule(
 ##### Now: Megatron Bridge GPTSFTDatasetConfig
 
 ```python
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.training.config import TrainingConfig
 
 dataset_config = GPTSFTDatasetConfig(
@@ -1327,7 +1327,7 @@ Full fine-tuning without PEFT - all model parameters are updated:
 ```python
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.finetune import finetune
-from megatron.bridge.training.config import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
 config = ConfigContainer(
     model=GPTModelProvider(),

@@ -12,30 +12,135 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
 import json
 import logging
+import re
 import warnings
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import torch
-from datasets import Dataset
 from megatron.core.msc_utils import MultiStorageClientFeature
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
+from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
 from megatron.bridge.data.datasets.packed_parquet import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset, get_dataset_root
-from megatron.bridge.data.hf_datasets.makers import get_hf_dataset_maker
-from megatron.bridge.training.config import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.hf_source import HFDatasetSourceConfig, load_and_adapt_hf_dataset
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(kw_only=True)
+class GPTSFTDatasetConfig(DataloaderConfig):
+    """Serializable configuration for text-only ``GPTSFTDataset`` construction.
+
+    Exactly one source is required: ``dataset_root`` selects existing local
+    JSONL/packed artifacts, while ``hf_dataset`` selects a declarative Hugging
+    Face source that is materialized before construction.
+    """
+
+    seq_length: int
+    dataset_root: str | Path | None = None
+    hf_dataset: HFDatasetSourceConfig | None = None
+    hf_validation_dataset: HFDatasetSourceConfig | None = None
+    hf_test_dataset: HFDatasetSourceConfig | None = None
+    hf_output_root: str | Path | None = None
+    hf_validation_proportion: float | None = None
+    hf_rewrite: bool = False
+    seed: int = 1234
+    memmap_workers: int = 1
+    max_train_samples: int | None = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: PackedSequenceSpecs | None = None
+    dataset_kwargs: dict[str, Any] | None = None
+    do_validation: bool = True
+    do_test: bool = True
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "batch"
+
+    def validate(self) -> None:
+        """Validate source selection and text-only SFT settings."""
+        has_local_source = self.dataset_root is not None
+        has_hf_source = self.hf_dataset is not None
+        if has_local_source == has_hf_source:
+            raise ValueError("Exactly one text-only SFT source must be set: dataset_root or hf_dataset.")
+        if has_local_source and not str(self.dataset_root).strip():
+            raise ValueError("dataset_root must be a non-empty path.")
+        hf_only_fields_set = (
+            any(
+                value is not None
+                for value in (
+                    self.hf_validation_dataset,
+                    self.hf_test_dataset,
+                    self.hf_output_root,
+                    self.hf_validation_proportion,
+                )
+            )
+            or self.hf_rewrite
+        )
+        if has_local_source and hf_only_fields_set:
+            raise ValueError("Hugging Face split and materialization settings require hf_dataset, not dataset_root.")
+        if self.hf_dataset is not None:
+            self.hf_dataset.validate()
+        if self.hf_validation_dataset is not None:
+            self.hf_validation_dataset.validate()
+        if self.hf_test_dataset is not None:
+            self.hf_test_dataset.validate()
+        if self.hf_output_root is not None and not str(self.hf_output_root).strip():
+            raise ValueError("hf_output_root must be a non-empty path when set.")
+        if self.hf_validation_proportion is not None and not 0.0 < self.hf_validation_proportion < 1.0:
+            raise ValueError("hf_validation_proportion must be between 0 and 1.")
+        if self.hf_validation_dataset is not None and self.hf_validation_proportion is not None:
+            raise ValueError("Set either hf_validation_dataset or hf_validation_proportion, not both.")
+        if not self.do_validation and (
+            self.hf_validation_dataset is not None or self.hf_validation_proportion is not None
+        ):
+            raise ValueError("Hugging Face validation settings require do_validation=True.")
+        if not self.do_test and self.hf_test_dataset is not None:
+            raise ValueError("hf_test_dataset requires do_test=True.")
+        if self.seq_length <= 0:
+            raise ValueError("seq_length must be greater than 0.")
+        if self.enable_offline_packing and self.offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if self.offline_packing_specs is not None and not self.enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+        if self.offline_packing_specs is not None and self.offline_packing_specs.packed_sequence_size <= 0:
+            raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+        validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
+        if self.dataset_kwargs is not None and "max_num_samples" in self.dataset_kwargs:
+            raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
+
+    def finalize(self) -> None:
+        """Finalize dataloader settings and validate this config."""
+        super().finalize()
+        self.validate()
+
+
+# =============================================================================
+# Deprecated compatibility APIs
+# =============================================================================
+
+
+@dataclass(kw_only=True)
+class FinetuningDatasetConfig(GPTSFTDatasetConfig):
+    """Deprecated compatibility name for :class:`GPTSFTDatasetConfig`."""
+
+    def __post_init__(self) -> None:
+        warnings.warn(
+            "FinetuningDatasetConfig is deprecated; use megatron.bridge.data.builders.GPTSFTDatasetConfig instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
 
 def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
@@ -46,10 +151,26 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
 
     source = config.hf_dataset
     assert source is not None
-    if source.output_root is not None:
-        return Path(source.output_root)
-    dataset_name = str((source.maker_kwargs or {}).get("path_or_dataset", source.maker_name))
-    return get_dataset_root(f"{dataset_name}-{source.maker_name}")
+    if config.hf_output_root is not None:
+        return Path(config.hf_output_root)
+    materialization_identity = {
+        "source": asdict(source),
+        "validation_source": asdict(config.hf_validation_dataset) if config.hf_validation_dataset else None,
+        "test_source": asdict(config.hf_test_dataset) if config.hf_test_dataset else None,
+        "validation_proportion": config.hf_validation_proportion,
+        "validation_seed": config.seed if config.hf_validation_proportion is not None else None,
+        "do_validation": config.do_validation,
+        "do_test": config.do_test,
+    }
+    encoded_identity = json.dumps(
+        materialization_identity,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    fingerprint = hashlib.sha256(encoded_identity).hexdigest()[:16]
+    adapter_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", source.schema_adapter or "native").strip("-")
+    return get_dataset_root(f"hf-sft-{adapter_name}-{fingerprint}")
 
 
 def normalize_gpt_sft_dataset_kwargs(config: GPTSFTDatasetConfig) -> dict[str, Any]:
@@ -66,18 +187,8 @@ def normalize_gpt_sft_dataset_kwargs(config: GPTSFTDatasetConfig) -> dict[str, A
 
 def _load_hf_examples(
     source: HFDatasetSourceConfig,
-    *,
-    split: str,
-    extra_kwargs: dict[str, Any] | None,
 ) -> list[dict[str, Any]]:
-    kwargs = dict(source.maker_kwargs or {})
-    if extra_kwargs:
-        kwargs.update(extra_kwargs)
-    kwargs.setdefault("split", split)
-    examples = get_hf_dataset_maker(source.maker_name)(**kwargs)
-    if not isinstance(examples, list) or not examples:
-        raise ValueError(f"Maker '{source.maker_name}' returned no examples for split='{split}'")
-    return examples
+    return load_and_adapt_hf_dataset(source)
 
 
 def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, Any]]) -> None:
@@ -89,27 +200,26 @@ def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, An
     print_rank_0(f"Prepared Hugging Face text SFT {output_name} data at {output_path}")
 
 
-def _needs_hf_write(source: HFDatasetSourceConfig, root: Path, output_name: str) -> bool:
+def _needs_hf_write(config: GPTSFTDatasetConfig, root: Path, output_name: str) -> bool:
     output_path = root / f"{output_name}.jsonl"
-    if output_path.exists() and not source.rewrite:
+    if output_path.exists() and not config.hf_rewrite:
         print_rank_0(f"Skipping Hugging Face text SFT {output_name} preparation - already exists: {output_path}")
         return False
     return True
 
 
 def _materialize_hf_split(
+    config: GPTSFTDatasetConfig,
     source: HFDatasetSourceConfig,
     root: Path,
     *,
     output_name: str,
-    split: str,
-    extra_kwargs: dict[str, Any] | None,
 ) -> None:
-    if _needs_hf_write(source, root, output_name):
+    if _needs_hf_write(config, root, output_name):
         _write_hf_examples(
             root,
             output_name,
-            _load_hf_examples(source, split=split, extra_kwargs=extra_kwargs),
+            _load_hf_examples(source),
         )
 
 
@@ -119,14 +229,18 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
     if source is None:
         raise ValueError("materialize_hf_dataset requires an hf_dataset source.")
 
-    derive_validation = config.do_validation and source.val_proportion is not None and source.val_maker_kwargs is None
+    derive_validation = (
+        config.do_validation and config.hf_validation_proportion is not None and config.hf_validation_dataset is None
+    )
     if derive_validation:
-        write_train = _needs_hf_write(source, root, "training")
-        write_validation = _needs_hf_write(source, root, "validation")
+        write_train = _needs_hf_write(config, root, "training")
+        write_validation = _needs_hf_write(config, root, "validation")
         if write_train or write_validation:
-            examples = _load_hf_examples(source, split="train", extra_kwargs=None)
+            from datasets import Dataset
+
+            examples = _load_hf_examples(source)
             split_dataset = Dataset.from_list(examples).train_test_split(
-                test_size=source.val_proportion,
+                test_size=config.hf_validation_proportion,
                 seed=config.seed,
             )
             if write_train:
@@ -134,23 +248,23 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
             if write_validation:
                 _write_hf_examples(root, "validation", list(split_dataset["test"]))
     else:
-        _materialize_hf_split(source, root, output_name="training", split="train", extra_kwargs=None)
+        _materialize_hf_split(config, source, root, output_name="training")
 
     if config.do_validation and not derive_validation:
+        validation_source = config.hf_validation_dataset or source.with_split("validation")
         _materialize_hf_split(
-            source,
+            config,
+            validation_source,
             root,
             output_name="validation",
-            split="validation",
-            extra_kwargs=source.val_maker_kwargs,
         )
     if config.do_test:
+        test_source = config.hf_test_dataset or source.with_split("test")
         _materialize_hf_split(
-            source,
+            config,
+            test_source,
             root,
             output_name="test",
-            split="test",
-            extra_kwargs=source.test_maker_kwargs,
         )
 
 
@@ -572,6 +686,24 @@ class GPTSFTDatasetBuilder:
             return f"unknown_tokenizer_{hash(self.tokenizer)}"
 
 
+def gpt_sft_train_valid_test_datasets_provider(
+    train_val_test_num_samples: list[int],
+    dataset_config: GPTSFTDatasetConfig,
+    tokenizer: MegatronTokenizer | None = None,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> tuple[Any | None, Any | None, Any | None]:
+    """Build text-only SFT datasets through the canonical runtime builder."""
+    del train_val_test_num_samples, pg_collection
+    if tokenizer is None:
+        raise ValueError("GPTSFTDatasetBuilder requires an initialized tokenizer.")
+    return tuple(GPTSFTDatasetBuilder(config=dataset_config, tokenizer=tokenizer).build())
+
+
+# =============================================================================
+# Deprecated compatibility APIs
+# =============================================================================
+
+
 class FinetuningDatasetBuilder(GPTSFTDatasetBuilder):
     """Deprecated constructor-compatible adapter for :class:`GPTSFTDatasetBuilder`."""
 
@@ -590,7 +722,7 @@ class FinetuningDatasetBuilder(GPTSFTDatasetBuilder):
         do_test: bool = True,
     ) -> None:
         warnings.warn(
-            "FinetuningDatasetBuilder is deprecated; construct GPTSFTDatasetBuilder with GPTSFTDatasetConfig instead.",
+            "FinetuningDatasetBuilder is deprecated; use megatron.bridge.data.builders.GPTSFTDatasetBuilder instead.",
             DeprecationWarning,
             stacklevel=2,
         )

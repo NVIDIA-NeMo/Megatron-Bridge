@@ -1,0 +1,273 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Serializable config and runtime builder for direct Hugging Face SFT."""
+
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any, Literal
+
+import torch
+from megatron.core.process_groups_config import ProcessGroupCollection
+from transformers import AutoProcessor, AutoTokenizer
+
+from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
+from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
+from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_source import HFDatasetSourceConfig, load_and_adapt_hf_dataset
+from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
+
+
+logger = logging.getLogger(__name__)
+
+DatasetMaker = Callable[..., list[dict[str, Any]]]
+CollateFunction = Callable[..., dict[str, torch.Tensor]]
+
+
+@dataclass(kw_only=True)
+class HFSFTDatasetConfig(DataloaderConfig):
+    """Serializable configuration for direct Hugging Face SFT datasets."""
+
+    seq_length: int
+    source: HFDatasetSourceConfig
+    validation_source: HFDatasetSourceConfig | None = None
+    test_source: HFDatasetSourceConfig | None = None
+    hf_processor_path: str | None = None
+    do_validation: bool = True
+    do_test: bool = True
+    skip_getting_attention_mask_from_dataset: bool = True
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "single"
+    enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
+
+    def validate(self) -> None:
+        """Validate declarative source and dataset settings."""
+        if self.seq_length <= 0:
+            raise ValueError("seq_length must be greater than 0.")
+        self.source.validate()
+        if self.validation_source is not None:
+            self.validation_source.validate()
+        if self.test_source is not None:
+            self.test_source.validate()
+        if not self.do_validation and self.validation_source is not None:
+            raise ValueError("validation_source requires do_validation=True.")
+        if not self.do_test and self.test_source is not None:
+            raise ValueError("test_source requires do_test=True.")
+        if self.hf_processor_path is not None and not self.hf_processor_path.strip():
+            raise ValueError("hf_processor_path must be a non-empty string when set.")
+        if self.pad_to_multiple_of <= 0:
+            raise ValueError("pad_to_multiple_of must be greater than 0.")
+        if self.in_batch_packing_pad_to_multiple_of <= 0:
+            raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+
+    def finalize(self) -> None:
+        """Finalize dataloader settings and validate this config."""
+        super().finalize()
+        self.validate()
+
+
+def normalize_hf_sft_processor(processor: Any) -> Any:
+    """Ensure the runtime tokenizer can pad batched conversation text."""
+    tokenizer = get_processor_tokenizer(processor)
+    if getattr(tokenizer, "pad_token_id", None) is not None:
+        return processor
+
+    eos_token = getattr(tokenizer, "eos_token", None)
+    if eos_token is not None:
+        tokenizer.pad_token = eos_token
+    else:
+        eos_token_id = getattr(tokenizer, "eos_token_id", None)
+        if eos_token_id is not None:
+            tokenizer.pad_token_id = eos_token_id
+    return processor
+
+
+def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> Any:
+    """Load the configured HF processor or adapt the training tokenizer."""
+    if config.hf_processor_path is None:
+        if tokenizer is None:
+            raise ValueError("hf_processor_path must be set when no tokenizer is available in build context.")
+        return normalize_hf_sft_processor(get_processor_tokenizer(tokenizer))
+
+    trust_remote_code = is_safe_repo(
+        trust_remote_code=config.trust_remote_code,
+        hf_path=config.hf_processor_path,
+    )
+    try:
+        return normalize_hf_sft_processor(
+            AutoProcessor.from_pretrained(
+                config.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
+        )
+    except (OSError, ValueError):
+        logger.debug(
+            "AutoProcessor.from_pretrained failed for %s; falling back to AutoTokenizer.",
+            config.hf_processor_path,
+            exc_info=True,
+        )
+        return normalize_hf_sft_processor(
+            AutoTokenizer.from_pretrained(
+                config.hf_processor_path,
+                trust_remote_code=trust_remote_code,
+            )
+        )
+
+
+def load_hf_sft_examples(
+    source: HFDatasetSourceConfig,
+    *,
+    maker: DatasetMaker | None = None,
+    maker_kwargs: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Load and normalize one source, with an optional legacy maker override."""
+    if maker is None:
+        return load_and_adapt_hf_dataset(source)
+    kwargs = dict(maker_kwargs or {})
+    examples = maker(**kwargs)
+    if not isinstance(examples, list) or not examples:
+        raise ValueError("Legacy Hugging Face maker returned no examples.")
+    if not all(isinstance(example, dict) for example in examples):
+        raise TypeError("Legacy Hugging Face makers must return a list of dictionaries.")
+    return examples
+
+
+def select_hf_sft_collate(
+    examples: list[dict[str, Any]],
+    collate_impl: CollateFunction | None = None,
+) -> CollateFunction | None:
+    """Select the shared text collator while leaving multimodal inference to the dataset."""
+    if collate_impl is not None:
+        return collate_impl
+    if all(is_text_only_chat_example(example) for example in examples):
+        return text_chat_collate_fn
+    return None
+
+
+def build_hf_sft_split(
+    config: HFSFTDatasetConfig,
+    source: HFDatasetSourceConfig,
+    target_length: int,
+    processor: Any,
+    *,
+    maker: DatasetMaker | None = None,
+    maker_kwargs: dict[str, Any] | None = None,
+    collate_impl: CollateFunction | None = None,
+) -> ConversationDataset | None:
+    """Build one requested direct-HF SFT split."""
+    if target_length <= 0:
+        return None
+    examples = load_hf_sft_examples(source, maker=maker, maker_kwargs=maker_kwargs)
+    return ConversationDataset(
+        base_examples=examples,
+        target_length=target_length,
+        processor=processor,
+        collate_impl=select_hf_sft_collate(examples, collate_impl),
+        sequence_length=config.seq_length,
+        pad_to_max_length=config.pad_to_max_length,
+        pad_to_multiple_of=config.pad_to_multiple_of,
+        enable_in_batch_packing=config.enable_in_batch_packing,
+        defer_in_batch_packing_to_step=config.defer_in_batch_packing_to_step,
+        in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
+    )
+
+
+class HFSFTDatasetBuilder:
+    """Build runtime SFT datasets from declarative Hugging Face sources."""
+
+    def __init__(
+        self,
+        config: HFSFTDatasetConfig,
+        *,
+        maker: DatasetMaker | None = None,
+        collate_impl: CollateFunction | None = None,
+        maker_kwargs: dict[str, Any] | None = None,
+        val_maker_kwargs: dict[str, Any] | None = None,
+        test_maker_kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        config.validate()
+        self.config = config
+        self._maker = maker
+        self._collate_impl = collate_impl
+        self._maker_kwargs = maker_kwargs
+        self._val_maker_kwargs = val_maker_kwargs
+        self._test_maker_kwargs = test_maker_kwargs
+
+    def build(
+        self,
+        context: DatasetBuildContext,
+    ) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
+        """Build train, validation, and test datasets for requested sample counts."""
+        processor = load_hf_sft_processor(self.config, context.tokenizer)
+        train_dataset = build_hf_sft_split(
+            self.config,
+            self.config.source,
+            context.train_samples,
+            processor,
+            maker=self._maker,
+            maker_kwargs=self._maker_kwargs,
+            collate_impl=self._collate_impl,
+        )
+        validation_source = self.config.validation_source or self.config.source.with_split("validation")
+        valid_dataset = (
+            build_hf_sft_split(
+                self.config,
+                validation_source,
+                context.valid_samples,
+                processor,
+                maker=self._maker,
+                maker_kwargs=self._val_maker_kwargs,
+                collate_impl=self._collate_impl,
+            )
+            if self.config.do_validation
+            else None
+        )
+        test_source = self.config.test_source or self.config.source.with_split("test")
+        test_dataset = (
+            build_hf_sft_split(
+                self.config,
+                test_source,
+                context.test_samples,
+                processor,
+                maker=self._maker,
+                maker_kwargs=self._test_maker_kwargs,
+                collate_impl=self._collate_impl,
+            )
+            if self.config.do_test
+            else None
+        )
+        return train_dataset, valid_dataset, test_dataset
+
+
+def hf_sft_train_valid_test_datasets_provider(
+    train_val_test_num_samples: list[int],
+    dataset_config: HFSFTDatasetConfig,
+    tokenizer: MegatronTokenizer | None = None,
+    pg_collection: ProcessGroupCollection | None = None,
+) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
+    """Build direct-HF SFT datasets through the canonical runtime builder."""
+    context = DatasetBuildContext(
+        train_samples=train_val_test_num_samples[0],
+        valid_samples=train_val_test_num_samples[1],
+        test_samples=train_val_test_num_samples[2],
+        tokenizer=tokenizer,
+        pg_collection=pg_collection,
+    )
+    return HFSFTDatasetBuilder(dataset_config).build(context)

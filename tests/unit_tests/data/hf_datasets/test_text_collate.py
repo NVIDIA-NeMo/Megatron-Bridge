@@ -40,8 +40,15 @@ class _TextChatTokenizer:
         if tokenize:
             assert kwargs.get("return_assistant_tokens_mask") is True
             if conversation[-1]["content"] == "bye":
-                return {"input_ids": [11, 12, 21, 22], "assistant_masks": [0, 0, 1, 1]}
-            return {"input_ids": [11, 21, 22], "assistant_masks": [0, 1, 1]}
+                input_ids = [11, 12, 21, 22]
+                assistant_masks = [0, 0, 1, 1]
+            else:
+                input_ids = [11, 21, 22]
+                assistant_masks = [0, 1, 1]
+            if kwargs.get("truncation") and kwargs.get("max_length") is not None:
+                input_ids = input_ids[: kwargs["max_length"]]
+                assistant_masks = assistant_masks[: kwargs["max_length"]]
+            return {"input_ids": input_ids, "assistant_masks": assistant_masks}
         return "bye" if conversation[-1]["content"] == "bye" else "hello"
 
     def __call__(
@@ -95,7 +102,10 @@ class _ChatMLBoundaryTokenizer:
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         if tokenize:
-            raise AssertionError("boundary fallback test should render then tokenize")
+            input_ids = [100, 10, 102, 103, 101, 21, 22, 102, 103]
+            if kwargs.get("truncation") and kwargs.get("max_length") is not None:
+                input_ids = input_ids[: kwargs["max_length"]]
+            return {"input_ids": input_ids}
         return "rendered-boundary"
 
     def __call__(
@@ -233,15 +243,15 @@ def test_text_chat_collate_fn_accepts_legacy_conversations_and_max_length():
         }
     ]
 
-    batch = text_chat_collate_fn(examples, tokenizer, max_length=4, pad_to_max_length=True)
+    batch = text_chat_collate_fn(examples, tokenizer, max_length=2, pad_to_max_length=True)
 
     expected_conversation = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
-    assert tokenizer.conversations == [expected_conversation, expected_conversation]
-    assert batch["tokens"].tolist() == [[11, 21, 22, 0]]
-    assert batch["attention_mask"].tolist() == [[1, 1, 1, 0]]
-    assert batch["labels"].tolist() == [[21, 22, -100, -100]]
-    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0, 0.0]]
-    assert batch["token_count"] == [3]
+    assert tokenizer.conversations == [expected_conversation]
+    assert batch["tokens"].tolist() == [[11, 21]]
+    assert batch["attention_mask"].tolist() == [[1, 1]]
+    assert batch["labels"].tolist() == [[21, -100]]
+    assert batch["loss_mask"].tolist() == [[1.0, 0.0]]
+    assert batch["token_count"] == [2]
 
 
 def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
@@ -265,7 +275,7 @@ def test_text_chat_collate_fn_packs_sequences_for_gpt_step():
     batch = text_chat_collate_fn(examples, tokenizer, enable_in_batch_packing=True)
 
     assert batch["tokens"].tolist() == [[11, 21, 22, 11, 12, 21, 22]]
-    assert tokenizer.padding_values == [False, False]
+    assert tokenizer.padding_values == []
     assert tokenizer.padding_side == "left"
     assert batch["input_ids"].data_ptr() == batch["tokens"].data_ptr()
     assert batch["labels"].tolist() == [[21, 22, -100, -100, 21, 22, -100]]

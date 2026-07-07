@@ -19,6 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -31,8 +32,6 @@ from megatron.bridge.training.config import (
     DistributedInitConfig,
     GPTDatasetConfig,
     GPTFIMDatasetConfig,
-    GPTSFTDatasetConfig,
-    HFConversationDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     NVRxStragglerDetectionConfig,
@@ -159,9 +158,12 @@ def create_test_gpt_sft_dataset_config(sequence_length: int) -> GPTSFTDatasetCon
     return GPTSFTDatasetConfig(seq_length=sequence_length, dataset_root="/tmp/dataset")
 
 
-def create_test_hf_conversation_dataset_config(sequence_length: int) -> HFConversationDatasetConfig:
-    """Create an HFConversationDatasetConfig with defaults for testing."""
-    return HFConversationDatasetConfig(seq_length=sequence_length, maker_name="text_chat")
+def create_test_hf_conversation_dataset_config(sequence_length: int) -> HFSFTDatasetConfig:
+    """Create an HFSFTDatasetConfig with defaults for testing."""
+    return HFSFTDatasetConfig(
+        seq_length=sequence_length,
+        source=HFDatasetSourceConfig(path_or_dataset="json"),
+    )
 
 
 def create_test_logger_config(**kwargs: Any) -> LoggerConfig:
