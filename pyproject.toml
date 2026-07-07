@@ -157,6 +157,11 @@ requires-dist = []
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+# Override the transitive fast-hadamard-transform pin from 3rdparty/Megatron-LM
+# (an older git rev) so the newer fast-hadamard-transform ToT resolves. The
+# PyPI sdist is incomplete, so it must come from the git repo (see the DSv4/GLM-5
+# example READMEs). uv records the resolved commit in uv.lock for reproducibility.
+fast-hadamard-transform = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git", rev = "master" }
 
 [project.optional-dependencies]
 recipes = [
