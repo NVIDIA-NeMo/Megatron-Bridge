@@ -64,7 +64,6 @@ from megatron.bridge.diffusion.models.flux.layers import (
 from megatron.bridge.diffusion.models.flux.model_config import (
     FluxModelBuilder,
     FluxModelConfig,
-    FluxTransformerConfig,
 )
 
 
@@ -74,7 +73,6 @@ __all__ = [
     "FluxModelBuilder",
     "FluxModelConfig",
     "FluxProvider",
-    "FluxTransformerConfig",
     # Transformer layers
     "MMDiTLayer",
     "FluxSingleTransformerBlock",

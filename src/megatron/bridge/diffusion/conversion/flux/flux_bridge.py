@@ -21,7 +21,7 @@ from megatron.core.transformer.utils import openai_gelu
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
-from megatron.bridge.diffusion.models.flux.model_config import FluxModelConfig, FluxTransformerConfig
+from megatron.bridge.diffusion.models.flux.model_config import FluxModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
@@ -62,7 +62,6 @@ class FluxBridge(MegatronModelBridge):
     """
 
     MODEL_CONFIG_CLASS = FluxModelConfig
-    TRANSFORMER_CONFIG_CLASS = FluxTransformerConfig
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map a diffusers FLUX config to builder-backed model config fields."""
@@ -75,6 +74,10 @@ class FluxBridge(MegatronModelBridge):
             "num_attention_heads": hf_config.num_attention_heads,
             "num_query_groups": hf_config.num_attention_heads,
             "kv_channels": hf_config.attention_head_dim,
+            "layernorm_epsilon": 1e-6,
+            "hidden_dropout": 0.0,
+            "attention_dropout": 0.0,
+            "qk_layernorm": True,
             "num_joint_layers": hf_config.num_layers,
             "num_single_layers": hf_config.num_single_layers,
             "in_channels": hf_config.in_channels,
@@ -84,6 +87,15 @@ class FluxBridge(MegatronModelBridge):
             "guidance_embed": hf_config.guidance_embeds,
             "axes_dims_rope": _flux_axes_dims_rope(hf_config),
             "activation_func": openai_gelu,
+            "add_qkv_bias": True,
+            "rotary_interleaved": True,
+            "apply_rope_fusion": False,
+            "use_cpu_initialization": True,
+            "gradient_accumulation_fusion": False,
+            "enable_cuda_graph": False,
+            "cuda_graph_scope": None,
+            "use_te_rng_tracker": False,
+            "cuda_graph_warmup_steps": 2,
             "fp16": False,
             "bf16": False,
             "params_dtype": torch.float32,
