@@ -57,7 +57,7 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import ProviderBridgeInput
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ class Gemma4VLBridge(Gemma4Bridge):
     """
 
     def provider_bridge(
-        self, hf_pretrained: PreTrainedVLM
+        self, hf_pretrained: ProviderBridgeInput
     ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config

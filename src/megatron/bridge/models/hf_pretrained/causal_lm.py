@@ -724,6 +724,9 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
         return "\n".join(lines)
 
 
+ProviderBridgeInput = Union[PreTrainedCausalLM, _ConfigOnlyPretrainedShim]
+
+
 # TypedDict definitions for method parameters
 class GenerateKwargs(TypedDict, total=False):
     """TypedDict for generate method parameters."""

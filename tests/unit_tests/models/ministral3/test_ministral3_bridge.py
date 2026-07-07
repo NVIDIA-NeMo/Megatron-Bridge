@@ -20,7 +20,7 @@ from transformers import Mistral3Config
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
@@ -77,7 +77,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 
@@ -306,7 +306,7 @@ class TestMinistral3BridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, ministral3_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config
@@ -443,7 +443,7 @@ class TestMinistral3BridgeCompatibility:
                 "image_size": 28,
             },
         )
-        hf_pretrained = Mock(spec=PreTrainedVLM)
+        hf_pretrained = Mock(spec=PreTrainedCausalLM)
         hf_pretrained.config = hf_config
 
         provider = ministral3_bridge.provider_bridge(hf_pretrained)
@@ -492,7 +492,7 @@ class TestMinistral3BridgeCompatibility:
                 "image_size": 28,
             },
         )
-        checkpoint_pretrained = Mock(spec=PreTrainedVLM)
+        checkpoint_pretrained = Mock(spec=PreTrainedCausalLM)
         checkpoint_pretrained.config = checkpoint_config
         checkpoint_provider = ministral3_bridge.provider_bridge(checkpoint_pretrained)
 

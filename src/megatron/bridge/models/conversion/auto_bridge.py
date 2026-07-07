@@ -46,7 +46,11 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
+from megatron.bridge.models.hf_pretrained.causal_lm import (
+    PreTrainedCausalLM,
+    ProviderBridgeInput,
+    _ConfigOnlyPretrainedShim,
+)
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
@@ -1787,7 +1791,7 @@ class AutoBridge(Generic[MegatronModelT]):
         return bridge
 
     @property
-    def _provider_bridge_input(self) -> PreTrainedCausalLM | _ConfigOnlyPretrainedShim:
+    def _provider_bridge_input(self) -> ProviderBridgeInput:
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
             return self.hf_pretrained
         return self._config_only_pretrained
