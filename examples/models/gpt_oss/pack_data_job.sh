@@ -45,7 +45,8 @@ CONTAINER_IMAGE=""
 CONTAINER_MOUNTS=""
 # CONTAINER_MOUNTS="/data:/data,/workspace:/workspace"
 
-# HuggingFace / NeMo cache directories (set to avoid re-downloading)
+# HuggingFace / NeMo cache directories. NEMO_HOME must match the shared path
+# used by the subsequent multi-node training job.
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export NEMO_HOME="/path/to/shared/NEMO_HOME"
 
@@ -53,6 +54,11 @@ mkdir -p logs
 
 if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set."
+    exit 1
+fi
+
+if [ -z "${NEMO_HOME:-}" ]; then
+    echo "ERROR: NEMO_HOME must point to shared storage used by both packing and training."
     exit 1
 fi
 

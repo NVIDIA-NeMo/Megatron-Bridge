@@ -13,24 +13,31 @@
 # limitations under the License.
 
 import logging
+import os
+import socket
 import warnings
 from pathlib import Path
-from typing import Any, Optional, Union
+from typing import Any, Optional, TypedDict, Union
 
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
-from megatron.bridge.data.datasets.packed_parquet import (
-    is_packed_parquet_spec,
-    resolve_packed_parquet_paths,
-)
+from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_spec, resolve_packed_parquet_paths
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
+
+
+class _PathVisibility(TypedDict):
+    rank: int
+    local_rank: str
+    hostname: str
+    path: str
+    exists: bool
 
 
 class FinetuningDatasetBuilder:
@@ -207,6 +214,54 @@ class FinetuningDatasetBuilder:
         else:
             return Path(path_str).is_file()
 
+    def _path_exists(self, path: Union[str, Path]) -> bool:
+        """Check whether a dataset path resolves on the current rank."""
+        path_str = str(path)
+        if is_packed_parquet_spec(path_str):
+            try:
+                return len(resolve_packed_parquet_paths(path_str)) > 0
+            except ValueError:
+                return False
+
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            return bool(msc.Path(path_str).exists())
+        return Path(path_str).exists()
+
+    def _validate_path_visibility(self, path: Union[str, Path], path_exists: bool) -> None:
+        """Raise when a prepared dataset path is visible to only some distributed ranks."""
+        if not torch.distributed.is_initialized() or torch.distributed.get_world_size() <= 1:
+            return
+
+        local_state: _PathVisibility = {
+            "rank": torch.distributed.get_rank(),
+            "local_rank": os.getenv("LOCAL_RANK", os.getenv("SLURM_LOCALID", "unknown")),
+            "hostname": socket.gethostname(),
+            "path": str(path),
+            "exists": path_exists,
+        }
+        visibility = [local_state.copy() for _ in range(torch.distributed.get_world_size())]
+        torch.distributed.all_gather_object(visibility, local_state)
+
+        visible = [state for state in visibility if state["exists"]]
+        missing = [state for state in visibility if not state["exists"]]
+        if not visible or not missing:
+            return
+
+        def describe(states: list[_PathVisibility]) -> str:
+            return "; ".join(
+                f"rank {state['rank']} (local rank {state['local_rank']}, host {state['hostname']}, "
+                f"path {state['path']})"
+                for state in states
+            )
+
+        raise RuntimeError(
+            "Dataset path visibility is inconsistent across distributed ranks after rank-0 preparation. "
+            f"Visible on: {describe(visible)}. Missing on: {describe(missing)}. "
+            "Set NEMO_HOME or dataset_root to shared storage mounted at the same path on every node, "
+            "or prepare the dataset on every node."
+        )
+
     def build(self) -> list[Optional[Any]]:
         """Build train, validation, and test datasets.
 
@@ -283,22 +338,8 @@ class FinetuningDatasetBuilder:
             The created dataset
         """
         path_str = str(path)
-
-        # Check if path exists - handle packed parquet specs differently
-        if is_packed_parquet_spec(path_str):
-            # For packed parquet specs, check via resolution
-            try:
-                resolved = resolve_packed_parquet_paths(path_str)
-                path_exists = len(resolved) > 0
-            except ValueError:
-                path_exists = False
-        else:
-            # Standard file/path existence check
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                path_exists = msc.Path(path_str).exists()
-            else:
-                path_exists = Path(path_str).exists()
+        path_exists = self._path_exists(path)
+        self._validate_path_visibility(path, path_exists)
 
         if not path_exists:
             print_rank_0(f"Warning: Dataset path {path} does not exist")

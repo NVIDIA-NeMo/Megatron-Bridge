@@ -117,7 +117,8 @@ export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=7200
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# HuggingFace / NeMo cache directories (recommended for shared filesystem)
+# HuggingFace / NeMo cache directories. Multi-node SFT requires NEMO_HOME on
+# shared storage so every node can read data prepared by global rank 0.
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export NEMO_HOME="/path/to/shared/NEMO_HOME"
 
@@ -150,6 +151,12 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
     exit 1
 fi
+
+if [ "${SLURM_JOB_NUM_NODES:-1}" -gt 1 ] && [ -z "${NEMO_HOME:-}" ]; then
+    echo "ERROR: Multi-node SFT requires NEMO_HOME on shared storage mounted at the same path on every node."
+    exit 1
+fi
+echo "NeMo cache: ${NEMO_HOME:-/root/.cache/nemo}"
 
 # Build srun command (shared across configs)
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
