@@ -13,6 +13,7 @@
 # limitations under the License.
 
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
+    _should_load_checkpoint,
     _validate_and_set_vocab_size,
     maybe_log_and_save_config,
 )
@@ -39,6 +41,56 @@ def _make_gpt_model_config(**kwargs):
     defaults = dict(transformer=_make_transformer(**tc_kwargs), vocab_size=32000)
     defaults.update(kwargs)
     return GPTModelConfig(**defaults)
+
+
+def _make_checkpoint_source_config(*, load, pretrained_checkpoint=None, required=True):
+    return SimpleNamespace(
+        checkpoint=SimpleNamespace(load=load, pretrained_checkpoint=pretrained_checkpoint),
+        peft=None,
+        _checkpoint_load_required=required,
+    )
+
+
+class TestShouldLoadCheckpoint:
+    """Tests for checkpoint source detection at setup time."""
+
+    @patch("megatron.bridge.training.setup.is_hf_checkpoint_dir", return_value=False)
+    @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
+    def test_required_checkpoint_must_exist(self, _mock_exists, _mock_is_hf):
+        cfg = _make_checkpoint_source_config(load="/missing/checkpoint")
+        checkpoint_manager = SimpleNamespace(checkpointing_context={})
+
+        with pytest.raises(FileNotFoundError, match="Finetuning requires loading from an available"):
+            _should_load_checkpoint(cfg, checkpoint_manager)
+
+    @patch("megatron.bridge.training.setup.is_hf_checkpoint_dir", return_value=False)
+    @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
+    def test_local_checkpoint_satisfies_required_source(self, _mock_exists, _mock_is_hf):
+        cfg = _make_checkpoint_source_config(load="/missing/global/checkpoint")
+        local_manager = Mock()
+        local_manager.find_latest.return_value = 12
+        checkpoint_manager = SimpleNamespace(checkpointing_context={"local_checkpoint_manager": local_manager})
+
+        assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
+    def test_hf_load_reaches_checkpoint_loader_for_targeted_error(self, _mock_exists):
+        cfg = _make_checkpoint_source_config(load="/hf/full-model")
+        checkpoint_manager = SimpleNamespace(checkpointing_context={})
+
+        with patch(
+            "megatron.bridge.training.setup.is_hf_checkpoint_dir",
+            side_effect=lambda path: path == "/hf/full-model",
+        ):
+            assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    @patch("megatron.bridge.training.setup.is_hf_checkpoint_dir", return_value=False)
+    @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
+    def test_missing_checkpoint_remains_optional_for_pretraining(self, _mock_exists, _mock_is_hf):
+        cfg = _make_checkpoint_source_config(load="/missing/checkpoint", required=False)
+        checkpoint_manager = SimpleNamespace(checkpointing_context={})
+
+        assert _should_load_checkpoint(cfg, checkpoint_manager) is False
 
 
 class TestValidateAndSetVocabSize:

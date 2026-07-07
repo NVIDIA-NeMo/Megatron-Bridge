@@ -38,7 +38,7 @@ class TestBuildHypercommGrids:
         assert "language" in grids
         assert grids["language"] == mock_grid
 
-        # Check grid was created with correct shape
+        # Check grid was created with the dense (base) view shape: [tp, cp, dp, pp].
         mock_grid_class.assert_called_once()
         call_kwargs = mock_grid_class.call_args[1]
         assert call_kwargs["shape"] == [2, 1, 2, 2]  # [tp, cp, dp, pp]
@@ -63,6 +63,9 @@ class TestBuildHypercommGrids:
         assert (["ep"], EXPERT_VIEW_NAME) in create_pg_calls
         assert (["expt_tp"], EXPERT_VIEW_NAME) in create_pg_calls
         assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["tp", "cp", "dp", "pp"], None) in create_pg_calls
+        assert (["expt_tp", "ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep", "pp"], EXPERT_VIEW_NAME) in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_multiple_modules(self, mock_grid_class):
@@ -131,14 +134,16 @@ class TestBuildHypercommGrids:
         # Check both grids created with different shapes
         assert mock_grid_class.call_count == 2
 
-        # First call (llm): shape [8, 1, 1, 2]
+        # First call (llm): base view [tp, cp, dp, pp] == [8, 1, 1, 2].
         first_call_kwargs = mock_grid_class.call_args_list[0][1]
         assert first_call_kwargs["shape"] == [8, 1, 1, 2]
+        assert first_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert first_call_kwargs["rank_offset"] == 0
 
-        # Second call (encoder): shape [2, 1, 2, 1]
+        # Second call (encoder): base view [2, 1, 2, 1].
         second_call_kwargs = mock_grid_class.call_args_list[1][1]
         assert second_call_kwargs["shape"] == [2, 1, 2, 1]
+        assert second_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert second_call_kwargs["rank_offset"] == 16
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")

@@ -758,8 +758,10 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_first_stage")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.populate_embedding_and_position_groups")
     @patch("torch.distributed.get_rank")
-    def test_pg_collection_includes_composite_groups(self, mock_get_rank, mock_populate, mock_is_first, mock_is_last):
-        """Test that pg_collection includes mp, tp_ep_pp, and expt_dp composite groups."""
+    def test_pg_collection_preserves_dense_and_expert_view_contracts(
+        self, mock_get_rank, mock_populate, mock_is_first, mock_is_last
+    ):
+        """Test that each PGC field is sourced from the matching grid view and dimension."""
         mock_get_rank.return_value = 0
         mock_populate.return_value = (MagicMock(), MagicMock())
         mock_is_first.return_value = True
@@ -785,27 +787,31 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_mp = MagicMock(name="mp_pg")
         mock_tp_ep = MagicMock(name="tp_ep_pg")
         mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
+        mock_intra_dist_opt = MagicMock(name="intra_dist_opt_pg")
 
+        # Key by both view and dimensions so an expert group cannot silently come from the
+        # base view or from a different expert dimension.
         pg_map = {
-            (("tp",), None): mock_tp,
-            (("dp",), None): mock_dp,
-            (("pp",), None): mock_pp,
-            (("cp",), None): mock_cp,
-            (("dp", "cp"), None): mock_dp_cp,
-            (("tp", "cp"), None): mock_tp_cp,
-            (("tp", "dp", "cp"), None): mock_tp_dp_cp,
-            (("tp", "pp"), None): mock_mp,
-            (("ep",), "expert"): mock_ep,
-            (("expt_tp",), "expert"): mock_expt_tp,
-            (("expt_dp",), "expert"): mock_expt_dp,
-            (("expt_tp", "ep"), "expert"): mock_tp_ep,
-            (("expt_tp", "ep", "pp"), "expert"): mock_tp_ep_pp,
+            (None, ("tp",)): mock_tp,
+            (None, ("dp",)): mock_dp,
+            (None, ("pp",)): mock_pp,
+            (None, ("cp",)): mock_cp,
+            (None, ("dp", "cp")): mock_dp_cp,
+            (None, ("tp", "cp")): mock_tp_cp,
+            (None, ("tp", "dp", "cp")): mock_tp_dp_cp,
+            (None, ("tp", "pp")): mock_mp,
+            (None, ("tp", "cp", "dp", "pp")): mock_intra_dist_opt,
+            ("expert", ("ep",)): mock_ep,
+            ("expert", ("expt_tp",)): mock_expt_tp,
+            ("expert", ("expt_dp",)): mock_expt_dp,
+            ("expert", ("expt_tp", "ep")): mock_tp_ep,
+            ("expert", ("expt_tp", "ep", "pp")): mock_tp_ep_pp,
         }
 
         mock_grid = MagicMock()
         mock_grid.rank_offset = 0
         mock_grid.size = 4
-        mock_grid.get_pg.side_effect = lambda dims, view=None: pg_map[(tuple(dims), view)]
+        mock_grid.get_pg.side_effect = lambda dims, view=None: pg_map[(view, tuple(dims))]
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
@@ -830,3 +836,4 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
         assert pgc.intra_expt_dp == mock_expt_dp
+        assert pgc.intra_dist_opt == mock_intra_dist_opt

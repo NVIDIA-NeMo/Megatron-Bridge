@@ -292,6 +292,8 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             if grid.is_current_rank_in_grid():
                 first_stage = is_pp_first_stage(pp_group)
                 last_stage = is_pp_last_stage(pp_group)
+                dp_cp_group = grid.get_pg(["dp", "cp"])
+                expt_dp_group = grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME)
 
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
@@ -300,15 +302,16 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     cp=grid.get_pg(["cp"]),
                     ep=grid.get_pg(["ep"], view=EXPERT_VIEW_NAME),
                     expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
-                    expt_dp=grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME),
-                    dp_cp=grid.get_pg(["dp", "cp"]),
-                    intra_dp_cp=grid.get_pg(["dp", "cp"]),
+                    expt_dp=expt_dp_group,
+                    dp_cp=dp_cp_group,
+                    intra_dp_cp=dp_cp_group,
                     tp_cp=grid.get_pg(["tp", "cp"]),
                     tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
                     tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
                     tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME),
-                    intra_expt_dp=grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME),
+                    intra_expt_dp=expt_dp_group,
+                    intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )

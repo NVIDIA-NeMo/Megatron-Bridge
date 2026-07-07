@@ -23,6 +23,11 @@ def build_hypercomm_grids(
     Creates grids on ALL ranks (required for consistent collective calls),
     but only ranks in each grid's range will participate in its operations.
 
+    Each grid is built with a dense ``base`` view plus a registered ``expert`` view over the same
+    rank span. Dense process groups (tp/cp/dp/pp) come from the base view; expert-parallel groups
+    (expt_tp/ep/expt_dp) come from the expert view, matching the contract mcore's
+    ``get_mimo_optimizer`` expects.
+
     Args:
         megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig specifying parallelism per module.
 
