@@ -10,6 +10,7 @@ overrides = [
     { name = "av", marker = "sys_platform == 'never'" },
     { name = "cachetools", specifier = ">=5.0.0" },
     { name = "cryptography", specifier = ">=43.0.0,<47" },
+    { name = "cuda-tile", specifier = "==1.4.0" },
     { name = "imageio", marker = "sys_platform == 'never'" },
     { name = "imageio-ffmpeg", marker = "sys_platform == 'never'" },
     { name = "langchain", specifier = ">=0.3.28" },
@@ -724,14 +725,15 @@ wheels = [
 
 [[package]]
 name = "cuda-tile"
-version = "1.5.0rc2"
+version = "1.4.0"
 source = { registry = "https://pypi.nvidia.com/" }
 dependencies = [
     { name = "typing-extensions" },
 ]
 wheels = [
-    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.5.0rc2-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1de726f40653c221235eb9b628a9f3dac431b2bd928a336cda53ae1874a999ca" },
-    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.5.0rc2-cp312-cp312-win_amd64.whl", hash = "sha256:111b2387fb81ca895df0840f9759f17b8d22f073154c7ec42059b006c9cc67c6" },
+    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.4.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:9e358a85a153820aa0a51d0e09346d884a3c14b88c0313d20d0fb9f53952abae" },
+    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.4.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1d9d99b6fa57366af3f8707ac4fd91411275af2ee736996a60620240fcf92070" },
+    { url = "https://pypi.nvidia.com/cuda-tile/cuda_tile-1.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:616f13cbc7af6caa7b92430b85ba0a429d1f96ca9e7e04a29d89114cfe859663" },
 ]
 
 [[package]]
