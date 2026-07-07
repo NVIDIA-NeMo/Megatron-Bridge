@@ -35,8 +35,8 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     Step35Bridge,
     Step35DecoderLayer,
     Step35SharedExpertMLP,
-    _build_step35_layer_spec,
     _MTPDenseLayerSpecsList,
+    build_step35_layer_spec,
 )
 
 
@@ -446,16 +446,27 @@ class TestStep35BridgeProviderBridge:
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         _, p = self._run()
-        assert p.transformer_layer_spec is _build_step35_layer_spec
+        assert p.transformer_layer_spec is build_step35_layer_spec
+
+    def test_transformer_layer_spec_target_passes_checkpoint_load_validation(self):
+        """The serialized spec target must be loadable by the checkpoint instantiate path."""
+        from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+
+        _, p = self._run()
+        spec = p.transformer_layer_spec
+        target = f"{spec.__module__}.{spec.__qualname__}"
+        # Raises InstantiationException for private path segments — the exact
+        # gate that rejects a converted checkpoint's run_config on load.
+        _validate_target_prefix(target=target, full_key="transformer_layer_spec")
 
 
 # ---------------------------------------------------------------------------
-# _build_step35_layer_spec
+# build_step35_layer_spec
 # ---------------------------------------------------------------------------
 
 
 class TestBuildStep35LayerSpec:
-    """Cover the per-spec rewrite loop in ``_build_step35_layer_spec``.
+    """Cover the per-spec rewrite loop in ``build_step35_layer_spec``.
 
     Mocks out the two Megatron-Core spec builders so the test can run without
     a real backend, and feeds them a hand-rolled mix of MoE and dense layer
@@ -496,7 +507,7 @@ class TestBuildStep35LayerSpec:
                 return_value=fake_dense_mtp,
             ) as mock_dense,
         ):
-            out = _build_step35_layer_spec(cfg)
+            out = build_step35_layer_spec(cfg)
         return out, fake_dense_mtp, mock_block, mock_dense, cfg
 
     def test_moe_shared_experts_rebound_to_step35_shared_expert_mlp(self):
