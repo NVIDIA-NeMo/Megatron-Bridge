@@ -158,9 +158,7 @@ def _build_model_specs(
                 deterministic=deterministic,
                 num_moe_experts=language_num_moe_experts,
             ),
-            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(
-                num_experts=language_num_moe_experts
-            ),
+            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(num_experts=language_num_moe_experts),
             "vocab_size": _VOCAB_SIZE,
             "max_sequence_length": _SEQ_LENGTH,
         },
