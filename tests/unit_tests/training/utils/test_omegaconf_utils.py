@@ -516,6 +516,24 @@ class TestSafeCreateOmegaconfWithPreservation:
         assert getattr(config.model, field_name) == expected
         assert getattr(config.model.transformer, field_name) == expected
 
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            (["model.rotary_base=20000", "model.transformer.rotary_base=30000"], 30000),
+            (["model.transformer.rotary_base=30000", "model.rotary_base=20000"], 20000),
+        ],
+    )
+    def test_builder_model_mixed_alias_overrides_follow_cli_order(self, overrides, expected):
+        """The later flat or nested compatibility override must win."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, overrides)
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert config.model.rotary_base == expected
+        assert config.model.transformer.rotary_base == expected
+
 
 class TestApplyOverrides:
     """Test _apply_overrides function."""
