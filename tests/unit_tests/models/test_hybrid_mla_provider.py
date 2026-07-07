@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for shared MLA model providers."""
+"""Unit tests for the Hybrid MLA model provider."""
 
 from unittest.mock import patch
 
 import pytest
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
-from megatron.bridge.models.mla_provider import HybridMLAModelProvider
+from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider
 from megatron.bridge.models.transformer_config import MLATransformerConfig
 
 

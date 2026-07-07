@@ -14,7 +14,7 @@
 
 """GLM5 uses HybridMLAModelProvider through this compatibility alias."""
 
-from megatron.bridge.models.mla_provider import HybridMLAModelProvider as GLM5ModelProvider  # noqa: F401
+from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider as GLM5ModelProvider  # noqa: F401
 
 
 __all__ = ["GLM5ModelProvider"]

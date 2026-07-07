@@ -31,7 +31,7 @@ from megatron.bridge.models.glm_moe_dsa.glm5_bridge import (
     glm5_hybrid_stack_spec,
 )
 from megatron.bridge.models.glm_moe_dsa.glm5_provider import GLM5ModelProvider
-from megatron.bridge.models.mla_provider import HybridMLAModelProvider
+from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider
 
 
 pytestmark = pytest.mark.unit
