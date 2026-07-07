@@ -39,6 +39,15 @@ class _Iterator:
         return self.batch
 
 
+class _NoCudaTensor(torch.Tensor):
+    def cuda(self, non_blocking=False):  # type: ignore[override]
+        return self
+
+
+def _as_nocuda(tensor):
+    return tensor.as_subclass(_NoCudaTensor)
+
+
 def _make_batch(device="cpu"):
     # Minimal text tensors
     tokens = torch.tensor([[1, 2, 3]], device=device)
@@ -156,6 +165,57 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
     assert out_vi.pixel_values is not None and out_vi.image_grid_thw is not None
 
 
+def test_get_batch_from_iterator_projects_visual_payload_on_middle_pp_stage():
+    batch = _make_batch()
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
+        batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    original_pixel_values = vi.pixel_values
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+    )
+
+    out_vi = out["visual_inputs"]
+    assert isinstance(out_vi, GenericVisualInputs)
+    assert out_vi.pixel_values is None
+    assert out_vi.image_grid_thw is not None
+    assert vi.pixel_values is not None
+    assert vi.pixel_values.shape == original_pixel_values.shape
+    # Token and position IDs stay available to every PP stage.
+    assert out["input_ids"] is not None
+
+
+def test_get_batch_from_iterator_keeps_input_ids_with_multiaxis_position_ids():
+    batch = _make_batch()
+    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
+        batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+    )
+
+    assert out["tokens"] is not None
+    assert out["input_ids"] is not None
+    assert out["position_ids"].shape == (3, 1, 3)
+    assert out["visual_inputs"].pixel_values is None
+    assert out["visual_inputs"].image_grid_thw is not None
+
+
 class _MockProcessGroup:
     """Mock process group with rank/size methods for testing."""
 
@@ -248,6 +308,27 @@ class _MmTokenTypeForwardModel(_ForwardModelBase):
         return torch.tensor(0.0)
 
 
+class _PackedForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        packed_seq_params=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "packed_seq_params": packed_seq_params,
+        }
+        return torch.tensor(0.0)
+
+
 def test_forward_step_filters_unsupported_visual_kwargs(monkeypatch):
     inner_model = _Gemma4LikeForwardModel()
     model = _ForwardWrapper(inner_model)
@@ -272,6 +353,18 @@ def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
     assert output.item() == 0.0
     assert inner_model.received_kwargs is not None
     assert inner_model.received_kwargs["mm_token_type_ids"] is not None
+
+
+def test_forward_step_rejects_deferred_in_batch_packing(monkeypatch):
+    inner_model = _PackedForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+    state = _make_forward_step_state()
+    state.cfg.dataset.enable_in_batch_packing = True
+    state.cfg.dataset.defer_in_batch_packing_to_step = True
+
+    with pytest.raises(ValueError, match="requires collate-time in-batch packing"):
+        forward_step(state, _Iterator(_make_visual_forward_batch()), model)
 
 
 def test_get_batch_consumes_collated_sequence_shape(monkeypatch):

@@ -100,6 +100,36 @@ def _bind_dataset_provider_context(
     return provider
 
 
+def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: CheckpointManager) -> bool:
+    """Return whether setup has a checkpoint source to load."""
+    checkpointing_context = getattr(checkpoint_manager, "checkpointing_context", {})
+    has_local_checkpoint = (
+        "local_checkpoint_manager" in checkpointing_context
+        and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
+    )
+
+    if cfg.peft is not None:
+        return cfg.checkpoint.load is not None and (
+            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+        )
+
+    load_checkpoint_exists = cfg.checkpoint.load is not None and (
+        checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+    )
+    has_pretrained_checkpoint = cfg.checkpoint.pretrained_checkpoint is not None and (
+        checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+        or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
+    )
+    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+
+    if cfg._checkpoint_load_required and not should_load_checkpoint:
+        raise FileNotFoundError(
+            "Finetuning requires loading from an available pretrained checkpoint or resuming from a checkpoint"
+        )
+
+    return should_load_checkpoint
+
+
 def setup(
     state: GlobalState,
     train_valid_test_datasets_provider: Callable[..., tuple[Optional[Any], Optional[Any], Optional[Any]]],
@@ -291,39 +321,13 @@ def setup(
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
-    # Check if a local (non-persistent) checkpoint is available.  Local
-    # checkpoints are independent of global ones — they don't write
-    # latest_train_state.pt to load_dir, so checkpoint_exists() won't
-    # find them.
-    _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
-    has_local_checkpoint = (
-        "local_checkpoint_manager" in _ckpt_ctx and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
-    )
-
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
+    should_load_checkpoint = _should_load_checkpoint(cfg, checkpoint_manager)
     if cfg.peft is not None:
-        # HF full-model directories enter the load flow only to produce the
-        # targeted checkpoint.load error in checkpointing.
-        should_load_checkpoint = cfg.checkpoint.load is not None and (
-            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
-        )
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
-    else:
-        # ``checkpoint.load`` resumes from native Megatron checkpoints. ``pretrained_checkpoint``
-        # may also point at a HuggingFace full-model directory for initialization.
-        # HF directories are included in load detection only to route to the
-        # targeted checkpoint.load error in checkpointing.
-        load_checkpoint_exists = cfg.checkpoint.load is not None and (
-            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
-        )
-        has_pretrained_checkpoint = cfg.checkpoint.pretrained_checkpoint is not None and (
-            checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-            or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
-        )
-        should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)

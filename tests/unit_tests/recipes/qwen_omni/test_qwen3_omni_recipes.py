@@ -20,6 +20,8 @@ import types
 import typing
 from types import SimpleNamespace
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 if "megatron.energon" not in sys.modules:
     fake_energon = types.ModuleType("megatron.energon")
@@ -133,7 +135,7 @@ class _FakeAutoBridge:
 
 
 def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_config()
 
@@ -163,7 +165,7 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
 
 
 def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
 

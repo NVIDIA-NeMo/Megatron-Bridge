@@ -94,16 +94,17 @@ class _TinyAutoBridge:
 
 
 def _tiny_nemotron_omni_cord_v2_sft_config():
-    processor_id = os.environ.get("NEMOTRON_OMNI_PROCESSOR_MODEL", _DEFAULT_PROCESSOR_ID)
-    return nemotron_omni_cord_v2_sft_config(hf_path=processor_id)
+    return nemotron_omni_cord_v2_sft_config()
 
 
 class TestNemotronOmniRecipes:
     @pytest.mark.run_only_on("GPU")
     def test_nemotron_omni_finetune_recipe(self, monkeypatch, tmp_path):
-        import megatron.bridge.recipes.nemotron_omni.nemotron_omni as recipe_module
+        import megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni as recipe_module
 
+        processor_id = os.environ.get("NEMOTRON_OMNI_PROCESSOR_MODEL", _DEFAULT_PROCESSOR_ID)
         monkeypatch.setattr(recipe_module, "AutoBridge", _TinyAutoBridge)
+        monkeypatch.setattr(recipe_module, "_DEFAULT_HF_PATH", processor_id)
 
         run_pretrain_vl_recipe_test(
             _tiny_nemotron_omni_cord_v2_sft_config,

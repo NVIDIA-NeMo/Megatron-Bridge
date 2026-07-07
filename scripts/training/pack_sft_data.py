@@ -57,6 +57,12 @@ def main() -> None:
         "--packed-val-data-path", default=None, help="Optional output path for packed validation data."
     )
     parser.add_argument("--packed-metadata-path", default=None, help="Optional output path for packing metadata.")
+    parser.add_argument(
+        "--num-tokenizer-workers",
+        type=int,
+        default=1,
+        help="Tokenizer worker processes. Values less than or equal to 1 run serially (default: 1).",
+    )
     args = parser.parse_args()
 
     import megatron.bridge.recipes as all_recipes
@@ -94,15 +100,11 @@ def main() -> None:
     if offline_packing_specs is None:
         sys.exit(f"Error: recipe '{args.recipe}' has no offline packing specs.")
 
-    # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
-    # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
-    # Use 1 worker so serial materialization avoids multiprocessing shared memory
-    # (see packed_sequence._materialize_dataset_items).
-    offline_packing_specs.num_tokenizer_workers = 1
+    offline_packing_specs.num_tokenizer_workers = args.num_tokenizer_workers
 
     print(f"Recipe:   {args.recipe}")
     print(f"Seq len:  {offline_packing_specs.packed_sequence_size}")
-    print(f"Workers:  {offline_packing_specs.num_tokenizer_workers} (single-threaded, no /dev/shm)")
+    print(f"Workers:  {offline_packing_specs.num_tokenizer_workers}")
     print()
 
     print("Building tokenizer...")

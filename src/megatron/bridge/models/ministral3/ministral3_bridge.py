@@ -119,14 +119,24 @@ class Ministral3Bridge(MegatronModelBridge):
 
         # Ministral 3 has separate text_config and vision_config
         text_config = getattr(hf_config, "text_config", hf_config)
+        dtype_config = hf_config if hasattr(hf_config, "torch_dtype") else text_config
+        params_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
         provider = Ministral3ModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
             num_layers=text_config.num_hidden_layers,
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
+            num_attention_heads=text_config.num_attention_heads,
+            num_query_groups=text_config.num_key_value_heads,
+            kv_channels=text_config.head_dim,
+            seq_length=text_config.max_position_embeddings,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             rotary_base=text_config.rope_parameters["rope_theta"],
             vocab_size=text_config.vocab_size,
+            params_dtype=params_dtype,
+            fp16=params_dtype == torch.float16,
+            bf16=params_dtype == torch.bfloat16,
             hf_config=hf_config,
+            image_token_id=getattr(hf_config, "image_token_index", 10),
         )
 
         return provider
@@ -146,6 +156,8 @@ class Ministral3Bridge(MegatronModelBridge):
         correction_range_round_to_int = rope_parameters.get(
             "correction_range_round_to_int", rope_parameters.get("truncate", False)
         )
+        dtype_config = hf_config if hasattr(hf_config, "torch_dtype") else text_config
+        params_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
         hf_config_dict = _plain_config_dict(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",
@@ -159,16 +171,16 @@ class Ministral3Bridge(MegatronModelBridge):
             rotary_base=rope_parameters.get("rope_theta", 1000000),
             attention_dropout=0.0,
             hidden_dropout=0.0,
-            share_embeddings_and_output_weights=getattr(text_config, "tie_word_embeddings", False),
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
             init_method_std=getattr(text_config, "initializer_range", 0.02),
             layernorm_epsilon=getattr(text_config, "rms_norm_eps", 1e-5),
-            params_dtype=torch.bfloat16,
-            bf16=True,
-            fp16=False,
-            autocast_dtype=torch.bfloat16,
+            params_dtype=params_dtype,
+            bf16=params_dtype == torch.bfloat16,
+            fp16=params_dtype == torch.float16,
+            autocast_dtype=params_dtype,
             scatter_embedding_sequence_parallel=False,
             hf_config=hf_config_dict,
-            image_token_id=getattr(hf_config, "image_token_id", 10),
+            image_token_id=getattr(hf_config, "image_token_index", getattr(hf_config, "image_token_id", 10)),
             spatial_merge_size=getattr(hf_config, "spatial_merge_size", 2),
             vision_feature_layer=getattr(hf_config, "vision_feature_layer", -1),
             yarn_rotary_scaling_factor=rope_parameters.get("factor", 16.0),
@@ -182,6 +194,19 @@ class Ministral3Bridge(MegatronModelBridge):
             llama_4_original_max_position_embeddings=rope_parameters.get("original_max_position_embeddings", 16384),
         )
         return config_kwargs
+
+    @classmethod
+    def megatron_to_hf_config(
+        cls, model_config: "Ministral3ModelProvider | Ministral3ModelConfig"
+    ) -> dict[str, object]:
+        """Convert a Ministral 3 model config to its nested HuggingFace layout."""
+        text_config = super().megatron_to_hf_config(model_config)
+        top_level_keys = ("architectures", "model_type", "tie_word_embeddings")
+        hf_config = {key: text_config.pop(key) for key in top_level_keys if key in text_config}
+        if "torch_dtype" in text_config:
+            hf_config["dtype"] = text_config.pop("torch_dtype")
+        hf_config["text_config"] = text_config
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
@@ -303,7 +328,7 @@ if HAS_MISTRAL3 and Mistral3ForConditionalGeneration is not None:
     # Dynamically register the bridge with Ministral3Model as target
     try:
         Ministral3Bridge = MegatronModelBridge.register_bridge(
-            source=Mistral3ForConditionalGeneration, target=Ministral3Model
+            source=Mistral3ForConditionalGeneration, target=Ministral3Model, model_type="mistral3"
         )(Ministral3Bridge)
     except Exception:
         # If registration fails, the bridge will still work manually

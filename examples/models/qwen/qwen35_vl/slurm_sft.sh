@@ -167,9 +167,7 @@ CLI_OVERRIDES="\
     dataset.maker_name=make_${DATASET_NAME}_dataset \
     dataset.seq_length=$SEQ_LENGTH"
 
-# For multinode runs, the recipe's online HF path can be unstable. Pass --hf_path
-# with a local model directory for more reliable config loading, e.g.:
-#   --hf_path ${WORKSPACE}/models/Qwen/${HF_MODEL_NAME}
+# To use local processor assets, set dataset.hf_processor_path in CLI_OVERRIDES.
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func qwen3_vl_step \

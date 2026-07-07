@@ -25,6 +25,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _gemma_module = importlib.import_module("megatron.bridge.recipes.gemma")
 _GEMMA3_RECIPE_FUNCS = [
@@ -114,7 +116,7 @@ def test_each_gemma3_recipe_builds_config(recipe_func: Callable, monkeypatch: py
     if is_sft_or_peft:
         module_name = recipe_func.__module__
         mod = importlib.import_module(module_name)
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
         # Mock AutoTokenizer to avoid HF I/O
         from unittest.mock import MagicMock
@@ -173,7 +175,7 @@ def test_gemma3_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each Gemma3 SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -204,7 +206,7 @@ def test_gemma3_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mo
     """Test that each Gemma3 PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -236,7 +238,7 @@ def test_gemma3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     """Test that PEFT configurations are correctly applied for different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -262,7 +264,7 @@ def test_gemma3_1b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -298,7 +300,7 @@ def test_gemma3_1b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma3_1b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -334,7 +336,7 @@ def test_gemma3_1b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock
@@ -363,7 +365,7 @@ def test_gemma3_1b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
     from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer to avoid HF I/O
     from unittest.mock import MagicMock

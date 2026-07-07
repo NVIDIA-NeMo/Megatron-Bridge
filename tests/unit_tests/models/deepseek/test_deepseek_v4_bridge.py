@@ -98,6 +98,7 @@ def _deepseek_v4_hf_config():
         moe_intermediate_size=1024,
         n_shared_experts=1,
         tie_word_embeddings=False,
+        torch_dtype=torch.bfloat16,
     )
 
 
@@ -415,6 +416,30 @@ class TestDeepSeekV4RotaryPercent:
 class TestDeepSeekV4HardwareDefaults:
     """DSv4 Blackwell-only fused kernels must not default on for Hopper."""
 
+    @staticmethod
+    def _model_config_kwargs(*, capability: tuple[int, int], dsa_kernels_available: bool) -> dict[str, object]:
+        with (
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=capability),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_fused_dsa_kernels",
+                return_value=dsa_kernels_available,
+            ),
+        ):
+            return DeepSeekV4Bridge().hf_config_to_model_config_kwargs(_deepseek_v4_hf_config())
+
+    def test_model_config_gates_blackwell_only_fusions(self):
+        kwargs = self._model_config_kwargs(capability=(10, 0), dsa_kernels_available=True)
+
+        assert kwargs["apply_dsa_kernel_fusion"] is True
+        assert kwargs["use_fused_mhc"] is True
+
+    def test_model_config_disables_dsa_fusion_when_optional_kernels_are_missing(self):
+        kwargs = self._model_config_kwargs(capability=(10, 0), dsa_kernels_available=False)
+
+        assert kwargs["apply_dsa_kernel_fusion"] is False
+        assert kwargs["use_fused_mhc"] is True
+
     @pytest.mark.parametrize(
         ("capability", "expected"),
         [
@@ -432,13 +457,17 @@ class TestDeepSeekV4HardwareDefaults:
             patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
             patch.object(torch.cuda, "is_available", return_value=True),
             patch.object(torch.cuda, "get_device_capability", return_value=capability),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_fused_dsa_kernels",
+                return_value=True,
+            ),
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.apply_dsa_kernel_fusion is expected
         assert out.use_fused_mhc is expected
 
-    def test_provider_bridge_preserves_fused_defaults_without_cuda(self):
+    def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
         provider = MagicMock()
@@ -450,7 +479,27 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
-        assert out.apply_dsa_kernel_fusion is True
+        assert out.apply_dsa_kernel_fusion is False
+        assert out.use_fused_mhc is False
+
+    def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=(10, 0)),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_fused_dsa_kernels",
+                return_value=False,
+            ),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.apply_dsa_kernel_fusion is False
         assert out.use_fused_mhc is True
 
 

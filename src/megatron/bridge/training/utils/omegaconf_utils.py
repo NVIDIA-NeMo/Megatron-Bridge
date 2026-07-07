@@ -83,7 +83,7 @@ def create_omegaconf_dict_config(config_container: Any) -> Tuple[DictConfig, Dic
             for field_name in transformer_dict:
                 # Keep untouched aliases synchronized with nested overrides;
                 # overriding the alias itself replaces this interpolation.
-                model_dict.setdefault(field_name, f"${{model.transformer.{field_name}}}")
+                model_dict[field_name] = f"${{model.transformer.{field_name}}}"
 
     # Verify no callables remain
     if not _verify_no_callables(base_dict, "root"):

@@ -154,6 +154,7 @@ def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, Lis
 
     sequences = collections.defaultdict(list)
     counts = [0] * (truncate_seq_len + 1)
+    num_skipped = 0
 
     for item_dict in dataset:
         # Minus 1 here to account for the fact that transformer input and label
@@ -162,8 +163,18 @@ def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, Lis
         # (this way the tokens are aligned for next token prediction).
         # We want pack size to be the length of the actual input and label, hence minus 1.
         seq_len = len(item_dict["input_ids"]) - 1
+        if seq_len > truncate_seq_len:
+            num_skipped += 1
+            continue
         sequences[seq_len].append(item_dict)
         counts[seq_len] += 1
+
+    if num_skipped:
+        logger.warning(
+            "Skipped %d sequences longer than the maximum packed sequence length %d",
+            num_skipped,
+            truncate_seq_len,
+        )
 
     logger.debug("Histogram of sequence lengths")
     logger.debug(counts)

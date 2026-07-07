@@ -606,14 +606,16 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
                 - seq_boundaries: list[int] - Sequence boundaries (derived from seq_start_id)
                 - loss_mask: list[int] - Per-token loss mask
         """
+        is_padding_sample = idx < 0
+
         # Apply sample mapping if exists
         if self.samples_mapping is not None:
             idx = self.samples_mapping[idx]
 
         # Handle negative indices (padding samples)
         # Use wrap-around semantics matching parent GPTSFTPackedDataset behavior
-        is_padding_sample = idx < 0
-        if is_padding_sample:
+        if idx < 0:
+            is_padding_sample = True
             idx = self._num_rows + idx  # -1 -> last row, -N -> Nth from end
 
         # Locate the row across files and row groups

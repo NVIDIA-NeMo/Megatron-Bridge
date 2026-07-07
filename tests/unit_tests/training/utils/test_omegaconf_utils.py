@@ -23,7 +23,7 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
-from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 from omegaconf import DictConfig, OmegaConf
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -102,7 +102,7 @@ class ConfigWithBuilderModel:
 
     model: BridgeGPTModelConfig = dataclasses.field(
         default_factory=lambda: BridgeGPTModelConfig(
-            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            transformer=MLATransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
             vocab_size=32,
         )
     )
@@ -493,6 +493,28 @@ class TestSafeCreateOmegaconfWithPreservation:
         apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
 
         assert config.model.transformer.recompute_modules == ["mlp"]
+
+    @pytest.mark.parametrize(
+        ("override", "field_name", "expected"),
+        [
+            ("model.rotary_base=20000", "rotary_base", 20000),
+            ("model.transformer.rotary_base=30000", "rotary_base", 30000),
+            ("model.rotary_percent=0.5", "rotary_percent", 0.5),
+            ("model.transformer.rotary_percent=0.75", "rotary_percent", 0.75),
+        ],
+    )
+    def test_builder_model_overlapping_flat_and_nested_overrides_remain_synchronized(
+        self, override, field_name, expected
+    ):
+        """Nested overrides must not be reverted by stale overlapping outer values."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, [override])
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert getattr(config.model, field_name) == expected
+        assert getattr(config.model.transformer, field_name) == expected
 
 
 class TestApplyOverrides:

@@ -24,9 +24,11 @@ from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmni
 from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
 from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
 from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_omni")
+_h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni")
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 _TEST_HF_ID = "unit-test/nemotron-omni"
@@ -67,13 +69,14 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
 
     import transformers
 
-    monkeypatch.setattr(_recipe_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _recipe_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *_, **__: processor)
     return processor
 
 
 def _build_config(recipe_func: Callable, fake_processor) -> ConfigContainer:
-    return recipe_func(hf_path=_TEST_HF_ID)
+    return recipe_func()
 
 
 def _assert_common_config(cfg: ConfigContainer):

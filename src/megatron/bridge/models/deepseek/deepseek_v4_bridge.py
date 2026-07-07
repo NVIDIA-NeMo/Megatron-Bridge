@@ -107,13 +107,26 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
 def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
     """Return whether DSv4 Blackwell-only fused kernels should default on."""
     if not torch.cuda.is_available():
-        return True
+        return False
 
     major, _minor = torch.cuda.get_device_capability()
     return major >= 10
 
 
-def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
+def deepseek_v4_supports_fused_dsa_kernels() -> bool:
+    """Return whether DSv4 fused DSA kernels can be enabled."""
+    try:
+        from cudnn import DSA  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+    except ImportError:
+        return False
+
+    return True
+
+
+def set_deepseek_v4_pipeline_model_parallel_layout(
+    model_cfg: MLAModelProvider | DeepSeekV4ModelConfig,
+) -> None:
     """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
 
     DeepSeek-V4 uses hash-routed MoE layers that must co-locate with the
@@ -123,7 +136,7 @@ def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) 
     the embedding on the first stage and the MTP/loss layers on the last stage.
 
     Args:
-        model_cfg: The DeepSeek-V4 model provider to configure in place.
+        model_cfg: The DeepSeek-V4 model configuration to update in place.
     """
     pp_size = model_cfg.pipeline_model_parallel_size or 1
     if pp_size <= 1:
@@ -359,7 +372,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         else:
             main_rope = rope_params
             compress_rope = rope_params
-        fused = deepseek_v4_supports_blackwell_fused_kernels()
+        use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
+        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
         config.update(
             multi_latent_attention=True,
             qk_layernorm=True,
@@ -387,9 +401,9 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             dsa_indexer_n_heads=int(hf_config.index_n_heads),
             dsa_indexer_head_dim=int(hf_config.index_head_dim),
             dsa_indexer_topk=int(hf_config.index_topk),
-            apply_dsa_kernel_fusion=fused,
+            apply_dsa_kernel_fusion=use_dsa_kernel_fusion,
             enable_hyper_connections=True,
-            use_fused_mhc=fused,
+            use_fused_mhc=use_blackwell_fused_kernels,
             num_residual_streams=int(hf_config.hc_mult),
             mhc_sinkhorn_iterations=int(hf_config.hc_sinkhorn_iters),
             moe_n_hash_layers=_dsv4_num_hash_layers(hf_config),
@@ -438,6 +452,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
+        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -515,7 +530,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.apply_dsa_kernel_fusion = use_blackwell_fused_kernels
+        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True

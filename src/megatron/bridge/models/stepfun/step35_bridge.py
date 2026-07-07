@@ -24,6 +24,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -58,6 +59,10 @@ if TYPE_CHECKING:
 # `AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")` would route to a
 # different config class and the bridge resolution below would fail.
 AutoConfig.register("step3p5", Step35Config, exist_ok=True)
+
+
+def _mcore_supports_head_wise_attn_gate() -> bool:
+    return "head_wise_attn_gate" in getattr(MCoreTransformerConfig, "__dataclass_fields__", {})
 
 
 class StackedExpertAutoMapping(AutoMapping):
@@ -288,6 +293,11 @@ class Step35Bridge(MegatronModelBridge):
                 if config_field.init and hasattr(base_provider, name)
             }
         )
+        if provider.head_wise_attn_gate and provider.attention_output_gate and _mcore_supports_head_wise_attn_gate():
+            # Native head-wise gates and the full-head output gate are mutually
+            # exclusive. Older MCore versions need the output-gate fallback.
+            provider.attention_output_gate = False
+
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
         if provider.layer_types is not None and mtp_layer_types:
             provider.layer_types = list(provider.layer_types) + list(mtp_layer_types)
@@ -397,6 +407,15 @@ class Step35Bridge(MegatronModelBridge):
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Hugging Face Step-3.5 config to builder-backed config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+
+        if (
+            config_kwargs.get("head_wise_attn_gate", False)
+            and config_kwargs.get("attention_output_gate", False)
+            and _mcore_supports_head_wise_attn_gate()
+        ):
+            # Keep the builder-backed path aligned with the legacy provider:
+            # native scalar gates replace the expanded output-gate fallback.
+            config_kwargs["attention_output_gate"] = False
 
         layer_types = config_kwargs.get("layer_types")
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
@@ -535,8 +554,8 @@ class Step35Bridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
-                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and expand
-                # the scalar g_proj rows into MCore's attention_output_gate layout.
+                # QKV + per-head gate: select the native scalar-gate layout or
+                # the expanded attention_output_gate fallback via model config.
                 QKVGMapping(
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",

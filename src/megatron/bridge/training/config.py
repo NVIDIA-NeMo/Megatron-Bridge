@@ -1079,6 +1079,7 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
+    _checkpoint_load_required: bool = field(default=False, init=False, repr=False)
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -1235,10 +1236,15 @@ class ConfigContainer(Container):
             )
             self.dataset.pad_to_max_length = requires_fixed_seq_len
 
-        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
-        # can enable variable_seq_lengths for pipeline parallelism.
+        # Propagate in-batch packing state to the transformer that owns pipeline
+        # communication settings. Builder-backed configs keep an exact MCore
+        # TransformerConfig under ``model.transformer``; private attributes on
+        # the outer flat proxy do not reach it.
         if enable_in_batch_packing:
-            self.model._enable_in_batch_packing = True
+            transformer_config = getattr(self.model, "transformer", self.model)
+            transformer_config._enable_in_batch_packing = True
+            if getattr(transformer_config, "pipeline_model_parallel_size", 1) > 1:
+                transformer_config.variable_seq_lengths = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 cp_size = getattr(self.model, "context_parallel_size", 1)
                 tp_size = getattr(self.model, "tensor_model_parallel_size", 1)

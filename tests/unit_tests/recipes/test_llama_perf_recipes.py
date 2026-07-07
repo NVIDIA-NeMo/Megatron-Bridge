@@ -20,6 +20,7 @@ from collections.abc import Callable
 import pytest
 
 from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 def _finetune_perf_recipes() -> list[Callable[[], ConfigContainer]]:
@@ -55,7 +56,7 @@ class _FakeBridge:
     def from_hf_pretrained(*args, **kwargs) -> "_FakeBridge":
         return _FakeBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False) -> _FakeModelCfg:
+    def get_model_config(self) -> _FakeModelCfg:
         return _FakeModelCfg()
 
 
@@ -65,7 +66,7 @@ def test_llama3_finetune_perf_recipes_use_offline_packing_specs(
     recipe_func: Callable[[], ConfigContainer], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     base_recipes = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(base_recipes, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, base_recipes, "AutoBridge", _FakeBridge)
 
     config = recipe_func()
 

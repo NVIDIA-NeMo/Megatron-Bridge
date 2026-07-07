@@ -18,6 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig as MCoreTransformerConfig
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -1042,6 +1043,37 @@ class TestConfigContainerValidation:
         try:
             container.validate()
             assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 8
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_enable_in_batch_packing_sets_variable_shapes_on_builder_transformer(self):
+        """Builder-backed PP configs receive variable-shape communication state."""
+
+        model_cfg = GPTModelConfig(
+            transformer=MCoreTransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                pipeline_model_parallel_size=2,
+                pipeline_dtype=torch.bfloat16,
+            ),
+            vocab_size=128,
+            seq_length=512,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=4)
+        dataset_cfg = create_test_finetuning_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert model_cfg.transformer.variable_seq_lengths is True
+            assert model_cfg.variable_seq_lengths is True
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
