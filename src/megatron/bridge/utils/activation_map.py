@@ -25,13 +25,7 @@ from typing import Callable
 import torch
 import torch.nn.functional as F
 from megatron.core.activations import fast_gelu, squared_relu
-
-
-try:
-    from megatron.core.fusions.fused_bias_geglu import quick_gelu
-except ImportError:
-    # Fallback if fused_bias_geglu is not available in the pinned MCore version
-    quick_gelu = F.gelu
+from megatron.core.fusions.fused_bias_geglu import quick_gelu
 
 
 logger = logging.getLogger(__name__)
