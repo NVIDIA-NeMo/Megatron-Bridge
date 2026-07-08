@@ -64,7 +64,7 @@ known_constraints:
   - For finetuning with CP > 1, ddp.average_in_collective must be false.
   - pad_cu_seqlens=true also requires pad_to_max_length=true.
   - A distinct eval CP topology requires decentralized process groups plus caller-managed eval groups, P2P communication, eval-aware data sharding and batch math, and eval_cp_context.
-  - Packed Parquet requires runtime JSON metadata only for pad_cu_seqlens; legacy packed NPY loads builder-resolved metadata for offline packing.
+  - Packed Parquet requires runtime JSON metadata only for pad_cu_seqlens; legacy packed NPY expects builder-resolved metadata for offline packing.
   - Synthetic padding rows must retain an all-zero loss mask after samples_mapping remaps their indices.
   - Fine-tuning sequence packing is documented as unsupported with MTP.
 known_limitations:

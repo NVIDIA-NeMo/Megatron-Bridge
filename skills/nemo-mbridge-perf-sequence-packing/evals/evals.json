@@ -1,17 +1,17 @@
 [
   {
     "id": "sequence-packing-positive-sft-smoke",
-    "question": "Use the nemo-mbridge-perf-sequence-packing skill. Compare offline packed SFT and Direct-HF/VLM in-batch packing in Megatron Bridge, including the exact micro-batch rules, PackedSequenceSpecs fields, train/eval CP plus SP padding formula, CUDA-graphs metadata behavior, and finetuning CP settings.",
+    "question": "Use the nemo-mbridge-perf-sequence-packing skill. Compare offline packed SFT with Direct-HF/VLM in-batch packing, including micro-batch rules, CP/SP padding, CUDA-graphs metadata, and finetuning CP settings.",
     "expected_skill": "nemo-mbridge-perf-sequence-packing",
     "expected_script": null,
-    "ground_truth": "The answer should use the sequence packing skill. It should say offline packed SFT uses cfg.dataset.enable_offline_packing=True plus PackedSequenceSpecs with packed_sequence_size and explicit pad_seq_to_mult, and requires configured train.micro_batch_size=1. Direct-HF/VLM in-batch packing uses cfg.dataset.enable_in_batch_packing=True and requires configured train.micro_batch_size>1; Direct-HF text also sets defer_in_batch_packing_to_step=False, after which collate emits one physical THD row. It should state that CP lengths must respect 2*CP and that pad_seq_to_mult or Direct-HF collate padding must be the LCM across both train and eval CP constraints plus CP*TP for sequence parallelism. It should mention that Direct-HF derives this LCM, while offline packing remains explicit. CUDA graphs on the offline path need pad_cu_seqlens=True plus pad_to_max_length=True; the builder resolves an explicit or default metadata path, packed Parquet needs that runtime JSON only with pad_cu_seqlens, and legacy NPY loads it for offline packing. It should mention finetuning with CP requires calculate_per_token_loss=True and ddp.average_in_collective=False. A distinct eval CP requires caller-managed decentralized eval topology, sharding, and batch math; the showcase is not a complete real-data recipe. Qwen3-Next, GLM-4.5, Qwen3.5-VL, and MTP have explicit opt-outs or incompatibilities.",
+    "ground_truth": "Use the sequence-packing skill. Offline packing sets enable_offline_packing=True with PackedSequenceSpecs and requires configured micro_batch_size=1. Direct-HF/VLM in-batch packing sets enable_in_batch_packing=True and requires configured micro_batch_size>1; Direct-HF text keeps defer_in_batch_packing_to_step=False and collation emits one physical THD row. With CP/SP, use the LCM of train/eval 2*CP and CP*TP constraints: Direct-HF derives it, while offline pad_seq_to_mult is explicit. CP finetuning also requires calculate_per_token_loss=True and average_in_collective=False. CUDA-graph-friendly offline packing uses pad_cu_seqlens=True and pad_to_max_length=True; the builder resolves an explicit/default metadata path, while packed Parquet needs runtime JSON only when cu-seqlens padding is enabled. Mention that packing support remains model-specific.",
     "expected_behavior": [
       "Read the nemo-mbridge-perf-sequence-packing skill before answering.",
       "Identify packed sequences and long-context training as the task.",
       "Distinguish offline packed SFT from Direct-HF/VLM in-batch packing with opposite configured micro-batch rules and one physical THD row.",
       "List enable_offline_packing, PackedSequenceSpecs, and enable_in_batch_packing config surfaces.",
       "State the train/eval CP and sequence-parallel LCM formula.",
-      "Mention format-specific CUDA graph metadata behavior, eval-CP topology limits, and finetuning CP requirements."
+      "Mention CUDA graph metadata behavior, finetuning CP requirements, and model-specific support."
     ]
   }
 ]

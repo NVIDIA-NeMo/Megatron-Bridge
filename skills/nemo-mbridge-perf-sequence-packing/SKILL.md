@@ -1,7 +1,8 @@
 ---
 name: nemo-mbridge-perf-sequence-packing
-description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT from Direct-HF/VLM in-batch packing and applying the right CP constraints. Use when enabling or debugging PackedSequenceSpecs, enable_in_batch_packing, long-context SFT, or CP with packing.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT from Direct-HF/VLM in-batch packing and applying the right CP constraints.
 license: Apache-2.0
+when_to_use: Enabling sequence packing or long-context SFT, or debugging PackedSequenceSpecs, enable_in_batch_packing, CP with packing, or packed-sequence regressions.
 ---
 
 # Sequence Packing Skill
@@ -68,11 +69,13 @@ cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
 cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 ```
 
-**Note:** The builder resolves `PackedSequenceSpecs.packed_metadata_path` or
-generates a default metadata file beside its packed output. Packed Parquet needs
-that runtime JSON only when `pad_cu_seqlens=True`; otherwise its THD boundaries
-come from the Parquet rows. Legacy packed `.npy` datasets continue to load the
-builder-resolved metadata whenever offline packing is enabled.
+**Note:** The builder resolves `PackedSequenceSpecs.packed_metadata_path` or a
+default path beside its packed output. It writes that metadata when it
+materializes packed data; pre-existing packed inputs must already provide the
+metadata they require. Packed Parquet needs the runtime JSON only when
+`pad_cu_seqlens=True`; otherwise its THD boundaries come from the Parquet rows.
+Legacy packed `.npy` datasets expect the builder-resolved metadata whenever
+offline packing is enabled.
 
 In-batch packing for Direct Hugging Face and supported VLM finetuning:
 
