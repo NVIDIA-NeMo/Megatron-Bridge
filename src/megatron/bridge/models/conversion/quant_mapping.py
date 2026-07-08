@@ -89,12 +89,14 @@ class _DerivedAmaxMapping(AmaxMapping):
     def __init__(self, source_mapping: MegatronParamMapping, mapped_name: str) -> None:
         self.source_mapping = source_mapping
         self.mapped_name = mapped_name
-        megatron_param = _convert_megatron_weight_name(source_mapping.megatron_param, mapped_name)
-        if megatron_param is None:
-            raise ValueError(f"Cannot derive an amax mapping from {source_mapping.megatron_param!r}")
-        hf_param = _convert_hf_weight_param(source_mapping.hf_param, mapped_name)
-        if hf_param is None:
-            raise ValueError(f"Cannot derive an amax mapping from {source_mapping.hf_param!r}")
+        megatron_param = source_mapping.megatron_param.removesuffix(".weight") + mapped_name
+        if isinstance(source_mapping.hf_param, dict):
+            hf_param = {
+                key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
+                for key, value in source_mapping.hf_param.items()
+            }
+        else:
+            hf_param = source_mapping.hf_param.removesuffix(".weight") + mapped_name
         super().__init__(megatron_param, hf_param)
 
     def _validate_patterns(self) -> None:
@@ -265,24 +267,6 @@ def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -
     return []
 
 
-def _convert_megatron_weight_name(megatron_param: str, mapped_name: str) -> str | None:
-    for suffix in (".weight*", ".weight"):
-        if megatron_param.endswith(suffix):
-            return megatron_param.removesuffix(suffix) + mapped_name
-    return None
-
-
-def _convert_hf_weight_param(hf_param: str | dict[str, str], mapped_name: str) -> str | dict[str, str] | None:
-    if isinstance(hf_param, dict):
-        return {
-            key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
-            for key, value in hf_param.items()
-        }
-    if hf_param.endswith(".weight"):
-        return hf_param.removesuffix(".weight") + mapped_name
-    return None
-
-
 _QKV_PROJECTION_NAMES = {"q": "q_proj", "k": "k_proj", "v": "v_proj"}
 # Speculative-decoding draft models and MTP layers are not supported by the
 # KV-cache amax refit path yet, so do not derive mappings for their QKV blocks.
@@ -385,8 +369,7 @@ def convert_to_amax_map(
 
     for mapping in mappings:
         if mapping.megatron_param.endswith(".weight*"):
-            new_megatron_param = _convert_megatron_weight_name(mapping.megatron_param, mapped_name)
-            assert new_megatron_param is not None
+            new_megatron_param = mapping.megatron_param.removesuffix(".weight*") + mapped_name
             hf_patterns = _convert_hf_weight_names(mapping.hf_param, mapped_name)
             megatron_wildcards = mapping._count_wildcard_groups(new_megatron_param)
 
@@ -406,11 +389,15 @@ def convert_to_amax_map(
         if not mapping.megatron_param.endswith(".weight"):
             continue
 
-        new_megatron_param = _convert_megatron_weight_name(mapping.megatron_param, mapped_name)
-        assert new_megatron_param is not None
-
-        new_hf_param = _convert_hf_weight_param(mapping.hf_param, mapped_name)
-        if new_hf_param is None:
+        new_megatron_param = mapping.megatron_param.removesuffix(".weight") + mapped_name
+        if isinstance(mapping.hf_param, dict):
+            new_hf_param = {
+                key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
+                for key, value in mapping.hf_param.items()
+            }
+        elif isinstance(mapping.hf_param, str) and mapping.hf_param.endswith(".weight"):
+            new_hf_param = mapping.hf_param.removesuffix(".weight") + mapped_name
+        else:
             continue
 
         if "*" in new_megatron_param:

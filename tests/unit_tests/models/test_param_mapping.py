@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -30,8 +29,6 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
     RowParallelMapping,
-    _ModelOptFusedExpertMapping,
-    _ModelOptFusedGatedExpertMapping,
     merge_kv_biases,
     merge_kv_weights,
     merge_qkv_biases,
@@ -462,42 +459,6 @@ class TestGatedMLPMapping:
         assert torch.equal(result["gate.weight"], gate)
         assert torch.equal(result["up.weight"], up)
 
-    def test_megatron_to_hf_can_skip_expert_parallel_gather(
-        self,
-        mock_distributed_env,
-        transformer_config,
-    ):
-        """Test that a caller can keep gate/up experts EP-local."""
-        mock_distributed_env()
-        mapping = GatedMLPMapping(
-            megatron_param="decoder.layers.0.mlp.experts.linear_fc1.weight0",
-            gate="model.layers.0.mlp.experts.0.gate_proj.weight",
-            up="model.layers.0.mlp.experts.0.up_proj.weight",
-        )
-        # Expert mappings use the ETP group. This single-rank fixture only
-        # configures TP, so mirror that group explicitly for the layout check.
-        mapping._etp_group = mapping._tp_group
-        merged_weight = torch.randn(256, 32)
-        megatron_module = MockModule(transformer_config, weight_shape=(256, 32))
-
-        with patch.object(
-            mapping,
-            "gather_from_ep_ranks",
-            side_effect=AssertionError("EP gather must be deferred"),
-        ):
-            result = mapping.megatron_to_hf(
-                merged_weight,
-                megatron_module,
-                gather_from_ep=False,
-            )
-
-        assert set(result) == {
-            "model.layers.0.mlp.experts.0.gate_proj.weight",
-            "model.layers.0.mlp.experts.0.up_proj.weight",
-        }
-        torch.testing.assert_close(result["model.layers.0.mlp.experts.0.gate_proj.weight"], merged_weight[:128])
-        torch.testing.assert_close(result["model.layers.0.mlp.experts.0.up_proj.weight"], merged_weight[128:])
-
     def test_hf_to_megatron_bias_single_tp(self, mock_distributed_env, transformer_config):
         """Test gate+up bias merging with single TP rank."""
         mock_distributed_env()
@@ -789,119 +750,6 @@ class TestMappingEdgeCases:
         module_without_config = torch.nn.Linear(10, 10)
         with pytest.raises(ValueError, match="Could not find config"):
             mapping._get_config(module_without_config)
-
-
-class TestModelOptLocalExpertMappings:
-    @pytest.mark.parametrize(
-        ("parallelism_type", "concat_dim"),
-        [("column", 0), ("row", 1)],
-    )
-    def test_fused_expert_keeps_ep_local_after_tp_gather(
-        self,
-        mock_distributed_env,
-        transformer_config,
-        parallelism_type,
-        concat_dim,
-    ):
-        mock_distributed_env(tp_size=2)
-        mapping = _ModelOptFusedExpertMapping(
-            "decoder.layers.0.mlp.experts.linear_fc2.weight0",
-            "model.layers.0.mlp.experts.down_proj",
-        )
-        pg_collection = SimpleNamespace(
-            pp=mapping.pp_group,
-            ep=object(),
-            tp=mapping._tp_group,
-            expt_tp=mapping._tp_group,
-        )
-        mapping.set_process_groups_from_pg_collection(pg_collection)
-        mapping._detected_type = parallelism_type
-        mapping._mapping = mapping._get_or_create_mapping(parallelism_type)
-        shards = [torch.randn(4, 3), torch.randn(4, 3)]
-        if concat_dim == 1:
-            shards = [torch.randn(3, 4), torch.randn(3, 4)]
-
-        with (
-            patch.object(mapping._mapping, "gather_from_tp_ranks", return_value=shards),
-            patch.object(
-                mapping._mapping,
-                "gather_from_ep_ranks",
-                side_effect=AssertionError("EP gather must happen after quantization"),
-            ),
-        ):
-            result = mapping.megatron_to_hf(
-                shards[0],
-                MockModule(transformer_config, weight_shape=shards[0].shape),
-            )
-
-        torch.testing.assert_close(
-            result["model.layers.0.mlp.experts.down_proj"],
-            torch.cat(shards, dim=concat_dim),
-        )
-
-    def test_fused_gated_expert_reorders_tp_shards_before_local_batching(
-        self,
-        mock_distributed_env,
-        transformer_config,
-    ):
-        mock_distributed_env(tp_size=2)
-        mapping = _ModelOptFusedGatedExpertMapping(
-            "decoder.layers.0.mlp.experts.linear_fc1.weight0",
-            "model.layers.0.mlp.experts.gate_up_proj",
-        )
-        pg_collection = SimpleNamespace(
-            pp=mapping.pp_group,
-            ep=object(),
-            tp=mapping._tp_group,
-            expt_tp=mapping._tp_group,
-        )
-        mapping.set_process_groups_from_pg_collection(pg_collection)
-        gate_0, up_0 = torch.randn(2, 3), torch.randn(2, 3)
-        gate_1, up_1 = torch.randn(2, 3), torch.randn(2, 3)
-        shards = [torch.cat((gate_0, up_0)), torch.cat((gate_1, up_1))]
-
-        with (
-            patch.object(mapping._gated_mapping, "gather_from_tp_ranks", return_value=shards),
-            patch.object(
-                mapping._gated_mapping,
-                "gather_from_ep_ranks",
-                side_effect=AssertionError("EP gather must happen after quantization"),
-            ),
-        ):
-            result = mapping.megatron_to_hf(
-                shards[0],
-                MockModule(transformer_config, weight_shape=shards[0].shape),
-            )
-
-        torch.testing.assert_close(
-            result["model.layers.0.mlp.experts.gate_up_proj"],
-            torch.cat((gate_0, gate_1, up_0, up_1)),
-        )
-
-    def test_process_group_collection_reaches_lazy_and_nested_mappings(self, mock_distributed_env):
-        mock_distributed_env()
-        pg_collection = SimpleNamespace(pp=object(), ep=object(), tp=object(), expt_tp=object())
-        auto_mapping = AutoMapping("decoder.experts.weight0", "model.experts.0.weight")
-        auto_mapping.set_process_groups_from_pg_collection(pg_collection)
-        delegate = auto_mapping._get_or_create_mapping("column")
-        gated_mapping = FusedGatedExpertMapping(
-            "decoder.experts.weight0",
-            "model.experts.gate_up_proj",
-        )
-        gated_mapping.set_process_groups_from_pg_collection(pg_collection)
-        qkv_mapping = QKVMapping(
-            "decoder.linear_qkv.weight",
-            q="model.q_proj.weight",
-            k="model.k_proj.weight",
-            v="model.v_proj.weight",
-        )
-        qkv_mapping.set_process_groups_from_pg_collection(pg_collection)
-
-        for mapping in (delegate, gated_mapping, gated_mapping._gated_mapping, qkv_mapping, qkv_mapping._tp_mapping):
-            assert mapping.pp_group is pg_collection.pp
-            assert mapping.ep_group is pg_collection.ep
-            assert mapping._tp_group is pg_collection.tp
-            assert mapping._etp_group is pg_collection.expt_tp
 
 
 class TestAutoMappingWithPermute:

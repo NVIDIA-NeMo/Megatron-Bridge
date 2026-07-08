@@ -23,16 +23,14 @@ QUANTIZATION_NONE = quant_utils.QUANTIZATION_NONE
 QUANTIZATION_NVFP4 = quant_utils.QUANTIZATION_NVFP4
 
 from megatron.bridge.models.conversion import modelopt_utils
-from megatron.bridge.models.conversion.auto_bridge import (
-    AutoBridge,
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+from megatron.bridge.models.conversion.modelopt_utils import (
+    QuantMeta,
     _fuse_grouped_projection_names,
     _grouped_expert_projection_name,
     _modelopt_pre_ep_mapping,
     _stage_tensor_for_collective,
-)
-from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
-from megatron.bridge.models.conversion.modelopt_utils import (
-    QuantMeta,
     build_hf_modelopt_quant_metadata,
     collect_modelopt_quant_metadata,
     compute_nvfp4_input_scale,
@@ -85,11 +83,7 @@ def _bridge_for_export(conversion_tasks, exported_weights):
         def export_hf_weights(self, model, **kwargs):
             self.export_calls.append((model, kwargs))
             export_hf_weight = next(
-                (
-                    task._export_hf_weight
-                    for task in kwargs.get("conversion_tasks", ())
-                    if getattr(task, "_export_hf_weight", None) is not None
-                ),
+                (task.export_hook for task in kwargs.get("conversion_tasks", ()) if task.export_hook is not None),
                 None,
             )
             for hf_name, tensor in exported_weights:
@@ -900,7 +894,7 @@ def test_quantize_nvfp4_weight_exports_fused_moe_internal_names(monkeypatch):
     assert captured["weight_scale_2"].shape == (2, 1, 1)
 
 
-def test_quantize_w4a16_weight_keeps_non_gated_fused_up_proj_transport_names_and_per_expert_scale_2(
+def test_quantize_w4a16_weight_exports_non_gated_fused_w13_family(
     monkeypatch,
 ):
     w4a16_qformat = "modelopt_w4a16_nvfp4"
@@ -932,15 +926,13 @@ def test_quantize_w4a16_weight_keeps_non_gated_fused_up_proj_transport_names_and
     )
 
     assert set(tensors) == {
-        "model.layers.0.mlp.experts.up_proj",
-        "model.layers.0.mlp.experts.up_proj_scale",
-        "model.layers.0.mlp.experts.up_proj_scale_2",
+        "model.layers.0.mlp.experts.w13_weight",
+        "model.layers.0.mlp.experts.w13_weight_scale",
+        "model.layers.0.mlp.experts.w13_weight_scale_2",
     }
-    # Nemotron-H's non-gated payload is expanded by the receiver, so it must
-    # retain its up_proj transport name and one second-scale value per expert.
     torch.testing.assert_close(
-        tensors["model.layers.0.mlp.experts.up_proj_scale_2"],
-        torch.tensor([1.0, 0.5]),
+        tensors["model.layers.0.mlp.experts.w13_weight_scale_2"],
+        torch.tensor([[1.0], [0.5]]),
     )
     assert captured["weight_scale_2"].shape == (2, 1, 1)
 
@@ -983,17 +975,17 @@ def test_quantize_nvfp4_weight_exports_non_gated_fused_w4a4_transport(monkeypatc
     )
 
     assert set(tensors) == {
-        "model.layers.0.mlp.experts.up_proj",
-        "model.layers.0.mlp.experts.up_proj_scale",
-        "model.layers.0.mlp.experts.up_proj_scale_2",
-        "model.layers.0.mlp.experts.up_proj_input_scale",
+        "model.layers.0.mlp.experts.w13_weight",
+        "model.layers.0.mlp.experts.w13_weight_scale",
+        "model.layers.0.mlp.experts.w13_weight_scale_2",
+        "model.layers.0.mlp.experts.w13_input_scale",
     }
     torch.testing.assert_close(
-        tensors["model.layers.0.mlp.experts.up_proj_scale_2"],
-        torch.tensor([1.0, 0.5]),
+        tensors["model.layers.0.mlp.experts.w13_weight_scale_2"],
+        torch.tensor([[1.0], [0.5]]),
     )
     torch.testing.assert_close(
-        tensors["model.layers.0.mlp.experts.up_proj_input_scale"],
+        tensors["model.layers.0.mlp.experts.w13_input_scale"],
         torch.tensor([[1.0], [0.5]]),
     )
     assert captured["weight_scale_2"].shape == (2, 1, 1)
@@ -1257,7 +1249,7 @@ def test_auto_bridge_modelopt_export_quantizes_matching_weights(monkeypatch):
     assert export_tasks is not conversion_tasks
     assert isinstance(export_tasks[0], WeightConversionTask)
     assert export_tasks[0].global_param_name == conversion_tasks[0].global_param_name
-    assert callable(export_tasks[0]._export_hf_weight)
+    assert callable(export_tasks[0].export_hook)
 
 
 @pytest.mark.parametrize("shared_group", [False, True], ids=["distinct-pp-ep", "shared-pp-ep"])
@@ -1279,7 +1271,7 @@ def test_auto_bridge_modelopt_export_syncs_ep_and_deduplicates_groups(monkeypatc
     world_size_calls = []
     sync_calls = []
 
-    def get_world_size(*, group):
+    def get_pg_size(group=None):
         world_size_calls.append(group)
         return 2 if group is ep_group else 1
 
@@ -1292,26 +1284,26 @@ def test_auto_bridge_modelopt_export_syncs_ep_and_deduplicates_groups(monkeypatc
         return ep_group
 
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.is_initialized",
         lambda: True,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.get_world_size",
-        get_world_size,
+        "megatron.bridge.models.conversion.modelopt_utils.get_pg_size",
+        get_pg_size,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.all_gather_object",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.all_gather_object",
         lambda gathered, value, *, group: gathered.__setitem__(
             slice(None),
             [value, value],
         ),
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_pp_group",
         get_pp_group,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_ep_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_ep_group",
         get_ep_group,
     )
     monkeypatch.setattr(modelopt_utils, "collect_modelopt_quant_metadata", lambda _tasks: metadata)
@@ -1371,23 +1363,23 @@ def test_auto_bridge_modelopt_export_keeps_regular_path_for_shared_pp_ep_group(
             return iter(())
 
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_pp_group",
         lambda _model: shared_group,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_ep_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_ep_group",
         lambda _model: shared_group,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.is_initialized",
         lambda: True,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.get_world_size",
-        lambda *, group: 2,
+        "megatron.bridge.models.conversion.modelopt_utils.get_pg_size",
+        lambda group=None: 2,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.all_gather_object",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.all_gather_object",
         lambda gathered, value, *, group: gathered.__setitem__(
             slice(None),
             [value, value],
@@ -1470,12 +1462,8 @@ def test_auto_bridge_modelopt_export_ep_gathers_qwen_input_scale_in_rank_order(
                 True,
                 False,
             ]
-            task = export_tasks[0]
-            local_experts = torch.tensor(
-                [[[1.0, 1.0]], [[2.0, 2.0]]],
-            )
-            for name, tensor in task._export_hf_weight(fused_name, local_experts):
-                yield from task._finalize_hf_weight(name, tensor)
+            for task, value in zip(export_tasks[:2], (1.0, 2.0), strict=True):
+                yield from task.export_hook(fused_name, torch.full((1, 2), value))
 
     def fake_export_weight(name, tensor, meta):
         assert name == fused_name
@@ -1521,31 +1509,31 @@ def test_auto_bridge_modelopt_export_ep_gathers_qwen_input_scale_in_rank_order(
         return original_build_pre_ep_metadata(tasks, task_metadata)
 
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_pp_group",
         lambda _model: None,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_ep_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_ep_group",
         lambda _model: ep_group,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.is_initialized",
         lambda: True,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.get_world_size",
-        lambda *, group: 2 if group is ep_group else 1,
+        "megatron.bridge.models.conversion.modelopt_utils.get_pg_size",
+        lambda group=None: 2 if group is ep_group else 1,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.get_backend",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.get_backend",
         lambda group: "gloo",
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.all_gather_into_tensor",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.all_gather_into_tensor",
         fake_all_gather_into_tensor,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.all_gather_object",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.all_gather_object",
         fake_all_gather_object,
     )
     monkeypatch.setattr(
@@ -1570,7 +1558,7 @@ def test_auto_bridge_modelopt_export_ep_gathers_qwen_input_scale_in_rank_order(
         lambda _mode: (QUANTIZATION_NVFP4, fake_export_weight),
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils.unwrap_model",
         lambda _model: [SimpleNamespace(config=SimpleNamespace(num_moe_experts=4))],
     )
 
@@ -1663,27 +1651,27 @@ def test_auto_bridge_modelopt_export_rejects_incomplete_pre_ep_expert_family(
         gathered[:] = [value, value]
 
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_pp_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_pp_group",
         lambda _model: None,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge._get_ep_group",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils._get_ep_group",
         lambda _model: ep_group,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils.unwrap_model",
         lambda _model: [SimpleNamespace(config=SimpleNamespace(num_moe_experts=num_moe_experts))],
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.is_initialized",
         lambda: True,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.get_world_size",
-        lambda *, group: 2 if group is ep_group else 1,
+        "megatron.bridge.models.conversion.modelopt_utils.get_pg_size",
+        lambda group=None: 2 if group is ep_group else 1,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.all_gather_object",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.all_gather_object",
         fake_all_gather_object,
     )
     monkeypatch.setattr(
@@ -1759,6 +1747,9 @@ def test_modelopt_pre_ep_mapping_supports_nemotron_h_expert_projections(
     assert original_names == (hf_name,)
     for attr, group in process_groups.items():
         assert getattr(replacement, attr) is group
+    delegate = replacement._get_or_create_mapping("column")
+    assert not delegate.is_expert
+    assert delegate.tp_group is pg_collection.expt_tp
 
 
 @pytest.mark.parametrize(
@@ -1798,11 +1789,11 @@ def test_auto_bridge_modelopt_export_selects_nemotron_h_pre_ep_family(
             return iter(())
 
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.dist.is_initialized",
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.is_initialized",
         lambda: False,
     )
     monkeypatch.setattr(
-        "megatron.bridge.models.conversion.auto_bridge.model_bridge.unwrap_model",
+        "megatron.bridge.models.conversion.modelopt_utils.model_bridge_utils.unwrap_model",
         lambda _model: [SimpleNamespace(config=SimpleNamespace(num_moe_experts=2))],
     )
     monkeypatch.setattr(
@@ -1865,6 +1856,8 @@ def test_modelopt_pre_ep_mapping_fuses_qwen3_gate_and_up_experts():
     for attr, group in process_groups.items():
         assert getattr(replacement, attr) is group
         assert getattr(replacement._gated_mapping, attr) is group
+    assert not replacement._gated_mapping.is_expert
+    assert replacement._gated_mapping.tp_group is pg_collection.expt_tp
 
 
 def test_modelopt_pre_ep_mapping_rejects_mismatched_gate_up_experts():
@@ -1924,9 +1917,18 @@ def test_stage_tensor_for_collective_moves_pinned_cpu_tensor_for_nccl(monkeypatc
         return cuda_tensor
 
     tensor.to = move_to
-    monkeypatch.setattr("megatron.bridge.models.conversion.auto_bridge.dist.get_backend", lambda _group: "nccl")
-    monkeypatch.setattr("megatron.bridge.models.conversion.auto_bridge.torch.cuda.is_available", lambda: True)
-    monkeypatch.setattr("megatron.bridge.models.conversion.auto_bridge.torch.cuda.current_device", lambda: 3)
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.get_backend",
+        lambda _group: "nccl",
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.modelopt_utils.torch.cuda.is_available",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.modelopt_utils.torch.cuda.current_device",
+        lambda: 3,
+    )
 
     assert _stage_tensor_for_collective(tensor, group) is cuda_tensor
     assert calls == [(torch.device("cuda", 3), True)]
@@ -1935,7 +1937,10 @@ def test_stage_tensor_for_collective_moves_pinned_cpu_tensor_for_nccl(monkeypatc
 def test_stage_tensor_for_collective_keeps_cpu_tensor_for_gloo(monkeypatch):
     group = object()
     tensor = torch.ones(1)
-    monkeypatch.setattr("megatron.bridge.models.conversion.auto_bridge.dist.get_backend", lambda _group: "gloo")
+    monkeypatch.setattr(
+        "megatron.bridge.models.conversion.modelopt_utils.torch.distributed.get_backend",
+        lambda _group: "gloo",
+    )
 
     assert _stage_tensor_for_collective(tensor, group) is tensor
 
@@ -1956,7 +1961,10 @@ def test_auto_bridge_modelopt_export_falls_back_to_mapping_registry(monkeypatch)
         lookup_calls.append(name)
         return SimpleNamespace(megatron_param=megatron_name)
 
-    registry = SimpleNamespace(hf_to_megatron_lookup=hf_to_megatron_lookup)
+    registry = SimpleNamespace(
+        hf_to_megatron_lookup=hf_to_megatron_lookup,
+        set_process_groups_from_pg_collection=lambda _pg_collection: None,
+    )
 
     def get_registry():
         registry_calls.append(True)
@@ -2102,12 +2110,12 @@ def test_auto_bridge_modelopt_export_streams_base_weights_lazily(monkeypatch):
         def export_hf_weights(self, _model, **kwargs):
             export_task = kwargs["conversion_tasks"][0]
             events.append("start")
-            yield from export_task._export_hf_weight(
+            yield from export_task.export_hook(
                 "model.layers.0.mlp.up_proj.weight",
                 torch.tensor([1.0]),
             )
             events.append("after-first")
-            yield from export_task._export_hf_weight(
+            yield from export_task.export_hook(
                 "model.layers.0.mlp.down_proj.weight",
                 torch.tensor([2.0]),
             )

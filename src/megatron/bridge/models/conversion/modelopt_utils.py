@@ -15,15 +15,32 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
 from fnmatch import fnmatchcase
-from typing import TYPE_CHECKING, Iterator, cast
+from typing import TYPE_CHECKING, Any, Iterator, cast
 
 import torch
+from megatron.core.utils import get_pg_size
+
+from megatron.bridge.models.conversion import model_bridge as model_bridge_utils
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, WeightConversionTask
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    ColumnParallelMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+    ReplicatedMapping,
+    RowParallelMapping,
+)
+from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
 if TYPE_CHECKING:
-    from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+    from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+
+HFExportHook = Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]
 
 _NVFP4_AMAX_DENOMINATOR = 6.0 * 448.0
 _NVFP4_MAXBOUND = 6.0
@@ -41,10 +58,9 @@ _EXPERT_NUMBER_PATTERNS = (
 )
 _FUSED_MOE_NVFP4_NAME_MAP = {
     ".experts.gate_up_proj": ".experts.w13_weight",
-    # Keep Nemotron-H's single (non-gated) projection distinguishable from a
-    # gate+up w13 tensor. The receiver expands this fused expert batch without
-    # splitting its projection dimension.
-    ".experts.up_proj": ".experts.up_proj",
+    # vLLM uses the w13 family for both gated and non-gated first projections;
+    # ``is_act_and_mul=False`` selects a single projection shard.
+    ".experts.up_proj": ".experts.w13_weight",
     ".experts.down_proj": ".experts.w2_weight",
 }
 
@@ -461,7 +477,7 @@ def _build_hf_modelopt_pre_ep_quant_metadata(
 
 
 def collect_modelopt_quant_metadata(
-    conversion_tasks: list[WeightConversionTask | None],
+    conversion_tasks: list[WeightConversionTask],
 ) -> dict[str, QuantMeta]:
     """Collect ModelOpt quantization metadata from conversion task modules."""
     from modelopt.torch.export import quant_utils
@@ -476,7 +492,7 @@ def collect_modelopt_quant_metadata(
     metadata: dict[str, QuantMeta] = {}
     quantizer_metadata: dict[tuple[int, int, str, int], QuantMeta | None] = {}
     for task in conversion_tasks:
-        if task is None or task.megatron_module is None or task.param_weight is None:
+        if task.megatron_module is None or task.param_weight is None:
             continue
 
         weight_quantizer, quant_module = find_modelopt_weight_quantizer_and_module(
@@ -666,10 +682,15 @@ def _format_nvfp4_weight_scale_2_for_export(
 ) -> torch.Tensor:
     if source_name.endswith(".experts.up_proj"):
         if weight_scale_2.dim() == 0:
-            return weight_scale_2.expand(weight.shape[0]).contiguous()
+            return weight_scale_2.expand(weight.shape[0], 1).contiguous()
+        if weight_scale_2.dim() == 1:
+            return weight_scale_2[:, None].contiguous()
         if weight_scale_2.dim() == 2 and weight_scale_2.shape[1] == 1:
-            return weight_scale_2[:, 0].contiguous()
-        return weight_scale_2
+            return weight_scale_2.contiguous()
+        raise RuntimeError(
+            "Expected one non-gated W13 weight_scale_2 per expert for "
+            f"{weight_name}, got shape {tuple(weight_scale_2.shape)}"
+        )
     if weight_name.endswith("w13_weight"):
         if weight_scale_2.dim() == 0:
             weight_scale_2 = weight_scale_2.expand(weight.shape[0])
@@ -686,12 +707,13 @@ def _format_nvfp4_weight_scale_2_for_export(
 
 
 def _format_nvfp4_input_scale_for_export(
+    source_name: str,
     weight_name: str,
     weight: torch.Tensor,
     input_scale: torch.Tensor,
 ) -> torch.Tensor:
     """Shape static activation scales for dense and fused-MoE vLLM loaders."""
-    if weight_name.endswith(".experts.up_proj"):
+    if source_name.endswith(".experts.up_proj"):
         num_experts = weight.shape[0]
         if input_scale.numel() == 1:
             return input_scale.reshape(1, 1).expand(num_experts, 1).contiguous()
@@ -790,6 +812,7 @@ def quantize_nvfp4_weight(
         yield (
             input_scale_name,
             _format_nvfp4_input_scale_for_export(
+                name,
                 weight_name,
                 weight,
                 input_scale,
@@ -814,3 +837,376 @@ def get_modelopt_quant_exporter(quant_mode: str):
     else:
         raise ValueError(f"Unsupported ModelOpt quant_mode: {quant_mode}")
     return qformat, quantize_nvfp4_weight
+
+
+def _grouped_expert_projection_name(hf_name: str) -> tuple[str, int] | None:
+    """Remove a resolved expert index and terminal weight suffix from an HF name."""
+    parts = hf_name.split(".")
+    if parts and parts[-1] == "weight":
+        parts.pop()
+    if (
+        len(parts) < 4
+        or parts[-3] != "experts"
+        or not parts[-2].isascii()
+        or not parts[-2].isdecimal()
+        or not parts[-1]
+        or parts.count("experts") != 1
+        or any(not part or "*" in part for part in parts)
+    ):
+        return None
+    return ".".join((*parts[:-2], parts[-1])), int(parts[-2])
+
+
+def _fuse_grouped_projection_names(gate_name: str, up_name: str) -> str | None:
+    """Merge two projection leaves while preserving their common underscore suffix."""
+    gate_parent, separator, gate_projection = gate_name.rpartition(".")
+    up_parent, up_separator, up_projection = up_name.rpartition(".")
+    if not separator or not up_separator or gate_parent != up_parent:
+        return None
+
+    gate_parts = gate_projection.split("_")
+    up_parts = up_projection.split("_")
+    if any(not part for part in (*gate_parts, *up_parts)):
+        return None
+    common_suffix = 0
+    while (
+        common_suffix < len(gate_parts)
+        and common_suffix < len(up_parts)
+        and gate_parts[-(common_suffix + 1)] == up_parts[-(common_suffix + 1)]
+    ):
+        common_suffix += 1
+    if common_suffix == 0 or common_suffix == len(gate_parts) or common_suffix == len(up_parts):
+        return None
+
+    fused_projection = "_".join(
+        (*gate_parts[:-common_suffix], *up_parts[:-common_suffix], *gate_parts[-common_suffix:])
+    )
+    return f"{gate_parent}.{fused_projection}"
+
+
+class _LocalExpertMappingMixin:
+    """Use expert TP while leaving the expert dimension local."""
+
+    @property
+    def tp_group(self):
+        return self._etp_group
+
+    @property
+    def is_expert(self) -> bool:
+        return False
+
+
+class _LocalExpertColumnMapping(_LocalExpertMappingMixin, ColumnParallelMapping):
+    pass
+
+
+class _LocalExpertRowMapping(_LocalExpertMappingMixin, RowParallelMapping):
+    pass
+
+
+class _LocalExpertReplicatedMapping(_LocalExpertMappingMixin, ReplicatedMapping):
+    pass
+
+
+class _LocalExpertGatedMLPMapping(_LocalExpertMappingMixin, GatedMLPMapping):
+    pass
+
+
+class _ModelOptFusedExpertMapping(FusedExpertMapping):
+    """Build one E/EP-local expert batch without a BF16 EP gather."""
+
+    is_grouped_export = False
+    is_modelopt_pre_ep_export = True
+
+    def _get_or_create_mapping(self, parallelism_type: str):
+        mapping_types = {
+            "column": _LocalExpertColumnMapping,
+            "row": _LocalExpertRowMapping,
+            "replicated": _LocalExpertReplicatedMapping,
+        }
+        try:
+            mapping_type = mapping_types[parallelism_type]
+        except KeyError as error:
+            raise ValueError(f"Unknown parallelism type: {parallelism_type}") from error
+        mapping = mapping_type(self.megatron_param, self.hf_param)
+        mapping.set_process_groups_from_pg_collection(self._pg_collection)
+        return mapping
+
+
+class _ModelOptFusedGatedExpertMapping(FusedGatedExpertMapping):
+    """Fuse gate/up locally without a BF16 EP gather."""
+
+    is_grouped_export = False
+    is_modelopt_pre_ep_export = True
+
+    def __init__(
+        self,
+        megatron_param: str,
+        hf_param: str,
+        permute_dims: tuple[int, ...] | None = None,
+        transpose_on_export: bool = False,
+    ) -> None:
+        super().__init__(megatron_param, hf_param, permute_dims, transpose_on_export)
+        self._gated_mapping = _LocalExpertGatedMLPMapping(
+            megatron_param=self.megatron_param,
+            gate=f"{self.hf_param}.gate",
+            up=f"{self.hf_param}.up",
+        )
+
+
+def _modelopt_pre_ep_mapping(
+    mapping: Any,
+    pg_collection: Any = None,
+) -> tuple[Any, tuple[str, ...]] | None:
+    """Build a fused local-expert mapping for ModelOpt expert projections."""
+    if type(mapping) is GatedMLPMapping and isinstance(mapping.hf_param, dict):
+        gate_name = mapping.hf_param.get("gate")
+        up_name = mapping.hf_param.get("up")
+        if isinstance(gate_name, str) and isinstance(up_name, str):
+            grouped_gate = _grouped_expert_projection_name(gate_name)
+            grouped_up = _grouped_expert_projection_name(up_name)
+            if grouped_gate is not None and grouped_up is not None and grouped_gate[1] == grouped_up[1]:
+                grouped_name = _fuse_grouped_projection_names(grouped_gate[0], grouped_up[0])
+            else:
+                grouped_name = None
+            if grouped_name is not None and is_modelopt_quantizable_weight_name(grouped_name):
+                replacement = _ModelOptFusedGatedExpertMapping(
+                    mapping.megatron_param,
+                    grouped_name,
+                )
+                replacement.set_process_groups_from_pg_collection(pg_collection)
+                return replacement, (gate_name, up_name)
+
+    if type(mapping) is not AutoMapping or not isinstance(mapping.hf_param, str):
+        return None
+
+    grouped_projection = _grouped_expert_projection_name(mapping.hf_param)
+    if grouped_projection is None or not is_modelopt_quantizable_weight_name(grouped_projection[0]):
+        return None
+
+    replacement = _ModelOptFusedExpertMapping(
+        mapping.megatron_param,
+        grouped_projection[0],
+        mapping.permute_dims,
+    )
+    replacement.set_process_groups_from_pg_collection(pg_collection)
+    return replacement, (mapping.hf_param,)
+
+
+def _stage_tensor_for_collective(tensor: torch.Tensor, group: Any) -> torch.Tensor:
+    """Move a CPU tensor to CUDA only when its collective backend requires it."""
+    backend = str(torch.distributed.get_backend(group)).lower()
+    if backend != "nccl" or tensor.device.type != "cpu":
+        return tensor
+    if not torch.cuda.is_available():
+        raise RuntimeError("NCCL ModelOpt expert gather requires CUDA")
+    return tensor.to(
+        device=torch.device("cuda", torch.cuda.current_device()),
+        non_blocking=tensor.is_pinned(),
+    )
+
+
+def _compose_export_hooks(exporter: HFExportHook, finalizer: HFExportHook | None) -> HFExportHook:
+    if finalizer is None:
+        return exporter
+
+    def export_and_finalize(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        for exported_name, exported_tensor in exporter(hf_name, tensor):
+            yield from finalizer(exported_name, exported_tensor)
+
+    return export_and_finalize
+
+
+def build_modelopt_export_plan(
+    conversion_tasks: list[WeightConversionTask],
+    *,
+    model: list[torch.nn.Module],
+    bridge: "MegatronModelBridge",
+    quant_mode: str,
+    ignore_patterns: list[str],
+) -> list[WeightConversionTask]:
+    """Prepare mapped conversion tasks and hooks for a ModelOpt export."""
+    expected_qformat, export_weight = get_modelopt_quant_exporter(quant_mode)
+    pg_collection = model_bridge_utils._get_pg_collection_from_model(model)
+    local_metadata = collect_modelopt_quant_metadata(conversion_tasks)
+    if torch.distributed.is_initialized():
+        pp_group = model_bridge_utils._get_pp_group(model)
+        ep_group = model_bridge_utils._get_ep_group(model)
+    else:
+        pp_group = None
+        ep_group = None
+
+    # PP stages need metadata for their EP-local experts, but pre-EP packing
+    # must retain the E/EP-local view rather than a full global-E copy.
+    pp_world_size = get_pg_size(pp_group)
+    ep_world_size = pp_world_size if ep_group is pp_group else get_pg_size(ep_group)
+    if pp_world_size > 1:
+        sync_modelopt_quant_metadata(local_metadata, pp_group)
+
+    # A shared non-singleton PP/EP group has already globalized metadata, so it
+    # cannot provide the local view required by pre-EP packing.
+    can_export_before_ep = not (pp_world_size > 1 and pp_group is not None and ep_group is pp_group)
+    candidate_mappings: dict[int, Any] = {}
+    candidate_groups: dict[str, list[int]] = {}
+    eligible_groups: dict[str, bool] = {}
+    for task_idx, task in enumerate(conversion_tasks):
+        candidate = _modelopt_pre_ep_mapping(task.mapping, pg_collection) if can_export_before_ep else None
+        if candidate is None:
+            continue
+        replacement, original_hf_names = candidate
+        group_key = str(replacement.hf_param)
+        candidate_mappings[task_idx] = replacement
+        candidate_groups.setdefault(group_key, []).append(task_idx)
+
+        meta = local_metadata.get(task.global_param_name)
+        task_is_eligible = (
+            meta is not None
+            and meta.qformat == expected_qformat
+            and not any(matches_quant_ignore_pattern(name, ignore_patterns) for name in original_hf_names)
+        )
+        eligible_groups[group_key] = eligible_groups.get(group_key, True) and task_is_eligible
+
+    experts_per_rank = 0
+    if candidate_groups:
+        unwrapped_model = model_bridge_utils.unwrap_model(model)[0]
+        num_experts = getattr(unwrapped_model.config, "num_moe_experts", None)
+        valid_expert_layout = isinstance(num_experts, int) and num_experts > 0 and num_experts % ep_world_size == 0
+        experts_per_rank = num_experts // ep_world_size if valid_expert_layout else 0
+        expected_local_ids = set(range(experts_per_rank))
+        for group_key, task_indices in candidate_groups.items():
+            local_ids: list[int] = []
+            if valid_expert_layout:
+                try:
+                    for task_idx in task_indices:
+                        candidate_task = conversion_tasks[task_idx]
+                        local_ids.append(
+                            extract_expert_number_from_param(candidate_task.param_name) % experts_per_rank
+                        )
+                except ValueError:
+                    local_ids = []
+            eligible_groups[group_key] = eligible_groups[group_key] and (
+                valid_expert_layout and len(local_ids) == experts_per_rank and set(local_ids) == expected_local_ids
+            )
+
+    if ep_world_size > 1:
+        gathered_eligibility: list[dict[str, bool] | None] = [None] * ep_world_size
+        torch.distributed.all_gather_object(gathered_eligibility, eligible_groups, group=ep_group)
+        all_group_keys = set().union(*(rank_groups or {} for rank_groups in gathered_eligibility))
+        eligible_groups = {
+            group_key: all(bool((rank_groups or {}).get(group_key, False)) for rank_groups in gathered_eligibility)
+            for group_key in all_group_keys
+        }
+
+    mapped_tasks = list(conversion_tasks)
+    for group_key, task_indices in candidate_groups.items():
+        if not eligible_groups[group_key]:
+            continue
+        for task_idx in task_indices:
+            mapped_tasks[task_idx] = replace(
+                conversion_tasks[task_idx],
+                mapping=candidate_mappings[task_idx],
+            )
+
+    regular_metadata_tasks: list[WeightConversionTask] = []
+    pre_ep_tasks: list[WeightConversionTask] = []
+    for original_task, mapped_task in zip(conversion_tasks, mapped_tasks, strict=True):
+        if getattr(mapped_task.mapping, "is_modelopt_pre_ep_export", False):
+            pre_ep_tasks.append(mapped_task)
+        else:
+            regular_metadata_tasks.append(original_task)
+
+    regular_metadata_names = {task.global_param_name for task in regular_metadata_tasks}
+    pre_ep_only_metadata_names = {task.global_param_name for task in pre_ep_tasks}.difference(regular_metadata_names)
+    regular_metadata = {name: meta for name, meta in local_metadata.items() if name not in pre_ep_only_metadata_names}
+    if ep_world_size > 1 and ep_group is not pp_group:
+        sync_modelopt_quant_metadata(regular_metadata, ep_group)
+
+    hf_metadata = build_hf_modelopt_quant_metadata(regular_metadata_tasks, regular_metadata)
+    pre_ep_hf_metadata = _build_hf_modelopt_pre_ep_quant_metadata(pre_ep_tasks, local_metadata)
+    hf_metadata.update(pre_ep_hf_metadata)
+    pre_ep_hf_names = set(pre_ep_hf_metadata)
+    mapping_registry = None
+
+    def modelopt_export_weight(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        nonlocal mapping_registry
+        if "_quantizer." in hf_name:
+            return
+
+        meta = None
+        if is_modelopt_quantizable_weight_name(hf_name) and (
+            hf_name in pre_ep_hf_names or not matches_quant_ignore_pattern(hf_name, ignore_patterns)
+        ):
+            meta = hf_metadata.get(hf_name)
+            if meta is None and regular_metadata:
+                if mapping_registry is None:
+                    mapping_registry = bridge.mapping_registry()
+                    mapping_registry.set_process_groups_from_pg_collection(pg_collection)
+                mapping = mapping_registry.hf_to_megatron_lookup(hf_name)
+                if mapping is not None:
+                    meta = regular_metadata.get(mapping.megatron_param)
+
+        if meta is None:
+            yield HFWeightTuple(hf_name, tensor)
+            return
+        if meta.qformat != expected_qformat:
+            raise RuntimeError(f"Unsupported qformat for ModelOpt {quant_mode} export: {meta.qformat}")
+        for quant_name, quant_tensor in export_weight(hf_name, tensor, meta):
+            yield HFWeightTuple(quant_name, quant_tensor)
+
+    def finalize_ep_weight(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+        if get_pg_size(ep_group) == 1:
+            yield HFWeightTuple(hf_name, tensor)
+            return
+
+        local_tensor = tensor.contiguous()
+        if local_tensor.ndim == 0:
+            raise ValueError("Pre-EP ModelOpt tensor must have an expert dimension")
+        collective_tensor = _stage_tensor_for_collective(local_tensor, ep_group)
+        local_bytes = collective_tensor.reshape(-1).view(torch.uint8)
+        world_size = get_pg_size(ep_group)
+        gathered_bytes = torch.empty(
+            world_size * local_bytes.numel(),
+            dtype=torch.uint8,
+            device=collective_tensor.device,
+        )
+        torch.distributed.all_gather_into_tensor(gathered_bytes, local_bytes, group=ep_group)
+        global_shape = (world_size * local_tensor.shape[0], *local_tensor.shape[1:])
+        yield HFWeightTuple(
+            hf_name,
+            gathered_bytes.view(local_tensor.dtype).reshape(global_shape),
+        )
+
+    pre_ep_buffers: dict[str, dict[int, torch.Tensor]] = {}
+
+    def build_pre_ep_hook(task: WeightConversionTask) -> HFExportHook:
+        local_expert_id = extract_expert_number_from_param(task.param_name) % experts_per_rank
+
+        def export_local_expert(hf_name: str, tensor: torch.Tensor) -> Iterable[HFWeightTuple]:
+            expert_tensors = pre_ep_buffers.setdefault(hf_name, {})
+            if local_expert_id in expert_tensors:
+                raise RuntimeError(f"Duplicate local expert {local_expert_id} for {hf_name}")
+            expert_tensors[local_expert_id] = tensor
+            if len(expert_tensors) != experts_per_rank:
+                return
+
+            missing = set(range(experts_per_rank)).difference(expert_tensors)
+            if missing:
+                raise RuntimeError(f"Missing local experts {sorted(missing)} for {hf_name}")
+            local_batch = torch.stack(
+                [expert_tensors[expert_id] for expert_id in range(experts_per_rank)],
+                dim=0,
+            )
+            del pre_ep_buffers[hf_name]
+            for exported_name, exported_tensor in modelopt_export_weight(hf_name, local_batch):
+                yield from finalize_ep_weight(exported_name, exported_tensor)
+
+        return export_local_expert
+
+    regular_hook = _compose_export_hooks(modelopt_export_weight, None)
+    export_tasks = []
+    for task in mapped_tasks:
+        export_hook = (
+            build_pre_ep_hook(task) if getattr(task.mapping, "is_modelopt_pre_ep_export", False) else regular_hook
+        )
+        export_tasks.append(replace(task, export_hook=export_hook))
+    return export_tasks

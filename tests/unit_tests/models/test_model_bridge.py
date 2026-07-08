@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import torch
 
-from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 
@@ -30,23 +30,15 @@ class DummyBridge(MegatronModelBridge):
         return MegatronMappingRegistry()
 
 
-class _ExportTask:
-    def __init__(self, task, exporter, finalizer=None):
-        self._task = task
-        self._exporter = exporter
-        self._finalizer = finalizer
+def _with_export_hook(task, exporter, finalizer=None):
+    def export_hook(name, tensor):
+        for exported_name, exported_tensor in exporter(name, tensor):
+            if finalizer is None:
+                yield exported_name, exported_tensor
+            else:
+                yield from finalizer(exported_name, exported_tensor)
 
-    def __getattr__(self, name):
-        return getattr(self._task, name)
-
-    def _export_hf_weight(self, name, tensor):
-        return self._exporter(name, tensor)
-
-    def _finalize_hf_weight(self, name, tensor):
-        if self._finalizer is None:
-            yield name, tensor
-        else:
-            yield from self._finalizer(name, tensor)
+    return replace(task, export_hook=export_hook)
 
 
 def _patch_stream_weights_megatron_to_hf_basics(
@@ -109,7 +101,7 @@ def test_stream_weights_megatron_to_hf_custom_export_preserves_device_when_cpu_f
         assert tensor is source
         yield name, tensor
 
-    task = _ExportTask(task, export)
+    task = _with_export_hook(task, export)
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
     monkeypatch.setattr(
         DummyBridge,
@@ -179,7 +171,7 @@ def test_stream_weights_megatron_to_hf_transforms_before_final_cpu_placement(mon
         yield f"{name}.packed", TrackingTensor("packed")
         yield f"{name}.scale", TrackingTensor("scale")
 
-    task = _ExportTask(task, transform)
+    task = _with_export_hook(task, transform)
 
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
     monkeypatch.setattr(
@@ -242,7 +234,7 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
         yield f"{name}.scale", torch.ones(2, 1)
         yield f"{name}.scale_2", torch.ones(2)
 
-    tasks = [_ExportTask(task, transform) for task in tasks]
+    tasks = [_with_export_hook(task, transform) for task in tasks]
 
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch, num_moe_experts=2)
 
@@ -268,123 +260,6 @@ def test_stream_weights_megatron_to_hf_transforms_grouped_tensor_once_after_accu
         "hf.grouped.scale",
         "hf.grouped.scale_2",
     ]
-
-
-def test_accumulate_grouped_export_uses_mapping_ep_group(monkeypatch):
-    bridge = DummyBridge()
-    ep_group = object()
-    mapping = SimpleNamespace(ep_group=ep_group, is_grouped_export=True)
-    model_config = SimpleNamespace(num_moe_experts=4)
-    grouped_buffers = {}
-
-    monkeypatch.setattr(model_bridge.torch.distributed, "is_initialized", lambda: True)
-    monkeypatch.setattr(
-        model_bridge.torch.distributed,
-        "get_world_size",
-        lambda *, group: 2 if group is ep_group else 1,
-    )
-    monkeypatch.setattr(
-        model_bridge.parallel_state,
-        "get_expert_model_parallel_world_size",
-        lambda: 1,
-    )
-
-    first = bridge._accumulate_grouped_export(
-        SimpleNamespace(
-            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight0",
-            mapping=mapping,
-        ),
-        {"hf.grouped": torch.tensor([[[1.0]], [[3.0]]])},
-        model_config,
-        grouped_buffers,
-        {},
-    )
-    second = bridge._accumulate_grouped_export(
-        SimpleNamespace(
-            param_name="decoder.layers.0.mlp.experts.linear_fc2.weight1",
-            mapping=mapping,
-        ),
-        {"hf.grouped": torch.tensor([[[2.0]], [[4.0]]])},
-        model_config,
-        grouped_buffers,
-        {},
-    )
-
-    assert first is None
-    assert second is not None
-    torch.testing.assert_close(
-        second["hf.grouped"],
-        torch.tensor([[[1.0]], [[2.0]], [[3.0]], [[4.0]]]),
-    )
-
-
-def test_stream_weights_megatron_to_hf_batches_local_experts_before_modelopt_export(monkeypatch):
-    bridge = DummyBridge()
-    ep_group = object()
-
-    class PreEPGroupedMapping:
-        is_grouped_export = True
-        is_modelopt_pre_ep_export = True
-        group_key = "hf.grouped"
-
-        def __init__(self):
-            self.ep_group = ep_group
-
-        def megatron_to_hf(self, weight, module):
-            return {self.group_key: weight}
-
-    tasks = [
-        WeightConversionTask(
-            param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
-            global_param_name=f"decoder.layers.0.mlp.experts.linear_fc2.weight{expert}",
-            mapping=PreEPGroupedMapping(),
-            pp_rank=0,
-            vp_stage=0,
-            megatron_module=None,
-            param_weight=torch.full((1, 2), float(expert + 1)),
-        )
-        for expert in (2, 3)
-    ]
-    export_calls = []
-
-    def export_local_batch(name, tensor):
-        export_calls.append((name, tensor.clone()))
-        yield f"{name}.packed", tensor.to(torch.uint8)
-
-    tasks = [_ExportTask(task, export_local_batch) for task in tasks]
-    _patch_stream_weights_megatron_to_hf_basics(
-        monkeypatch,
-        num_moe_experts=4,
-        expert_parallel_size=2,
-    )
-    monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.torch.distributed.is_initialized",
-        lambda: True,
-    )
-    monkeypatch.setattr(
-        "megatron.bridge.models.conversion.model_bridge.torch.distributed.get_world_size",
-        lambda *, group: 2 if group is ep_group else 1,
-    )
-
-    weights = list(
-        bridge.stream_weights_megatron_to_hf(
-            [Mock()],
-            SimpleNamespace(),
-            cpu=True,
-            show_progress=False,
-            conversion_tasks=tasks,
-            merge_adapter_weights=False,
-        )
-    )
-
-    assert len(export_calls) == 1
-    assert export_calls[0][0] == "hf.grouped"
-    torch.testing.assert_close(
-        export_calls[0][1],
-        torch.tensor([[[3.0, 3.0]], [[4.0, 4.0]]]),
-    )
-    assert export_calls[0][1].shape == (2, 1, 2)
-    assert [weight.param_name for weight in weights] == ["hf.grouped.packed"]
 
 
 def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(monkeypatch):
@@ -426,7 +301,7 @@ def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(mon
         events.append(("finalize", tensor.label))
         yield name, tensor
 
-    task = _ExportTask(task, export_weight, finalize_weight)
+    task = _with_export_hook(task, export_weight, finalize_weight)
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
     monkeypatch.setattr(
         DummyBridge,
@@ -479,7 +354,7 @@ def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(mon
         yield f"{name}.packed", tensor
         yield f"{name}.scale", torch.ones(1)
 
-    task = _ExportTask(task, transform)
+    task = _with_export_hook(task, transform)
 
     _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
     monkeypatch.setattr(

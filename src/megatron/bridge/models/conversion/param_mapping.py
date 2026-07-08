@@ -139,22 +139,21 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         would compute the wrong shard sizes. ``MegatronModelBridge`` calls this
         right before running tasks to install the user-supplied groups.
         """
+        if pg_collection is None:
+            return
         self._pg_collection = pg_collection
-        if pg_collection is not None:
-            for attr, field in (
-                ("pp_group", "pp"),
-                ("ep_group", "ep"),
-                ("_tp_group", "tp"),
-                ("_etp_group", "expt_tp"),
-            ):
-                group = getattr(pg_collection, field, None)
-                if group is not None:
-                    setattr(self, attr, group)
-        for child in self._process_group_children():
-            child.set_process_groups_from_pg_collection(pg_collection)
-
-    def _process_group_children(self) -> tuple["MegatronParamMapping", ...]:
-        return ()
+        for attr, field in (
+            ("pp_group", "pp"),
+            ("ep_group", "ep"),
+            ("_tp_group", "tp"),
+            ("_etp_group", "expt_tp"),
+        ):
+            group = getattr(pg_collection, field, None)
+            if group is not None:
+                setattr(self, attr, group)
+        for child in vars(self).values():
+            if isinstance(child, MegatronParamMapping):
+                child.set_process_groups_from_pg_collection(pg_collection)
 
     @property
     def tp_group(self):
@@ -888,11 +887,6 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         return tensor
 
 
-class _TPMappingProcessGroupMixin:
-    def _process_group_children(self) -> tuple[MegatronParamMapping, ...]:
-        return (self._tp_mapping,)
-
-
 class DirectMapping(MegatronParamMapping[torch.Tensor]):
     """Direct 1:1 weight mapping with no transformation or tensor parallelism."""
 
@@ -1032,8 +1026,6 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
@@ -1052,7 +1044,7 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=0)
 
-        if self.is_expert and not self.is_adapter and gather_from_ep:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -1197,8 +1189,6 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Gather from all TP ranks and concatenate."""
         # Handle cross-PP broadcast
@@ -1217,7 +1207,7 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
             gathered = self.gather_from_tp_ranks(megatron_weights)
             full_weights = torch.cat(gathered, dim=1)
 
-        if self.is_expert and not self.is_adapter and gather_from_ep:
+        if self.is_expert and not self.is_adapter:
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
@@ -1315,8 +1305,6 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Return weight only from rank 0 to avoid duplication."""
         # Handle cross-PP broadcast
@@ -1328,7 +1316,7 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
 
-        if self.is_expert and gather_from_ep:
+        if self.is_expert:
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): megatron_weights}
@@ -1491,9 +1479,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             mapping.set_process_groups_from_pg_collection(self._pg_collection)
         return mapping
 
-    def _process_group_children(self) -> tuple[MegatronParamMapping, ...]:
-        return () if self._mapping is None else (self._mapping,)
-
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
         if is_modelopt_dynamic_module(module):
@@ -1580,8 +1565,6 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Delegate to appropriate mapping based on module type."""
         # Need to determine type even if module is None (different PP rank)
@@ -1607,11 +1590,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
 
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
-        result = self._mapping.megatron_to_hf(
-            megatron_weights,
-            megatron_module,
-            gather_from_ep=gather_from_ep,
-        )
+        result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
 
         # Apply reverse permutation if specified (after gathering)
         if self.permute_dims is not None and result:
@@ -1667,7 +1646,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims)
 
 
-class QKVMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     Mapping for interleaved Query/Key/Value attention projection weights.
 
@@ -1883,7 +1862,7 @@ class QKVMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, tor
         )
 
 
-class QKVGMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """QKV mapping that also fuses a per-head scalar gate (``g_proj``).
 
     Megatron format follows the attention module selected by the provider. For
@@ -1963,7 +1942,7 @@ class QKVGMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, to
         )
 
 
-class KVMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class KVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     Mapping for interleaved Key/Value projection weights.
 
@@ -2047,7 +2026,7 @@ class KVMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torc
         )
 
 
-class MambaInProjMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class MambaInProjMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """Mapping for Mamba input projection weights that handles z, x, B, C, dt components.
 
     Converts between HuggingFace's concatenated in_proj format and Megatron's
@@ -2153,7 +2132,7 @@ class MambaInProjMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[
         return {self.hf_param: torch.cat(full_weights, dim=0)}
 
 
-class ChunkedMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class ChunkedMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """Abstract class to handle chunked weights mapping, e.g.,
     GDN Conv1d that handles q, k, v components, Mamba Conv1d that handles x, B, C components.
     """
@@ -2286,7 +2265,7 @@ class MambaConv1dMapping(ChunkedMapping):
         return [x_shard_idx, B_shard_idx, C_shard_idx]
 
 
-class GDNLinearMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class GDNLinearMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     TODO: Add comments
     """
@@ -2368,7 +2347,7 @@ class GDNLinearMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[st
         )
 
 
-class GDNLinearMappingSeparate(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class GDNLinearMappingSeparate(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """GDN input projection mapping for models with separate QKV, Z, B, A HF weights.
 
     Unlike :class:`GDNLinearMapping` which expects two fused tensors (``in_proj_qkvz``
@@ -2471,7 +2450,7 @@ class GDNLinearMappingSeparate(_TPMappingProcessGroupMixin, MegatronParamMapping
         )
 
 
-class ConcatenatedQKVMapping(_TPMappingProcessGroupMixin, MegatronParamMapping[Dict[str, torch.Tensor]]):
+class ConcatenatedQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
     """
     Mapping for interleaved Query/Key/Value attention projection weights.
 
@@ -2697,8 +2676,6 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
         """Gather concatenated shards and split into gate and up."""
         # Handle cross-PP broadcast first
@@ -2737,7 +2714,7 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             gate = torch.cat(gate_parts, dim=0)
             up = torch.cat(up_parts, dim=0)
 
-        if self.is_expert and gather_from_ep:
+        if self.is_expert:
             gathered_gate_weights_dict = self.gather_from_ep_ranks(gate, megatron_module, self.hf_param["gate"])
             gathered_up_weights_dict = self.gather_from_ep_ranks(up, megatron_module, self.hf_param["up"])
             return {**gathered_gate_weights_dict, **gathered_up_weights_dict}
@@ -3003,9 +2980,6 @@ class FusedGatedExpertMapping(AutoMapping):
             up=f"{self.hf_param}.up",
         )
 
-    def _process_group_children(self) -> tuple[MegatronParamMapping, ...]:
-        return (*super()._process_group_children(), self._gated_mapping)
-
     @property
     def group_key(self) -> str:
         """Tasks sharing the same group_key are merged during export."""
@@ -3045,14 +3019,8 @@ class FusedGatedExpertMapping(AutoMapping):
         self,
         megatron_weights: Optional[torch.Tensor],
         megatron_module: Optional[nn.Module],
-        *,
-        gather_from_ep: bool = True,
     ) -> Dict[str, torch.Tensor]:
-        converted = self._gated_mapping.megatron_to_hf(
-            megatron_weights,
-            megatron_module,
-            gather_from_ep=gather_from_ep,
-        )
+        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
         if not converted:
             return {}
 
@@ -3071,45 +3039,6 @@ class FusedGatedExpertMapping(AutoMapping):
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
         return type(self)(resolved_megatron_param, resolved_hf_param, self.permute_dims, self.transpose_on_export)
-
-
-class _ModelOptFusedExpertMapping(FusedExpertMapping):
-    """Private fused-expert mapping that leaves the expert dimension local.
-
-    ModelOpt packs the resulting local 3-D batch before the export task's
-    finalizer performs the EP all-gather. This avoids communicating BF16 expert
-    tensors merely to quantize them independently on every EP rank.
-    """
-
-    is_modelopt_pre_ep_export = True
-
-    def megatron_to_hf(
-        self,
-        megatron_weights: Optional[torch.Tensor],
-        megatron_module: Optional[nn.Module],
-    ) -> Dict[str, torch.Tensor]:
-        return super().megatron_to_hf(
-            megatron_weights,
-            megatron_module,
-            gather_from_ep=False,
-        )
-
-
-class _ModelOptFusedGatedExpertMapping(FusedGatedExpertMapping):
-    """Private fused gate/up mapping that leaves the expert dimension local."""
-
-    is_modelopt_pre_ep_export = True
-
-    def megatron_to_hf(
-        self,
-        megatron_weights: Optional[torch.Tensor],
-        megatron_module: Optional[nn.Module],
-    ) -> Dict[str, torch.Tensor]:
-        return super().megatron_to_hf(
-            megatron_weights,
-            megatron_module,
-            gather_from_ep=False,
-        )
 
 
 def merge_qkv_biases(config: TransformerConfig, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
