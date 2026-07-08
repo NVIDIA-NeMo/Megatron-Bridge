@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -44,16 +42,18 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
     padded = torch.tensor([0, 8, 16], dtype=torch.int32)
     seen = {}
 
-    class FakeTransformerEngineTorch:
-        @staticmethod
-        def thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank):
-            seen["cu_seqlens"] = cu_seqlens
-            seen["total_tokens"] = total_tokens
-            seen["cp_size"] = cp_size
-            seen["cp_rank"] = cp_rank
-            return torch.tensor([0, 1, 14, 15], dtype=torch.int64)
+    cp_group = object()
 
-    monkeypatch.setitem(sys.modules, "transformer_engine_torch", FakeTransformerEngineTorch)
+    def fake_get_batch_on_this_cp_rank(batch, *, is_hybrid_cp, cp_group):
+        seen["batch"] = batch
+        seen["is_hybrid_cp"] = is_hybrid_cp
+        seen["cp_group"] = cp_group
+        return {**batch, "tokens": torch.tensor([[0, 1, 14, 15]], dtype=torch.int64)}
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.utils.packed_seq_utils.get_batch_on_this_cp_rank",
+        fake_get_batch_on_this_cp_rank,
+    )
 
     packed_seq_params = PackedSeqParams(
         qkv_format="thd",
@@ -69,12 +69,13 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
         cp_size=4,
         cp_rank=0,
         device=torch.device("cpu"),
+        cp_group=cp_group,
     )
 
-    assert torch.equal(seen["cu_seqlens"], padded)
-    assert seen["total_tokens"] == 16
-    assert seen["cp_size"] == 4
-    assert seen["cp_rank"] == 0
+    assert torch.equal(seen["batch"]["cu_seqlens"], padded.unsqueeze(0))
+    assert seen["batch"]["tokens"].shape == (1, 16)
+    assert seen["is_hybrid_cp"] is False
+    assert seen["cp_group"] is cp_group
     assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
 
 
