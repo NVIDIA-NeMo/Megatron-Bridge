@@ -184,6 +184,25 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
 
     # MoE / FP8
     num_moe_experts: Optional[int] = None
+    num_moe_experts_per_layer: Optional[list[int]] = None
+    """Explicit per-layer expert layout for heterogeneous MoE models.
+
+    ``None`` (the default) means the model is homogeneous and every MoE layer
+    uses the scalar :attr:`num_moe_experts`. When set, it must be a list of
+    length ``num_layers`` giving the *global* number of routed experts for each
+    decoder layer, indexed by global layer number; use ``0`` for dense (non-MoE)
+    layers, and every non-zero entry must be divisible by the expert-parallel
+    size.
+
+    This is the authoritative, config-level contract for expert layout: it is
+    the layout the model is built from and the layout checkpoint conversion
+    (HF <-> Megatron) uses to renumber experts across expert-parallel ranks.
+    Conversion therefore never inspects an instantiated module to recover
+    per-layer expert counts, keeping name mapping decoupled from runtime layout
+    (PP/VPP, MTP, custom MoE wrappers) and from whether a live model exists.
+    Multi-token-prediction layers (``mtp.layers.*``) are not decoder layers and
+    are not covered by this list; they follow the scalar :attr:`num_moe_experts`.
+    """
     moe_grouped_gemm: bool = False
     qk_layernorm: bool = False
     fp8: Optional[str] = None
