@@ -6,6 +6,7 @@ import yaml
 from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.conversion.transformers_version import is_transformers_min_version
 from megatron.bridge.models.megatron_mimo.conversion.mimo_model_io import _clear_derived_spec_fields
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
@@ -14,13 +15,15 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.instantiate_utils import instantiate
 from megatron.bridge.utils.yaml_utils import safe_yaml_representers
 
 
-pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
+pytestmark = pytest.mark.skipif(
+    not is_transformers_min_version("5.2.0"), reason="transformers does not have qwen3_5 support"
+)
 
 
 def _make_language_provider(**overrides) -> Qwen35VLModelProvider:

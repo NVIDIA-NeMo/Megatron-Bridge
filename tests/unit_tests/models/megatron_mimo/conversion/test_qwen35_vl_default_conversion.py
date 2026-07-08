@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from megatron.core.transformer.spec_utils import ModuleSpec
 
+from megatron.bridge.models.conversion.transformers_version import is_transformers_min_version
 from megatron.bridge.models.megatron_mimo.conversion import (
     MIMOComponent,
     get_mimo_conversion_spec,
@@ -32,10 +33,12 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider
 
 
-pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
+pytestmark = pytest.mark.skipif(
+    not is_transformers_min_version("5.2.0"), reason="transformers does not have qwen3_5 support"
+)
 
 
 def _make_parallelism_config() -> MegatronMIMOParallelismConfig:

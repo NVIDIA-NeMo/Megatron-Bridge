@@ -1,7 +1,6 @@
 ---
 name: adding-model-support
-description: Guide for adding support for new LLM or VLM models in Megatron-Bridge. Covers bridge, provider, recipe, tests, docs, and examples.
-when_to_use: User asks to add, onboard, or integrate a new model family; 'add Qwen4 support', 'onboard Llama 5', 'create a bridge for X', 'write a recipe for Y'.
+description: Guide for adding, onboarding, or integrating new LLM or VLM model families in Megatron-Bridge, including bridges, providers, recipes, tests, docs, and examples.
 ---
 
 # Adding New Model Support in Megatron-Bridge
@@ -81,6 +80,38 @@ Also add or update focused tests when touching export/import quantization paths;
 `tests/unit_tests/models/test_fp8_param_export.py` for current FP8 export coverage.
 
 ## Phase 2: Bridge Support
+
+### Declare Transformers compatibility
+
+For every new bridge, determine the earliest verified upstream Transformers release that provides
+the required model APIs. Test that boundary and the preceding release; do not copy the current
+project pin or guess a minimum from the model publication date.
+
+Register architectures that may be absent at the package floor by string and
+attach the verified compatibility contract:
+
+```python
+@MegatronModelBridge.register_bridge(
+    source="NewModelForCausalLM",
+    target=GPTModel,
+    model_type="new_model",
+    min_transformers_version="5.8.0",
+    required_transformers_symbols=("transformers.NewModelConfig", "transformers.NewModelForCausalLM"),
+)
+class NewModelBridge(MegatronModelBridge):
+    ...
+```
+- `min_transformers_version` is the earliest verified release that can support the bridge. Do not
+  leave it `None` for newly added model support.
+- `required_transformers_symbols` lists exact dotted config, model, processor, or internal module
+  attributes the bridge uses. Add it for newly introduced or version-sensitive APIs so vendor,
+  development, and incomplete builds fail with an actionable Bridge error instead of a later import error.
+- Required symbols need an explicit minimum. The version check runs first; the
+  symbols are resolved lazily only after that bridge is selected.
+- Keep version-sensitive Transformers imports out of module scope. Import them
+  inside a guarded provider/load/export path after bridge selection.
+- Do not add native Transformers symbols for `trust_remote_code` classes that
+  exist only in a model repository; validate those through the remote-code path.
 
 ### File structure
 
@@ -351,6 +382,16 @@ tests/functional_tests/test_groups/models/<model>/
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
 └── test_<model>_provider.py    # compare_provider_configs (optional)
 ```
+
+Add compatibility boundary coverage for every new registration:
+
+- At the declared minimum, package/registry import and bridge selection pass.
+- On the immediately preceding release, package/registry import still passes,
+  while selecting the incompatible bridge raises `TransformersVersionError`
+  before provider construction or model loading.
+- Assert required-symbol failures separately from old-version failures.
+- Run version cases in fresh subprocesses or immutable environments so
+  Transformers lazy modules and Bridge registration state cannot leak.
 
 For detailed test patterns, see @skills/adding-model-support/tests-and-examples.md.
 

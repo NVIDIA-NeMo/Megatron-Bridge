@@ -62,6 +62,7 @@ from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationB
 from megatron.bridge.models.conversion.transformers_compat import (
     rope_theta_from_hf,
 )
+from megatron.bridge.models.conversion.transformers_version import require_transformers_version
 from megatron.bridge.models.conversion.utils import (
     extract_sort_key,
     get_module_and_param_from_name,
@@ -81,6 +82,9 @@ HFPreTrained = TypeVar("HFPreTrained")
 ModelProviderTarget = TypeVar("ModelProviderTarget", bound=ModelProviderMixin)
 MegatronModel = TypeVar("MegatronModel", bound=MegatronModule)
 _BridgeImplClass = TypeVar("_BridgeImplClass", bound="MegatronModelBridge")
+
+_BRIDGE_CLASSES_BY_SOURCE_NAME: dict[str, type["MegatronModelBridge"]] = {}
+_BRIDGE_CLASSES_BY_MODEL_TYPE: dict[str, type["MegatronModelBridge"]] = {}
 
 
 class MegatronWeightTuple(NamedTuple):
@@ -610,6 +614,26 @@ class MegatronModelBridge(
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
     MODEL_TYPE: str | None = None
+    MIN_TRANSFORMERS_VERSION: str | None = None
+    REQUIRED_TRANSFORMERS_SYMBOLS: tuple[str, ...] = ()
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "MegatronModelBridge":
+        """Create a bridge only after validating its Transformers policy."""
+        instance = super().__new__(cls)
+        cls.require_transformers_compatibility(action="use this model bridge")
+        return instance
+
+    @classmethod
+    def require_transformers_compatibility(cls, *, action: str | None = None) -> None:
+        """Validate the explicit Transformers policy attached to this bridge."""
+        if cls.MIN_TRANSFORMERS_VERSION is None:
+            return
+        require_transformers_version(
+            cls.SOURCE_NAME or cls.__name__,
+            cls.MIN_TRANSFORMERS_VERSION,
+            symbols=cls.REQUIRED_TRANSFORMERS_SYMBOLS,
+            action=action,
+        )
 
     def provider_bridge(self, hf_pretrained: HFPreTrained) -> ModelProviderTarget:
         """Create a Megatron model provider from HuggingFace configuration.
@@ -1949,6 +1973,8 @@ class MegatronModelBridge(
         target: Type[MegatronModel],
         provider: Type[ModelProviderTarget] | None = None,
         model_type: str | None = None,
+        min_transformers_version: str | None = None,
+        required_transformers_symbols: tuple[str, ...] = (),
     ) -> Callable[[_BridgeImplClass], _BridgeImplClass]:
         """Class decorator for registering bridge implementations.
 
@@ -1967,6 +1993,11 @@ class MegatronModelBridge(
                 Defaults to GPTModelProvider if not specified.
             model_type (str, optional): HuggingFace model_type string (e.g., "llama").
                 Used for megatron_to_hf_config conversion.
+            min_transformers_version: Minimum Transformers version required to
+                select or use this bridge. ``None`` means the policy is not yet
+                researched and is not enforced.
+            required_transformers_symbols: Dotted Transformers symbols that
+                must be available after the minimum version check passes.
 
         Returns:
             Callable[[_BridgeImplClass], _BridgeImplClass]: Decorator function
@@ -2006,7 +2037,14 @@ class MegatronModelBridge(
             class is defined.
         """
 
-        return create_bridge_decorator(source=source, target=target, provider=provider, model_type=model_type)
+        return create_bridge_decorator(
+            source=source,
+            target=target,
+            provider=provider,
+            model_type=model_type,
+            min_transformers_version=min_transformers_version,
+            required_transformers_symbols=required_transformers_symbols,
+        )
 
 
 # Core dispatch functions
@@ -2167,6 +2205,8 @@ def create_bridge_decorator(
     target: Type["MegatronModule"],
     provider: Type["ModelProviderMixin"] | None = None,
     model_type: str | None = None,
+    min_transformers_version: str | None = None,
+    required_transformers_symbols: tuple[str, ...] = (),
 ) -> Callable[[Type["MegatronModelBridge"]], Type["MegatronModelBridge"]]:
     """Create a decorator for registering bridge implementations.
 
@@ -2176,21 +2216,45 @@ def create_bridge_decorator(
         target: Megatron model class
         provider: Provider class to use for this model (e.g., DeepSeekModelProvider)
         model_type: HuggingFace model_type string (e.g., "llama", "deepseek_v3")
+        min_transformers_version: Minimum Transformers version required by the bridge.
+        required_transformers_symbols: Dotted Transformers symbols required by the bridge.
 
     Returns:
         Decorator function that registers the bridge implementation
     """
 
     def decorator(bridge_class: Type["MegatronModelBridge"]) -> Type["MegatronModelBridge"]:
+        if required_transformers_symbols and min_transformers_version is None:
+            raise ValueError("required_transformers_symbols requires min_transformers_version")
         # Store source name for HF config generation
         bridge_class.SOURCE_NAME = source if isinstance(source, str) else source.__name__
+        bridge_class.MIN_TRANSFORMERS_VERSION = min_transformers_version
+        bridge_class.REQUIRED_TRANSFORMERS_SYMBOLS = tuple(required_transformers_symbols)
         # Store model_type for HF config generation
         if model_type is not None:
             bridge_class.MODEL_TYPE = model_type
         # Set the provider class on the bridge
         if provider is not None:
             bridge_class.PROVIDER_CLASS = provider
+        _BRIDGE_CLASSES_BY_SOURCE_NAME[bridge_class.SOURCE_NAME] = bridge_class
+        if model_type is not None:
+            _BRIDGE_CLASSES_BY_MODEL_TYPE[model_type] = bridge_class
         register_bridge_implementation(source=source, target=target, bridge_class=bridge_class)
         return bridge_class
 
     return decorator
+
+
+def get_registered_bridge_class(
+    *,
+    source_name: str | None = None,
+    model_type: str | None = None,
+) -> type[MegatronModelBridge] | None:
+    """Return a registered bridge class by architecture name or model type."""
+    if source_name is not None:
+        bridge_class = _BRIDGE_CLASSES_BY_SOURCE_NAME.get(source_name)
+        if bridge_class is not None:
+            return bridge_class
+    if model_type is not None:
+        return _BRIDGE_CLASSES_BY_MODEL_TYPE.get(model_type)
+    return None

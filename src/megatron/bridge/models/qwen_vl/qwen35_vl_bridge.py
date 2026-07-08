@@ -139,6 +139,10 @@ def _get_vision_mappings():
     target=Qwen3VLModel,
     provider=Qwen35VLMoEModelProvider,
     model_type="qwen3_5_moe",
+    min_transformers_version="5.2.0",
+    required_transformers_symbols=(
+        "transformers.models.qwen3_5_moe.configuration_qwen3_5_moe.Qwen3_5MoeVisionConfig",
+    ),
 )
 class Qwen35VLMoEBridge(MegatronModelBridge):
     """
@@ -269,6 +273,8 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
     target=Qwen3VLModel,
     provider=Qwen35VLModelProvider,
     model_type="qwen3_5",
+    min_transformers_version="5.2.0",
+    required_transformers_symbols=("transformers.models.qwen3_5.configuration_qwen3_5.Qwen3_5VisionConfig",),
 )
 class Qwen35VLBridge(MegatronModelBridge):
     """

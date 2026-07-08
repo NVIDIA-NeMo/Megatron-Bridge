@@ -27,6 +27,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
     RowParallelMapping,
 )
+from megatron.bridge.models.conversion.transformers_version import (
+    TransformersVersionError,
+    get_transformers_version,
+    is_transformers_min_version,
+    require_transformers_version,
+)
 from megatron.bridge.models.conversion.utils import weights_verification_table
 
 
@@ -44,4 +50,8 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "weights_verification_table",
+    "TransformersVersionError",
+    "get_transformers_version",
+    "is_transformers_min_version",
+    "require_transformers_version",
 ]

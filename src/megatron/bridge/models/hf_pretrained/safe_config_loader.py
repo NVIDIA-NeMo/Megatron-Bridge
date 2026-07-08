@@ -22,6 +22,7 @@ multiple threads try to download and cache the same model simultaneously.
 
 import hashlib
 import os
+import re
 import time
 from pathlib import Path
 from typing import Union
@@ -31,6 +32,39 @@ from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 
 import megatron.bridge.models.conversion.transformers_compat  # noqa: F401  # patches removed HF utils
+
+
+_UNRECOGNIZED_MODEL_TYPE_PATTERNS = (
+    re.compile(r"model type [`'\"](?P<model_type>[^`'\"]+)[`'\"]", re.IGNORECASE),
+    re.compile(r"model_type [`'\"](?P<model_type>[^`'\"]+)[`'\"]", re.IGNORECASE),
+)
+
+
+def _raise_for_known_transformers_architecture_error(error: Exception) -> None:
+    """Translate a known guarded model-type error into Bridge compatibility guidance."""
+    error_message = str(error)
+    normalized_message = error_message.lower()
+    if not (
+        "does not recognize this architecture" in normalized_message or "unrecognized model type" in normalized_message
+    ):
+        return
+
+    model_type = None
+    for pattern in _UNRECOGNIZED_MODEL_TYPE_PATTERNS:
+        match = pattern.search(error_message)
+        if match is not None:
+            model_type = match.group("model_type")
+            break
+    if model_type is None:
+        return
+
+    # Import lazily to avoid a safe_config_loader -> model_bridge import cycle.
+    from megatron.bridge.models.conversion.model_bridge import get_registered_bridge_class
+
+    bridge_class = get_registered_bridge_class(model_type=model_type)
+    if bridge_class is None or bridge_class.MIN_TRANSFORMERS_VERSION is None:
+        return
+    bridge_class.require_transformers_compatibility(action="load this model configuration")
 
 
 def safe_load_config_with_retry(
@@ -101,6 +135,7 @@ def safe_load_config_with_retry(
                 return AutoConfig.from_pretrained(path, trust_remote_code=trust_remote_code, **kwargs)
 
         except Exception as e:
+            _raise_for_known_transformers_architecture_error(e)
             last_exception = e
 
             # Don't retry on certain types of errors

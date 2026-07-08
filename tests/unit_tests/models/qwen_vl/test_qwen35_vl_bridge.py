@@ -20,15 +20,13 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+from megatron.bridge.models.conversion.transformers_version import is_transformers_min_version
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
-from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
-    _TRANSFORMERS_HAS_QWEN3_5,
-    _TRANSFORMERS_HAS_QWEN3_5_MOE,
-    Qwen35VLModelProvider,
-    Qwen35VLMoEModelProvider,
-)
+from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider, Qwen35VLMoEModelProvider
 
+
+_TRANSFORMERS_HAS_QWEN3_5 = is_transformers_min_version("5.2.0")
 
 pytestmark = pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5 support")
 
@@ -283,14 +281,14 @@ class TestQwen35VLBridgeMappingRegistry:
 # =====================================================================
 
 
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEBridgeInitialization:
     def test_bridge_initialization(self):
         bridge = Qwen35VLMoEBridge()
         assert isinstance(bridge, Qwen35VLMoEBridge)
 
 
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEBridgeProviderBridge:
     @pytest.fixture
     def bridge(self):
@@ -341,7 +339,7 @@ class TestQwen35VLMoEBridgeProviderBridge:
         assert provider.image_token_id == 248056
 
 
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEBridgeMappingRegistry:
     @pytest.fixture
     def bridge(self):
@@ -381,7 +379,7 @@ class TestQwen35VLMoEBridgeMappingRegistry:
 
 
 @pytest.mark.unit
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
+@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5, reason="transformers does not have qwen3_5_moe support")
 class TestQwen35VLMoEBridgeExport:
     def test_maybe_modify_converted_hf_weight_keeps_explicit_mtp_expert_keys(self, monkeypatch):
         """Preserve already-expanded MTP expert keys without extra regrouping."""
