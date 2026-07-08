@@ -44,6 +44,37 @@ def _make_setup_output(module_to_grid_map):
     )
 
 
+def test_configured_data_parallel_size_uses_sample_dp_not_dense_grid_dp():
+    """Scalable data loading uses configured sample DP when ETP is one."""
+    from megatron.bridge.training.train_megatron_mimo import _configured_data_parallel_size
+
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(
+            megatron_mimo_parallelism_config=SimpleNamespace(
+                module_parallelisms={"language": SimpleNamespace(expert_tensor_parallel_size=1, data_parallel_size=4)}
+            )
+        )
+    )
+
+    assert _configured_data_parallel_size(cfg, "language") == 4
+
+
+def test_configured_data_parallel_size_rejects_etp():
+    """ETP cannot be folded into scalable data loading's sample-DP size."""
+    from megatron.bridge.training.train_megatron_mimo import _configured_data_parallel_size
+
+    cfg = SimpleNamespace(
+        model=SimpleNamespace(
+            megatron_mimo_parallelism_config=SimpleNamespace(
+                module_parallelisms={"language": SimpleNamespace(expert_tensor_parallel_size=2, data_parallel_size=4)}
+            )
+        )
+    )
+
+    with pytest.raises(NotImplementedError, match="expert_tensor_parallel_size=1"):
+        _configured_data_parallel_size(cfg, "language")
+
+
 @patch("megatron.bridge.models.megatron_mimo.build_model.dist")
 def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist):
     """_set_per_module_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
@@ -60,7 +91,7 @@ def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mo
     grid.rank_offset = 4
     grid.size = 4
     grid.is_current_rank_in_grid.return_value = True
-    grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+    grid.get_pg.side_effect = lambda dims, view=None: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
 
@@ -92,7 +123,7 @@ def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist):
     grid.rank_offset = 0
     grid.size = 4
     grid.is_current_rank_in_grid.return_value = True
-    grid.get_pg.side_effect = lambda dims: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+    grid.get_pg.side_effect = lambda dims, view=None: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
 
     megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
 

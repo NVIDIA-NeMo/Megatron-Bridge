@@ -41,8 +41,8 @@ dataset = GPTDatasetConfig(
 The CLI-friendly `data_path` field is converted to Megatron Core's `blend` field during config finalization. For weighted multi-dataset training, use either a flattened `data_path` list with weights and prefixes or set `blend`/`blend_per_split` directly.
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --dataset llm-pretrain \
     dataset.data_path=/data/dclm/preprocessed_text_document \
     dataset.seq_length=8192
@@ -81,8 +81,8 @@ dataset = FinetuningDatasetConfig(
 Launch the generic recipe runner with the preloaded local JSONL dataset type:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe llama32_1b_sft_config \
+uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
+    --recipe llama32_1b_sft_1gpu_h100_bf16_config \
     --dataset llm-finetune-preloaded \
     dataset.dataset_root=/data/sft_jsonl \
     dataset.seq_length=4096 \
@@ -114,8 +114,8 @@ If `dataset_root` is omitted, the processed JSONL is cached under the NeMo datas
 The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe llama32_1b_peft_config \
+uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
+    --recipe llama32_1b_peft_1gpu_h100_bf16_config \
     --dataset llm-finetune \
     dataset.dataset_name=gsm8k \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
@@ -128,8 +128,8 @@ VLM recipes usually use a dataset provider instead of `FinetuningDatasetConfig`.
 For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe qwen3_vl_8b_peft_energon_config \
+uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
+    --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config \
     --dataset vlm-energon \
     --step_func qwen3_vl_step \
     dataset.path=/data/vlm_energon \
@@ -143,8 +143,8 @@ For preloaded VLM JSON or JSONL, use records with `messages` or `conversations` 
 ```
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
-    --recipe qwen3_vl_8b_peft_config \
+uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
+    --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
     --dataset vlm-preloaded \
     --step_func qwen3_vl_step \
     dataset.train_data_path=/data/vlm/train.jsonl \

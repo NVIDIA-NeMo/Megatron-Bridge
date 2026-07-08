@@ -57,18 +57,26 @@ if TYPE_CHECKING:
     from megatron.core.process_groups_config import MultiModuleProcessGroupCollection
 
     from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOInfra
+    from megatron.bridge.training.config import ConfigContainer
 
 
 logger = logging.getLogger(__name__)
 
 
-def _grid_dp_size(grid: object) -> int:
-    """Return the static DP dimension from a MegatronMIMO hyper-comm grid."""
-    dim_names = getattr(grid, "dim_names", None)
-    shape = getattr(grid, "shape", None)
-    if dim_names is None or shape is None or "dp" not in dim_names:
-        return 1
-    return int(shape[list(dim_names).index("dp")])
+def _configured_data_parallel_size(cfg: "ConfigContainer", module_name: str) -> int:
+    """Return the module's sample data-parallel size for scalable data loading."""
+    parallelism_config = getattr(cfg.model, "megatron_mimo_parallelism_config", None)
+    if parallelism_config is None or module_name not in parallelism_config.module_parallelisms:
+        raise ValueError(f"Missing MegatronMIMO parallelism config for module {module_name!r}.")
+    module_parallelism = parallelism_config.module_parallelisms[module_name]
+    if module_parallelism.expert_tensor_parallel_size != 1:
+        raise NotImplementedError(
+            "MegatronMIMO scalable_dp currently requires expert_tensor_parallel_size=1 because "
+            "the base grid DP dimension folds ETP into dense data parallelism."
+        )
+    if module_parallelism.data_parallel_size is None:
+        raise ValueError(f"Module {module_name!r} data_parallel_size must be finalized before training.")
+    return int(module_parallelism.data_parallel_size)
 
 
 def train_step_megatron_mimo(
@@ -286,8 +294,7 @@ def train_megatron_mimo(
 
     schedule_micro_batch_size = micro_batch_size
     if bool(getattr(getattr(cfg, "mimo", None), "scalable_dp", False)):
-        active_grid = megatron_mimo_infra.module_to_grid_map.get(active_module_name)
-        active_dp_size = _grid_dp_size(active_grid) if active_grid is not None else 1
+        active_dp_size = _configured_data_parallel_size(cfg, active_module_name)
         if micro_batch_size % active_dp_size != 0:
             raise ValueError(
                 f"scalable_dp requires micro_batch_size ({micro_batch_size}) to be divisible by "

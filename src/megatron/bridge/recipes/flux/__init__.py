@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,5 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Compatibility aliases for legacy FLUX recipe names."""
 
-from megatron.bridge.diffusion.recipes.flux import *  # noqa: F401, F403
+from megatron.bridge.recipes.flux.h100.flux import (
+    flux_12b_pretrain_2gpu_h100_bf16_config as flux_12b_pretrain_config,
+)
+from megatron.bridge.recipes.flux.h100.flux import (
+    flux_12b_sft_2gpu_h100_bf16_config as flux_12b_sft_config,
+)
+
+
+__all__ = [
+    "flux_12b_pretrain_config",
+    "flux_12b_sft_config",
+]

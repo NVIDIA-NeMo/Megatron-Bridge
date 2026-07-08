@@ -26,6 +26,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _qwen_module = importlib.import_module("megatron.bridge.recipes.qwen")
 _QWEN_RECIPE_FUNCS = [
@@ -100,17 +102,20 @@ def _assert_basic_config(cfg):
 def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     # Always patch AutoBridge in qwen3_moe (where base configs actually call it)
     qwen3_moe_mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(qwen3_moe_mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, qwen3_moe_mod, "AutoBridge", _FakeBridge)
     # Also patch in the recipe function's own module if it directly references AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     if hasattr(mod, "AutoBridge"):
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
-    # qwen3_next PEFT is intentionally not implemented
-    if recipe_func.__name__ == "qwen3_next_80b_a3b_peft_config":
+    # qwen3_next PEFT is intentionally not implemented.
+    if recipe_func.__name__ in {
+        "qwen3_next_80b_a3b_peft_config",
+        "qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config",
+    }:
         with pytest.raises(NotImplementedError):
             recipe_func(**overrides)
         return
@@ -178,7 +183,7 @@ def test_qwen3_moe_sft_config(recipe_func: Callable, monkeypatch: pytest.MonkeyP
     """Test that full SFT configurations are correctly applied for Qwen3 MoE models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
 
@@ -194,7 +199,7 @@ def test_qwen3_moe_peft_config(recipe_func: Callable, peft_scheme: str, monkeypa
     """Test that PEFT configurations are correctly applied for Qwen3 MoE models."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
 
@@ -209,7 +214,7 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_peft_config(peft_scheme="lora")
 
@@ -233,7 +238,7 @@ def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_peft_config(peft_scheme="dora")
 
@@ -257,7 +262,7 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_30b_a3b_sft_config()
 
@@ -276,7 +281,7 @@ def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_peft_config(peft_scheme="lora")
 
@@ -304,7 +309,7 @@ def test_qwen3_235b_a22b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_peft_config(peft_scheme="dora")
 
@@ -332,7 +337,7 @@ def test_qwen3_235b_a22b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = qwen3_235b_a22b_sft_config()
 

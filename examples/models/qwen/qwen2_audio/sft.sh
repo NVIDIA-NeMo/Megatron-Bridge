@@ -79,11 +79,11 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
     uv run --no-sync python -m torch.distributed.run --nproc_per_node=${NPROC} scripts/training/run_recipe.py \
         --recipe qwen2_audio_7b_finetune_config \
         --step_func audio_lm_step \
-        --hf_path ${HF_MODEL} \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         checkpoint.save=${WORKSPACE}/exp/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
         checkpoint.save_interval=$SAVE_INTERVAL \
         checkpoint.save_optim=False \
+        dataset.hf_processor_path=$HF_MODEL \
         model.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \

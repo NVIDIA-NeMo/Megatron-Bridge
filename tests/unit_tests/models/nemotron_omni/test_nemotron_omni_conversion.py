@@ -21,7 +21,7 @@ from torch import nn
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
@@ -112,7 +112,7 @@ def test_public_nemotron_omni_architecture_is_registered():
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     hf_config = _mock_omni_hf_config()
-    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
 
     provider = NemotronOmniBridge().provider_bridge(hf_pretrained)

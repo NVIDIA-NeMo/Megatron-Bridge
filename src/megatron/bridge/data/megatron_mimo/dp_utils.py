@@ -209,9 +209,21 @@ def get_megatron_mimo_sampling_info(
 
     needs_data = _needs_data_for_module(my_grid, my_module)
     if scalable_dp:
+        module_parallelism = megatron_mimo_cfg.module_parallelisms[my_module]
+        if module_parallelism.expert_tensor_parallel_size != 1:
+            raise NotImplementedError(
+                "MegatronMIMO scalable_dp currently requires expert_tensor_parallel_size=1. "
+                "The base HyperCommGrid DP group folds expert tensor parallelism into dense DP, "
+                "so it cannot be used as a sample-sharding group when ETP > 1."
+            )
         # Disjoint reads: each rank's sampler emits only its module-local DP shard. The
         # reorder buffer rebalances across the module DP group by per-sample all-to-all.
         dp_pg = my_grid.get_pg(["dp"])
+        if dp_pg.size() != module_parallelism.data_parallel_size:
+            raise RuntimeError(
+                f"MegatronMIMO scalable_dp expected module {my_module!r} data-parallel size "
+                f"{module_parallelism.data_parallel_size}, but its base DP group has size {dp_pg.size()}."
+            )
         return dp_pg.rank(), dp_pg.size(), needs_data
     # All data-loading ranks use the same sampler settings so they load identical global
     # micro-batches; module-local DP slicing happens later in forward_step.

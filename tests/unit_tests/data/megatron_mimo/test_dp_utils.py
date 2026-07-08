@@ -157,6 +157,36 @@ def test_get_megatron_mimo_sampling_info_llm_intermediate_pp(monkeypatch):
     assert needs_data is True
 
 
+def test_get_megatron_mimo_sampling_info_scalable_dp_uses_configured_dp(monkeypatch):
+    """Scalable sampling uses the configured sample-DP group when ETP is one."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    monkeypatch.setattr(dist, "get_rank", lambda: 5)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=2, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=1, dp_size=4, pp_rank=1, pp_size=3),
+    }
+
+    sampler_dp_rank, sampler_dp_size, needs_data = get_megatron_mimo_sampling_info(
+        megatron_mimo_cfg, grids, scalable_dp=True
+    )
+
+    assert (sampler_dp_rank, sampler_dp_size, needs_data) == (1, 4, True)
+
+
+def test_get_megatron_mimo_sampling_info_scalable_dp_rejects_etp(monkeypatch):
+    """ETP ranks must not be mistaken for independent sample-DP replicas."""
+    megatron_mimo_cfg = _make_megatron_mimo_cfg()
+    megatron_mimo_cfg.module_parallelisms["vision"].expert_tensor_parallel_size = 2
+    monkeypatch.setattr(dist, "get_rank", lambda: 0)
+    grids = {
+        "vision": FakeGrid(0, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+        "language": FakeGrid(4, 4, dp_rank=0, dp_size=4, pp_rank=0, pp_size=1),
+    }
+
+    with pytest.raises(NotImplementedError, match="expert_tensor_parallel_size=1"):
+        get_megatron_mimo_sampling_info(megatron_mimo_cfg, grids, scalable_dp=True)
+
+
 def test_get_megatron_mimo_dp_info_non_participating_rank(monkeypatch):
     """Test heterogeneous mode, rank not in any module."""
     megatron_mimo_cfg = _make_megatron_mimo_cfg()

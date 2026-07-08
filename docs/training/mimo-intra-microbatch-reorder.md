@@ -64,6 +64,7 @@ no cross-module DP straggler to remove.
 | In-batch packing + `PP > 1` | Supported |
 | Non-`single` sampler (cyclic/batch) | Guarded with `NotImplementedError` — the exchange assumes contiguous sharding; implementable later by all-gathering each rank's real global indices |
 | `TP > 1` | Untested |
+| `ETP > 1` with `scalable_dp` | Guarded with `NotImplementedError` — current main's base grid DP group folds ETP into dense DP and is not a valid sample-sharding group |
 | `CP > 1` | Blocked upstream (`bridge_communicator` asserts language-grid CP size 1) |
 
 The on-device exchange needs module `dp ≥ 2` (≥ 4 ranks non-colocated), which exceeds the
