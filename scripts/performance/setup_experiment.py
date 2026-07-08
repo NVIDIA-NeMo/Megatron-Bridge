@@ -434,6 +434,7 @@ def main(
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
+    load_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
     additional_slurm_params: Optional[Dict[str, Any]],
@@ -556,6 +557,13 @@ def main(
             if save_dir_mount not in custom_mounts:
                 custom_mounts.append(save_dir_mount)
                 logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
+
+    if load_dir:
+        load_dir_path = Path(load_dir).resolve()
+        load_dir_mount = f"{load_dir_path}:{load_dir_path}"
+        if load_dir_mount not in custom_mounts:
+            custom_mounts.append(load_dir_mount)
+            logger.info(f"Added checkpoint load directory mount for container: {load_dir_mount}")
 
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
@@ -989,6 +997,7 @@ if __name__ == "__main__":
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
+        load_dir=args.load_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
         additional_slurm_params=args.additional_slurm_params,
