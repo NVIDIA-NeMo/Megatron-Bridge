@@ -180,7 +180,9 @@ class TestDistillationProvider:
         # Avoid ProjectionLayer being created here
         mock_student_model.config.hidden_size = mock_teacher_model.config.hidden_size = 4096
         mock_kd_model = Mock()
-        # Ensure that .parameters() callable returns an empty iterator
+        # Ensure that .parameters() callable returns an empty iterator. The KD conversion is deferred,
+        # so provide() now returns the un-converted student, which get_model iterates before the hook.
+        mock_student_model.parameters.return_value = iter(())
         mock_teacher_model.parameters.return_value = iter(())
         mock_kd_model.parameters.return_value = iter(())
 
