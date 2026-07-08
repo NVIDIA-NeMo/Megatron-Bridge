@@ -28,6 +28,7 @@ Usage::
 """
 
 import os
+from dataclasses import asdict, is_dataclass
 
 import torch
 
@@ -151,12 +152,45 @@ class Gemma4VLBridge(Gemma4Bridge):
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: Gemma4VLModelProvider | Gemma4DenseVLProvider) -> dict:
+    def megatron_to_hf_config(
+        cls,
+        provider: Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider,
+    ) -> dict:
         """Convert a Gemma 4 VL provider config back to Hugging Face config."""
-        hf_config = super().megatron_to_hf_config(provider)
-        final_logit_softcapping = hf_config.pop("final_logit_softcapping")
-        hf_config.setdefault("text_config", {})["final_logit_softcapping"] = final_logit_softcapping
-        return hf_config
+        text_config = super().megatron_to_hf_config(provider)
+        text_config.pop("architectures", None)
+        text_config["model_type"] = "gemma4_text"
+
+        if not isinstance(provider, (Gemma4VLModelProvider, Gemma4DenseVLProvider)):
+            text_config["architectures"] = ["Gemma4ForCausalLM"]
+            return text_config
+
+        def config_to_dict(config) -> dict | None:
+            if config is None:
+                return None
+            if isinstance(config, dict):
+                return dict(config)
+            if hasattr(config, "to_dict"):
+                return config.to_dict()
+            if is_dataclass(config):
+                return asdict(config)
+            return {name: value for name, value in vars(config).items() if not name.startswith("_")}
+
+        return {
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "audio_config": config_to_dict(provider.audio_config),
+            "audio_token_id": provider.audio_token_id,
+            "bos_token_id": provider.bos_token_id,
+            "dtype": text_config["dtype"],
+            "eos_token_id": provider.eos_token_id,
+            "image_token_id": provider.image_token_id,
+            "model_type": "gemma4",
+            "text_config": text_config,
+            "tie_word_embeddings": provider.share_embeddings_and_output_weights,
+            "video_token_id": provider.video_token_id,
+            "vision_config": config_to_dict(provider.vision_config),
+            "vision_soft_tokens_per_image": provider.vision_soft_tokens_per_image,
+        }
 
     def _conversion_mode(self) -> str:
         mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")

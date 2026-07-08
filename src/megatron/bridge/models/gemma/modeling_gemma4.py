@@ -49,7 +49,7 @@ from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubm
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
 from megatron.core.transformer.mlp import MLP, MLPSubmodules
-from megatron.core.transformer.moe.moe_layer import MoELayer
+from megatron.core.transformer.moe.moe_layer import MoELayer, te_checkpoint
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
 from megatron.core.transformer.transformer_config import TransformerConfig
@@ -1398,6 +1398,16 @@ class Gemma4MoELayer(MoELayer):
             return output, mlp_bias
 
         if self.moe_layer_recompute and self.training:
+            if self.config.fp8 or self.config.fp4:
+                return te_checkpoint(
+                    custom_forward,
+                    False,
+                    tensor_parallel.random.get_cuda_rng_tracker,
+                    self.tp_group,
+                    expert_input,
+                    shared_expert_input,
+                    router_input,
+                )
             return tensor_parallel.checkpoint(
                 custom_forward,
                 False,
@@ -1570,14 +1580,54 @@ class Gemma4SelfAttention(SelfAttention):
 
         return _fix(state_dict)
 
+    def _get_tied_query_key_value_tensors(
+        self,
+        hidden_states: Tensor,
+        key_value_states: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Return independently normalized K and V from Gemma 4's shared raw projection."""
+        mixed_qkv, split_arg_list = super().get_query_key_value_tensors(
+            hidden_states,
+            key_value_states,
+            output_gate=False,
+            split_qkv=False,
+        )
+        query, raw_key, _value = torch.split(mixed_qkv, split_arg_list, dim=3)
+        key = raw_key
+
+        query = query.reshape(
+            query.size(0),
+            query.size(1),
+            -1,
+            self.hidden_size_per_attention_head,
+        )
+        if self.config.num_query_groups < self.world_size:
+            idx = get_pg_rank(self.pg_collection.tp) % (self.world_size // self.config.num_query_groups)
+            size = self.num_attention_heads_per_partition // (self.world_size // self.config.num_query_groups)
+            query = query[:, :, idx * size : (idx + 1) * size, :]
+
+        if self.q_layernorm is not None:
+            query = apply_module(self.q_layernorm)(query)
+        if self.k_layernorm is not None:
+            key = apply_module(self.k_layernorm)(key)
+        if self.config.test_mode:
+            self.run_realtime_tests()
+
+        return query, key, raw_key
+
     def get_query_key_value_tensors(self, hidden_states, key_value_states=None, **kwargs):
         """Override to apply v_norm and enforce K=V tying for global attention."""
+        if getattr(self, "_tied_kv", False) and kwargs.get("split_qkv", True) and not kwargs.get("output_gate", False):
+            query, key, value = self._get_tied_query_key_value_tensors(hidden_states, key_value_states)
+            v_float = value.float()
+            rms = v_float.pow(2).mean(-1, keepdim=True).add(self._v_norm_eps).sqrt()
+            value = (v_float / rms).to(value.dtype)
+            return query, key, value
+
         result = super().get_query_key_value_tensors(hidden_states, key_value_states, **kwargs)
         if len(result) < 3:
             return result
         query, key, value = result[0], result[1], result[2]
-        if getattr(self, "_tied_kv", False):
-            value = key
         v_float = value.float()
         rms = v_float.pow(2).mean(-1, keepdim=True).add(self._v_norm_eps).sqrt()
         value = (v_float / rms).to(value.dtype)

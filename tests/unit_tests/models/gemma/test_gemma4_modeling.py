@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core import tensor_parallel
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseMLP,
@@ -735,33 +736,50 @@ class TestGemma4SelfAttention:
 
         assert out is expected
 
-    def test_get_query_key_value_tensors_ties_and_normalizes_value(self, monkeypatch):
-        query = torch.ones(2, 1, 1, 2)
-        key = torch.full_like(query, 3.0)
-        value = torch.full_like(query, 5.0)
-        extra = torch.full_like(query, 7.0)
+    def test_get_query_key_value_tensors_normalizes_tied_value_from_raw_key(self, monkeypatch):
+        query = torch.tensor([[[[1.0, 2.0]]]])
+        raw_key = torch.tensor([[[[3.0, 4.0]]]])
+        unused_value = torch.tensor([[[[5.0, 6.0]]]])
+        mixed_qkv = torch.cat((query, raw_key, unused_value), dim=-1)
 
-        def fake_get_qkv(self, hidden_states, key_value_states=None, **kwargs):
-            del self, hidden_states, key_value_states, kwargs
-            return query, key, value, extra
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del self, hidden_states, key_value_states
+            assert output_gate is False
+            assert split_qkv is False
+            return mixed_qkv, [2, 2, 2]
 
         monkeypatch.setattr(
             "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
             fake_get_qkv,
         )
         attn = self._make_attention(layer_number=2)
+        attn.config.num_query_groups = 1
+        attn.config.test_mode = False
+        attn.hidden_size_per_attention_head = 2
+        attn.world_size = 1
+
+        class ScaleKey(torch.nn.Module):
+            def forward(self, tensor):
+                return tensor * torch.tensor([2.0, 1.0])
+
+        object.__setattr__(attn, "q_layernorm", torch.nn.Identity())
+        object.__setattr__(attn, "k_layernorm", ScaleKey())
         attn._tied_kv = True
         attn._v_norm_eps = 1e-6
 
-        out_query, out_key, out_value, out_extra = Gemma4SelfAttention.get_query_key_value_tensors(
+        out_query, out_key, out_value = Gemma4SelfAttention.get_query_key_value_tensors(
             attn,
             torch.zeros(1),
         )
 
-        assert out_query is query
-        assert out_key is key
-        assert out_extra is extra
-        torch.testing.assert_close(out_value, torch.ones_like(key))
+        torch.testing.assert_close(out_query, query)
+        torch.testing.assert_close(out_key, raw_key * torch.tensor([2.0, 1.0]))
+        expected_value = raw_key / torch.sqrt(raw_key.pow(2).mean(-1, keepdim=True) + 1e-6)
+        torch.testing.assert_close(out_value, expected_value)
+        assert not torch.allclose(
+            out_value,
+            out_key / torch.sqrt(out_key.pow(2).mean(-1, keepdim=True) + 1e-6),
+        )
 
     def test_forward_selects_local_mask_and_rotary_embedding(self, monkeypatch):
         calls = {}
@@ -1949,6 +1967,50 @@ class TestGemma4MoEHelpers:
         out = Gemma4MoELayer.postprocess(layer, output, shared)
 
         torch.testing.assert_close(out, torch.full_like(output, 21.0))
+
+    @pytest.mark.parametrize(("fp8", "fp4"), [(True, False), (False, True)])
+    def test_moe_layer_recompute_uses_te_checkpoint_for_quantized_training(self, monkeypatch, fp8, fp4):
+        calls = []
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_tracker, tp_group, *args):
+            calls.append((distribute_saved_activations, get_rng_tracker, tp_group))
+            return function(*args)
+
+        def fail_tensor_parallel_checkpoint(*args, **kwargs):
+            del args, kwargs
+            raise AssertionError("quantized MoE recompute must use TE checkpointing")
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.te_checkpoint", fake_te_checkpoint)
+        monkeypatch.setattr(tensor_parallel, "checkpoint", fail_tensor_parallel_checkpoint)
+
+        layer = object.__new__(Gemma4MoELayer)
+        torch.nn.Module.__init__(layer)
+        layer.shared_expert_overlap = False
+        layer.moe_layer_recompute = True
+        layer.train()
+        layer.config = SimpleNamespace(fp8=fp8, fp4=fp4)
+        layer.tp_group = "tp-group"
+        layer.shared_experts_compute = lambda tensor: tensor + 1.0
+        layer.route = lambda tensor, padding_mask: (tensor, padding_mask)
+        layer.preprocess = lambda tensor, probs, routing_map: (tensor + probs, routing_map)
+        layer.dispatch = lambda tensor, probs: (tensor, probs)
+        layer.routed_experts_compute = lambda tensor, probs: (tensor + 1.0, None)
+        layer.combine = lambda tensor: tensor
+        layer.postprocess = lambda output, shared: output + shared
+        expert_input = torch.tensor(1.0)
+        shared_input = torch.tensor(2.0)
+        router_input = torch.tensor(3.0)
+
+        output, bias = Gemma4MoELayer.forward_with_separate_inputs(
+            layer,
+            expert_input,
+            shared_input,
+            router_input,
+        )
+
+        assert bias is None
+        torch.testing.assert_close(output, torch.tensor(8.0))
+        assert calls == [(False, tensor_parallel.random.get_cuda_rng_tracker, "tp-group")]
 
     def test_install_tied_kv_marks_only_global_attention_layers(self):
         local_attn = SimpleNamespace()

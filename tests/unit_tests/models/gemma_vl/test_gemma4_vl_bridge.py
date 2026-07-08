@@ -761,6 +761,81 @@ def test_megatron_to_hf_config_nests_final_logit_softcapping(provider_cls):
     assert hf_config["text_config"]["final_logit_softcapping"] == 17.0
 
 
+def test_megatron_to_hf_config_nests_dense_architecture_fields():
+    provider = Gemma4DenseVLProvider(
+        attention_k_eq_v=True,
+        final_logit_softcapping=17.0,
+        num_kv_shared_layers=20,
+        use_double_wide_mlp=True,
+        vision_config={"hidden_size": 1152},
+        audio_config={"hidden_size": 512},
+        eos_token_id=[1, 106],
+        window_size=(511, 0),
+    )
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    expected = {
+        "attention_k_eq_v": True,
+        "enable_moe_block": False,
+        "final_logit_softcapping": 17.0,
+        "num_kv_shared_layers": 20,
+        "sliding_window": 512,
+        "use_double_wide_mlp": True,
+    }
+    assert {name: hf_config["text_config"][name] for name in expected} == expected
+    assert not set(expected).intersection(hf_config)
+    assert hf_config["architectures"] == ["Gemma4ForConditionalGeneration"]
+    assert hf_config["model_type"] == "gemma4"
+    assert hf_config["text_config"]["model_type"] == "gemma4_text"
+    assert hf_config["text_config"]["num_hidden_layers"] == provider.num_layers
+    assert hf_config["vision_config"] == {"hidden_size": 1152}
+    assert hf_config["audio_config"] == {"hidden_size": 512}
+    assert hf_config["eos_token_id"] == [1, 106]
+
+
+def test_megatron_to_hf_config_nests_moe_architecture_fields():
+    provider = Gemma4VLModelProvider(
+        attention_k_eq_v=True,
+        final_logit_softcapping=19.0,
+        moe_ffn_hidden_size=704,
+        moe_router_topk=8,
+        moe_shared_expert_intermediate_size=2112,
+        num_layers=6,
+        num_moe_experts=128,
+        window_size=1024,
+    )
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    expected = {
+        "attention_k_eq_v": True,
+        "enable_moe_block": True,
+        "final_logit_softcapping": 19.0,
+        "intermediate_size": 2112,
+        "moe_intermediate_size": 704,
+        "num_experts": 128,
+        "num_kv_shared_layers": 0,
+        "sliding_window": 1024,
+        "top_k_experts": 8,
+        "use_double_wide_mlp": False,
+    }
+    assert {name: hf_config["text_config"][name] for name in expected} == expected
+    assert not set(expected).intersection(hf_config)
+    assert hf_config["text_config"]["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
+
+
+def test_megatron_to_hf_config_keeps_vl_text_mode_flat():
+    provider = Gemma4DenseProvider(final_logit_softcapping=23.0)
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    assert "text_config" not in hf_config
+    assert hf_config["architectures"] == ["Gemma4ForCausalLM"]
+    assert hf_config["model_type"] == "gemma4_text"
+    assert hf_config["final_logit_softcapping"] == 23.0
+
+
 class TestGemma4VLBridgeMappingRegistry:
     def _collect_names(self, registry):
         names = []

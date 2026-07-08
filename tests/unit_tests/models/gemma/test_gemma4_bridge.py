@@ -286,12 +286,18 @@ class TestGemma4BridgeConfigExport:
         assert config["enable_moe_block"] is False
         assert config["sliding_window"] == 1024
         assert config["attention_k_eq_v"] is True
+        assert config["dtype"] == "bfloat16"
+        assert config["global_head_dim"] == provider.global_kv_channels
+        assert config["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
+        assert config["num_global_key_value_heads"] == provider.num_global_query_groups
         assert config["num_kv_shared_layers"] == 20
+        assert config["rope_parameters"]["full_attention"]["partial_rotary_factor"] == 0.25
         assert config["use_double_wide_mlp"] is True
 
     def test_moe_architecture_fields(self):
         provider = Gemma4ModelProvider(
             attention_k_eq_v=True,
+            num_layers=6,
             num_moe_experts=128,
             moe_router_topk=8,
             moe_ffn_hidden_size=704,
@@ -302,6 +308,9 @@ class TestGemma4BridgeConfigExport:
 
         assert config["enable_moe_block"] is True
         assert config["attention_k_eq_v"] is True
+        assert config["dtype"] == "bfloat16"
+        assert config["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
+        assert config["num_global_key_value_heads"] == provider.num_global_key_value_heads
         assert config["num_experts"] == 128
         assert config["top_k_experts"] == 8
         assert config["moe_intermediate_size"] == 704

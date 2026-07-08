@@ -181,6 +181,8 @@ class Gemma4DenseProvider(GPTModelProvider):
     moe_ffn_hidden_size: Optional[int] = None
 
     def finalize(self) -> None:
+        if self.use_double_wide_mlp:
+            self.hetereogenous_dist_checkpoint = True
         super().finalize()
         self._gemma4_dense_finalized = True
 

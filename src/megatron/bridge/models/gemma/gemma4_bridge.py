@@ -94,6 +94,62 @@ def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int]:
     return (len(layer_types), 0)
 
 
+def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> list[str]:
+    """Reconstruct the Hugging Face per-layer attention pattern."""
+    if isinstance(provider, Gemma4DenseProvider):
+        pattern = provider.window_attn_skip_freq
+    else:
+        pattern = provider.interleaved_attn_pattern
+
+    if isinstance(pattern, list):
+        layer_types = [
+            value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
+            for value in pattern
+        ]
+    elif isinstance(pattern, tuple) and len(pattern) == 2:
+        sliding_count, full_count = pattern
+        cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+        layer_types = [cycle[index % len(cycle)] for index in range(provider.num_layers)] if cycle else []
+    elif isinstance(pattern, int) and pattern > 0:
+        layer_types = [
+            "sliding_attention" if layer_number % pattern else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+    else:
+        layer_types = ["full_attention"] * provider.num_layers
+
+    if layer_types:
+        layer_types[-1] = "full_attention"
+    return layer_types
+
+
+def _rope_parameters_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict[str, dict]:
+    """Reconstruct Gemma 4's dual local/global RoPE configuration."""
+    if isinstance(provider, Gemma4DenseProvider):
+        local_base = provider.sliding_window_rope_base
+        global_base = provider.full_attention_rope_base
+        global_partial_factor = provider.full_attention_rope_partial_factor
+    else:
+        rotary_base = provider.rotary_base
+        if isinstance(rotary_base, tuple):
+            local_base, global_base = rotary_base
+        else:
+            local_base = global_base = rotary_base
+        global_partial_factor = provider.global_rotary_percent
+
+    return {
+        "full_attention": {
+            "partial_rotary_factor": global_partial_factor,
+            "rope_theta": global_base,
+            "rope_type": "proportional",
+        },
+        "sliding_attention": {
+            "rope_theta": local_base,
+            "rope_type": "default",
+        },
+    }
+
+
 # ---------------------------------------------------------------------------
 # Gemma4Bridge — text-only CausalLM bridge (MoE and Dense)
 # ---------------------------------------------------------------------------
@@ -238,6 +294,11 @@ class Gemma4Bridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
         """Preserve Gemma 4 architecture fields affected by provider conversion."""
         hf_config = super().megatron_to_hf_config(provider)
+        dtype = hf_config.pop("torch_dtype", None)
+        if dtype is not None:
+            hf_config["dtype"] = dtype
+        hf_config.pop("partial_rotary_factor", None)
+        hf_config.pop("rope_theta", None)
         is_moe = provider.num_moe_experts is not None
         window_size = provider.window_size
         hf_config.update(
@@ -245,9 +306,17 @@ class Gemma4Bridge(MegatronModelBridge):
                 "attention_k_eq_v": provider.attention_k_eq_v,
                 "enable_moe_block": is_moe,
                 "final_logit_softcapping": provider.final_logit_softcapping,
+                "global_head_dim": (provider.global_head_dim if is_moe else provider.global_kv_channels),
+                "hidden_size_per_layer_input": getattr(provider, "per_layer_embed_dim", 0),
+                "layer_types": _layer_types_from_provider(provider),
                 "num_kv_shared_layers": getattr(provider, "num_kv_shared_layers", 0),
+                "num_global_key_value_heads": (
+                    provider.num_global_key_value_heads if is_moe else provider.num_global_query_groups
+                ),
+                "rope_parameters": _rope_parameters_from_provider(provider),
                 "sliding_window": window_size[0] + 1 if isinstance(window_size, tuple) else window_size,
                 "use_double_wide_mlp": getattr(provider, "use_double_wide_mlp", False),
+                "vocab_size_per_layer_input": getattr(provider, "per_layer_embed_vocab_size", provider.vocab_size),
             }
         )
         if is_moe:

@@ -120,6 +120,13 @@ class TestGemma4DenseProviderDefaults:
         provider.finalize()
         assert provider._gemma4_dense_finalized is True
 
+    def test_finalize_marks_double_wide_layers_as_heterogeneous_for_checkpointing(self):
+        provider = Gemma4DenseProvider(use_double_wide_mlp=True)
+
+        provider.finalize()
+
+        assert provider.hetereogenous_dist_checkpoint is True
+
     def test_provide_rejects_pipeline_parallel(self, provider):
         provider.pipeline_model_parallel_size = 2
         with pytest.raises(NotImplementedError, match="PP=1"):
@@ -209,6 +216,79 @@ class TestGemma4DenseLoadStateAliases:
         _install_gemma4_dense_load_state_aliases(model)
         _install_gemma4_dense_load_state_aliases(model)
         assert model._gemma4_dense_load_state_aliases_installed is True
+
+
+class TestGemma4DenseDistributedCheckpoint:
+    """Exercise a real heterogeneous E2B model checkpoint on CPU."""
+
+    def test_double_wide_mlp_checkpoint_roundtrip(self, tmp_path):
+        from megatron.core import parallel_state
+        from megatron.core.dist_checkpointing import load, save
+
+        rendezvous = tmp_path / "dist_init"
+        checkpoint_dir = tmp_path / "checkpoint"
+        checkpoint_dir.mkdir()
+        torch.distributed.init_process_group(
+            "gloo",
+            init_method=f"file://{rendezvous}",
+            rank=0,
+            world_size=1,
+        )
+        parallel_state.initialize_model_parallel()
+
+        def make_provider():
+            return Gemma4DenseProvider(
+                num_layers=4,
+                hidden_size=8,
+                ffn_hidden_size=16,
+                num_attention_heads=2,
+                num_query_groups=1,
+                kv_channels=4,
+                global_kv_channels=4,
+                num_global_query_groups=1,
+                seq_length=8,
+                vocab_size=32,
+                make_vocab_size_divisible_by=1,
+                window_size=(3, 0),
+                window_attn_skip_freq=[True, False, True, False],
+                num_kv_shared_layers=2,
+                use_double_wide_mlp=True,
+                per_layer_embed_vocab_size=32,
+                per_layer_embed_dim=0,
+                bf16=False,
+                params_dtype=torch.float32,
+                autocast_dtype=torch.float32,
+                use_cpu_initialization=True,
+            )
+
+        try:
+            with (
+                patch(
+                    "megatron.bridge.models.gemma.gemma4_provider.Gemma4DenseRotaryEmbedding",
+                    return_value=None,
+                ),
+                patch("torch.cuda.current_device", return_value="cpu"),
+                patch("torch.cuda.synchronize"),
+            ):
+                source = make_provider().provide()
+                source_state = {
+                    name: tensor.detach().clone()
+                    for name, tensor in source.state_dict().items()
+                    if torch.is_tensor(tensor)
+                }
+                save(source.sharded_state_dict(), checkpoint_dir, async_sharded_save=False)
+
+                destination = make_provider().provide()
+                loaded_state = load(destination.sharded_state_dict(), checkpoint_dir)
+                destination.load_state_dict(loaded_state, strict=False)
+
+            fc1_shapes = [tuple(layer.mlp.linear_fc1.weight.shape) for layer in source.decoder.layers]
+            assert fc1_shapes == [(32, 8), (32, 8), (64, 8), (64, 8)]
+            for name, expected in source_state.items():
+                torch.testing.assert_close(destination.state_dict()[name], expected)
+        finally:
+            parallel_state.destroy_model_parallel()
+            torch.distributed.destroy_process_group()
 
 
 class TestGemma4PLEBlockThreading:
