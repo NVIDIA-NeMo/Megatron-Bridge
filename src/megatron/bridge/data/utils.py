@@ -21,13 +21,13 @@ from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_
 from megatron.core.process_groups_config import ProcessGroupCollection
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders.direct_hf_sft_dataset import (
+    DirectHFSFTDatasetConfig,
+    direct_hf_sft_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.builders.gpt_sft_dataset import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
-)
-from megatron.bridge.data.builders.hf_sft_dataset import (
-    HFSFTDatasetConfig,
-    hf_sft_train_valid_test_datasets_provider,
 )
 from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
 from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
@@ -89,12 +89,12 @@ _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTSFTDatasetConfig: gpt_sft_train_valid_test_datasets_provider,
-    HFSFTDatasetConfig: hf_sft_train_valid_test_datasets_provider,
+    DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
 }
 
 
 def get_dataset_provider(
-    dataset_config: BlendedMegatronDatasetConfig | GPTSFTDatasetConfig | HFSFTDatasetConfig | DatasetProvider,
+    dataset_config: BlendedMegatronDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | DatasetProvider,
 ) -> Callable[..., Any]:
     """Get the appropriate dataset provider function based on the config type.
 
@@ -108,8 +108,8 @@ def get_dataset_provider(
     """
     if isinstance(dataset_config, GPTSFTDatasetConfig):
         return gpt_sft_train_valid_test_datasets_provider
-    if isinstance(dataset_config, HFSFTDatasetConfig):
-        return hf_sft_train_valid_test_datasets_provider
+    if isinstance(dataset_config, DirectHFSFTDatasetConfig):
+        return direct_hf_sft_train_valid_test_datasets_provider
 
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):

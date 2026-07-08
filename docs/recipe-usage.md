@@ -23,7 +23,7 @@ Training mode follows the recipe and dataset type:
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
 | Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face source data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
-| VLM SFT or PEFT | `HFSFTDatasetConfig` + builder, Energon, or a specialized/preloaded provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
+| VLM SFT or PEFT | `DirectHFSFTDatasetConfig` + builder, Energon, or a specialized/preloaded provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
 

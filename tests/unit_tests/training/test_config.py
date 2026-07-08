@@ -19,7 +19,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
@@ -158,9 +158,9 @@ def create_test_gpt_sft_dataset_config(sequence_length: int) -> GPTSFTDatasetCon
     return GPTSFTDatasetConfig(seq_length=sequence_length, dataset_root="/tmp/dataset")
 
 
-def create_test_hf_conversation_dataset_config(sequence_length: int) -> HFSFTDatasetConfig:
-    """Create an HFSFTDatasetConfig with defaults for testing."""
-    return HFSFTDatasetConfig(
+def create_test_direct_hf_sft_dataset_config(sequence_length: int) -> DirectHFSFTDatasetConfig:
+    """Create a DirectHFSFTDatasetConfig with defaults for testing."""
+    return DirectHFSFTDatasetConfig(
         seq_length=sequence_length,
         source=HFDatasetSourceConfig(path_or_dataset="json"),
     )
@@ -317,7 +317,7 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
     if dataset_type == "finetuning":
         dataset_cfg = create_test_gpt_sft_dataset_config(sequence_length=512)
     elif dataset_type == "conversation":
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
     else:
         dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
 
@@ -984,7 +984,7 @@ class TestConfigContainerValidation:
         """Test validation error when micro_batch_size == 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1011,7 +1011,7 @@ class TestConfigContainerValidation:
         """Test validation passes when micro_batch_size > 1 with enable_in_batch_packing=True."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -1035,7 +1035,7 @@ class TestConfigContainerValidation:
             calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
         dataset_cfg.enable_in_batch_packing = True
 
         container, og_ws, cfg_mod = create_test_config_container(
@@ -3322,7 +3322,7 @@ class TestEpochBasedTraining:
             world_size_override=1,
             model_config=create_test_gpt_config(),
             train_config=train_cfg,
-            dataset_config_override=create_test_hf_conversation_dataset_config(sequence_length=512),
+            dataset_config_override=create_test_direct_hf_sft_dataset_config(sequence_length=512),
         )
 
         try:
@@ -3470,7 +3470,7 @@ class TestDatasetSequenceLengthValidation:
     def test_hf_conversation_dataset_sequence_length_mismatch_fails(self, monkeypatch):
         """Test that direct HF conversation configs enforce model sequence length."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=1024)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=1024)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3489,7 +3489,7 @@ class TestDatasetSequenceLengthValidation:
     def test_hf_conversation_dataset_sequence_length_match_passes(self, monkeypatch):
         """Test that direct HF conversation configs accept matching sequence length."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
-        dataset_cfg = create_test_hf_conversation_dataset_config(sequence_length=512)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
 
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,

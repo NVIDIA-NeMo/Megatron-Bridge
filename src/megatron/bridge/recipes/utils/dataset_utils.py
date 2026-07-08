@@ -19,9 +19,9 @@ from typing import Callable, List, Optional, Tuple
 
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
-    HFSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
@@ -255,7 +255,7 @@ def apply_dataset_override(
             )
 
     elif dataset_type == "vlm-hf":
-        config.dataset = HFSFTDatasetConfig(
+        config.dataset = DirectHFSFTDatasetConfig(
             seq_length=resolved_seq_length,
             preprocessing=ChatSFTPreprocessingConfig(),
             hf_processor_path=None,

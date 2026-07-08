@@ -16,7 +16,7 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -346,7 +346,7 @@ def _sft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM SFT (`_sft_common`):
-    - Uses HFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -403,7 +403,7 @@ def _sft_common_vlm() -> ConfigContainer:
 
     # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFSFTDatasetConfig(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
@@ -449,7 +449,7 @@ def _peft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM PEFT (`_peft_common`):
-    - Uses HFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -507,7 +507,7 @@ def _peft_common_vlm() -> ConfigContainer:
 
     # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFSFTDatasetConfig(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config

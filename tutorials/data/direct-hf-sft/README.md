@@ -1,6 +1,6 @@
 # Direct Hugging Face SFT Dataset Tutorial
 
-Use `HFSFTDatasetConfig` for direct Hugging Face SFT processing. The training framework resolves `HFSFTDatasetBuilder`, which loads a declarative source, applies an optional schema adapter, binds the processor/tokenizer and collator, and constructs schedule-sized `ConversationDataset` splits.
+Use `DirectHFSFTDatasetConfig` for direct Hugging Face SFT processing. The training framework resolves `DirectHFSFTDatasetBuilder`, which loads a declarative source, applies an optional schema adapter, binds the processor/tokenizer and collator, and constructs schedule-sized `ConversationDataset` splits.
 
 This tutorial starts with text chat, but the same Config + Builder path supports paired text, vision, video, audio, and omni rows. Text rows use the same preprocessing configs and tokenization helpers as the materialized text-only SFT path. Multimodal rows use chat preprocessing plus the configured Hugging Face processor and its registered model collator.
 
@@ -11,8 +11,8 @@ Compared with materialized text-only SFT, this path processes adapted rows direc
 Generate local `messages` JSONL files from the repository root:
 
 ```bash
-uv run python tutorials/data/hf-sft/prepare_example_data.py \
-    --output-dir /tmp/bridge-hf-sft
+uv run python tutorials/data/direct-hf-sft/prepare_example_data.py \
+    --output-dir /tmp/bridge-direct-hf-sft
 ```
 
 Native chat sources may use rows like:
@@ -29,30 +29,30 @@ Use the Hugging Face `json` loader directly. Set an instruction-tuned processor 
 
 ```python
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, DirectHFSFTDatasetConfig
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 
 cfg = llama32_1b_sft_config()
 cfg.checkpoint.pretrained_checkpoint = "/checkpoints/llama32-1b-instruct"
 cfg.checkpoint.load = None
-cfg.dataset = HFSFTDatasetConfig(
+cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=cfg.model.seq_length,
     preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
     source=HFDatasetSourceConfig(
         path_or_dataset="json",
-        load_kwargs={"data_files": {"train": "/tmp/bridge-hf-sft/training.jsonl"}},
+        load_kwargs={"data_files": {"train": "/tmp/bridge-direct-hf-sft/training.jsonl"}},
     ),
     validation_source=HFDatasetSourceConfig(
         path_or_dataset="json",
         split="validation",
-        load_kwargs={"data_files": {"validation": "/tmp/bridge-hf-sft/validation.jsonl"}},
+        load_kwargs={"data_files": {"validation": "/tmp/bridge-direct-hf-sft/validation.jsonl"}},
     ),
     test_source=HFDatasetSourceConfig(
         path_or_dataset="json",
         split="test",
-        load_kwargs={"data_files": {"test": "/tmp/bridge-hf-sft/test.jsonl"}},
+        load_kwargs={"data_files": {"test": "/tmp/bridge-direct-hf-sft/test.jsonl"}},
     ),
     dataloader_type="single",
     do_validation=True,
@@ -71,7 +71,7 @@ Select prompt-completion preprocessing when the source is already formatted as p
 ```python
 from megatron.bridge.data.builders import PromptCompletionSFTPreprocessingConfig
 
-cfg.dataset = HFSFTDatasetConfig(
+cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=cfg.model.seq_length,
     source=HFDatasetSourceConfig(
         path_or_dataset="json",
@@ -95,7 +95,7 @@ This mode tokenizes the prompt and completion separately and never calls `apply_
 For a hosted dataset that already exposes native `messages`, select the dataset and split directly; no adapter is required:
 
 ```python
-cfg.dataset = HFSFTDatasetConfig(
+cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=cfg.model.seq_length,
     preprocessing=ChatSFTPreprocessingConfig(),
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
@@ -115,7 +115,7 @@ Use `schema_adapter` only when the hosted columns are not already one of `messag
 For a built-in VLM or audio dataset, set the model processor path and select its named source preset:
 
 ```python
-cfg.dataset = HFSFTDatasetConfig(
+cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=4096,
     preprocessing=ChatSFTPreprocessingConfig(),
     hf_processor_path="Qwen/Qwen2.5-VL-3B-Instruct",
@@ -124,7 +124,7 @@ cfg.dataset = HFSFTDatasetConfig(
 )
 ```
 
-Use the corresponding recipe step, such as `vlm_step`, `qwen3_vl_step`, or an audio/omni step. Collators are inferred at runtime from processor type. Runtime callable collator overrides are intentionally not config fields; custom integrations can inject them into `HFSFTDatasetBuilder` without making serialized configs provider-specific.
+Use the corresponding recipe step, such as `vlm_step`, `qwen3_vl_step`, or an audio/omni step. Collators are inferred at runtime from processor type. Runtime callable collator overrides are intentionally not config fields; custom integrations can inject them into `DirectHFSFTDatasetBuilder` without making serialized configs provider-specific.
 
 ## In-batch packing and padding
 

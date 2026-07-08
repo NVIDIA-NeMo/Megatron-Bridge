@@ -46,7 +46,7 @@ CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
 
 @dataclass(kw_only=True)
-class HFSFTDatasetConfig(DataloaderConfig):
+class DirectHFSFTDatasetConfig(DataloaderConfig):
     """Serializable configuration for direct Hugging Face SFT datasets.
 
     Chat preprocessing is the compatibility default for multimodal and
@@ -97,7 +97,7 @@ class HFSFTDatasetConfig(DataloaderConfig):
         self.validate()
 
 
-def normalize_hf_sft_processor(processor: Any) -> Any:
+def normalize_direct_hf_sft_processor(processor: Any) -> Any:
     """Ensure the runtime tokenizer can pad batched conversation text."""
     tokenizer = get_processor_tokenizer(processor)
     if getattr(tokenizer, "pad_token_id", None) is not None:
@@ -113,19 +113,19 @@ def normalize_hf_sft_processor(processor: Any) -> Any:
     return processor
 
 
-def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> Any:
+def load_direct_hf_sft_processor(config: DirectHFSFTDatasetConfig, tokenizer: Any | None) -> Any:
     """Load the configured HF processor or adapt the training tokenizer."""
     if config.hf_processor_path is None:
         if tokenizer is None:
             raise ValueError("hf_processor_path must be set when no tokenizer is available in build context.")
-        return normalize_hf_sft_processor(get_processor_tokenizer(tokenizer))
+        return normalize_direct_hf_sft_processor(get_processor_tokenizer(tokenizer))
 
     trust_remote_code = is_safe_repo(
         trust_remote_code=config.trust_remote_code,
         hf_path=config.hf_processor_path,
     )
     try:
-        return normalize_hf_sft_processor(
+        return normalize_direct_hf_sft_processor(
             AutoProcessor.from_pretrained(
                 config.hf_processor_path,
                 trust_remote_code=trust_remote_code,
@@ -137,7 +137,7 @@ def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> 
             config.hf_processor_path,
             exc_info=True,
         )
-        return normalize_hf_sft_processor(
+        return normalize_direct_hf_sft_processor(
             AutoTokenizer.from_pretrained(
                 config.hf_processor_path,
                 trust_remote_code=trust_remote_code,
@@ -145,7 +145,7 @@ def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> 
         )
 
 
-def load_hf_sft_examples(
+def load_direct_hf_sft_examples(
     source: HFDatasetSourceConfig,
     preprocessing: SFTPreprocessingConfig,
 ) -> list[dict[str, Any]]:
@@ -153,7 +153,7 @@ def load_hf_sft_examples(
     return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
-def select_hf_sft_collate(
+def select_direct_hf_sft_collate(
     examples: list[dict[str, Any]],
     preprocessing: SFTPreprocessingConfig | None = None,
     collate_impl: CollateFunction | None = None,
@@ -174,8 +174,8 @@ def select_hf_sft_collate(
     raise ValueError("Prompt-completion preprocessing supports text-only examples.")
 
 
-def build_hf_sft_split(
-    config: HFSFTDatasetConfig,
+def build_direct_hf_sft_split(
+    config: DirectHFSFTDatasetConfig,
     source: HFDatasetSourceConfig,
     target_length: int,
     processor: Any,
@@ -185,12 +185,12 @@ def build_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    examples = load_hf_sft_examples(source, config.preprocessing)
+    examples = load_direct_hf_sft_examples(source, config.preprocessing)
     return ConversationDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_hf_sft_collate(examples, config.preprocessing, collate_impl),
+        collate_impl=select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl),
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,
@@ -200,12 +200,12 @@ def build_hf_sft_split(
     )
 
 
-class HFSFTDatasetBuilder:
+class DirectHFSFTDatasetBuilder:
     """Build runtime SFT datasets from declarative Hugging Face sources."""
 
     def __init__(
         self,
-        config: HFSFTDatasetConfig,
+        config: DirectHFSFTDatasetConfig,
         *,
         collate_impl: CollateFunction | None = None,
     ) -> None:
@@ -234,8 +234,8 @@ class HFSFTDatasetBuilder:
             and not hf_dataset_supports_split(self.config.source, "test")
         ):
             raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
-        processor = load_hf_sft_processor(self.config, context.tokenizer)
-        train_dataset = build_hf_sft_split(
+        processor = load_direct_hf_sft_processor(self.config, context.tokenizer)
+        train_dataset = build_direct_hf_sft_split(
             self.config,
             self.config.source,
             context.train_samples,
@@ -244,7 +244,7 @@ class HFSFTDatasetBuilder:
         )
         validation_source = self.config.validation_source or self.config.source.with_split("validation")
         valid_dataset = (
-            build_hf_sft_split(
+            build_direct_hf_sft_split(
                 self.config,
                 validation_source,
                 context.valid_samples,
@@ -256,7 +256,7 @@ class HFSFTDatasetBuilder:
         )
         test_source = self.config.test_source or self.config.source.with_split("test")
         test_dataset = (
-            build_hf_sft_split(
+            build_direct_hf_sft_split(
                 self.config,
                 test_source,
                 context.test_samples,
@@ -269,9 +269,9 @@ class HFSFTDatasetBuilder:
         return train_dataset, valid_dataset, test_dataset
 
 
-def hf_sft_train_valid_test_datasets_provider(
+def direct_hf_sft_train_valid_test_datasets_provider(
     train_val_test_num_samples: list[int],
-    dataset_config: HFSFTDatasetConfig,
+    dataset_config: DirectHFSFTDatasetConfig,
     tokenizer: MegatronTokenizer | None = None,
     pg_collection: ProcessGroupCollection | None = None,
 ) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
@@ -283,4 +283,4 @@ def hf_sft_train_valid_test_datasets_provider(
         tokenizer=tokenizer,
         pg_collection=pg_collection,
     )
-    return HFSFTDatasetBuilder(dataset_config).build(context)
+    return DirectHFSFTDatasetBuilder(dataset_config).build(context)

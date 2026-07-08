@@ -1,18 +1,23 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
+import importlib
+
 import pytest
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetBuilder,
+    DirectHFSFTDatasetConfig,
     HFDatasetSourceConfig,
-    HFSFTDatasetBuilder,
-    HFSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.builders import hf_sft_dataset as builder_module
-from megatron.bridge.data.builders.hf_sft_dataset import load_hf_sft_processor, select_hf_sft_collate
+from megatron.bridge.data.builders import direct_hf_sft_dataset as builder_module
+from megatron.bridge.data.builders.direct_hf_sft_dataset import (
+    load_direct_hf_sft_processor,
+    select_direct_hf_sft_collate,
+)
 from megatron.bridge.data.hf_source import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
@@ -32,6 +37,15 @@ class _Tokenizer:
         return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 1]}
 
 
+def test_legacy_hf_sft_builder_api_is_removed():
+    from megatron.bridge.data import builders
+
+    assert not hasattr(builders, "HFSFTDatasetConfig")
+    assert not hasattr(builders, "HFSFTDatasetBuilder")
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("megatron.bridge.data.builders.hf_sft_dataset")
+
+
 @pytest.mark.parametrize("column", ["messages", "conversation", "conversations"])
 def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypatch, column):
     turns = [
@@ -44,7 +58,7 @@ def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypat
         else {column: turns}
     )
     monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
         pad_to_multiple_of=1,
@@ -52,7 +66,9 @@ def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypat
         do_test=False,
     )
 
-    train, validation, test = HFSFTDatasetBuilder(config).build(DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer()))
+    train, validation, test = DirectHFSFTDatasetBuilder(config).build(
+        DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
+    )
 
     assert train is not None
     assert train.collate_fn([train[0]])["tokens"].tolist() == [[1, 2, 3]]
@@ -60,7 +76,7 @@ def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypat
 
 
 def test_config_validates_source_and_padding():
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=0,
         source=HFDatasetSourceConfig(path_or_dataset=""),
         pad_to_multiple_of=0,
@@ -71,7 +87,7 @@ def test_config_validates_source_and_padding():
 
 
 def test_config_rejects_disabled_explicit_split_sources():
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
         validation_source=HFDatasetSourceConfig(path_or_dataset="org/validation"),
@@ -94,7 +110,7 @@ def test_builder_leaves_multimodal_conversations_to_processor_collators(media_ty
         ]
     }
 
-    assert select_hf_sft_collate([row]) is None
+    assert select_direct_hf_sft_collate([row]) is None
 
 
 def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(monkeypatch):
@@ -105,14 +121,14 @@ def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(m
         ]
     }
     monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/vlm"),
         do_validation=False,
         do_test=False,
     )
 
-    train, _, _ = HFSFTDatasetBuilder(config, collate_impl=lambda *_args, **_kwargs: {}).build(
+    train, _, _ = DirectHFSFTDatasetBuilder(config, collate_impl=lambda *_args, **_kwargs: {}).build(
         DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
     )
 
@@ -133,7 +149,7 @@ def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(m
     ],
 )
 def test_builder_preserves_top_level_media_for_processor_collators(row):
-    assert select_hf_sft_collate([row]) is None
+    assert select_direct_hf_sft_collate([row]) is None
 
 
 def test_builder_rejects_unsupported_multimodal_chat_loss_mode():
@@ -145,7 +161,7 @@ def test_builder_rejects_unsupported_multimodal_chat_loss_mode():
     }
 
     with pytest.raises(ValueError, match="only assistant chat loss"):
-        select_hf_sft_collate([row], ChatSFTPreprocessingConfig(loss_mode="full"))
+        select_direct_hf_sft_collate([row], ChatSFTPreprocessingConfig(loss_mode="full"))
 
 
 def test_builder_does_not_classify_mixed_rows_from_first_text_example():
@@ -157,7 +173,7 @@ def test_builder_does_not_classify_mixed_rows_from_first_text_example():
         ]
     }
 
-    assert select_hf_sft_collate([text_row, image_row]) is None
+    assert select_direct_hf_sft_collate([text_row, image_row]) is None
 
 
 def test_builder_loads_all_requested_sources(monkeypatch):
@@ -170,7 +186,7 @@ def test_builder_loads_all_requested_sources(monkeypatch):
         return [row]
 
     monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", _load)
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/train"),
         validation_source=HFDatasetSourceConfig(path_or_dataset="org/validation", split="dev"),
@@ -178,7 +194,9 @@ def test_builder_loads_all_requested_sources(monkeypatch):
         pad_to_multiple_of=1,
     )
 
-    train, validation, test = HFSFTDatasetBuilder(config).build(DatasetBuildContext(3, 2, 1, tokenizer=_Tokenizer()))
+    train, validation, test = DirectHFSFTDatasetBuilder(config).build(
+        DatasetBuildContext(3, 2, 1, tokenizer=_Tokenizer())
+    )
 
     assert [len(dataset) for dataset in (train, validation, test)] == [3, 2, 1]
     assert calls == [
@@ -189,7 +207,7 @@ def test_builder_loads_all_requested_sources(monkeypatch):
 
 
 def test_builder_rejects_requested_implicit_unsupported_split_before_loading():
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(dataset_name="rdr"),
         do_validation=True,
@@ -198,7 +216,7 @@ def test_builder_rejects_requested_implicit_unsupported_split_before_loading():
     )
 
     with pytest.raises(ValueError, match="has no validation split"):
-        HFSFTDatasetBuilder(config).build(DatasetBuildContext(3, 1, 0, tokenizer=_Tokenizer()))
+        DirectHFSFTDatasetBuilder(config).build(DatasetBuildContext(3, 1, 0, tokenizer=_Tokenizer()))
 
 
 def test_builder_forwards_runtime_packing_to_collate(monkeypatch):
@@ -224,7 +242,7 @@ def test_builder_forwards_runtime_packing_to_collate(monkeypatch):
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
 
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=64,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
         do_validation=False,
@@ -235,7 +253,7 @@ def test_builder_forwards_runtime_packing_to_collate(monkeypatch):
         in_batch_packing_pad_to_multiple_of=8,
     )
 
-    train, _, _ = HFSFTDatasetBuilder(config, collate_impl=_collate).build(
+    train, _, _ = DirectHFSFTDatasetBuilder(config, collate_impl=_collate).build(
         DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
     )
 
@@ -259,13 +277,13 @@ def test_processor_loading_disables_untrusted_remote_code(monkeypatch):
             return _Tokenizer()
 
     monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
         hf_processor_path="org/processor",
     )
 
-    processor = load_hf_sft_processor(config, tokenizer=None)
+    processor = load_direct_hf_sft_processor(config, tokenizer=None)
 
     assert isinstance(processor, _Tokenizer)
     assert seen["call"] == ("org/processor", False)
@@ -284,17 +302,17 @@ def test_processor_loading_falls_back_to_tokenizer(monkeypatch):
 
     monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
     monkeypatch.setattr(builder_module, "AutoTokenizer", _AutoTokenizer)
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
         hf_processor_path="org/tokenizer",
     )
 
-    assert isinstance(load_hf_sft_processor(config, tokenizer=None), _Tokenizer)
+    assert isinstance(load_direct_hf_sft_processor(config, tokenizer=None), _Tokenizer)
 
 
-def test_hf_sft_config_round_trip_is_declarative():
-    config = HFSFTDatasetConfig(
+def test_direct_hf_sft_config_round_trip_is_declarative():
+    config = DirectHFSFTDatasetConfig(
         seq_length=128,
         source=HFDatasetSourceConfig(
             path_or_dataset="json",
@@ -307,7 +325,7 @@ def test_hf_sft_config_round_trip_is_declarative():
     serialized = ConfigContainer._convert_value_to_dict(config)
     restored = instantiate(serialized)
 
-    assert isinstance(restored, HFSFTDatasetConfig)
+    assert isinstance(restored, DirectHFSFTDatasetConfig)
     assert restored.preprocessing.loss_mode == "assistant"
     assert restored.source.load_kwargs == config.source.load_kwargs
     assert "collate_impl" not in serialized
@@ -316,7 +334,7 @@ def test_hf_sft_config_round_trip_is_declarative():
 
 
 def test_prompt_completion_config_round_trip_is_declarative():
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=128,
         source=HFDatasetSourceConfig(path_or_dataset="json"),
         preprocessing=PromptCompletionSFTPreprocessingConfig(
@@ -342,7 +360,7 @@ def test_builder_uses_prompt_completion_without_chat_template(monkeypatch):
     tokenizer = _Tokenizer()
     tokenizer.encode = lambda text, add_special_tokens=False: [ord(character) for character in text]
     tokenizer.apply_chat_template = lambda *args, **kwargs: pytest.fail("prompt-completion must not render chat")
-    config = HFSFTDatasetConfig(
+    config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/paired"),
         preprocessing=PromptCompletionSFTPreprocessingConfig(
@@ -355,7 +373,7 @@ def test_builder_uses_prompt_completion_without_chat_template(monkeypatch):
         do_test=False,
     )
 
-    train, _, _ = HFSFTDatasetBuilder(config).build(DatasetBuildContext(1, 0, 0, tokenizer=tokenizer))
+    train, _, _ = DirectHFSFTDatasetBuilder(config).build(DatasetBuildContext(1, 0, 0, tokenizer=tokenizer))
 
     assert train is not None
     batch = train.collate_fn([train[0]])
@@ -363,7 +381,7 @@ def test_builder_uses_prompt_completion_without_chat_template(monkeypatch):
     assert batch["loss_mask"].sum().item() == 2
 
 
-def test_hf_sft_config_resolves_canonical_builder(monkeypatch):
+def test_direct_hf_sft_config_resolves_canonical_builder(monkeypatch):
     from megatron.bridge.data import utils as data_utils
 
     seen = {}
@@ -376,8 +394,8 @@ def test_hf_sft_config_resolves_canonical_builder(monkeypatch):
             seen["context"] = context
             return "train", "validation", "test"
 
-    monkeypatch.setattr(builder_module, "HFSFTDatasetBuilder", _FakeBuilder)
-    config = HFSFTDatasetConfig(
+    monkeypatch.setattr(builder_module, "DirectHFSFTDatasetBuilder", _FakeBuilder)
+    config = DirectHFSFTDatasetConfig(
         seq_length=128,
         source=HFDatasetSourceConfig(path_or_dataset="json"),
     )

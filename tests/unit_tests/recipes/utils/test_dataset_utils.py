@@ -413,11 +413,11 @@ class TestApplyDatasetOverride:
     # -- VLM HF ---------------------------------------------------------------
 
     def test_vlm_hf_creates_config(self):
-        from megatron.bridge.data.builders import HFSFTDatasetConfig
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
         config = _make_mock_config()
         result = apply_dataset_override(config, "vlm-hf", seq_length=4096)
-        assert isinstance(result.dataset, HFSFTDatasetConfig)
+        assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
         assert result.dataset.seq_length == 4096
         assert result.dataset.source.dataset_name == "cord_v2"
 

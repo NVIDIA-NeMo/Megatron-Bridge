@@ -161,12 +161,12 @@ class TestQwen2AudioFinetuneConfig:
         assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
 
     def test_finetune_config_uses_hf_conversation_config(self):
-        """Dataset is HFSFTDatasetConfig with an explicit audio source adapter."""
-        from megatron.bridge.data.builders import HFSFTDatasetConfig
+        """Dataset is DirectHFSFTDatasetConfig with an explicit audio source adapter."""
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
-        assert isinstance(cfg.dataset, HFSFTDatasetConfig)
+        assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
         assert cfg.dataset.source.dataset_name == "cv17"
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
         assert cfg.dataset.source.split is None

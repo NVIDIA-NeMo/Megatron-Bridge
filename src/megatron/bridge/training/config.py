@@ -50,6 +50,7 @@ from megatron.bridge.data.base import (
 from megatron.bridge.data.base import (
     DatasetBuildContext as DatasetBuildContext,
 )
+from megatron.bridge.data.builders.direct_hf_sft_dataset import DirectHFSFTDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
 # Config + Builder APIs from megatron.bridge.data.builders.
@@ -59,7 +60,6 @@ from megatron.bridge.data.builders.gpt_sft_dataset import (
 from megatron.bridge.data.builders.gpt_sft_dataset import (
     GPTSFTDatasetConfig,
 )
-from megatron.bridge.data.builders.hf_sft_dataset import HFSFTDatasetConfig
 from megatron.bridge.data.hf_source import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
@@ -953,7 +953,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | HFSFTDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1290,7 +1290,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, (GPTSFTDatasetConfig, HFSFTDatasetConfig)):
+            if isinstance(self.dataset, (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1336,7 +1336,7 @@ class ConfigContainer(Container):
         if self.dataset is not None:
             # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, HFSFTDatasetConfig)):
+            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
                 data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (

@@ -22,8 +22,8 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
     HFDatasetSourceConfig,
-    HFSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -152,7 +152,7 @@ class TestSupervisedFinetuning:
             config.train.global_batch_size = 2
             config.train.micro_batch_size = 2
             config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=1024)
-            config.dataset = HFSFTDatasetConfig(
+            config.dataset = DirectHFSFTDatasetConfig(
                 seq_length=16,
                 source=HFDatasetSourceConfig(
                     path_or_dataset="json",

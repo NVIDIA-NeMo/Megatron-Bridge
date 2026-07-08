@@ -47,9 +47,9 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetBuilder,
+    DirectHFSFTDatasetConfig,
     HFDatasetSourceConfig,
-    HFSFTDatasetBuilder,
-    HFSFTDatasetConfig,
 )
 from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
@@ -375,11 +375,11 @@ def _build_dataset_source(args: argparse.Namespace) -> HFDatasetSourceConfig:
     )
 
 
-def _build_dataset_config(args: argparse.Namespace) -> HFSFTDatasetConfig:
+def _build_dataset_config(args: argparse.Namespace) -> DirectHFSFTDatasetConfig:
     source = _build_dataset_source(args)
     auto_validation = source.dataset_name is not None and hf_dataset_supports_split(source, "validation")
     do_validation = auto_validation if args.do_validation is None else args.do_validation
-    dataset_config = HFSFTDatasetConfig(
+    dataset_config = DirectHFSFTDatasetConfig(
         seq_length=args.seq_length,
         preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=args.processor_path or args.hf_model,
@@ -832,11 +832,11 @@ def _make_build_data_iterators(spec: Qwen35MIMOHFSpec, args: argparse.Namespace)
             test_samples=0,
             tokenizer=None,
         )
-        if not isinstance(cfg.dataset, HFSFTDatasetConfig):
-            raise TypeError("MegatronMIMO Qwen3.5-VL requires HFSFTDatasetConfig.")
-        train_ds, _, _ = HFSFTDatasetBuilder(cfg.dataset).build(context)
+        if not isinstance(cfg.dataset, DirectHFSFTDatasetConfig):
+            raise TypeError("MegatronMIMO Qwen3.5-VL requires DirectHFSFTDatasetConfig.")
+        train_ds, _, _ = DirectHFSFTDatasetBuilder(cfg.dataset).build(context)
         if train_ds is None:
-            raise ValueError("HFSFTDatasetBuilder did not build a train dataset.")
+            raise ValueError("DirectHFSFTDatasetBuilder did not build a train dataset.")
         base_collate = getattr(train_ds, "collate_fn", None)
         if base_collate is None:
             raise ValueError("Direct HF SFT train dataset does not expose collate_fn.")
@@ -976,7 +976,7 @@ def _register_converted_checkpoint_pre_wrap_hook(
 def _build_config(
     *,
     model_provider: MegatronMIMOProvider,
-    dataset_config: HFSFTDatasetConfig,
+    dataset_config: DirectHFSFTDatasetConfig,
     args: argparse.Namespace,
 ) -> ConfigContainer:
     optimizer_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(

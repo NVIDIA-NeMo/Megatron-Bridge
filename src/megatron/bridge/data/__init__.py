@@ -3,15 +3,15 @@
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetBuilder,
+    DirectHFSFTDatasetConfig,
     GPTSFTDatasetBuilder,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
-    HFSFTDatasetBuilder,
-    HFSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
+    direct_hf_sft_train_valid_test_datasets_provider,
     gpt_sft_train_valid_test_datasets_provider,
-    hf_sft_train_valid_test_datasets_provider,
 )
 
 
@@ -23,10 +23,10 @@ __all__ = [
     "GPTSFTDatasetBuilder",
     "GPTSFTDatasetConfig",
     "HFDatasetSourceConfig",
-    "HFSFTDatasetBuilder",
-    "HFSFTDatasetConfig",
+    "DirectHFSFTDatasetBuilder",
+    "DirectHFSFTDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",
     "SFTPreprocessingConfig",
     "gpt_sft_train_valid_test_datasets_provider",
-    "hf_sft_train_valid_test_datasets_provider",
+    "direct_hf_sft_train_valid_test_datasets_provider",
 ]

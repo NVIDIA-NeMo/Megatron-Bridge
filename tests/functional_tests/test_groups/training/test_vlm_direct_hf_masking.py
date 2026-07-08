@@ -20,13 +20,13 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader
 
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.data.utils import get_dataset_provider
 
 
 @pytest.mark.run_only_on("GPU")
-class TestVLMHFMasking:
-    def test_hf_vlm_label_masking_and_alignment(self):
+class TestVLMDirectHFMasking:
+    def test_direct_hf_vlm_label_masking_and_alignment(self):
         try:
             from transformers import AutoProcessor  # noqa: F401
         except Exception:
@@ -63,7 +63,7 @@ class TestVLMHFMasking:
                 },
             ]
 
-        config = HFSFTDatasetConfig(
+        config = DirectHFSFTDatasetConfig(
             # Qwen's default minimum image resolution expands this tiny image
             # to roughly 256 visual tokens. Leave room for the assistant turn
             # so this test validates masking rather than truncating all labels.
@@ -79,7 +79,7 @@ class TestVLMHFMasking:
 
         provider = get_dataset_provider(config)
         with patch(
-            "megatron.bridge.data.builders.hf_sft_dataset.load_and_adapt_hf_dataset",
+            "megatron.bridge.data.builders.direct_hf_sft_dataset.load_and_adapt_hf_dataset",
             side_effect=lambda source: make_short_conversations(),
         ):
             train_ds, _, _ = provider([2, 0, 0], config, tokenizer=None)

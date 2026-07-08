@@ -11,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).parents[3]
 TEXT_ONLY_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/text-only-sft"
-HF_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/hf-sft"
+DIRECT_HF_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/direct-hf-sft"
 
 
 def _load_rows(path: Path) -> list[dict]:
@@ -31,8 +31,8 @@ def test_text_only_sft_prepare_example_data(tmp_path):
     assert all(set(row) == {"input", "output"} for row in _load_rows(tmp_path / "training.jsonl"))
 
 
-def test_hf_sft_prepare_example_data(tmp_path):
-    module = runpy.run_path(str(HF_SFT_TUTORIAL / "prepare_example_data.py"))
+def test_direct_hf_sft_prepare_example_data(tmp_path):
+    module = runpy.run_path(str(DIRECT_HF_SFT_TUTORIAL / "prepare_example_data.py"))
     module["prepare_example_data"](tmp_path)
 
     rows = _load_rows(tmp_path / "training.jsonl")
@@ -44,7 +44,7 @@ def test_hf_sft_prepare_example_data(tmp_path):
     ("tutorial", "config_name", "builder_name"),
     [
         (TEXT_ONLY_SFT_TUTORIAL, "GPTSFTDatasetConfig", "GPTSFTDatasetBuilder"),
-        (HF_SFT_TUTORIAL, "HFSFTDatasetConfig", "HFSFTDatasetBuilder"),
+        (DIRECT_HF_SFT_TUTORIAL, "DirectHFSFTDatasetConfig", "DirectHFSFTDatasetBuilder"),
     ],
 )
 def test_text_dataset_tutorial_uses_config_builder_primary_path(tutorial, config_name, builder_name):
@@ -63,8 +63,8 @@ def test_text_only_sft_tutorial_uses_standard_distributed_launcher():
     assert "uv run python -m torch.distributed.run" in readme
 
 
-def test_hf_sft_tutorial_documents_hosted_native_messages_source():
-    readme = (HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+def test_direct_hf_sft_tutorial_documents_hosted_native_messages_source():
+    readme = (DIRECT_HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
     assert "HuggingFaceH4/ultrachat_200k" in readme
     assert 'split="train_sft"' in readme
     assert "schema_adapter" in readme
