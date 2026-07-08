@@ -2211,7 +2211,7 @@ requires-dist = [
     { name = "transformer-engine", extras = ["core-cu13", "pytorch"], marker = "extra == 'te'" },
     { name = "transformers", specifier = ">=5.8.1,<5.9.0" },
     { name = "typing-extensions" },
-    { name = "wandb", specifier = ">=0.25.0" },
+    { name = "wandb", specifier = ">=0.28.0" },
 ]
 provides-extras = ["recipes", "parquet", "tensor-inspect", "te", "ssm", "audio"]
 
