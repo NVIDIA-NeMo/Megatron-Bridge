@@ -97,6 +97,7 @@ def main():  # noqa: D103
         clip_checkpoint_dir=args.clip_version,
         vae_checkpoint_dir=args.vae_ckpt,
     )
+    generator = torch.Generator(device=pipeline.device).manual_seed(args.base_seed)
 
     # Generate
     images = pipeline(
@@ -105,6 +106,7 @@ def main():  # noqa: D103
         width=args.width,
         num_inference_steps=args.num_inference_steps,
         guidance_scale=args.guidance_scale,
+        generator=generator,
         output_path=args.output_path,
     )
     print(f"Generated {len(images)} images to {args.output_path}")
