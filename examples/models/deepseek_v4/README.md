@@ -31,6 +31,54 @@ Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pin
 
 Run `bash conversion.sh` after setting `WORKSPACE` and `MODEL_VARIANT`. See each script's header comments for the expected environment variables and `#SBATCH` directives to edit before submitting.
 
+## Training with the HybridModel provider
+
+DeepSeek-V4 is built on Megatron-Core's `HybridModel`. `AutoBridge` turns the HF config into a
+`DeepSeekV4HybridModelProvider` — a hybrid-model provider that also carries the MLA configuration —
+so no manual model wiring is needed:
+
+```python
+from megatron.bridge import AutoBridge
+
+bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V4-Flash", trust_remote_code=True)
+provider = bridge.to_megatron_provider(load_weights=False)  # random init for pretraining
+```
+
+Each logical DeepSeek-V4 layer is expressed as **two** hybrid layers — an attention-only layer
+whose symbol encodes the per-layer compression (`W` sliding-window / ratio 0, `C` CSA / ratio 4,
+`H` HCA / ratio 128) followed by a MoE-only layer (`E`) — plus one `/WE` MTP depth per
+next-token-prediction layer. From the HF config the bridge derives the `hybrid_layer_pattern`
+(e.g. `WEWECEHE…CE/WE`), the per-hybrid-layer `csa_compress_ratios`, and `moe_n_hash_layers`, and
+selects [`hybrid_dsv4_stack_spec`](../../../src/megatron/bridge/models/deepseek/deepseek_v4_bridge.py)
+as the stack builder. This path requires a megatron-core that ships the DSv4 hybrid_model series
+(see [MCore Checkout](#mcore-checkout)); on an older core the bridge still imports, but building the
+model fails — and the DSv4 functional tests skip automatically.
+
+### Launch a pretraining run
+
+The recipes build the full model through `AutoBridge`; launch them with
+`scripts/training/run_recipe.py` and the built-in mock dataset. DSv4 requires **TP=1**; scale with
+expert/pipeline parallelism (the full model has 256 experts, so it needs enough ranks for expert
+parallelism — the recipe defaults to `TP=1, PP=4, EP=8` = 32 GPUs).
+
+```bash
+./scripts/switch_mcore.sh dev && uv sync        # DSv4-capable megatron-core
+
+# DeepSeek-V4-Flash, BF16/Adam, mock data. Launch across nodes to reach the recipe's 32 GPUs.
+uv run python -m torch.distributed.run --nnodes=<N> --nproc_per_node=<gpus_per_node> \
+    scripts/training/run_recipe.py \
+    --recipe deepseek_v4_flash_pretrain_config \
+    --dataset llm-pretrain-mock \
+    --step_func gpt_step \
+    train.train_iters=10 train.global_batch_size=8 train.micro_batch_size=1 \
+    model.seq_length=4096 dataset.seq_length=4096
+```
+
+Swap `--recipe` for `deepseek_v4_flash_pretrain_mxfp8_config` (MXFP8) or
+`deepseek_v4_flash_pretrain_muon_config` (Muon). For a ready-made multi-node GB200 launcher use
+[`slurm_pretrain.sh`](slurm_pretrain.sh); see [Parallelism Configurations](#parallelism-configurations)
+for EP/PP sizing.
+
 ## Pretraining Recipes
 
 See [`slurm_pretrain.sh`](slurm_pretrain.sh) for the Slurm launcher and [`deepseek_v4.py`](../../../src/megatron/bridge/recipes/deepseek/deepseek_v4.py) for recipe definitions.
