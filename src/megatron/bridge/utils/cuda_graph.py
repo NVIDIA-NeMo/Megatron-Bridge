@@ -81,7 +81,12 @@ def set_cuda_graph_modules(config: Any, modules: Any) -> None:
     if _supports_cuda_graph_modules(config):
         config.cuda_graph_modules = [_module_value(name) for name in module_names]
         if hasattr(config, "cuda_graph_scope"):
-            config.cuda_graph_scope = None
+            # Clear the deprecated per-layer scope, but preserve the empty-list
+            # convention rather than dropping it to None. An explicit
+            # ``cuda_graph_scope=[]`` (e.g. from a Hydra/CLI override) means "no
+            # per-layer scope", and must survive the override chain as ``[]`` --
+            # replacing it with None loses that user intent.
+            config.cuda_graph_scope = []
     else:
         config.cuda_graph_scope = [CudaGraphScope[name] for name in module_names]
 
