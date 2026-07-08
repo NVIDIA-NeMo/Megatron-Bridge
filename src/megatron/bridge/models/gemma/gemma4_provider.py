@@ -14,7 +14,7 @@
 
 """Gemma 4 text-only model providers.
 
-Gemma4DenseProvider: Dense (E4B, ~3.8B) — builds GPTModel with local spec,
+Gemma4DenseProvider: Dense (E2B, E4B, and 31B) — builds GPTModel with local spec,
     dual RoPE, PLE, and shared KV.
 Gemma4ModelProvider: MoE (26B-A4B and similar) — extends GPTModelProvider
     with TE-based layer spec, dual RoPE, and softcapped output layer.

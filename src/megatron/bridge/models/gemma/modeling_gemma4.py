@@ -15,7 +15,7 @@
 """
 Gemma 4 Dense and MoE layer specs, attention, positional embeddings, and helpers.
 
-Dense (E4B) layer specification:
+Dense (E2B, E4B, and 31B) layer specification:
 - 4-norm transformer structure (input, post-attn, pre-MLP, post-MLP)
 - Dual RoPE (sliding θ=10000, global θ=1000000 with partial rotation)
 - Per-Layer Embeddings (PLE)
@@ -1353,6 +1353,7 @@ class Gemma4TopKRouter(TopKRouter):
         padding_mask: Tensor | None = None,
         input_ids: Tensor | None = None,
     ) -> tuple[Tensor, Tensor | None]:
+        # Token identities do not affect Gemma 4 routing; retain the argument for compatibility with existing callers.
         del input_ids
         routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask)
         if routing_map is not None:

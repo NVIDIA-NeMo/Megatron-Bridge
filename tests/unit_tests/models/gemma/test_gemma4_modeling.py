@@ -1968,20 +1968,29 @@ class TestGemma4MoEHelpers:
 
         torch.testing.assert_close(out, torch.full_like(output, 21.0))
 
-    @pytest.mark.parametrize(("fp8", "fp4"), [(True, False), (False, True)])
-    def test_moe_layer_recompute_uses_te_checkpoint_for_quantized_training(self, monkeypatch, fp8, fp4):
+    @pytest.mark.parametrize(
+        ("fp8", "fp4", "expected_checkpoint"),
+        [
+            pytest.param(False, False, "tensor_parallel", id="bf16"),
+            pytest.param(True, False, "te", id="fp8"),
+            pytest.param(False, True, "te", id="fp4"),
+        ],
+    )
+    def test_moe_layer_recompute_uses_expected_checkpoint_for_training(
+        self, monkeypatch, fp8, fp4, expected_checkpoint
+    ):
         calls = []
 
         def fake_te_checkpoint(function, distribute_saved_activations, get_rng_tracker, tp_group, *args):
-            calls.append((distribute_saved_activations, get_rng_tracker, tp_group))
+            calls.append(("te", distribute_saved_activations, get_rng_tracker, tp_group))
             return function(*args)
 
-        def fail_tensor_parallel_checkpoint(*args, **kwargs):
-            del args, kwargs
-            raise AssertionError("quantized MoE recompute must use TE checkpointing")
+        def fake_tensor_parallel_checkpoint(function, distribute_saved_activations, *args):
+            calls.append(("tensor_parallel", distribute_saved_activations))
+            return function(*args)
 
         monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.te_checkpoint", fake_te_checkpoint)
-        monkeypatch.setattr(tensor_parallel, "checkpoint", fail_tensor_parallel_checkpoint)
+        monkeypatch.setattr(tensor_parallel, "checkpoint", fake_tensor_parallel_checkpoint)
 
         layer = object.__new__(Gemma4MoELayer)
         torch.nn.Module.__init__(layer)
@@ -2010,7 +2019,10 @@ class TestGemma4MoEHelpers:
 
         assert bias is None
         torch.testing.assert_close(output, torch.tensor(8.0))
-        assert calls == [(False, tensor_parallel.random.get_cuda_rng_tracker, "tp-group")]
+        if expected_checkpoint == "te":
+            assert calls == [("te", False, tensor_parallel.random.get_cuda_rng_tracker, "tp-group")]
+        else:
+            assert calls == [("tensor_parallel", False)]
 
     def test_install_tied_kv_marks_only_global_attention_layers(self):
         local_attn = SimpleNamespace()
