@@ -27,7 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
-from megatron.bridge.models.gemma.model_config import GemmaModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 
@@ -53,7 +53,8 @@ class GemmaBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = GemmaModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.gemma.model_config.GemmaModelBuilder"
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GemmaModelProvider:
         """Convert HuggingFace config to GemmaModelProvider.

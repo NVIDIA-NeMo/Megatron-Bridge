@@ -414,6 +414,7 @@ class MegatronModelBridge(
     # config type. The latter cannot be inferred from inherited dataclass
     # annotations for MLA and heterogeneous model families.
     MODEL_CONFIG_CLASS: ClassVar[type[ModelConfig]] = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS: ClassVar[str | None] = None
     TRANSFORMER_CONFIG_CLASS: ClassVar[type[TransformerConfig]] = TransformerConfig
 
     # Additional file patterns to automatically copy during HF export (e.g., ["*reasoning_parser.py"])
@@ -804,7 +805,10 @@ class MegatronModelBridge(
                 if name in config_kwargs:
                     transformer_kwargs[name] = config_kwargs[name]
         transformer_config = self.TRANSFORMER_CONFIG_CLASS(**transformer_kwargs)
-        return self.MODEL_CONFIG_CLASS(transformer=transformer_config, **model_kwargs)
+        model_config = self.MODEL_CONFIG_CLASS(transformer=transformer_config, **model_kwargs)
+        if self.MODEL_BUILDER_CLASS is not None:
+            model_config.builder = self.MODEL_BUILDER_CLASS
+        return model_config
 
     # Set by @register_bridge decorator
     SOURCE_NAME: str | None = None
@@ -926,6 +930,14 @@ class MegatronModelBridge(
             yarn_correction_range_round_to_int = getattr(model_config, "yarn_correction_range_round_to_int", None)
             if yarn_correction_range_round_to_int is not None:
                 hf_config["rope_scaling"]["truncate"] = yarn_correction_range_round_to_int
+        elif getattr(model_config, "rope_type", None) == "yarn":
+            # MLA configs keep YaRN state on the nested TransformerConfig and
+            # expose it through the outer config's flat proxy.
+            hf_config.setdefault("rope_scaling", {})["rope_type"] = "yarn"
+            for hf_key, megatron_key in cls.MLA_ROPE_SCALING_MAPPING:
+                value = getattr(model_config, megatron_key, None)
+                if value is not None:
+                    hf_config["rope_scaling"][hf_key] = value
 
         # Convert activation function back to HF format
         activation_func = getattr(model_config, "activation_func", None)

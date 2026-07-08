@@ -12,16 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Builder-backed model construction for Qwen hybrid text models."""
+"""Layer specification for Kimi K2 language models."""
 
-from megatron.bridge.models.gpt.model_builder import LayerSpecGPTModelBuilder, mtp_block_spec_from_layer_spec
+from typing import Any
 
-
-qwen_hybrid_mtp_block_spec = mtp_block_spec_from_layer_spec
-
-
-class QwenHybridModelBuilder(LayerSpecGPTModelBuilder):
-    """Build Qwen hybrid models while preserving their MTP attention spec."""
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
+from megatron.core.transformer import ModuleSpec
 
 
-__all__ = ["QwenHybridModelBuilder", "qwen_hybrid_mtp_block_spec"]
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def kimi_k2_layer_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build Kimi K2's decoder block with the available backend."""
+    return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
+
+
+__all__ = ["kimi_k2_layer_spec"]

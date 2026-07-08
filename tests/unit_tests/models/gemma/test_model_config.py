@@ -17,12 +17,13 @@ from megatron.bridge.models.gemma.model_config import (
     Gemma2ModelConfig,
     Gemma3ModelBuilder,
     Gemma3ModelConfig,
+    Gemma4ModelConfig,
     GemmaModelBuilder,
-    GemmaModelConfig,
 )
 from megatron.bridge.models.gemma.modeling_gemma2 import Gemma2OutputLayer, gemma2_layer_spec
 from megatron.bridge.models.gemma.modeling_gemma3 import gemma3_layer_spec
 from megatron.bridge.models.gemma.modules import EmbeddingScalingMixin
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 def _common_hf_config(**overrides: object) -> SimpleNamespace:
@@ -54,7 +55,7 @@ def _common_hf_config(**overrides: object) -> SimpleNamespace:
 def test_gemma_model_config_bridge_uses_pure_config_and_builder() -> None:
     model_config = GemmaBridge().model_config_bridge(SimpleNamespace(config=_common_hf_config()))
 
-    assert isinstance(model_config, GemmaModelConfig)
+    assert type(model_config) is BridgeGPTModelConfig
     assert model_config.get_builder_cls() is GemmaModelBuilder
     assert model_config.transformer.normalization == "RMSNorm"
     assert model_config.transformer.gated_linear_unit is True
@@ -149,6 +150,22 @@ def test_gemma3_model_config_serialization_restores_family_defaults() -> None:
     assert restored.transformer_layer_spec is gemma3_layer_spec
     assert restored.rotary_base == 1_000_000
     assert restored.rotary_base_local == 10_000
+
+
+def test_gemma4_model_config_serialization_restores_private_layer_spec_default() -> None:
+    original = Gemma4ModelConfig(
+        transformer=TransformerConfig(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+        ),
+        vocab_size=128,
+    )
+
+    restored = ModelConfig.from_dict(original.as_dict())
+
+    assert isinstance(restored, Gemma4ModelConfig)
+    assert restored.transformer_layer_spec is original.transformer_layer_spec
 
 
 def test_gemma3_model_config_restores_tuple_runtime_fields() -> None:

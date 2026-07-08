@@ -14,6 +14,7 @@
 
 import ast
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -22,6 +23,7 @@ from unittest.mock import patch
 import pytest
 import torch
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
 from megatron.training.models.gpt import GPTModelConfig
 
@@ -49,6 +51,10 @@ class _HookBridge(_TestBridge):
             }
         )
         return config_kwargs
+
+
+class _BuilderSelectingBridge(_TestBridge):
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.mistral.model_config.MistralModelBuilder"
 
 
 class _UnknownFieldBridge(_TestBridge):
@@ -235,6 +241,29 @@ def test_silu_activation_round_trips_through_model_config_dict() -> None:
     assert serialized["extra_checkpoint_metadata"][ACTIVATION_FUNC_METADATA_KEY] == "silu"
     assert type(restored.transformer) is TransformerConfig
     assert restored.transformer.activation_func is F.silu
+
+
+def test_generic_model_config_round_trips_partial_layer_spec() -> None:
+    layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=False)
+    config = BridgeGPTModelConfig(
+        transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+        vocab_size=256,
+        transformer_layer_spec=layer_spec,
+    )
+
+    restored = BridgeGPTModelConfig.from_dict(config.as_dict())
+
+    assert isinstance(restored.transformer_layer_spec, partial)
+    assert restored.transformer_layer_spec.func is get_gpt_decoder_block_spec
+    assert restored.transformer_layer_spec.keywords == {"use_transformer_engine": False}
+
+
+def test_bridge_can_select_custom_builder_without_custom_config() -> None:
+    model_config = _BuilderSelectingBridge().model_config_bridge(_hf_pretrained())
+
+    assert type(model_config) is BridgeGPTModelConfig
+    assert model_config.builder == _BuilderSelectingBridge.MODEL_BUILDER_CLASS
+    assert model_config.as_dict()["_builder_"] == _BuilderSelectingBridge.MODEL_BUILDER_CLASS
 
 
 def test_load_model_config_restores_silu_before_nested_config_construction() -> None:

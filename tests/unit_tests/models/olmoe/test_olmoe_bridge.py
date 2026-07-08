@@ -19,13 +19,13 @@ from unittest.mock import Mock
 import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.training.models.gpt import GPTModelConfig
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge
+from megatron.bridge.models.olmoe.olmoe_bridge import OlMoEBridge, olmoe_model_config_layer_spec
 
 
 class TestMegatronOlMoEBridge:
@@ -185,9 +185,9 @@ class TestMegatronOlMoEBridge:
     def test_model_config_bridge_preserves_olmoe_specialization(self, mock_pretrained_olmoe_1b_7b):
         result = OlMoEBridge().model_config_bridge(mock_pretrained_olmoe_1b_7b)
 
-        assert isinstance(result, GPTModelConfig)
+        assert type(result) is BridgeGPTModelConfig
         assert type(result.transformer) is TransformerConfig
-        assert result.transformer_layer_spec is not None
+        assert result.transformer_layer_spec is olmoe_model_config_layer_spec
         assert result.transformer.normalization == "RMSNorm"
         assert result.transformer.qk_layernorm is True
         assert result.transformer.moe_grouped_gemm is True
@@ -197,8 +197,8 @@ class TestMegatronOlMoEBridge:
 
         restored = type(result).from_dict(result.as_dict())
 
-        assert type(restored) is type(result)
-        assert restored.transformer_layer_spec is result.transformer_layer_spec
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is olmoe_model_config_layer_spec
 
     def test_provider_bridge_basic_custom(self, mock_pretrained_olmoe_custom, olmoe_custom_config):
         """Test basic provider_bridge functionality for custom OLMoE."""

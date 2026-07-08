@@ -20,8 +20,9 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig, kimi_k2_layer_spec
+from megatron.bridge.models.kimi.layer_specs import kimi_k2_layer_spec
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
 
@@ -35,7 +36,7 @@ class KimiK2Bridge(MegatronModelBridge):
     """Megatron Bridge for Kimi K2."""
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    MODEL_CONFIG_CLASS = KimiK2ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
@@ -87,6 +88,7 @@ class KimiK2Bridge(MegatronModelBridge):
         """Convert a Hugging Face Kimi K2 config to Megatron model-config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_layer_spec=kimi_k2_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             position_embedding_type="rope",

@@ -15,7 +15,9 @@
 from typing import Any, Dict, Mapping, Union
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion import quantization_utils
@@ -24,7 +26,7 @@ from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.deepseek.model_config import DeepSeekV3ModelConfig, deepseek_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -33,6 +35,19 @@ __all__ = ["DeepSeekV3Bridge", "_dequant_fp8_blockwise"]
 
 
 _dequant_fp8_blockwise = quantization_utils.dequantize_fp8_blockwise
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def deepseek_v3_layer_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build the DeepSeek-V3 decoder block with the available backend."""
+    return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
 
 
 @MegatronModelBridge.register_bridge(
@@ -45,13 +60,13 @@ class DeepSeekV3Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V3."""
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    MODEL_CONFIG_CLASS = DeepSeekV3ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = deepseek_layer_spec
+        provider.transformer_layer_spec = deepseek_v3_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
@@ -98,6 +113,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         """Convert a Hugging Face DeepSeek-V3 config to Megatron model-config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_layer_spec=deepseek_v3_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

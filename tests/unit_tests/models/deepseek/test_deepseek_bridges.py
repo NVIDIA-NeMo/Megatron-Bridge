@@ -24,12 +24,12 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
+from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge, deepseek_v2_layer_spec
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import (
     DeepSeekV3Bridge,
     _dequant_fp8_blockwise,
+    deepseek_v3_layer_spec,
 )
-from megatron.bridge.models.deepseek.model_config import DeepSeekV2ModelConfig, DeepSeekV3ModelConfig
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -146,8 +146,8 @@ class TestDeepSeekV2Bridge:
         assert model_config.transformer.moe_layer_freq == [0] + [1] * 59
 
         restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
-        assert isinstance(restored, DeepSeekV2ModelConfig)
-        assert callable(restored.transformer_layer_spec)
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is deepseek_v2_layer_spec
 
     def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v2):
         bridge = DeepSeekV2Bridge()
@@ -213,17 +213,16 @@ class TestDeepSeekV2Bridge:
         assert kwargs["yarn_rotary_scaling_factor"] is None
 
     def test_megatron_to_hf_config_yarn_none_value(self, mock_pretrained_v2):
-        """Test that YARN_ROPE_SCALING_MAPPING omits None values on provider.
+        """Test that MLA_ROPE_SCALING_MAPPING omits None values.
 
-        Since yarn_* fields are now proper dataclass fields defaulting to None,
         None means 'unset' and should not appear in the exported rope_scaling dict.
         """
         bridge = DeepSeekV2Bridge()
-        provider = bridge.provider_bridge(mock_pretrained_v2)
-        provider.yarn_rotary_scaling_factor = 40
-        provider.yarn_mscale = None
+        model_config = bridge.model_config_bridge(mock_pretrained_v2)
+        model_config.rotary_scaling_factor = 40
+        model_config.mscale = None
 
-        hf_config = bridge.megatron_to_hf_config(provider)
+        hf_config = bridge.megatron_to_hf_config(model_config)
 
         assert "rope_scaling" in hf_config
         assert hf_config["rope_scaling"]["rope_type"] == "yarn"
@@ -346,8 +345,8 @@ class TestDeepSeekV3Bridge:
         assert model_config.make_vocab_size_divisible_by == 1280
 
         restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
-        assert isinstance(restored, DeepSeekV3ModelConfig)
-        assert callable(restored.transformer_layer_spec)
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is deepseek_v3_layer_spec
 
     def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()

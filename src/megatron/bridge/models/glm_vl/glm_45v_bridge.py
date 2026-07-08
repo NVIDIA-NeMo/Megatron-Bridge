@@ -28,6 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
 from megatron.bridge.models.glm_vl.model_config import GLM45VModelConfig
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
@@ -105,6 +106,7 @@ class GLM45VBridge(MegatronModelBridge):
             vision_config.to_dict() if hasattr(vision_config, "to_dict") else dict(vars(vision_config))
         )
         config_kwargs.update(
+            transformer_layer_spec=glm_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

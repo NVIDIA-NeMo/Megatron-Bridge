@@ -27,10 +27,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.llama_nemotron.layer_specs import llama_nemotron_layer_spec
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
-from megatron.bridge.models.llama_nemotron.model_config import LlamaNemotronModelConfig
 from megatron.bridge.utils import fusions
 
 
@@ -65,7 +66,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = LlamaNemotronModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     TRANSFORMER_CONFIG_CLASS = HeterogeneousTransformerConfig
 
     @staticmethod
@@ -149,6 +150,7 @@ class LlamaNemotronBridge(MegatronModelBridge):
         self._validate_heterogeneous_config(hf_config)
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_layer_spec=llama_nemotron_layer_spec,
             num_query_groups=self._num_query_groups(hf_config),
             heterogeneous_layers_config_encoded_json=hf_config.to_json_string(),
             normalization="RMSNorm",

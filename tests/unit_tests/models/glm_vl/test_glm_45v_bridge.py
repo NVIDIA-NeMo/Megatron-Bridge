@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     FusedGatedExpertMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.model_config import GLM45VModelBuilder, GLM45VModelConfig
@@ -155,9 +156,11 @@ class TestGLM45VBridgeInitialization:
         assert type(result.transformer) is TransformerConfig
         assert result.transformer.moe_layer_freq == [0, 1, 1]
         assert result.transformer.mrope_section == [8, 12, 12]
+        assert result.transformer_layer_spec is glm_layer_spec
         assert result.get_builder_cls() is GLM45VModelBuilder
         restored = type(result).from_dict(result.as_dict())
         assert restored.vision_config["hidden_size"] == 64
+        assert restored.transformer_layer_spec is glm_layer_spec
 
 
 class TestGLM45VBridgeProviderBridge:

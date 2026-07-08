@@ -10,14 +10,6 @@ SRC_ROOT = Path(__file__).parents[3] / "src"
 MODULE_FILES = {".".join(path.relative_to(SRC_ROOT).with_suffix("").parts): path for path in SRC_ROOT.rglob("*.py")}
 BUILDER_AUDIT = Path(__file__).with_name("test_registered_bridge_builder_audit.py")
 MIGRATED_CONFIG_NAMES = {
-    "DeepSeekV2ModelConfig",
-    "DeepSeekV3ModelConfig",
-    "Ernie45ModelConfig",
-    "GLM45ModelConfig",
-    "GLM47FlashModelConfig",
-    "KimiK2ModelConfig",
-    "MiniMaxM2ModelConfig",
-    "OlMoEModelConfig",
     "SarvamMoEModelConfig",
 }
 

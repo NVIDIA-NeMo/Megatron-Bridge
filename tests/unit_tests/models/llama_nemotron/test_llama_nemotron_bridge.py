@@ -21,11 +21,10 @@ import torch
 from transformers import GenerationConfig, LlamaConfig, LlamaForCausalLM
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.llama_nemotron.llama_nemotron_bridge import (
-    LlamaNemotronBridge,
-    LlamaNemotronModelConfig,
-)
+from megatron.bridge.models.llama_nemotron.layer_specs import llama_nemotron_layer_spec
+from megatron.bridge.models.llama_nemotron.llama_nemotron_bridge import LlamaNemotronBridge
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
     LlamaNemotronHeterogeneousProvider,
 )
@@ -183,7 +182,8 @@ class TestLlamaNemotronBridge:
 
         result = LlamaNemotronBridge().model_config_bridge(SimpleNamespace(config=config))
 
-        assert type(result) is LlamaNemotronModelConfig
+        assert type(result) is BridgeGPTModelConfig
+        assert result.transformer_layer_spec is llama_nemotron_layer_spec
         assert type(result.transformer).__name__ == "HeterogeneousTransformerConfig"
         assert result.transformer.heterogeneous_layers_config_encoded_json
         assert result.transformer.num_query_groups == 8
@@ -194,10 +194,10 @@ class TestLlamaNemotronBridge:
         assert "per_block_parameters" not in serialized["transformer"]
 
         restored = type(result).from_dict(serialized)
-        assert type(restored) is LlamaNemotronModelConfig
+        assert type(restored) is BridgeGPTModelConfig
         assert type(restored.transformer) is type(result.transformer)
         assert restored.transformer.activation_func is result.transformer.activation_func
-        assert restored.transformer_layer_spec is result.transformer_layer_spec
+        assert restored.transformer_layer_spec is llama_nemotron_layer_spec
 
     def test_model_config_bridge_disables_unavailable_rope_fusion(self, llama_nemotron_super_config_dict):
         config = SimpleNamespace(**llama_nemotron_super_config_dict)

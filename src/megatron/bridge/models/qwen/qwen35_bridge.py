@@ -35,7 +35,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
-from megatron.bridge.models.qwen.model_config import QwenHybridModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.qwen.qwen35_common import (
     apply_qwen35_common_config as _apply_qwen35_common_config,
 )
@@ -86,7 +86,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = QwenHybridModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder"
 
     @staticmethod
     def _experts_are_packed(hf_keys: set[str], *, hf_prefix: str) -> bool:
@@ -388,6 +389,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         mtp_num_layers = config_kwargs.get("mtp_num_layers")
         config_kwargs.update(
+            transformer_layer_spec=get_transformer_block_with_experimental_attention_variant_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_qkv_bias=getattr(hf_config, "attention_bias", False),
@@ -493,7 +495,8 @@ class Qwen35Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = QwenHybridModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder"
 
     @staticmethod
     def _get_dense_lm_mappings(hf_prefix="model.", megatron_prefix=""):
@@ -662,6 +665,7 @@ class Qwen35Bridge(MegatronModelBridge):
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         mtp_num_layers = config_kwargs.get("mtp_num_layers")
         config_kwargs.update(
+            transformer_layer_spec=get_transformer_block_with_experimental_attention_variant_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_qkv_bias=getattr(hf_config, "attention_bias", False),

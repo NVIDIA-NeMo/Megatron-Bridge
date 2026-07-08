@@ -21,6 +21,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, ReplicatedMapping
 from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.kimi.layer_specs import kimi_k2_layer_spec
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.model_config import KimiK25VLModelBuilder, KimiK25VLModelConfig
@@ -157,9 +158,11 @@ class TestKimiK25VLBridgeInitialization:
         assert type(result.transformer) is MLATransformerConfig
         assert result.hf_model_id == "/path/to/kimi_k25_vl"
         assert result.media_placeholder_token_id == 163605
+        assert result.transformer_layer_spec is kimi_k2_layer_spec
         assert result.get_builder_cls() is KimiK25VLModelBuilder
         restored = type(result).from_dict(result.as_dict())
         assert restored.vision_config["hidden_size"] == 1152
+        assert restored.transformer_layer_spec is kimi_k2_layer_spec
 
 
 class TestKimiK25VLBridgeProviderBridge:

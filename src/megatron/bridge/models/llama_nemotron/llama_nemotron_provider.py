@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.llama_nemotron.model_config import heterogeneous_layer_spec
+from megatron.bridge.models.llama_nemotron.layer_specs import llama_nemotron_layer_spec
 from megatron.bridge.models.transformer_config import HeterogeneousTransformerConfig
 
 
@@ -63,4 +63,4 @@ class LlamaNemotronHeterogeneousProvider(GPTModelProvider, HeterogeneousTransfor
     # Heterogeneous configuration fields
     heterogeneous_layers_config_path: str | None = None
     heterogeneous_layers_config_encoded_json: str = ""
-    transformer_layer_spec: ModuleSpec | Callable = heterogeneous_layer_spec
+    transformer_layer_spec: ModuleSpec | Callable = llama_nemotron_layer_spec

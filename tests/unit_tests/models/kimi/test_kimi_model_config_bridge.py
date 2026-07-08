@@ -7,7 +7,7 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge
-from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig
+from megatron.bridge.models.kimi.layer_specs import kimi_k2_layer_spec
 
 
 pytestmark = pytest.mark.unit
@@ -48,7 +48,8 @@ def test_model_config_bridge_maps_kimi_mla_config() -> None:
 
     model_config = KimiK2Bridge().model_config_bridge(SimpleNamespace(config=hf_config))
 
-    assert isinstance(model_config, BridgeGPTModelConfig)
+    assert type(model_config) is BridgeGPTModelConfig
+    assert model_config.transformer_layer_spec is kimi_k2_layer_spec
     assert type(model_config.transformer) is MLATransformerConfig
     assert model_config.transformer.rope_type == "rope"
     assert model_config.transformer.rotary_scaling_factor == 1.0
@@ -59,5 +60,5 @@ def test_model_config_bridge_maps_kimi_mla_config() -> None:
     assert model_config.make_vocab_size_divisible_by == 1280
 
     restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
-    assert isinstance(restored, KimiK2ModelConfig)
-    assert callable(restored.transformer_layer_spec)
+    assert type(restored) is BridgeGPTModelConfig
+    assert restored.transformer_layer_spec is kimi_k2_layer_spec

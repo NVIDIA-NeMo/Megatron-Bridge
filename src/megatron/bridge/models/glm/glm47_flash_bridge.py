@@ -34,7 +34,8 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.glm.model_config import GLM47FlashModelConfig, glm_layer_spec
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -58,7 +59,7 @@ class GLM47FlashBridge(MegatronModelBridge):
     """
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    MODEL_CONFIG_CLASS = GLM47FlashModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         """Convert HuggingFace config to MLAModelProvider."""
@@ -109,6 +110,7 @@ class GLM47FlashBridge(MegatronModelBridge):
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         first_k = getattr(hf_config, "first_k_dense_replace", 1)
         config_kwargs.update(
+            transformer_layer_spec=glm_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

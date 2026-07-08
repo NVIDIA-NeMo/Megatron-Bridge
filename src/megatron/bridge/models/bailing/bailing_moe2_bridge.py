@@ -70,9 +70,9 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
-# The deprecated provider builder still needs an explicit decoder-block spec
-# to honor Bailing's mixed dense/MoE ``moe_layer_freq``. The canonical MCore
-# GPTModelBuilder derives the equivalent block spec from the model config.
+# The deprecated provider path predates GPTModelBuilder's automatic MoE block
+# selection. Canonical model configs leave the spec unset so the stock builder
+# derives it from transformer_impl, normalization, and moe_layer_freq.
 bailing_moe2_provider_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
 
 

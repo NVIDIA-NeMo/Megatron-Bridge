@@ -64,13 +64,6 @@ def _install_gemma4_dense_load_state_aliases(model: object) -> None:
     model._gemma4_dense_load_state_aliases_installed = True
 
 
-@dataclass(kw_only=True)
-class GemmaModelConfig(BridgeGPTModelConfig):
-    """Pure model configuration for builder-backed Gemma models."""
-
-    builder: ClassVar[str] = "megatron.bridge.models.gemma.model_config.GemmaModelBuilder"
-
-
 class GemmaModelBuilder(GPTModelBuilder):
     """Build a Gemma model and install its embedding scaling behavior."""
 
@@ -104,7 +97,7 @@ class GemmaModelBuilder(GPTModelBuilder):
 
 
 @dataclass(kw_only=True)
-class Gemma2ModelConfig(GemmaModelConfig):
+class Gemma2ModelConfig(BridgeGPTModelConfig):
     """Pure model configuration for builder-backed Gemma2 models."""
 
     builder: ClassVar[str] = "megatron.bridge.models.gemma.model_config.Gemma2ModelBuilder"
@@ -319,5 +312,4 @@ __all__ = [
     "Gemma4ModelBuilder",
     "Gemma4ModelConfig",
     "GemmaModelBuilder",
-    "GemmaModelConfig",
 ]

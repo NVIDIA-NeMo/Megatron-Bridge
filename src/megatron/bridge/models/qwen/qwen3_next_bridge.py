@@ -33,7 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
-from megatron.bridge.models.qwen.model_config import QwenHybridModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -52,7 +52,7 @@ class Qwen3NextBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = QwenHybridModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""

@@ -20,12 +20,12 @@ from typing import ClassVar
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
-from megatron.bridge.models.kimi.model_config import KimiK2ModelConfig
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
 
 
 @dataclass(kw_only=True)
-class KimiK25VLModelConfig(KimiK2ModelConfig):
+class KimiK25VLModelConfig(BridgeGPTModelConfig):
     """Pure-data Kimi K2.5 multimodal build configuration."""
 
     builder: ClassVar[str] = "megatron.bridge.models.kimi_vl.model_config.KimiK25VLModelBuilder"

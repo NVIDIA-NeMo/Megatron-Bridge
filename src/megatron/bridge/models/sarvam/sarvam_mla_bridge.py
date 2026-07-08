@@ -15,19 +15,38 @@
 from typing import TYPE_CHECKING
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.transformer import MLATransformerConfig
+from megatron.core.transformer import MLATransformerConfig, ModuleSpec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.sarvam.common import get_common_config
-from megatron.bridge.models.sarvam.model_config import SarvamMLAModelConfig
 
 
 if TYPE_CHECKING:
     from megatron.bridge.models.sarvam.sarvam_provider import SarvamMLAModelProvider
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def sarvam_mla_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> ModuleSpec:
+    """Build the Sarvam MLA decoder block with the available backend."""
+    return get_gpt_decoder_block_spec(
+        config.transformer,
+        use_transformer_engine=HAVE_TE,
+        normalization="RMSNorm",
+        vp_stage=vp_stage,
+    )
 
 
 @MegatronModelBridge.register_bridge(source="SarvamMLAForCausalLM", target=GPTModel)
@@ -40,13 +59,14 @@ class SarvamMLABridge(MegatronModelBridge):
     architecture.
     """
 
-    MODEL_CONFIG_CLASS = SarvamMLAModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
 
     def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
         """Map Sarvam MLA fields before constructing the exact MCore config."""
         kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         kwargs.update(
+            transformer_layer_spec=sarvam_mla_layer_spec,
             kv_channels=hf_config.hidden_size // hf_config.num_attention_heads,
             moe_ffn_hidden_size=hf_config.moe_intermediate_size,
             num_moe_experts=hf_config.num_experts,

@@ -15,7 +15,7 @@
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import TYPE_CHECKING, Any, Callable, Dict
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Dict
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import (
@@ -34,6 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVGMapping,
 )
+from megatron.bridge.models.gpt.model_builder import LayerSpecGPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.stepfun.configuration_step35 import Step35Config
@@ -142,7 +143,7 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
-def _build_step35_layer_spec(cfg, **kw):
+def step35_layer_spec(cfg, **kw):
     """Per-layer spec for Step3.5: dense for layers 0-2 and 45-47, MoE for 3-44.
 
     Also rewrites every main-decoder layer's ModuleSpec to use
@@ -209,7 +210,8 @@ def _build_step35_layer_spec(cfg, **kw):
 class Step35ModelConfig(BridgeGPTModelConfig):
     """Builder-backed Step-3.5 config with its hybrid decoder layer spec."""
 
-    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = _build_step35_layer_spec
+    builder: ClassVar[str] = "megatron.bridge.models.stepfun.step35_bridge.Step35ModelBuilder"
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = step35_layer_spec
     layer_types: list[str] | None = None
     attention_other_setting: dict[str, Any] | None = None
     sliding_attention_setting: dict[str, Any] | None = None
@@ -218,6 +220,10 @@ class Step35ModelConfig(BridgeGPTModelConfig):
     swiglu_limits: list[float | None] | None = None
     swiglu_limits_shared: list[float | None] | None = None
     head_wise_attn_gate: bool = False
+
+
+class Step35ModelBuilder(LayerSpecGPTModelBuilder):
+    """Build Step3.5 while preserving its dense MTP decoder spec."""
 
 
 # ``source`` and ``model_type`` keep the legacy ``Step3p5ForCausalLM`` /
@@ -396,11 +402,11 @@ class Step35Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            # _build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
+            # step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
             # specs for the main decoder, and wraps layer_specs with _MTPDenseLayerSpecsList
             # so that get_gpt_mtp_block_spec_for_backend picks up a dense spec for MTP layers
             # (45-47 are not in moe_layers_enum).
-            provider.transformer_layer_spec = _build_step35_layer_spec
+            provider.transformer_layer_spec = step35_layer_spec
 
         return provider
 

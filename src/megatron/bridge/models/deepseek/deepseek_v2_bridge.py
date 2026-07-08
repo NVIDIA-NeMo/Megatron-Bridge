@@ -14,15 +14,30 @@
 
 from typing import Any
 
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.deepseek.model_config import DeepSeekV2ModelConfig, deepseek_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def deepseek_v2_layer_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build the DeepSeek-V2 decoder block with the available backend."""
+    return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
 
 
 @MegatronModelBridge.register_bridge(
@@ -35,13 +50,13 @@ class DeepSeekV2Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V2."""
 
     TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
-    MODEL_CONFIG_CLASS = DeepSeekV2ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = deepseek_layer_spec
+        provider.transformer_layer_spec = deepseek_v2_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
@@ -83,6 +98,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         """Convert a Hugging Face DeepSeek-V2 config to Megatron model-config kwargs."""
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_layer_spec=deepseek_v2_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

@@ -28,8 +28,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     MegatronParamMapping,
     QKVMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.minimax_m2.layer_specs import minimax_m2_layer_spec
-from megatron.bridge.models.minimax_m2.model_config import MiniMaxM2ModelConfig
 
 
 __all__ = ["MiniMaxM2Bridge", "_FullDimQKNormMapping", "_dequant_fp8_blockwise"]
@@ -132,7 +132,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = MiniMaxM2ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace MiniMax-M2 config to GPTModelProvider."""
@@ -179,6 +179,7 @@ class MiniMaxM2Bridge(MegatronModelBridge):
         head_dim = getattr(hf_config, "head_dim", None)
         rotary_percent = rotary_dim / head_dim if rotary_dim is not None and head_dim is not None else 1.0
         config_kwargs.update(
+            transformer_layer_spec=minimax_m2_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

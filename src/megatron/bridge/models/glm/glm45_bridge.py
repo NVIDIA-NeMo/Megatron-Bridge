@@ -27,7 +27,8 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.glm.model_config import GLM45ModelConfig, glm_layer_spec
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -46,7 +47,7 @@ class GLM45Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = GLM45ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         """Convert HuggingFace config to GPTModelProvider."""
@@ -98,6 +99,7 @@ class GLM45Bridge(MegatronModelBridge):
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_layer_spec=glm_layer_spec,
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

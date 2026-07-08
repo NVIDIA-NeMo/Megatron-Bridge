@@ -23,7 +23,9 @@ shared experts, expert bias for aux-free load balancing).
 from typing import Any
 
 import torch.nn.functional as F
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -33,17 +35,24 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.ernie.model_config import (
-    Ernie45ModelConfig,
-)
-from megatron.bridge.models.ernie.model_config import (
-    ernie45_decoder_block_spec as _ernie45_decoder_block_spec,
-)
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
 # HF class name string; avoids requiring the HF modeling module at import time.
 _ERNIE45_MOE_HF_CLASS_NAME = "Ernie4_5_MoeForCausalLM"
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+def ernie45_decoder_block_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build ERNIE's mixed dense/MoE block with the available backend."""
+    return get_gpt_decoder_block_spec(config=config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
 
 
 class _PPSafeMixin:
@@ -145,7 +154,7 @@ class Ernie45Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = Ernie45ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     @staticmethod
     def _get_num_experts(hf_config) -> int:
@@ -183,7 +192,7 @@ class Ernie45Bridge(MegatronModelBridge):
         # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
         # block spec that parses moe_layer_freq per-layer instead of the
         # default spec which applies MoE uniformly to all layers.
-        provider.transformer_layer_spec = _ernie45_decoder_block_spec
+        provider.transformer_layer_spec = ernie45_decoder_block_spec
 
         # --- MoE settings (ERNIE uses non-standard HF config field names) ---
         num_experts = self._get_num_experts(hf_config)
@@ -266,6 +275,7 @@ class Ernie45Bridge(MegatronModelBridge):
                 moe_layer_freq = [0] + [1] * (num_layers - 1)
 
         config_kwargs.update(
+            transformer_layer_spec=ernie45_decoder_block_spec,
             normalization="RMSNorm",
             activation_func=F.silu,
             gated_linear_unit=True,

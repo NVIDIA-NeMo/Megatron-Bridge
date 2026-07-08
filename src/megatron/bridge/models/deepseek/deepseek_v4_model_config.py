@@ -21,10 +21,11 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
+from megatron.bridge.models.gpt.model_builder import LayerSpecGPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
-def deepseek_v4_layer_spec(config):
+def deepseek_v4_layer_spec(config, vp_stage: int | None = None):
     """Dispatch to the installed MCore DeepSeek-v4 implementation.
 
     Bridge keeps the family fields outside the exact MLA config and attaches
@@ -36,7 +37,8 @@ def deepseek_v4_layer_spec(config):
         get_transformer_block_with_experimental_attention_variant_spec,
     )
 
-    return get_transformer_block_with_experimental_attention_variant_spec(config)
+    transformer_config = getattr(config, "transformer", config)
+    return get_transformer_block_with_experimental_attention_variant_spec(transformer_config, vp_stage=vp_stage)
 
 
 @dataclass(kw_only=True)
@@ -104,8 +106,17 @@ class DeepSeekV4ModelBuilder(GPTModelBuilder):
                 f"support; this MCore version is missing: {missing}"
             )
         layer_config = replace(config.transformer, **{name: getattr(config, name) for name in field_names})
-        runtime_config = replace(config, transformer_layer_spec=deepseek_v4_layer_spec(layer_config))
-        return GPTModelBuilder(runtime_config).build_model(pg_collection, pre_process, post_process, vp_stage)
+        runtime_config = replace(
+            config,
+            transformer=layer_config,
+            transformer_layer_spec=deepseek_v4_layer_spec,
+        )
+        return LayerSpecGPTModelBuilder(runtime_config).build_model(
+            pg_collection,
+            pre_process,
+            post_process,
+            vp_stage,
+        )
 
 
 __all__ = ["DeepSeekV4ModelBuilder", "DeepSeekV4ModelConfig"]

@@ -568,8 +568,8 @@ def test_deepseek_v4_builder_dispatches_to_installed_mcore(monkeypatch) -> None:
         f"{dispatcher}.get_transformer_block_with_experimental_attention_variant_spec", mocked_dispatch
     )
 
-    assert deepseek_v4_layer_spec(config) is expected
-    mocked_dispatch.assert_called_once_with(config)
+    assert deepseek_v4_layer_spec(config, vp_stage=2) is expected
+    mocked_dispatch.assert_called_once_with(config, vp_stage=2)
 
 
 def test_deepseek_v4_export_accepts_builder_model_config() -> None:
@@ -617,3 +617,58 @@ def test_deepseek_v4_builder_rejects_mcore_without_native_family_fields() -> Non
 
     with pytest.raises(NotImplementedError, match="native CSA, mHC, and hash-layer support"):
         DeepSeekV4ModelBuilder(config).build_model(MagicMock())
+
+
+def test_deepseek_v4_builder_uses_enriched_transformer_config(monkeypatch) -> None:
+    @dataclass
+    class InstalledTransformerConfig:
+        experimental_attention_variant: str | None = None
+        o_groups: int = 0
+        o_lora_rank: int = 0
+        csa_compress_ratios: list[int] | None = None
+        csa_window_size: int = 0
+        csa_compress_rotary_base: float = 0.0
+        dsa_indexer_n_heads: int = 0
+        dsa_indexer_head_dim: int = 0
+        dsa_indexer_topk: int = 0
+        apply_dsa_kernel_fusion: bool = False
+        enable_hyper_connections: bool = False
+        use_fused_mhc: bool = False
+        num_residual_streams: int = 0
+        mhc_sinkhorn_iterations: int = 0
+        moe_n_hash_layers: int = 0
+        actual_vocab_size: int = 0
+        activation_func_clamp_value: float = 0.0
+
+    config = DeepSeekV4ModelConfig(
+        transformer=InstalledTransformerConfig(),
+        vocab_size=8,
+        seq_length=8,
+        o_groups=4,
+        num_residual_streams=3,
+    )
+    expected_spec = object()
+    dispatcher = MagicMock(return_value=expected_spec)
+    monkeypatch.setattr(
+        "megatron.core.models.gpt.experimental_attention_variant_module_specs.get_transformer_block_with_experimental_attention_variant_spec",
+        dispatcher,
+    )
+    builder = MagicMock()
+    builder.build_model.return_value = "model"
+    builder_class = MagicMock(return_value=builder)
+    monkeypatch.setattr(
+        "megatron.bridge.models.deepseek.deepseek_v4_model_config.LayerSpecGPTModelBuilder",
+        builder_class,
+    )
+    pg_collection = MagicMock()
+
+    assert DeepSeekV4ModelBuilder(config).build_model(pg_collection, True, False, 1) == "model"
+
+    runtime_config = builder_class.call_args.args[0]
+    assert runtime_config.transformer is not config.transformer
+    assert runtime_config.transformer.o_groups == 4
+    assert runtime_config.transformer.num_residual_streams == 3
+    assert runtime_config.transformer_layer_spec is deepseek_v4_layer_spec
+    assert runtime_config.transformer_layer_spec(runtime_config, vp_stage=1) is expected_spec
+    dispatcher.assert_called_once_with(runtime_config.transformer, vp_stage=1)
+    builder.build_model.assert_called_once_with(pg_collection, True, False, 1)

@@ -19,7 +19,6 @@ from functools import partial
 from typing import Callable
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -31,23 +30,6 @@ try:
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
-
-
-def sarvam_mla_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> ModuleSpec:
-    """Build the available decoder block implementation used by Sarvam MLA."""
-    return get_gpt_decoder_block_spec(
-        config.transformer,
-        use_transformer_engine=HAVE_TE,
-        normalization="RMSNorm",
-        vp_stage=vp_stage,
-    )
-
-
-@dataclass(kw_only=True)
-class SarvamMLAModelConfig(BridgeGPTModelConfig):
-    """Serializable builder config for Sarvam MLA models."""
-
-    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: sarvam_mla_layer_spec)
 
 
 sarvam_moe_layer_spec = partial(
@@ -108,9 +90,7 @@ class SarvamMoEModelConfig(BridgeGPTModelConfig):
 
 
 __all__ = [
-    "SarvamMLAModelConfig",
     "SarvamMoEModelConfig",
     "get_sarvam_moe_pipeline_layout",
-    "sarvam_mla_layer_spec",
     "sarvam_moe_layer_spec",
 ]

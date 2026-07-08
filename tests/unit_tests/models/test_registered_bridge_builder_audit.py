@@ -31,16 +31,16 @@ BRIDGE_ROOT = SRC_ROOT / "megatron" / "bridge" / "models"
 # adding its builder/config contract to the audit is intentionally a test failure.
 REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
     "BailingMoeV2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
-    "DeepSeekV2Bridge": ("megatron.bridge.models.deepseek.model_config.DeepSeekV2ModelConfig",),
-    "DeepSeekV3Bridge": ("megatron.bridge.models.deepseek.model_config.DeepSeekV3ModelConfig",),
+    "DeepSeekV2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
+    "DeepSeekV3Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "DeepSeekV4Bridge": ("megatron.bridge.models.deepseek.deepseek_v4_model_config.DeepSeekV4ModelConfig",),
-    "Ernie45Bridge": ("megatron.bridge.models.ernie.model_config.Ernie45ModelConfig",),
+    "Ernie45Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Ernie45VLBridge": ("megatron.bridge.models.ernie_vl.model_config.Ernie45VLModelConfig",),
     "Exaone4Bridge": ("megatron.bridge.models.exaone.model_config.Exaone4ModelConfig",),
     "FalconH1Bridge": ("megatron.bridge.models.falcon_h1.model_config.FalconH1ModelConfig",),
-    "GLM45Bridge": ("megatron.bridge.models.glm.model_config.GLM45ModelConfig",),
+    "GLM45Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "GLM45VBridge": ("megatron.bridge.models.glm_vl.model_config.GLM45VModelConfig",),
-    "GLM47FlashBridge": ("megatron.bridge.models.glm.model_config.GLM47FlashModelConfig",),
+    "GLM47FlashBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "GLM5Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "GPTOSSBridge": ("megatron.bridge.models.gpt_oss.model_config.GPTOSSModelConfig",),
     "Gemma2Bridge": ("megatron.bridge.models.gemma.model_config.Gemma2ModelConfig",),
@@ -54,40 +54,46 @@ REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
         "megatron.bridge.models.gemma_vl.model_config.Gemma4VLModelConfig",
         "megatron.bridge.models.gemma_vl.model_config.Gemma4DenseVLModelConfig",
     ),
-    "GemmaBridge": ("megatron.bridge.models.gemma.model_config.GemmaModelConfig",),
-    "KimiK2Bridge": ("megatron.bridge.models.kimi.model_config.KimiK2ModelConfig",),
+    "GemmaBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
+    "KimiK2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "KimiK25VLBridge": ("megatron.bridge.models.kimi_vl.model_config.KimiK25VLModelConfig",),
     "LlamaBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
-    "LlamaNemotronBridge": ("megatron.bridge.models.llama_nemotron.model_config.LlamaNemotronModelConfig",),
+    "LlamaNemotronBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "MiMoV2FlashBridge": ("megatron.bridge.models.mimo_v2_flash.model_config.MiMoV2FlashModelConfig",),
     "MimoBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
-    "MiniMaxM2Bridge": ("megatron.bridge.models.minimax_m2.model_config.MiniMaxM2ModelConfig",),
+    "MiniMaxM2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Ministral3Bridge": ("megatron.bridge.models.ministral3.model_config.Ministral3ModelConfig",),
     "MistralBridge": ("megatron.bridge.models.mistral.model_config.MistralModelConfig",),
     "NemotronBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "NemotronHBridge": ("megatron.bridge.models.nemotronh.model_config.NemotronHModelConfig",),
     "NemotronOmniBridge": ("megatron.bridge.models.nemotron_omni.model_config.NemotronOmniModelConfig",),
     "NemotronVLBridge": ("megatron.bridge.models.nemotron_vl.model_config.NemotronVLModelConfig",),
-    "OlMoEBridge": ("megatron.bridge.models.olmoe.model_config.OlMoEModelConfig",),
+    "OlMoEBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Qwen2AudioBridge": ("megatron.bridge.models.qwen_audio.model_config.Qwen2AudioModelConfig",),
     "Qwen2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Qwen25OmniBridge": ("megatron.bridge.models.qwen_omni.model_config.Qwen25OmniModelConfig",),
     "Qwen25VLBridge": ("megatron.bridge.models.qwen_vl.model_config.Qwen25VLModelConfig",),
-    "Qwen35Bridge": ("megatron.bridge.models.qwen.model_config.QwenHybridModelConfig",),
-    "Qwen35MoEBridge": ("megatron.bridge.models.qwen.model_config.QwenHybridModelConfig",),
+    "Qwen35Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
+    "Qwen35MoEBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Qwen35VLBridge": ("megatron.bridge.models.qwen_vl.model_config.Qwen35VLModelConfig",),
     "Qwen35VLMoEBridge": ("megatron.bridge.models.qwen_vl.model_config.Qwen35VLModelConfig",),
     "Qwen3ASRBridge": ("megatron.bridge.models.qwen3_asr.model_config.Qwen3ASRModelConfig",),
     "Qwen3Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Qwen3MoEBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
-    "Qwen3NextBridge": ("megatron.bridge.models.qwen.model_config.QwenHybridModelConfig",),
+    "Qwen3NextBridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "Qwen3OmniBridge": ("megatron.bridge.models.qwen_omni.model_config.Qwen3OmniModelConfig",),
     "Qwen3VLBridge": ("megatron.bridge.models.qwen_vl.model_config.Qwen3VLModelConfig",),
     "Qwen3VLMoEBridge": ("megatron.bridge.models.qwen_vl.model_config.Qwen3VLModelConfig",),
-    "SarvamMLABridge": ("megatron.bridge.models.sarvam.model_config.SarvamMLAModelConfig",),
+    "SarvamMLABridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "SarvamMoEBridge": ("megatron.bridge.models.sarvam.model_config.SarvamMoEModelConfig",),
     "Step35Bridge": ("megatron.bridge.models.stepfun.step35_bridge.Step35ModelConfig",),
     "Step37Bridge": ("megatron.bridge.models.stepfun.step37_model_config.Step37ModelConfig",),
+}
+
+BRIDGE_SELECTED_BUILDERS: dict[str, str] = {
+    "GemmaBridge": "megatron.bridge.models.gemma.model_config.GemmaModelBuilder",
+    "Qwen35Bridge": "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder",
+    "Qwen35MoEBridge": "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder",
 }
 
 # Keep the registration source expression explicit as part of the manifest. This
@@ -226,10 +232,29 @@ def _registration_source_aliases() -> dict[str, str]:
     return aliases
 
 
+def _bridge_selected_builders() -> dict[str, str]:
+    builders: dict[str, str] = {}
+    for path in BRIDGE_ROOT.rglob("*.py"):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for child in node.body:
+                if not isinstance(child, (ast.Assign, ast.AnnAssign)):
+                    continue
+                targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                if not any(isinstance(target, ast.Name) and target.id == "MODEL_BUILDER_CLASS" for target in targets):
+                    continue
+                if isinstance(child.value, ast.Constant) and isinstance(child.value.value, str):
+                    builders[node.name] = child.value.value
+    return builders
+
+
 def test_every_registered_bridge_has_a_builder_contract_manifest_entry() -> None:
     assert _registered_bridge_architectures() == REGISTERED_BRIDGE_ARCHITECTURES
     assert _registration_source_aliases() == REGISTRATION_SOURCE_ALIASES
     assert REGISTERED_BRIDGE_CONFIGS.keys() == REGISTERED_BRIDGE_ARCHITECTURES.keys()
+    assert _bridge_selected_builders() == BRIDGE_SELECTED_BUILDERS
 
 
 @pytest.mark.parametrize(
@@ -244,6 +269,14 @@ def test_registered_model_config_resolves_a_stable_builder(config_path: str) -> 
     assert issubclass(builder_class, ModelBuilder)
     assert _resolve(config_class.builder) is builder_class
     assert "provider" not in config_class.builder.lower()
+
+
+@pytest.mark.parametrize("builder_path", sorted(set(BRIDGE_SELECTED_BUILDERS.values())))
+def test_bridge_selected_builder_resolves_a_stable_builder(builder_path: str) -> None:
+    builder_class = _resolve(builder_path)
+
+    assert issubclass(builder_class, ModelBuilder)
+    assert "provider" not in builder_path.lower()
 
 
 def test_registered_bridges_do_not_declare_legacy_model_build_routes() -> None:

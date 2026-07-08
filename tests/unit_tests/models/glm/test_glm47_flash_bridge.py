@@ -24,7 +24,7 @@ from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
-from megatron.bridge.models.glm.model_config import GLM47FlashModelConfig
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -153,8 +153,8 @@ class TestGLM47FlashBridge:
         assert model_config.transformer.moe_layer_freq == [0, 0, 0] + [1] * 44
 
         restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
-        assert isinstance(restored, GLM47FlashModelConfig)
-        assert callable(restored.transformer_layer_spec)
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is glm_layer_spec
 
     def test_mapping_registry_uses_hf_config_for_mtp_mappings(self, glm47_flash_config):
         """Test mapping_registry reads self.hf_config and includes MTP mappings."""

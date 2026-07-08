@@ -21,10 +21,14 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.model_config import (
@@ -110,12 +114,14 @@ class TestQwen35DenseBridge:
         pretrained = SimpleNamespace(config=SimpleNamespace(**qwen3_5_27b_config_dict))
         result = Qwen35Bridge().model_config_bridge(pretrained)
 
+        assert type(result) is BridgeGPTModelConfig
         assert type(result.transformer) is TransformerConfig
         assert result.transformer.experimental_attention_variant == "gated_delta_net"
         assert result.transformer.linear_attention_freq == 4
         assert "experimental_attention_variant" not in result.__dict__
         restored = type(result).from_dict(result.as_dict())
-        assert callable(restored.transformer_layer_spec)
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is get_transformer_block_with_experimental_attention_variant_spec
         assert restored.get_builder_cls() is QwenHybridModelBuilder
 
     def test_model_config_mtp_uses_experimental_attention_spec(self, qwen3_5_27b_config_dict):
@@ -124,7 +130,7 @@ class TestQwen35DenseBridge:
         result = Qwen35Bridge().model_config_bridge(pretrained)
         block_spec = result.transformer_layer_spec(result, pp_rank=0)
 
-        with patch("megatron.bridge.models.qwen.model_config.get_gpt_mtp_block_spec") as get_mtp_spec:
+        with patch("megatron.bridge.models.gpt.model_builder.get_gpt_mtp_block_spec") as get_mtp_spec:
             get_mtp_spec.return_value = "mtp-spec"
 
             assert qwen_hybrid_mtp_block_spec(result, block_spec) == "mtp-spec"
@@ -142,15 +148,14 @@ class TestQwen35DenseBridge:
         result = Qwen35Bridge().model_config_bridge(pretrained)
         empty_block_spec = TransformerBlockSubmodules(layer_specs=[])
 
-        with patch("megatron.bridge.models.qwen.model_config.get_gpt_mtp_block_spec") as get_mtp_spec:
-            get_mtp_spec.return_value = None
+        with patch("megatron.bridge.models.gpt.model_builder.default_mtp_block_spec") as default_mtp_spec:
+            default_mtp_spec.return_value = None
 
             assert qwen_hybrid_mtp_block_spec(result, empty_block_spec) is None
 
-        get_mtp_spec.assert_called_once_with(
-            result.transformer,
+        default_mtp_spec.assert_called_once_with(
+            result,
             empty_block_spec,
-            use_transformer_engine=True,
             vp_stage=None,
         )
 

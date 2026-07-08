@@ -25,13 +25,39 @@ def hf_config_to_model_config_kwargs(self, hf_config):
     return kwargs
 ```
 
-### When you need a custom builder
+### Custom layer specs and builders
 
-Create an outer model-config subclass and standalone builder when:
+Do not create an outer config subclass only to select a layer spec. Inject a named, importable layer-spec
+factory while mapping the HF config so `BridgeGPTModelConfig` can serialize it:
 
-1. The family has build parameters absent from MCore `TransformerConfig`.
-2. Construction needs a custom model, embedding, RoPE implementation, or layer-spec factory.
-3. The default builder cannot represent a hybrid or multimodal architecture.
+```python
+def my_model_layer_spec(config, vp_stage=None):
+    return get_gpt_decoder_block_spec(
+        config,
+        use_transformer_engine=True,
+        vp_stage=vp_stage,
+    )
+
+
+def hf_config_to_model_config_kwargs(self, hf_config):
+    kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+    kwargs["transformer_layer_spec"] = my_model_layer_spec
+    return kwargs
+```
+
+When stock GPT construction needs a different builder but no additional config data, select the builder on
+the bridge and keep using `BridgeGPTModelConfig`:
+
+```python
+class MyModelBridge(MegatronModelBridge):
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.my_model.model_config.MyModelBuilder"
+```
+
+Create an outer model-config subclass only when the family has additional serializable build fields that are
+absent from MCore `TransformerConfig`. A standalone builder is needed when:
+
+1. Construction needs a custom model, embedding, or RoPE implementation.
+2. The default builder cannot represent a hybrid or multimodal architecture.
 
 ```python
 @dataclass(kw_only=True)

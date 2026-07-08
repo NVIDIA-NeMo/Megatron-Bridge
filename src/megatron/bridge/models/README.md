@@ -82,15 +82,15 @@ The bridge uses decorators to register bridge implementations, enabling automati
 ```python
 @MegatronModelBridge.register_bridge(source=LlamaForCausalLM, target=GPTModel)
 class MegatronCausalLlamaBridge(MegatronModelBridge):
-    def model_config_bridge(self, hf_pretrained):
-        # Keep construction-only fields on the outer config.
-        return LlamaModelConfig(
-            transformer=TransformerConfig(
-                num_layers=hf_pretrained.config.num_hidden_layers,
-                hidden_size=hf_pretrained.config.hidden_size,
-                # ... more MCore config mapping
-            ),
+    def hf_config_to_model_config_kwargs(self, hf_config):
+        # The base mapping creates a BridgeGPTModelConfig with an exact MCore config.
+        kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
         )
+        return kwargs
     
     def mapping_registry(self):
         # Define weight mappings

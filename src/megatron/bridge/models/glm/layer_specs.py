@@ -12,16 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider-neutral Kimi K2 model configuration."""
+"""Layer specifications shared by GLM text and multimodal bridges."""
 
-from dataclasses import dataclass, field
-from functools import partial
-from typing import Callable
+from typing import Any
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.transformer.spec_utils import ModuleSpec
-
-from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.core.transformer import ModuleSpec
 
 
 try:
@@ -32,16 +28,9 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
-kimi_k2_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+def glm_layer_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build GLM's mixed dense/MoE block with the available backend."""
+    return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
 
 
-@dataclass(kw_only=True)
-class KimiK2ModelConfig(BridgeGPTModelConfig):
-    """Serializable Kimi K2 GPT build configuration."""
-
-    transformer_layer_spec: ModuleSpec | Callable[[BridgeGPTModelConfig], ModuleSpec] | None = field(
-        default_factory=lambda: kimi_k2_layer_spec
-    )
-
-
-__all__ = ["KimiK2ModelConfig", "kimi_k2_layer_spec"]
+__all__ = ["glm_layer_spec"]

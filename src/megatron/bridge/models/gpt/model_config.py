@@ -14,7 +14,9 @@
 
 """Serializable Bridge extension of Megatron-LM's GPT model config."""
 
-from dataclasses import dataclass, fields, is_dataclass
+import functools
+import inspect
+from dataclasses import MISSING, dataclass, fields, is_dataclass
 from typing import Any
 
 from megatron.training.models.gpt import GPTModelConfig
@@ -24,6 +26,54 @@ from megatron.bridge.utils.activation_map import callable_to_str, str_to_callabl
 
 
 ACTIVATION_FUNC_METADATA_KEY = "megatron_bridge.activation_func"
+
+
+def _callable_target(value: object) -> str:
+    """Return an importable target path for a layer-spec callable."""
+    module = inspect.getmodule(value)
+    qualname = getattr(value, "__qualname__", None)
+    if module is None or not isinstance(qualname, str) or "<locals>" in qualname:
+        raise ValueError(f"Cannot serialize non-importable transformer layer spec: {value!r}.")
+    return f"{module.__name__}.{qualname}"
+
+
+def _serialize_layer_spec(value: object) -> dict[str, Any]:
+    """Serialize a function or partial as an allow-listed code reference."""
+    if isinstance(value, functools.partial):
+        result: dict[str, Any] = {
+            "_target_": _callable_target(value.func),
+            "_partial_": True,
+            "_args_": list(value.args),
+        }
+        result.update(value.keywords or {})
+        return result
+    if inspect.isfunction(value):
+        return {"_target_": _callable_target(value), "_call_": False}
+    raise ValueError(
+        "transformer_layer_spec must be an importable function, functools.partial, ModuleSpec, or None; "
+        f"got {type(value).__name__}."
+    )
+
+
+def _same_layer_spec(left: object, right: object) -> bool:
+    """Return whether two layer-spec callables have the same construction."""
+    if left is right:
+        return True
+    if isinstance(left, functools.partial) and isinstance(right, functools.partial):
+        return left.func is right.func and left.args == right.args and left.keywords == right.keywords
+    return False
+
+
+def _uses_default_layer_spec(config: object) -> bool:
+    """Return whether a dataclass instance still uses its class field default."""
+    config_field = next(field for field in fields(config) if field.name == "transformer_layer_spec")
+    if config_field.default is not MISSING:
+        default = config_field.default
+    elif config_field.default_factory is not MISSING:
+        default = config_field.default_factory()
+    else:
+        return False
+    return _same_layer_spec(getattr(config, config_field.name), default)
 
 
 def _drop_non_init_fields(data: dict[str, Any], config: object) -> None:
@@ -77,7 +127,7 @@ class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
 
     The upstream config supplies the builder contract. Bridge keeps inherited
     outer/nested duplicate fields synchronized, rejects phantom overrides, and
-    serializes activation callables through its allow-listed symbolic registry.
+    serializes activation and layer-spec callables through allow-listed targets.
     """
 
     def as_dict(self) -> dict[str, Any]:
@@ -102,6 +152,8 @@ class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
         metadata = dict(data.get("extra_checkpoint_metadata") or {})
         metadata[ACTIVATION_FUNC_METADATA_KEY] = activation_name
         data["extra_checkpoint_metadata"] = metadata
+        if callable(self.transformer_layer_spec) and not _uses_default_layer_spec(self):
+            data["transformer_layer_spec"] = _serialize_layer_spec(self.transformer_layer_spec)
         return data
 
     @classmethod

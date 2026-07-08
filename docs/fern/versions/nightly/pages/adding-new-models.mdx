@@ -22,7 +22,8 @@ Use this checklist-style flow: scaffold → model config/builder mapping → par
  Most GPT-style models (such as the Qwen and Llama families) can reuse the Megatron-Core GPT model by mapping their configuration. If the model requires custom building blocks (e.g., an attention variant, RoPE variant, or VLM modules), add a lightweight specialization similar to how 🤗 HuggingFace implements `modeling_xxx.py`.
 
 - **Standard GPT-style models**: Implement a `Bridge` that maps the HF config into `BridgeGPTModelConfig`; reuse the stock GPT builder. See the [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py).
-- **Models with custom components**: Add a serializable model-config dataclass and standalone `ModelBuilder` in the model family directory. Keep custom modeling code local to the family. Existing provider classes are compatibility-only and should not be used by new integrations.
+- **Models with a custom layer spec or builder**: Keep `BridgeGPTModelConfig`, inject a named `transformer_layer_spec` from `hf_config_to_model_config_kwargs`, and use the bridge's `MODEL_BUILDER_CLASS` when stock GPT construction needs a different builder.
+- **Models with additional build data or non-GPT components**: Add a serializable model-config dataclass and standalone `ModelBuilder` in the model family directory. Keep custom modeling code local to the family. Existing provider classes are compatibility-only and should not be used by new integrations.
 
 
 ## 2) Scaffold the model folder
@@ -42,12 +43,33 @@ The bridge maps Hugging Face fields into an outer `ModelConfig` containing the e
 - Architecture quirks: RoPE base/scale, QK layernorm, tied embeddings, KV groups, max sequence length, etc.
 - Optional custom modules: select custom attention/MLP implementations in the builder or layer spec.
 
-For standard GPT-style models, reuse `BridgeGPTModelConfig` and its stock builder. For custom construction, define a stable builder import path:
+For standard GPT-style models, reuse `BridgeGPTModelConfig` and its stock builder. A custom layer spec does not require a config subclass:
+```python
+def your_model_layer_spec(config, vp_stage=None):
+    return get_gpt_decoder_block_spec(
+        config,
+        use_transformer_engine=True,
+        vp_stage=vp_stage,
+    )
+
+
+class YourModelBridge(MegatronModelBridge):
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.your_model.model_config.YourModelBuilder"
+
+    def hf_config_to_model_config_kwargs(self, hf_config):
+        kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        kwargs["transformer_layer_spec"] = your_model_layer_spec
+        return kwargs
+```
+
+Use a named, importable factory so config serialization can restore it. Set `MODEL_BUILDER_CLASS` only when a custom builder is needed; omit it to use the stock GPT builder.
+
+Define a custom outer config only when construction needs additional serializable fields that are absent from MCore `TransformerConfig`. Give its builder a stable import path:
 ```python
 @dataclass(kw_only=True)
-class YourModelConfig(ModelConfig):
+class YourModelConfig(BridgeGPTModelConfig):
     builder: ClassVar[str] = "megatron.bridge.models.your_model.model_config.YourModelBuilder"
-    transformer: TransformerConfig
+    custom_rope_parameter: float
 
 
 class YourModelBuilder(GPTModelBuilder):
@@ -60,7 +82,7 @@ class YourModelBuilder(GPTModelBuilder):
         )
 ```
 
-Subclassing `GPTModelBuilder` reuses its distributed wrapping behavior. A builder for a different model shape must also implement `build_distributed_models`. Configs must remain serializable data. Do not inherit `ModelProviderMixin`, attach undeclared fields, or put process-group state on the config. Expose nested transformer fields through the flat config API so users can set `cfg.model.tensor_model_parallel_size` without knowing field ownership.
+Subclassing `GPTModelBuilder` reuses its distributed wrapping behavior. A builder for a different model shape must also implement `build_distributed_models`. Configs must remain serializable data. Do not add a config subclass merely to select a spec or builder. Do not inherit `ModelProviderMixin`, attach undeclared fields, or put process-group state on the config. Expose nested transformer fields through the flat config API so users can set `cfg.model.tensor_model_parallel_size` without knowing field ownership.
 
 
 ## 4) Define Config and Parameter Mappings

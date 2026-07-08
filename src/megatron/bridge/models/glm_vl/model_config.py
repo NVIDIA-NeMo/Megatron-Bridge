@@ -20,12 +20,12 @@ from typing import ClassVar
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.training.models.gpt import GPTModelBuilder
 
-from megatron.bridge.models.glm.model_config import GLM45ModelConfig
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 @dataclass(kw_only=True)
-class GLM45VModelConfig(GLM45ModelConfig):
+class GLM45VModelConfig(BridgeGPTModelConfig):
     """Pure-data GLM 4.5V build configuration."""
 
     builder: ClassVar[str] = "megatron.bridge.models.glm_vl.model_config.GLM45VModelBuilder"

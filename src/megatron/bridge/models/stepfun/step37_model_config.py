@@ -19,8 +19,8 @@ from typing import Callable, ClassVar
 
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
-from megatron.training.models.gpt import GPTModelBuilder
 
+from megatron.bridge.models.gpt.model_builder import LayerSpecGPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.stepfun.configuration_step37 import Step37VisionConfig
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
@@ -54,7 +54,7 @@ class Step37ModelConfig(BridgeGPTModelConfig):
     add_decoder: bool = True
 
 
-class Step37ModelBuilder(GPTModelBuilder):
+class Step37ModelBuilder(LayerSpecGPTModelBuilder):
     """Build Step3.7 without importing or instantiating a provider."""
 
     def build_model(
