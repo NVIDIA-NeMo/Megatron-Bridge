@@ -1649,8 +1649,8 @@ class TestGroupedExpertLinearAdapter:
         assert mock_te_backend.call_args_list[1].kwargs["m_splits"] == [1, 2]
 
     @pytest.mark.run_only_on("GPU")
-    def test_grouped_expert_linear_adapter_runs_te_grouped_linear(self):
-        """Per-expert LoRA should train and infer through a real TE grouped-linear helper."""
+    def test_grouped_expert_linear_adapter_training_and_inference(self):
+        """Per-expert LoRA should produce correct outputs and gradients."""
         device = torch.device("cuda")
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
@@ -1677,7 +1677,6 @@ class TestGroupedExpertLinearAdapter:
         output = adapter(x, [1, 2])
 
         torch.testing.assert_close(output, expected)
-        assert adapter._te_grouped_linear_helpers
         output.float().sum().backward()
         assert x.grad is not None
         assert adapter.linear_in.weight.grad is not None

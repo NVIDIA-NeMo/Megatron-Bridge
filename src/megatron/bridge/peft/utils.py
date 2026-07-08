@@ -89,12 +89,14 @@ HAVE_TE = all(
 
 
 @cache
-def _te_grouped_linear_uses_explicit_m_splits(
+def _te_grouped_linear_api_features(
     autograd_function: type[torch.autograd.Function],
-) -> bool:
-    """Return whether TE passes grouped-linear splits outside ``non_tensor_args``."""
+) -> tuple[bool, bool]:
+    """Detect TE's private grouped-linear call contract from its signatures."""
 
-    return "m_splits" in inspect.signature(autograd_function.forward).parameters
+    uses_explicit_m_splits = "m_splits" in inspect.signature(autograd_function.forward).parameters
+    returns_workspaces = "_grad_workspaces" in inspect.signature(autograd_function.backward).parameters
+    return uses_explicit_m_splits, returns_workspaces
 
 
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
@@ -2011,15 +2013,26 @@ class GroupedExpertLinearAdapter(nn.Module):
                 helper.sequence_parallel,
                 helper.activation_dtype,
                 torch.is_grad_enabled(),
-                [None] * weight.shape[0],
-                False,
-                None,
-                helper.save_original_input,
-                False,
             )
+            uses_explicit_m_splits, returns_workspaces = _te_grouped_linear_api_features(
+                TEPytorchGroupedLinearAutograd
+            )
+            # TE 2.15 replaced the module argument with workspace/cache fields and
+            # added the workspace list to the autograd function's output.
+            if returns_workspaces:
+                common_non_tensor_args += (
+                    [None] * weight.shape[0],
+                    False,
+                    None,
+                    helper.save_original_input,
+                    False,
+                )
+            else:
+                common_non_tensor_args += (helper, None, helper.save_original_input, False)
+
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
             weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
-            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+            if uses_explicit_m_splits:
                 te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
                 autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
             else:
@@ -2028,10 +2041,13 @@ class GroupedExpertLinearAdapter(nn.Module):
 
             output: torch.Tensor
             if torch.is_grad_enabled():
-                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+                autograd_output = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
             else:
-                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
-            return output
+                autograd_output = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            if returns_workspaces:
+                output, _ = autograd_output
+                return output
+            return autograd_output
         finally:
             helper.end_forward()
 
