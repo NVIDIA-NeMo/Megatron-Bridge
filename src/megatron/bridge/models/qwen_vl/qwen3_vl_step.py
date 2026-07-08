@@ -168,7 +168,7 @@ def _pad_and_pack_qwen3_vl_step(
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``prepare_padded_or_packed_sequence_batch``.
+    prefer collate-time packing via ``prepare_sequence_batch``.
     """
 
     batch_size, cur_len = tokens.shape

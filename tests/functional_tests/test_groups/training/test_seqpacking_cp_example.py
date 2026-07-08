@@ -20,7 +20,7 @@ import pytest
 import torch
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.recipes.qwen.h100.qwen3 import (
     qwen3_600m_pretrain_1gpu_h100_bf16_config,
     qwen3_600m_sft_1gpu_h100_bf16_config,

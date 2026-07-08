@@ -22,7 +22,7 @@ from megatron.bridge.data.builders.gpt_sft import (
     normalize_gpt_sft_dataset_kwargs,
     resolve_gpt_sft_dataset_root,
 )
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
@@ -536,7 +536,7 @@ def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch
 
     monkeypatch.setattr(builder_mod, "materialize_hf_dataset", lambda *_: None)
     monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data",
+        "megatron.bridge.data.packing.offline.prepare_gpt_sft_packed_data",
         lambda **kwargs: pack_calls.append(kwargs),
     )
 
@@ -566,7 +566,7 @@ def test_hf_rewrite_removes_disabled_validation_pack(monkeypatch, tmp_path):
 
     monkeypatch.setattr(builder_mod, "materialize_hf_dataset", lambda *_: None)
     monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data",
+        "megatron.bridge.data.packing.offline.prepare_gpt_sft_packed_data",
         lambda **kwargs: pack_calls.append(kwargs),
     )
 

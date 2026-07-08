@@ -16,7 +16,7 @@
 import numpy as np
 import pytest
 
-from megatron.bridge.data.datasets.packing_utils import (
+from megatron.bridge.data.packing.algorithms import (
     create_hist,
     create_packing_strategy,
     fill_packing_strategy,

@@ -20,8 +20,9 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_gpt_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, create_gpt_sft_dataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
+from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
 
 class TestConvertToOpenAIMessages:
@@ -525,7 +526,7 @@ class TestCreateSFTDataset:
         assert call_kwargs["use_hf_tokenizer_chat_template"] is True
         assert call_kwargs["tool_schemas"] == {"type": "function"}
 
-    @patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTPackedDataset")
+    @patch("megatron.bridge.data.packing.gpt_sft.GPTSFTPackedDataset")
     def test_create_packed_dataset_priority(self, mock_packed_class):
         """Test that .npy files create GPTSFTPackedDataset even with chat=True."""
         from pathlib import Path
@@ -543,7 +544,7 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
         mock_packed_class.assert_called_once()
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_dataset_idx_parquet(self, mock_parquet_class):
         """Test that .idx.parquet files create GPTSFTPackedParquetDataset."""
         from pathlib import Path
@@ -559,7 +560,7 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedParquetDataset was called
         mock_parquet_class.assert_called_once()
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_dataset_preserves_pad_seq_to_mult(self, mock_parquet_class):
         """Test that packed Parquet datasets receive pad_seq_to_mult."""
         from pathlib import Path
@@ -576,7 +577,7 @@ class TestCreateSFTDataset:
         call_kwargs = mock_parquet_class.call_args[1]
         assert call_kwargs["pad_seq_to_mult"] == 4
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_dataset_idx_pq(self, mock_parquet_class):
         """Test that .idx.pq files create GPTSFTPackedParquetDataset."""
         from pathlib import Path
@@ -592,7 +593,7 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedParquetDataset was called
         mock_parquet_class.assert_called_once()
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_dataset_priority_over_chat(self, mock_parquet_class):
         """Test that packed Parquet files take precedence over chat=True."""
         from pathlib import Path
@@ -610,7 +611,7 @@ class TestCreateSFTDataset:
         # Verify GPTSFTPackedParquetDataset was called (not GPTSFTChatDataset)
         mock_parquet_class.assert_called_once()
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_regular_parquet_also_routed_to_packed(self, mock_parquet_class):
         """Test that all .parquet files route to GPTSFTPackedParquetDataset.
 
@@ -632,7 +633,7 @@ class TestCreateSFTDataset:
         # All .parquet files go through GPTSFTPackedParquetDataset
         mock_parquet_class.assert_called_once()
 
-    @patch("megatron.bridge.data.datasets.packed_parquet.GPTSFTPackedParquetDataset")
+    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
     def test_create_packed_parquet_glob_pattern(self, mock_parquet_class):
         """Test that glob patterns like data*.idx.parquet route to GPTSFTPackedParquetDataset."""
         from pathlib import Path
@@ -654,21 +655,21 @@ class TestIsPackedParquetFile:
 
     def test_single_file_idx_parquet(self):
         """Test detection of single .idx.parquet file."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("data.idx.parquet") is True
         assert is_packed_parquet_file("/path/to/data.idx.parquet") is True
 
     def test_single_file_idx_pq(self):
         """Test detection of single .idx.pq file."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("data.idx.pq") is True
         assert is_packed_parquet_file("/path/to/data.idx.pq") is True
 
     def test_glob_pattern_idx_parquet(self):
         """Test detection of glob patterns for .idx.parquet."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("data*.idx.parquet") is True
         assert is_packed_parquet_file("shard_?.idx.parquet") is True
@@ -676,14 +677,14 @@ class TestIsPackedParquetFile:
 
     def test_glob_pattern_idx_pq(self):
         """Test detection of glob patterns for .idx.pq."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("data*.idx.pq") is True
         assert is_packed_parquet_file("shard_?.idx.pq") is True
 
     def test_regular_parquet_not_detected(self):
         """Test that regular .parquet files are not detected as packed."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("data.parquet") is False
         assert is_packed_parquet_file("data*.parquet") is False
@@ -691,7 +692,7 @@ class TestIsPackedParquetFile:
 
     def test_case_insensitive(self):
         """Test case-insensitive detection."""
-        from megatron.bridge.data.datasets.packed_parquet import is_packed_parquet_file
+        from megatron.bridge.data.packing.paths import is_packed_parquet_file
 
         assert is_packed_parquet_file("DATA.IDX.PARQUET") is True
         assert is_packed_parquet_file("Data.Idx.Pq") is True
@@ -1238,7 +1239,7 @@ class TestPackedSequenceWithChatEndToEnd:
         from pathlib import Path
         from unittest.mock import MagicMock, patch
 
-        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+        from megatron.bridge.data.packing.offline import tokenize_dataset
 
         mock_tokenizer = MagicMock()
         mock_hf_tokenizer = MagicMock()
@@ -1261,7 +1262,7 @@ class TestPackedSequenceWithChatEndToEnd:
             "use_hf_tokenizer_chat_template": True,
         }
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
             mock_create.return_value = mock_dataset
 
             result = tokenize_dataset(
@@ -1279,7 +1280,7 @@ class TestPackedSequenceWithChatEndToEnd:
 
     def test_packed_dataset_preserves_chat_loss_mask(self):
         """Test that packed dataset preserves loss_mask from chat preprocessing."""
-        from megatron.bridge.data.datasets.packing_utils import fill_packing_strategy
+        from megatron.bridge.data.packing.algorithms import fill_packing_strategy
 
         # Simulate chat dataset items with loss_mask
         assignments = [[2]]
@@ -1383,7 +1384,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
 
-        with patch("megatron.bridge.data.datasets.gpt_sft._safe_load_packed_npy") as mock_load:
+        with patch("megatron.bridge.data.packing.gpt_sft._safe_load_packed_npy") as mock_load:
             mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy
@@ -1396,7 +1397,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
             )
 
             # Verify it's a packed dataset
-            from megatron.bridge.data.datasets.gpt_sft import GPTSFTPackedDataset
+            from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
             assert isinstance(dataset, GPTSFTPackedDataset)
 

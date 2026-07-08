@@ -30,6 +30,13 @@ Direct-HF/VLM in-batch packing solve padding waste; long-context training
 primarily addresses activation memory and communication tradeoffs at larger
 sequence lengths.
 
+The shared implementation lives under `megatron.bridge.data.packing`: offline
+GPT SFT materialization, packed Parquet runtime datasets, bin-packing
+algorithms, and collate-time THD packing each have separate modules. Ordinary
+non-packed padding remains in `megatron.bridge.data.collators`. Use
+`scripts/training/prepare_gpt_sft_packed_data.py` when packed GPT SFT artifacts
+should be prepared before launching training.
+
 ## When to Use It
 
 Packed sequences are a good fit when all of the following are true:

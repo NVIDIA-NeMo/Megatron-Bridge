@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Collate-time sequence batch padding, truncation, and packing helpers."""
+"""Collate-time construction of Megatron-Core THD packed sequence batches."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, MutableMapping, Sequence
-from contextlib import contextmanager
+from collections.abc import Mapping, MutableMapping, Sequence
 from typing import Any
 
 import torch
-import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 
@@ -30,25 +28,6 @@ def _ceil_to_multiple(value: int, multiple: int) -> int:
     if multiple <= 1:
         return value
     return ((value + multiple - 1) // multiple) * multiple
-
-
-@contextmanager
-def use_processor_right_padding(processor: Any) -> Iterator[None]:
-    """Temporarily force a processor tokenizer to use right padding.
-
-    Args:
-        processor: Hugging Face processor or tokenizer used by a collator.
-    """
-    tokenizer = getattr(processor, "tokenizer", processor)
-    should_restore = tokenizer is not None and hasattr(tokenizer, "padding_side")
-    previous_padding_side = getattr(tokenizer, "padding_side", None)
-    if should_restore:
-        tokenizer.padding_side = "right"
-    try:
-        yield
-    finally:
-        if should_restore:
-            tokenizer.padding_side = previous_padding_side
 
 
 def _token_key(batch: MutableMapping[str, Any]) -> str:
@@ -65,57 +44,6 @@ def _set_tokens(batch: MutableMapping[str, Any], token_key: str, value: torch.Te
         batch["tokens"] = value
     elif token_key == "tokens" and "input_ids" in batch:
         batch["input_ids"] = value
-
-
-def _pad_or_truncate_2d(x: torch.Tensor | None, target_len: int, pad_value: int | float) -> torch.Tensor | None:
-    if x is None:
-        return None
-    if x.dim() != 2:
-        raise ValueError(f"Expected a 2D tensor, got shape {tuple(x.shape)}.")
-    current_len = x.size(1)
-    if current_len < target_len:
-        return F.pad(x, (0, target_len - current_len), value=pad_value)
-    if current_len > target_len:
-        return x[:, :target_len].contiguous()
-    return x.contiguous()
-
-
-def _pad_or_truncate_position_ids(position_ids: torch.Tensor | None, target_len: int) -> torch.Tensor | None:
-    if position_ids is None:
-        return None
-    if position_ids.dim() != 2:
-        raise ValueError(f"Expected 2D position_ids, got shape {tuple(position_ids.shape)}.")
-    current_len = position_ids.size(1)
-    if current_len < target_len:
-        addition = (
-            torch.arange(current_len, target_len, device=position_ids.device, dtype=position_ids.dtype)
-            .unsqueeze(0)
-            .expand(position_ids.size(0), -1)
-        )
-        return torch.cat([position_ids, addition], dim=1).contiguous()
-    if current_len > target_len:
-        return position_ids[:, :target_len].contiguous()
-    return position_ids.contiguous()
-
-
-def _pad_or_truncate_attention_mask(attention_mask: torch.Tensor | None, target_len: int) -> torch.Tensor | None:
-    if attention_mask is None:
-        return None
-    pad_value = False if attention_mask.dtype == torch.bool else 0
-    if attention_mask.dim() == 2:
-        current_len = attention_mask.size(1)
-        if current_len < target_len:
-            return F.pad(attention_mask, (0, target_len - current_len), value=pad_value)
-        if current_len > target_len:
-            return attention_mask[:, :target_len].contiguous()
-        return attention_mask.contiguous()
-    if attention_mask.dim() == 4:
-        attention_mask = attention_mask[:, :, :target_len, :target_len]
-        _, _, query_len, key_len = attention_mask.shape
-        if query_len < target_len or key_len < target_len:
-            return F.pad(attention_mask, (0, target_len - key_len, 0, target_len - query_len), value=pad_value)
-        return attention_mask.contiguous()
-    raise ValueError(f"attention_mask must be 2D or 4D, got shape {tuple(attention_mask.shape)}.")
 
 
 def _right_padded_sequence_lengths(
@@ -392,79 +320,3 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
             batch[key] = packed[key]
         elif key in {"cu_seqlens_q_padded", "cu_seqlens_kv_padded"}:
             batch.pop(key, None)
-
-
-def prepare_padded_or_packed_sequence_batch(
-    batch: MutableMapping[str, Any],
-    *,
-    sequence_length: int | None,
-    pad_to_max_length: bool = False,
-    pad_to_multiple_of: int = 128,
-    enable_in_batch_packing: bool = False,
-    in_batch_packing_pad_to_multiple_of: int = 1,
-    pad_token_id: int = 0,
-    ignore_index: int = IGNORE_INDEX,
-    sequence_tensor_pad_values: Mapping[str, int | float] | None = None,
-) -> None:
-    """Pad, truncate, or pack sequence tensors for the training step.
-
-    This is the collate-time policy helper for sequence tensors. Non-packed
-    batches are padded/truncated to the requested shape. Packed batches are
-    emitted directly in MCore THD layout with current packed-sequence metadata.
-
-    Args:
-        batch: Mutable collate batch with ``input_ids`` or ``tokens`` plus
-            ``labels``, ``loss_mask``, ``position_ids``, and optional
-            ``attention_mask``.
-        sequence_length: Model sequence cap. If unset, non-packed batches are
-            left at the processor's batch-max length.
-        pad_to_max_length: If true, pad/truncate non-packed batches directly to
-            ``sequence_length``. This preserves the former PP/EP fixed-shape path.
-        pad_to_multiple_of: Efficient non-packed length multiple used when
-            ``pad_to_max_length`` is false.
-        enable_in_batch_packing: If true, flatten the microbatch and emit packed-sequence
-            metadata instead of returning a padded attention mask.
-        in_batch_packing_pad_to_multiple_of: Per-sequence packed length multiple
-            for CP/SP constraints.
-        pad_token_id: Token value for inserted padding.
-        ignore_index: Label value for inserted padding.
-        sequence_tensor_pad_values: Additional sequence-aligned tensor keys and
-            their padding values.
-    """
-    token_key = _token_key(batch)
-    tokens = batch[token_key]
-    if not isinstance(tokens, torch.Tensor) or tokens.dim() != 2:
-        raise ValueError("Sequence batch preparation expects a 2D token tensor.")
-
-    if enable_in_batch_packing:
-        pack_right_padded_sequence_batch_to_mcore_thd(
-            batch,
-            sequence_length=sequence_length,
-            pad_token_id=pad_token_id,
-            ignore_index=ignore_index,
-            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            token_key=token_key,
-            sequence_tensor_pad_values=sequence_tensor_pad_values,
-        )
-        return
-
-    if sequence_length is None:
-        return
-
-    if sequence_length < 1:
-        raise ValueError("sequence_length must be >= 1.")
-
-    current_len = tokens.size(1)
-    if pad_to_max_length:
-        target_len = sequence_length
-    else:
-        target_len = min(sequence_length, _ceil_to_multiple(current_len, pad_to_multiple_of))
-
-    _set_tokens(batch, token_key, _pad_or_truncate_2d(tokens, target_len, pad_token_id))
-    batch["labels"] = _pad_or_truncate_2d(batch.get("labels"), target_len, ignore_index)
-    batch["loss_mask"] = _pad_or_truncate_2d(batch.get("loss_mask"), target_len, 0)
-    batch["position_ids"] = _pad_or_truncate_position_ids(batch.get("position_ids"), target_len)
-    batch["attention_mask"] = _pad_or_truncate_attention_mask(batch.get("attention_mask"), target_len)
-    for key, pad_value in (sequence_tensor_pad_values or {}).items():
-        if batch.get(key) is not None:
-            batch[key] = _pad_or_truncate_2d(batch[key], target_len, pad_value)

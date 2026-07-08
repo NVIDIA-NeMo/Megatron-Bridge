@@ -31,8 +31,8 @@ import pytest
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
-from megatron.bridge.data.datasets.packed_parquet import (
-    GPTSFTPackedParquetDataset,
+from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset
+from megatron.bridge.data.packing.paths import (
     _resolve_parquet_paths,
     is_packed_parquet_file,
 )

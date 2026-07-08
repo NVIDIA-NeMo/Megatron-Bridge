@@ -21,7 +21,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     parse_hybrid_pattern,
 )
 
-from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size

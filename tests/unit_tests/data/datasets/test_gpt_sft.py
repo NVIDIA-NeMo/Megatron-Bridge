@@ -23,9 +23,9 @@ from megatron.bridge.data.datasets import gpt_sft as gpt_sft_module
 from megatron.bridge.data.datasets.gpt_sft import (
     GPTSFTChatDataset,
     GPTSFTDataset,
-    GPTSFTPackedDataset,
     get_dataset_root,
 )
+from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 
 

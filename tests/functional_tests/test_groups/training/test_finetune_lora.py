@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.builders import GPTSFTDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (

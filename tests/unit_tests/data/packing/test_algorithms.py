@@ -18,7 +18,7 @@ from typing import List
 import numpy as np
 import pytest
 
-from megatron.bridge.data.datasets.packing_utils import create_hist, first_fit, first_fit_decreasing
+from megatron.bridge.data.packing.algorithms import create_hist, first_fit, first_fit_decreasing
 
 
 def _first_fit_linear(seqlens: List[int], pack_size: int) -> List[List[int]]:

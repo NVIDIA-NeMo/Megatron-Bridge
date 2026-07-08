@@ -125,7 +125,7 @@ def create_squad_dataset_config(
         HFDatasetSourceConfig,
         PromptCompletionSFTPreprocessingConfig,
     )
-    from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+    from megatron.bridge.data.packing import PackedSequenceSpecs
 
     dataset_kwargs = {}
     offline_packing_specs = None

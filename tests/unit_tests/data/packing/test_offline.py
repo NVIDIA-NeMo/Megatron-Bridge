@@ -18,7 +18,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import (
+from megatron.bridge.data.packing.offline import (
     _init_shared_dataset_worker,
     _materialize_dataset_items,
     _pre_pad_data_point,
@@ -127,9 +127,7 @@ def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
         factory_kwargs.update(kwargs)
         return TinyDataset()
 
-    monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", fake_create_sft_dataset
-    )
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", fake_create_sft_dataset)
 
     dataset = tokenize_dataset(
         Path("unused.jsonl"),
@@ -163,9 +161,7 @@ def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length(monkeypatch
         def __getitem__(self, index):
             return self.items[index]
 
-    monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", lambda **kwargs: TinyDataset()
-    )
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", lambda **kwargs: TinyDataset())
 
     dataset = tokenize_dataset(
         Path("unused.jsonl"),
@@ -194,9 +190,7 @@ def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monke
         def __getitem__(self, index):
             raise AssertionError("invalid padding should fail before materializing samples")
 
-    monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", lambda **kwargs: TinyDataset()
-    )
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", lambda **kwargs: TinyDataset())
 
     with pytest.raises(ValueError, match="must be at least the effective padding multiple"):
         tokenize_dataset(
@@ -222,7 +216,7 @@ def test_materialize_dataset_items_uses_serial_path_for_non_positive_workers(mon
     def fail_pool(*args, **kwargs):
         raise AssertionError("Pool should not be constructed for non-positive worker counts")
 
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.Pool", fail_pool)
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.Pool", fail_pool)
 
     assert _materialize_dataset_items(TinyDataset(), -1).tolist() == [10, 11, 12]
     assert _materialize_dataset_items(TinyDataset(), 0).tolist() == [10, 11, 12]
@@ -259,12 +253,12 @@ def test_materialize_dataset_items_configures_and_restores_worker_resources(monk
 
     sharing_strategy_calls = []
     nofile_limit_calls = []
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.Pool", FakePool)
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.Pool", FakePool)
     monkeypatch.setattr(torch.multiprocessing, "get_sharing_strategy", lambda: "file_descriptor")
     monkeypatch.setattr(torch.multiprocessing, "set_sharing_strategy", sharing_strategy_calls.append)
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.resource.getrlimit", lambda _: (256, 4096))
+    monkeypatch.setattr("megatron.bridge.data.packing.offline.resource.getrlimit", lambda _: (256, 4096))
     monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.resource.setrlimit",
+        "megatron.bridge.data.packing.offline.resource.setrlimit",
         lambda _, limits: nofile_limit_calls.append(limits),
     )
 

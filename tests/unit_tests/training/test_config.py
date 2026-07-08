@@ -850,7 +850,7 @@ class TestConfigContainerValidation:
 
     def test_packed_sequence_micro_batch_size_validation_error(self, monkeypatch):
         """Test validation error when micro_batch_size > 1 with packed sequences."""
-        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.packing import PackedSequenceSpecs
 
         # Create config with micro_batch_size > 1 and packed sequences
         gpt_model_cfg = create_test_gpt_config()
@@ -877,7 +877,7 @@ class TestConfigContainerValidation:
 
     def test_packed_sequence_micro_batch_size_validation_passes(self, monkeypatch):
         """Test validation passes when micro_batch_size = 1 with packed sequences."""
-        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.packing import PackedSequenceSpecs
 
         # Create config with micro_batch_size = 1 and packed sequences
         gpt_model_cfg = create_test_gpt_config()
@@ -906,7 +906,7 @@ class TestConfigContainerValidation:
         from dataclasses import dataclass
         from typing import Optional, Tuple
 
-        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.packing import PackedSequenceSpecs
         from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
         @dataclass
@@ -1199,7 +1199,7 @@ class TestConfigContainerValidation:
 
     def test_offline_packing_specs_require_enable_offline_packing(self, monkeypatch):
         """Test validation error when offline specs are set without enabling offline packing."""
-        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.packing import PackedSequenceSpecs
 
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=32)
@@ -1221,7 +1221,7 @@ class TestConfigContainerValidation:
 
     def test_offline_and_in_batch_packing_are_mutually_exclusive(self, monkeypatch):
         """Test validation error when both packing modes are enabled."""
-        from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+        from megatron.bridge.data.packing import PackedSequenceSpecs
 
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(micro_batch_size=4, global_batch_size=32)

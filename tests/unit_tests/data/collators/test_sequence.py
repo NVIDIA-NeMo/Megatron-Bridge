@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 
 
 pytestmark = pytest.mark.unit
@@ -30,7 +30,7 @@ def test_prepare_sequence_batch_pads_to_efficiency_multiple():
         "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
     }
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=10,
         pad_to_max_length=False,
@@ -53,7 +53,7 @@ def test_prepare_sequence_batch_pads_to_model_length_when_required():
         "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
     }
 
-    prepare_padded_or_packed_sequence_batch(batch, sequence_length=6, pad_to_max_length=True)
+    prepare_sequence_batch(batch, sequence_length=6, pad_to_max_length=True)
 
     assert batch["input_ids"].shape == (1, 6)
     assert batch["labels"].tolist() == [[2, 3, -100, -100, -100, -100]]
@@ -71,7 +71,7 @@ def test_prepare_sequence_batch_handles_rectangular_4d_attention_mask():
         "attention_mask": torch.ones((1, 1, 3, 2), dtype=torch.bool),
     }
 
-    prepare_padded_or_packed_sequence_batch(batch, sequence_length=4, pad_to_max_length=True)
+    prepare_sequence_batch(batch, sequence_length=4, pad_to_max_length=True)
 
     assert batch["attention_mask"].shape == (1, 1, 4, 4)
     assert batch["attention_mask"][0, 0, :3, :2].all()
@@ -109,7 +109,7 @@ def test_prepare_sequence_batch_packs_directly_with_current_metadata():
         ),
     }
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=16,
         enable_in_batch_packing=True,
@@ -140,7 +140,7 @@ def test_prepare_sequence_batch_rejects_left_padded_direct_packing():
     }
 
     with pytest.raises(ValueError, match="right-padded"):
-        prepare_padded_or_packed_sequence_batch(
+        prepare_sequence_batch(
             batch,
             sequence_length=16,
             enable_in_batch_packing=True,
@@ -177,7 +177,7 @@ def test_prepare_sequence_batch_omits_padded_metadata_when_alignment_is_not_requ
         ),
     }
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=16,
         enable_in_batch_packing=True,
@@ -203,7 +203,7 @@ def test_prepare_sequence_batch_emits_padded_metadata_for_aligned_cp_multiple():
         "attention_mask": torch.tensor([[1, 1, 1, 1, 0, 0, 0, 0], [1, 1, 1, 1, 1, 1, 1, 1]]),
     }
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=8,
         enable_in_batch_packing=True,
@@ -223,7 +223,7 @@ def test_prepare_sequence_batch_rejects_overlength_packed_row():
     }
 
     with pytest.raises(ValueError, match="exceeds configured sequence_length 4"):
-        prepare_padded_or_packed_sequence_batch(
+        prepare_sequence_batch(
             batch,
             sequence_length=4,
             enable_in_batch_packing=True,
@@ -238,7 +238,7 @@ def test_prepare_sequence_batch_rejects_empty_packed_row():
     }
 
     with pytest.raises(ValueError, match="empty sequence row"):
-        prepare_padded_or_packed_sequence_batch(
+        prepare_sequence_batch(
             batch,
             sequence_length=4,
             enable_in_batch_packing=True,

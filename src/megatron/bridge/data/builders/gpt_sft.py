@@ -30,11 +30,11 @@ from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
 from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset, get_dataset_root
-from megatron.bridge.data.datasets.packed_parquet import (
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
 )
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
@@ -589,7 +589,7 @@ class GPTSFTDatasetBuilder:
             packed_path: Output path for the packed data.
             input_path: Input path to the raw dataset.
         """
-        from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
+        from megatron.bridge.data.packing.offline import prepare_gpt_sft_packed_data
 
         if self._packed_path_exists(packed_path) and not self._rewrite_packed_data:
             print_rank_0(f"Skipping packed {split_name} data preparation - already exists: {packed_path}")
@@ -606,7 +606,7 @@ class GPTSFTDatasetBuilder:
             return
 
         print_rank_0(f"Preparing packed {split_name} data at {packed_path}")
-        prepare_packed_sequence_data(
+        prepare_gpt_sft_packed_data(
             input_path=input_path,
             output_path=packed_path,
             output_metadata_path=self.pack_metadata,

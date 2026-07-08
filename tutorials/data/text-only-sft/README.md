@@ -108,7 +108,7 @@ The builder loads the source, applies the optional registered row adapter, norma
 Offline packing preprocesses examples into packed Parquet plus metadata and reuses it across runs:
 
 ```python
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 
 cfg.dataset.enable_offline_packing = True
 cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
@@ -130,7 +130,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -155,7 +155,7 @@ GPTSFTDatasetBuilder(config=dataset, tokenizer=tokenizer).prepare_data()
 PY
 ```
 
-This writes default `.idx.parquet` packed splits and metadata under the dataset root. `scripts/training/pack_sft_data.py` is also available when the selected named recipe's dataset schema matches the input files.
+This writes default `.idx.parquet` packed splits and metadata under the dataset root. `scripts/training/prepare_gpt_sft_packed_data.py` is also available when the selected named recipe's dataset schema matches the input files.
 
 Packed SFT requires micro batch size 1. With context parallelism, sequence lengths must be divisible by twice the CP size, `calculate_per_token_loss=True`, and `ddp.average_in_collective=False`. CUDA graphs require padded packed metadata.
 

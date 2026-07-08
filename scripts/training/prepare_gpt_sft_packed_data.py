@@ -21,7 +21,7 @@ directory defined by the recipe.
 
 Usage (inside container with PYTHONPATH=/opt/megatron-lm:/opt/Megatron-Bridge/src):
 
-    python scripts/training/pack_sft_data.py \\
+    python scripts/training/prepare_gpt_sft_packed_data.py \\
         --recipe <recipe_name>
 
 Set HF_HOME / NEMO_HOME if your dataset and model caches are not under ~/.cache.
@@ -29,12 +29,17 @@ Set HF_HOME / NEMO_HOME if your dataset and model caches are not under ~/.cache.
 
 import argparse
 import inspect
+import logging
 import sys
 from pathlib import Path
 
 
+logger = logging.getLogger(__name__)
+
+
 def main() -> None:
     """Pre-pack SFT dataset for the given recipe."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description="Pre-pack SFT dataset for a packed-sequence recipe.")
     parser.add_argument(
         "--recipe",
@@ -66,7 +71,7 @@ def main() -> None:
 
     import megatron.bridge.recipes as all_recipes
     from megatron.bridge.data.builders import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
-    from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
+    from megatron.bridge.data.packing.offline import prepare_gpt_sft_packed_data
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
     recipe_fn = getattr(all_recipes, args.recipe, None)
@@ -102,15 +107,14 @@ def main() -> None:
 
     offline_packing_specs.num_tokenizer_workers = args.num_tokenizer_workers
 
-    print(f"Recipe:   {args.recipe}")
-    print(f"Seq len:  {offline_packing_specs.packed_sequence_size}")
-    print(f"Workers:  {offline_packing_specs.num_tokenizer_workers}")
-    print()
+    logger.info("Recipe:   %s", args.recipe)
+    logger.info("Seq len:  %s", offline_packing_specs.packed_sequence_size)
+    logger.info("Workers:  %s", offline_packing_specs.num_tokenizer_workers)
 
-    print("Building tokenizer...")
+    logger.info("Building tokenizer...")
     tokenizer = build_tokenizer(cfg.tokenizer)
 
-    print("Packing dataset (skipped if already cached)...")
+    logger.info("Packing dataset (skipped if already cached)...")
     dataset_config = cfg.dataset
     builder = GPTSFTDatasetBuilder(config=dataset_config, tokenizer=tokenizer)
 
@@ -128,7 +132,7 @@ def main() -> None:
             sys.exit("Error: --packed-train-data-path is required when using explicit pack paths.")
 
         packed_metadata_path = Path(args.packed_metadata_path) if args.packed_metadata_path else builder.pack_metadata
-        prepare_packed_sequence_data(
+        prepare_gpt_sft_packed_data(
             input_path=Path(args.train_input_path),
             output_path=Path(args.packed_train_data_path),
             output_metadata_path=packed_metadata_path,
@@ -142,7 +146,7 @@ def main() -> None:
         )
 
         if args.val_input_path and args.packed_val_data_path:
-            prepare_packed_sequence_data(
+            prepare_gpt_sft_packed_data(
                 input_path=Path(args.val_input_path),
                 output_path=Path(args.packed_val_data_path),
                 output_metadata_path=packed_metadata_path,
@@ -157,12 +161,12 @@ def main() -> None:
         elif args.val_input_path or args.packed_val_data_path:
             sys.exit("Error: --val-input-path and --packed-val-data-path must be provided together.")
 
-        print("Done.")
+        logger.info("Done.")
         return
 
     builder.prepare_data()
 
-    print("Done.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":

@@ -105,7 +105,7 @@ For preparation schemas, offline packing, finite epochs, and a complete knob ref
 Select a Hugging Face dataset with `HFDatasetSourceConfig`. A built-in `dataset_name` preset owns the physical Hub path, subset, and schema adapter. This avoids repeating coupled metadata such as the SQuAD path and adapter in every recipe. Bridge never infers a schema from an arbitrary Hub path because one repository can expose multiple subsets and schemas. For a custom source, set `path_or_dataset`; rows already matching the selected chat or prompt-completion schema need no adapter.
 
 ```python
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,

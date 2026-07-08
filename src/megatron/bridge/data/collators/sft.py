@@ -30,7 +30,7 @@ from megatron.bridge.data.conversation_processing import (
     tokenize_chat_example,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_batching import build_mcore_thd_sequence_batch_from_rows
+from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
     sft_example_metadata,

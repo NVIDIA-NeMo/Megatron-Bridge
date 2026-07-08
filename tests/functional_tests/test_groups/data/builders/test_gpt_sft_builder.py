@@ -23,7 +23,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
 )
 from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -220,7 +220,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
     """Test GPTSFTDatasetBuilder with chat template and tool schema support."""
 
     def test_dataset_kwargs_passed_to_packing(self, tmp_path, monkeypatch):
-        """Test that dataset_kwargs are passed to prepare_packed_sequence_data."""
+        """Test that dataset_kwargs are passed to prepare_gpt_sft_packed_data."""
         from unittest.mock import patch
 
         # Create builder with dataset_kwargs
@@ -246,14 +246,14 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
             tokenizer=tokenizer,
         )
 
-        # Mock prepare_packed_sequence_data to verify it receives dataset_kwargs
-        with patch("megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data") as mock_prepare:
+        # Mock prepare_gpt_sft_packed_data to verify it receives dataset_kwargs
+        with patch("megatron.bridge.data.packing.offline.prepare_gpt_sft_packed_data") as mock_prepare:
             # Mock file existence checks
             monkeypatch.setattr("pathlib.Path.is_file", lambda self: False)
 
             builder.prepare_packed_data()
 
-            # Verify prepare_packed_sequence_data was called twice (train and val)
+            # Verify prepare_gpt_sft_packed_data was called twice (train and val)
             assert mock_prepare.call_count == 2
 
             # Verify dataset_kwargs were passed
@@ -353,7 +353,7 @@ class TestPackedSequenceDatasetKwargs:
         from pathlib import Path
         from unittest.mock import MagicMock, patch
 
-        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+        from megatron.bridge.data.packing.offline import tokenize_dataset
 
         # Mock tokenizer
         mock_tokenizer = MagicMock()
@@ -366,7 +366,7 @@ class TestPackedSequenceDatasetKwargs:
         }
 
         # Mock create_gpt_sft_dataset to verify it receives kwargs
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset
@@ -393,7 +393,7 @@ class TestPackedSequenceDatasetKwargs:
         from pathlib import Path
         from unittest.mock import MagicMock, patch
 
-        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+        from megatron.bridge.data.packing.offline import tokenize_dataset
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
@@ -401,7 +401,7 @@ class TestPackedSequenceDatasetKwargs:
         tool_schemas_dict = [{"type": "function", "function": {"name": "test"}}]
         dataset_kwargs = {"tool_schemas": tool_schemas_dict}
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset
@@ -426,7 +426,7 @@ class TestPackedSequenceDatasetKwargs:
         from pathlib import Path
         from unittest.mock import MagicMock, patch
 
-        from megatron.bridge.data.datasets.packed_sequence import tokenize_dataset
+        from megatron.bridge.data.packing.offline import tokenize_dataset
 
         # Mock HF tokenizer
         mock_tokenizer = MagicMock()
@@ -437,7 +437,7 @@ class TestPackedSequenceDatasetKwargs:
         custom_template = "{% for msg in messages %}{{ msg.content }}{% endfor %}"
         dataset_kwargs = {"chat_template": custom_template}
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset

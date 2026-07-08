@@ -19,7 +19,7 @@ import pytest
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 
 
 @pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])

@@ -22,7 +22,7 @@ from megatron.bridge.data.builders import (
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
 )
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA

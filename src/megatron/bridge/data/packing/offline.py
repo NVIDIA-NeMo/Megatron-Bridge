@@ -1,4 +1,4 @@
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2024-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,11 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""Offline materialization of packed GPT SFT artifacts."""
+
 import json
 import logging
 import resource
-import warnings
-from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
 
@@ -25,11 +26,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
 from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
-from megatron.bridge.data.datasets.packed_parquet import (
-    is_packed_parquet_spec,
-    resolve_packed_parquet_paths,
-)
-from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
+from megatron.bridge.data.packing.algorithms import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
@@ -211,7 +208,7 @@ def tokenize_dataset(
     return dataset
 
 
-def prepare_packed_sequence_data(
+def prepare_gpt_sft_packed_data(
     input_path: Path,
     output_path: Path,
     output_metadata_path: Path,
@@ -265,7 +262,7 @@ def prepare_packed_sequence_data(
     # save output data
     output_path_str = str(output_path)
     if output_path_str.lower().endswith((".parquet", ".pq")):
-        from megatron.bridge.data.datasets.packed_parquet import write_packed_parquet
+        from megatron.bridge.data.packing.parquet import write_packed_parquet
 
         write_packed_parquet(output_data, output_path)
     else:
@@ -296,124 +293,3 @@ def prepare_packed_sequence_data(
             json.dump(packing_metadata_file, f)
 
     logger.info(f"Packed sequence is prepared and saved to {output_path}")
-
-
-@dataclass
-class PackedSequenceSpecs:
-    """
-    Configuration class for packed sequence datasets.
-
-    This class holds parameters related to sequence packing, including the size of the packed sequences,
-    tokenizer information, paths to packed data files, and other related settings.
-    """
-
-    packed_sequence_size: int = -1
-    """
-    If a positive integer, this arg enables training with sequence packing and specifies the pack size
-    If less than or equal to 0, sequence packing is disabled. Defaults to -1.
-    Note: This arg is distinct from `seq_length` because `seq_length` specifies the maximum length
-    of the original sequence (i.e. the length to truncate long sequences in the input data).
-    """
-
-    tokenizer_model_name: str = None
-    """
-    Keep track of tokenizer model name, since each tokenizer produces a different packed sequence dataset file.
-    This field is set by llm.finetune api.
-    """
-
-    num_tokenizer_workers: int = -1
-    """
-    The number of worker processes to use for tokenization when preparing the packed sequence dataset.
-    If less than or equal to 1, tokenization runs serially. Values greater than 1 enable multiprocessing.
-    """
-
-    packed_train_data_path: str = None
-    """
-    If specified, use this file for the packed training dataset instead of the default path.
-    """
-
-    packed_val_data_path: str = None
-    """
-    If specified, use this file for the packed validation dataset instead of the default path.
-    """
-
-    packed_metadata_path: str = None
-    """
-    If specified, use this file for the training and validation packing metadata file instead of the default path.
-    """
-
-    pad_cu_seqlens: bool = False
-    """
-    If True, pad cu_seqlens to a constant size, which is required for use with cudagraphs.
-    """
-    pad_seq_to_mult: int | None = 1
-    """
-    Optional multiple to pad each sample to when generating packed datasets.
-    For THD/context parallel, set to (context_parallel_size * 2) to keep samples divisible.
-    """
-
-    def __post_init__(self):
-        if self.packed_train_data_path is not None:
-            self._validate_packed_path("packed_train_data_path", self.packed_train_data_path)
-
-        if self.packed_val_data_path is not None:
-            self._validate_packed_path("packed_val_data_path", self.packed_val_data_path)
-
-        if self.pad_seq_to_mult is not None and self.pad_seq_to_mult <= 0:
-            raise ValueError("pad_seq_to_mult must be a positive integer when provided.")
-
-    def _validate_packed_path(self, attr_name: str, path_value: str) -> None:
-        """Validate a packed data path and store it appropriately.
-
-        For .npy files: strict validation with Path.exists()
-        For packed parquet specs: validate via resolution (supports dirs/globs)
-
-        Args:
-            attr_name: The attribute name being validated (for error messages)
-            path_value: The path value to validate
-
-        Raises:
-            FileNotFoundError: If the path does not exist or resolves to no files
-            ValueError: If the path format is invalid
-        """
-        path_str = str(path_value)
-
-        # Check if it's an .npy file (legacy format)
-        if path_str.lower().endswith(".npy"):
-            warnings.warn(
-                f"The .npy packed sequence format is deprecated and will be removed in the next release. "
-                f"Please use packed parquet format instead. Path: {path_str}",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if MultiStorageClientFeature.is_enabled():
-                msc = MultiStorageClientFeature.import_package()
-                path_obj = msc.Path(path_str)
-            else:
-                path_obj = Path(path_str)
-
-            if not path_obj.exists():
-                raise FileNotFoundError(f"{attr_name} file does not exist: {path_str}")
-            setattr(self, attr_name, path_obj)
-            return
-
-        # Check if it's a packed parquet spec (file/dir/glob)
-        if is_packed_parquet_spec(path_str):
-            # Validate by resolving - this checks that files actually exist
-            try:
-                resolved_paths = resolve_packed_parquet_paths(path_str)
-                if len(resolved_paths) == 0:
-                    raise FileNotFoundError(f"{attr_name} resolved to no files: {path_str}")
-            except ValueError as e:
-                raise FileNotFoundError(f"{attr_name} could not be resolved: {path_str}. Error: {e}") from e
-
-            # Store the original string spec (not Path) to preserve globs
-            # The dataset loader will handle resolution
-            setattr(self, attr_name, path_str)
-            return
-
-        # Neither .npy nor valid packed parquet spec
-        raise ValueError(
-            f"{attr_name} must be a .npy file or a packed parquet spec "
-            f"(file/directory/glob ending in .parquet or .pq): {path_str}"
-        )
