@@ -1,0 +1,244 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""
+Tests for PreTrainedMaskedLM class.
+"""
+
+from unittest.mock import Mock, patch
+
+import pytest
+import torch
+from transformers import PreTrainedTokenizer
+
+from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
+
+
+class TestPreTrainedMaskedLMInitialization:
+    """Test initialization and configuration of PreTrainedMaskedLM."""
+
+    @patch("torch.cuda.is_available")
+    def test_init_minimal(self, mock_cuda):
+        """Test minimal initialization has no generation-specific state."""
+        mock_cuda.return_value = False
+        lm = PreTrainedMaskedLM()
+
+        assert lm._model_name_or_path is None
+        assert lm.device == "cpu"
+        assert lm.trust_remote_code is False
+        assert not hasattr(lm, "_config")
+        assert not hasattr(lm, "_tokenizer")
+        assert not hasattr(lm, "_model")
+        # Unlike PreTrainedCausalLM, no generation_config artifact exists at all.
+        assert not hasattr(lm, "generation_config")
+        assert PreTrainedMaskedLM.OPTIONAL_ARTIFACTS == []
+
+    def test_from_pretrained_classmethod(self):
+        """Test from_pretrained class method wires constructor args through."""
+        lm = PreTrainedMaskedLM.from_pretrained(
+            "bert-base-uncased",
+            device="cuda",
+            torch_dtype=torch.float16,
+            trust_remote_code=True,
+        )
+
+        assert lm._model_name_or_path == "bert-base-uncased"
+        assert lm.device == "cuda"
+        assert lm.torch_dtype == torch.float16
+        assert lm.trust_remote_code is True
+
+
+class TestPreTrainedMaskedLMConfigProperty:
+    """Test config property and lazy loading."""
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.safe_load_config_with_retry")
+    def test_config_lazy_load(self, mock_load_config, mock_config):
+        """Test config is lazy loaded on first access."""
+        mock_load_config.return_value = mock_config
+
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        assert not hasattr(lm, "_config")
+
+        config = lm.config
+
+        assert config is mock_config
+        mock_load_config.assert_called_once_with("bert-base-uncased", trust_remote_code=False)
+
+    def test_config_without_model_path(self):
+        """Test accessing config without model_name_or_path raises error."""
+        lm = PreTrainedMaskedLM()
+
+        with pytest.raises(ValueError, match="model_name_or_path must be provided"):
+            _ = lm.config
+
+
+class TestPreTrainedMaskedLMModelProperty:
+    """Test model property, lazy loading, and the AutoModelForMaskedLM/AutoModel fallback."""
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
+    def test_model_lazy_load_via_masked_lm_head(self, mock_from_pretrained, mock_model):
+        """Test model is loaded via AutoModelForMaskedLM when a masked-LM head is registered."""
+        mock_from_pretrained.return_value = mock_model
+
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        assert not hasattr(lm, "_model")
+
+        model = lm.model
+
+        assert model is mock_model
+        mock_from_pretrained.assert_called_once()
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModel.from_pretrained")
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
+    def test_model_falls_back_to_auto_model(
+        self, mock_masked_lm_from_pretrained, mock_auto_model_from_pretrained, mock_model
+    ):
+        """Test model loading falls back to AutoModel when no masked-LM head is registered."""
+        mock_masked_lm_from_pretrained.side_effect = ValueError("Unrecognized configuration class")
+        mock_auto_model_from_pretrained.return_value = mock_model
+
+        lm = PreTrainedMaskedLM(model_name_or_path="some-encoder-only-model")
+        model = lm.model
+
+        assert model is mock_model
+        mock_auto_model_from_pretrained.assert_called_once()
+
+    def test_model_without_model_path(self):
+        """Test accessing model without model_name_or_path raises error."""
+        lm = PreTrainedMaskedLM()
+
+        with pytest.raises(ValueError, match="model_name_or_path must be provided"):
+            _ = lm.model
+
+    def test_model_setter(self, mock_model):
+        """Test setting model manually moves it to the configured device."""
+        lm = PreTrainedMaskedLM(device="cuda")
+
+        lm.model = mock_model
+
+        assert lm._model is mock_model
+        mock_model.to.assert_called_once_with("cuda")
+
+
+class TestPreTrainedMaskedLMMethods:
+    """Test forward call, encode, and decode."""
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
+    def test_call_method(self, mock_from_pretrained, mock_model):
+        """Test __call__ forwards to the underlying model."""
+        mock_from_pretrained.return_value = mock_model
+        mock_model.return_value = "model_output"
+
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        result = lm(input_ids="dummy_ids")
+
+        assert result == "model_output"
+        mock_model.assert_called_once_with(input_ids="dummy_ids")
+
+    def test_encode_method(self, mock_tokenizer):
+        """Test encode tokenizes text and moves tensors to the model's device."""
+        lm = PreTrainedMaskedLM(device="cpu")
+        lm._tokenizer = mock_tokenizer
+
+        lm.encode("The capital of France is [MASK].")
+
+        mock_tokenizer.assert_called_once()
+        call_kwargs = mock_tokenizer.call_args[1]
+        assert call_kwargs["return_tensors"] == "pt"
+
+    def test_decode_method(self, mock_tokenizer):
+        """Test decode forwards to the tokenizer's decode method."""
+        lm = PreTrainedMaskedLM()
+        lm._tokenizer = mock_tokenizer
+
+        lm.decode([101, 2054, 102])
+
+        mock_tokenizer.decode.assert_called_once_with([101, 2054, 102])
+
+
+class TestPreTrainedMaskedLMDeviceManagement:
+    """Test to/half/float device and precision helpers."""
+
+    def test_to_method(self, mock_model):
+        """Test moving the model to a new device."""
+        lm = PreTrainedMaskedLM(device="cpu")
+        lm._model = mock_model
+
+        lm.to("cuda:0")
+
+        assert lm.device == "cuda:0"
+        mock_model.to.assert_called_once_with("cuda:0")
+
+    def test_half_method_no_model(self):
+        """Test half() is a no-op when no model has been loaded."""
+        lm = PreTrainedMaskedLM()
+        result = lm.half()
+        assert result is lm
+
+    def test_float_method(self, mock_model):
+        """Test float() converts a loaded model to float32."""
+        mock_model.float.return_value = mock_model
+        lm = PreTrainedMaskedLM()
+        lm._model = mock_model
+
+        lm.float()
+
+        mock_model.float.assert_called_once()
+
+
+class TestPreTrainedMaskedLMProperties:
+    """Test dtype/num_parameters/__repr__."""
+
+    def test_dtype_and_num_parameters_without_model(self):
+        """Test dtype and num_parameters are None before the model is loaded."""
+        lm = PreTrainedMaskedLM()
+        assert lm.dtype is None
+        assert lm.num_parameters is None
+
+    def test_repr_does_not_crash_without_loaded_components(self):
+        """Test __repr__ is safe to call before any component is loaded."""
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+
+        with patch.object(PreTrainedMaskedLM, "config", new=None):
+            repr_str = repr(lm)
+
+        assert "PreTrainedMaskedLM" in repr_str
+
+
+@pytest.fixture
+def mock_config():
+    """Mock AutoConfig for testing."""
+    config = Mock()
+    config.model_type = "bert"
+    config.num_hidden_layers = 12
+    config.hidden_size = 768
+    config.save_pretrained = Mock()
+    return config
+
+
+@pytest.fixture
+def mock_tokenizer():
+    """Mock PreTrainedTokenizer for testing."""
+    tokenizer = Mock(spec=PreTrainedTokenizer)
+    tokenizer.return_value = Mock(to=Mock(return_value="encoded_inputs"))
+    tokenizer.decode.return_value = "decoded text"
+    return tokenizer
+
+
+@pytest.fixture
+def mock_model():
+    """Mock model for testing."""
+    model = Mock()
+    model.to.return_value = model
+    return model
