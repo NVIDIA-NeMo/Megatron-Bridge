@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 
 
 def get_hf_model_id_from_model_config(model_config: object) -> str | None:
@@ -44,3 +44,44 @@ def get_hf_model_id_from_model_config(model_config: object) -> str | None:
         if hf_model_id:
             return str(hf_model_id)
     return None
+
+
+def set_hf_model_id_on_model_config(model_config: object, hf_model_id: str) -> None:
+    """Store a Hugging Face model identifier on a model config.
+
+    Legacy provider configs own an ``hf_model_id`` field. Builder-backed
+    configs store the value in serializable checkpoint metadata instead of
+    introducing a model-specific field.
+
+    Args:
+        model_config: A mutable model config object or serialized mapping.
+        hf_model_id: Hugging Face model identifier or local source path.
+
+    Raises:
+        TypeError: If a serialized config mapping is immutable or existing
+            checkpoint metadata is not a mapping.
+    """
+    if isinstance(model_config, Mapping):
+        if not isinstance(model_config, MutableMapping):
+            raise TypeError("Cannot set hf_model_id on an immutable model-config mapping.")
+        if "hf_model_id" in model_config:
+            model_config["hf_model_id"] = hf_model_id
+            return
+        metadata = model_config.get("extra_checkpoint_metadata")
+        if metadata is not None and not isinstance(metadata, Mapping):
+            raise TypeError("extra_checkpoint_metadata must be a mapping when present.")
+        updated_metadata = dict(metadata or {})
+        updated_metadata["hf_model_id"] = hf_model_id
+        model_config["extra_checkpoint_metadata"] = updated_metadata
+        return
+
+    if hasattr(model_config, "hf_model_id"):
+        setattr(model_config, "hf_model_id", hf_model_id)
+        return
+
+    metadata = getattr(model_config, "extra_checkpoint_metadata", None)
+    if metadata is not None and not isinstance(metadata, Mapping):
+        raise TypeError("extra_checkpoint_metadata must be a mapping when present.")
+    updated_metadata = dict(metadata or {})
+    updated_metadata["hf_model_id"] = hf_model_id
+    setattr(model_config, "extra_checkpoint_metadata", updated_metadata)

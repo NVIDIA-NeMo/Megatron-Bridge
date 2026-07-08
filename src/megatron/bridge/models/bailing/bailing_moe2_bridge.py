@@ -32,13 +32,14 @@ Supported models:
 """
 
 import logging
+from functools import partial
 from typing import Any
 
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import AutoConfig, AutoModelForCausalLM
 
 from megatron.bridge.models.bailing.configuration_bailing_moe_v2 import BailingMoeV2Config
-from megatron.bridge.models.bailing.model_config import BailingMoeV2ModelConfig, bailing_moe2_layer_spec
 from megatron.bridge.models.bailing.modeling_bailing_moe_v2 import BailingMoeV2ForCausalLM
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -47,6 +48,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -60,6 +62,19 @@ AutoModelForCausalLM.register(BailingMoeV2Config, BailingMoeV2ForCausalLM, exist
 
 logger = logging.getLogger(__name__)
 
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+# The deprecated provider builder still needs an explicit decoder-block spec
+# to honor Bailing's mixed dense/MoE ``moe_layer_freq``. The canonical MCore
+# GPTModelBuilder derives the equivalent block spec from the model config.
+bailing_moe2_provider_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+
 
 @MegatronModelBridge.register_bridge(source="BailingMoeV2ForCausalLM", target=GPTModel, model_type="bailing_moe_v2")
 class BailingMoeV2Bridge(MegatronModelBridge):
@@ -72,13 +87,13 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    MODEL_CONFIG_CLASS = BailingMoeV2ModelConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = bailing_moe2_layer_spec
+        provider.transformer_layer_spec = bailing_moe2_provider_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
@@ -115,6 +130,7 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         """
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
+            transformer_impl="transformer_engine" if HAVE_TE else "local",
             normalization="RMSNorm",
             gated_linear_unit=True,
             add_bias_linear=False,

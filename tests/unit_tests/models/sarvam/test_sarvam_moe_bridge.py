@@ -25,7 +25,12 @@ from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.sarvam.model_config import SarvamMoEModelConfig
+from megatron.bridge.models.sarvam import model_config as sarvam_model_config
+from megatron.bridge.models.sarvam.model_config import (
+    SarvamMLAModelConfig,
+    SarvamMoEModelConfig,
+    sarvam_mla_layer_spec,
+)
 from megatron.bridge.models.sarvam.sarvam_moe_bridge import SarvamMoEBridge
 from megatron.bridge.models.sarvam.sarvam_provider import SarvamMoEModelProvider
 
@@ -92,6 +97,35 @@ class TestSarvamMoEBridge:
 
     def test_registration(self):
         assert issubclass(SarvamMoEBridge, MegatronModelBridge)
+
+    def test_mla_model_config_registers_family_layer_spec(self):
+        config = SarvamMLAModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            vocab_size=256,
+        )
+
+        restored = type(config).from_dict(config.as_dict())
+
+        assert config.transformer_layer_spec is sarvam_mla_layer_spec
+        assert restored.transformer_layer_spec is sarvam_mla_layer_spec
+
+    def test_mla_layer_spec_uses_local_layers_without_transformer_engine(self, monkeypatch):
+        get_decoder_spec = Mock(return_value=object())
+        monkeypatch.setattr(sarvam_model_config, "HAVE_TE", False)
+        monkeypatch.setattr(sarvam_model_config, "get_gpt_decoder_block_spec", get_decoder_spec)
+        config = SarvamMLAModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=128, num_attention_heads=4),
+            vocab_size=256,
+        )
+
+        sarvam_mla_layer_spec(config)
+
+        get_decoder_spec.assert_called_once_with(
+            config.transformer,
+            use_transformer_engine=False,
+            normalization="RMSNorm",
+            vp_stage=None,
+        )
 
     def test_provider_bridge_maps_common_config(self, mock_pretrained_moe):
         bridge = SarvamMoEBridge()

@@ -15,9 +15,10 @@
 """Pure Step3.7 build configuration and standalone builder."""
 
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -31,7 +32,9 @@ class Step37ModelConfig(BridgeGPTModelConfig):
     """Serializable Step3.7 config with family fields outside MCore config."""
 
     builder: ClassVar[str] = "megatron.bridge.models.stepfun.step37_model_config.Step37ModelBuilder"
-    transformer_layer_spec = build_step35_layer_spec
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: build_step35_layer_spec
+    )
     layer_types: list[str] | None = None
     attention_other_setting: dict[str, object] | None = None
     sliding_attention_setting: dict[str, object] | None = None

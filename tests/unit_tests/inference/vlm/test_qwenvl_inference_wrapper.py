@@ -62,6 +62,34 @@ class TestQwenVLInferenceWrapper:
         # Just verify it was set (not None)
         assert wrapper.inference_params is not None
 
+    def test_prep_inference_input_preserves_batched_visual_inputs(self, wrapper):
+        prompts_tokens = torch.tensor([[1, 2, 3], [4, 5, 6]])
+        first_pixel_values = torch.tensor([[1.0, 2.0]])
+        second_pixel_values = torch.tensor([[3.0, 4.0], [5.0, 6.0]])
+        first_grid = torch.tensor([[1, 1, 1]])
+        second_grid = torch.tensor([[1, 1, 2]])
+        image_dict = [
+            {
+                "pixel_values": first_pixel_values,
+                "image_grid_thw": first_grid,
+                "mm_token_type_ids": torch.tensor([[0, 1, 0]], dtype=torch.int32),
+            },
+            {
+                "pixel_values": second_pixel_values,
+                "image_grid_thw": second_grid,
+                "mm_token_type_ids": torch.tensor([[1, 1, 0]], dtype=torch.int32),
+            },
+        ]
+
+        with patch(
+            "megatron.bridge.inference.vlm.qwenvl_inference_wrapper._to_cuda_optional", side_effect=lambda x: x
+        ):
+            result = wrapper.prep_inference_input(prompts_tokens, image_dict)
+
+        assert result["pixel_values"].equal(torch.cat([first_pixel_values, second_pixel_values]))
+        assert result["image_grid_thw"].equal(torch.cat([first_grid, second_grid]))
+        assert result["mm_token_type_ids"].equal(torch.tensor([[0, 1, 0], [1, 1, 0]], dtype=torch.int32))
+
     def test_prep_inference_input_pads_mm_token_type_ids(self, wrapper):
         prompts_tokens = torch.tensor([[1, 2, 3, 4, 5]])
         pixel_values = torch.randn(1, 3, 224, 224)

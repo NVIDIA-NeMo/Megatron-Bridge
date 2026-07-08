@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Bridge model-config compatibility and validated deserialization."""
+
 from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from typing import Any
@@ -32,7 +34,12 @@ from megatron.bridge.utils.instantiate_utils import _resolve_target, _validate_t
 
 
 class ModelConfig(_MegatronModelConfig):
-    """Bridge compatibility wrapper for Megatron-LM model configs."""
+    """Bridge compatibility wrapper for Megatron-LM model configs.
+
+    The upstream base remains the construction contract. Bridge adds target
+    allow-list validation, support for its structured instantiate nodes, and
+    activation-callable restoration needed by checkpoint config round trips.
+    """
 
     def get_builder_cls(self) -> type:
         """Get the appropriate builder type for this config."""

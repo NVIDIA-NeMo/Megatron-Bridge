@@ -476,7 +476,7 @@ class MegatronModelBridge(
     ]
 
     # YARN rope scaling field mapping for GPT models: (hf_rope_scaling_key, megatron_yarn_param)
-    # These are only applied when rope_scaling.type == "yarn" and provider is GPTModelProvider
+    # These are applied to the outer GPT model config when rope_scaling.type == "yarn".
     # Uses yarn_ prefix (e.g., yarn_mscale, yarn_rotary_scaling_factor)
     YARN_ROPE_SCALING_MAPPING = [
         ("factor", "yarn_rotary_scaling_factor"),
@@ -682,7 +682,7 @@ class MegatronModelBridge(
         is_mla_config = issubclass(self.TRANSFORMER_CONFIG_CLASS, MLATransformerConfig)
         if rope_type == "yarn":
             if not is_mla_config:
-                raise NotImplementedError(
+                raise ModelConfigNotSupportedError(
                     f"{type(self).__name__}.model_config_bridge() does not support YaRN configs yet. "
                     "Override model_config_bridge() with a model config and builder that represent all YaRN fields."
                 )
@@ -912,7 +912,8 @@ class MegatronModelBridge(
 
         # Handle YARN rope scaling: check if model config has yarn_* params and build rope_scaling dict
         yarn_rotary_scaling_factor = getattr(model_config, "yarn_rotary_scaling_factor", None)
-        if yarn_rotary_scaling_factor is not None:
+        position_embedding_type = getattr(model_config, "position_embedding_type", None)
+        if position_embedding_type == "yarn" and yarn_rotary_scaling_factor is not None:
             if "rope_scaling" not in hf_config:
                 hf_config["rope_scaling"] = {}
             hf_config["rope_scaling"]["rope_type"] = "yarn"

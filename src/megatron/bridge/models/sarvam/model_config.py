@@ -25,11 +25,19 @@ from megatron.core.transformer.transformer_block import TransformerBlockSubmodul
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
 def sarvam_mla_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> ModuleSpec:
-    """Build the Transformer Engine decoder block used by Sarvam MLA."""
+    """Build the available decoder block implementation used by Sarvam MLA."""
     return get_gpt_decoder_block_spec(
         config.transformer,
-        use_transformer_engine=True,
+        use_transformer_engine=HAVE_TE,
         normalization="RMSNorm",
         vp_stage=vp_stage,
     )
@@ -39,15 +47,7 @@ def sarvam_mla_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None = N
 class SarvamMLAModelConfig(BridgeGPTModelConfig):
     """Serializable builder config for Sarvam MLA models."""
 
-    transformer_layer_spec = sarvam_mla_layer_spec
-
-
-try:
-    import transformer_engine  # noqa: F401
-
-    HAVE_TE = True
-except (ImportError, ModuleNotFoundError):
-    HAVE_TE = False
+    transformer_layer_spec: Callable[..., ModuleSpec] = field(default_factory=lambda: sarvam_mla_layer_spec)
 
 
 sarvam_moe_layer_spec = partial(

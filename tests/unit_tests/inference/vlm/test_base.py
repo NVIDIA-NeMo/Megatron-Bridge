@@ -19,7 +19,7 @@ import torch
 
 from megatron.bridge.inference.vlm.base import generate, setup_inference_wrapper, setup_model_and_tokenizer
 from megatron.bridge.inference.vlm.qwenvl_inference_wrapper import QwenVLInferenceWrapper
-from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl import Qwen3VLModel, Qwen25VLModel
 
 
 class TestSetupModelAndTokenizer:
@@ -53,7 +53,7 @@ class TestSetupModelAndTokenizer:
 
         # Create mock model that will be returned by load_megatron_model
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         # Make cuda() return the same mock so eval() is called on it
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
@@ -143,7 +143,7 @@ class TestSetupModelAndTokenizer:
         mock_bridge.get_model_config.return_value = MagicMock()
 
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
 
@@ -227,7 +227,7 @@ class TestSetupModelAndTokenizer:
         mock_bridge.get_model_config.return_value = mock_model_config
 
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
 
@@ -268,13 +268,11 @@ class TestSetupInferenceWrapper:
         mock_language_model.decoder = mock_decoder
         mock_language_model.vocab_size = 151936
 
-        mock_module = MockObject()
+        mock_module = MagicMock(spec=Qwen25VLModel)
         mock_module.language_model = mock_language_model
 
         mock_model = MockObject()
         mock_model.module = mock_module
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
-        mock_model.config.hidden_size = 1024
         mock_model.cuda = MagicMock(return_value=mock_model)
         mock_model.to = MagicMock(return_value=mock_model)
         mock_model.eval = MagicMock()
@@ -293,9 +291,7 @@ class TestSetupInferenceWrapper:
         class MockObject:
             pass
 
-        mock_model = MockObject()
-        mock_model.config = MagicMock(spec=Qwen3VLModelProvider)
-        mock_model.config.hidden_size = 2048
+        mock_model = MagicMock(spec=Qwen3VLModel)
         mock_model.cuda = MagicMock(return_value=mock_model)
         mock_model.to = MagicMock(return_value=mock_model)
         mock_model.eval = MagicMock()

@@ -132,6 +132,14 @@ def test_model_config_bridge_rejects_unknown_fields() -> None:
         _UnknownFieldBridge().model_config_bridge(_hf_pretrained())
 
 
+def test_model_config_bridge_uses_compatibility_exception_for_unrepresented_yarn() -> None:
+    hf_pretrained = _hf_pretrained()
+    hf_pretrained.config.rope_scaling = {"rope_type": "yarn", "factor": 4.0}
+
+    with pytest.raises(ModelConfigNotSupportedError, match="does not support YaRN"):
+        _TestBridge().model_config_bridge(hf_pretrained)
+
+
 def test_flat_model_config_assignment_routes_to_declared_owner() -> None:
     transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
     model_config = BridgeGPTModelConfig(transformer=transformer, vocab_size=128)

@@ -30,7 +30,7 @@ BRIDGE_ROOT = SRC_ROOT / "megatron" / "bridge" / "models"
 # Every registered bridge must be named here. Adding a registration without
 # adding its builder/config contract to the audit is intentionally a test failure.
 REGISTERED_BRIDGE_CONFIGS: dict[str, tuple[str, ...]] = {
-    "BailingMoeV2Bridge": ("megatron.bridge.models.bailing.model_config.BailingMoeV2ModelConfig",),
+    "BailingMoeV2Bridge": ("megatron.bridge.models.gpt.model_config.BridgeGPTModelConfig",),
     "DeepSeekV2Bridge": ("megatron.bridge.models.deepseek.model_config.DeepSeekV2ModelConfig",),
     "DeepSeekV3Bridge": ("megatron.bridge.models.deepseek.model_config.DeepSeekV3ModelConfig",),
     "DeepSeekV4Bridge": ("megatron.bridge.models.deepseek.deepseek_v4_model_config.DeepSeekV4ModelConfig",),

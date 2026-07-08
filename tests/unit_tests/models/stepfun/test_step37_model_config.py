@@ -3,6 +3,7 @@
 from megatron.core.transformer import TransformerConfig
 
 from megatron.bridge.models.common.base import ModelConfig
+from megatron.bridge.models.stepfun.step35_modeling import build_step35_layer_spec
 from megatron.bridge.models.stepfun.step37_model_config import Step37ModelConfig
 
 
@@ -27,3 +28,4 @@ def test_step37_config_roundtrip_preserves_exact_mcore_config_and_family_fields(
     assert restored.layer_types == ["full_attention", "sliding_attention"]
     assert restored.image_token_id == 42
     assert restored.builder == "megatron.bridge.models.stepfun.step37_model_config.Step37ModelBuilder"
+    assert restored.transformer_layer_spec is build_step35_layer_spec

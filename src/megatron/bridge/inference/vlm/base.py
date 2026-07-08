@@ -26,7 +26,7 @@ from transformers import AutoProcessor
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl import Qwen3VLModel, Qwen25VLModel
 from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -142,17 +142,19 @@ def setup_inference_wrapper(
     inference_max_batch_size: int = 4,
 ):
     """Set up inference wrapper for the model"""
-    config = model.config
-
     mcore_model = model.cuda()
     mcore_model = mcore_model.to(params_dtype)
     mcore_model.eval()
 
-    if isinstance(config, Qwen25VLModelProvider) or isinstance(config, Qwen3VLModelProvider):
+    unwrapped_model = mcore_model
+    while hasattr(unwrapped_model, "module"):
+        unwrapped_model = unwrapped_model.module
+
+    if isinstance(unwrapped_model, (Qwen25VLModel, Qwen3VLModel)):
         wrapper_cls = QwenVLInferenceWrapper
         _expose_decoder_from_language_model(mcore_model)
     else:
-        raise ValueError(f"Unknown model config: {config}")
+        raise ValueError(f"Unknown model type: {type(unwrapped_model).__name__}")
 
     inference_wrapped_model = wrapper_cls(
         mcore_model,

@@ -23,8 +23,11 @@ class FlatTransformerConfigMixin:
 
     Builder-backed configs expose a flat user API while retaining a nested
     ``transformer`` dataclass for serialization and model construction. Fields
-    declared by both configs are kept synchronized because both builder and
-    transformer consumers may read them.
+    inherited from upstream ``GPTModelConfig`` overlap with fields on
+    ``TransformerConfig`` (for example ``rotary_base``). They cannot be removed
+    in Bridge subclasses, so assignments keep both inherited outer fields and
+    nested fields synchronized because builder and MCore consumers read them
+    from different owners.
     """
 
     def __setattr__(self, name: str, value: Any, /) -> None:

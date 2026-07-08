@@ -73,7 +73,12 @@ def restore_model_config_callables(data: dict[str, Any]) -> dict[str, Any]:
 
 @dataclass(kw_only=True)
 class BridgeGPTModelConfig(FlatTransformerConfigMixin, GPTModelConfig):
-    """GPTModelConfig that preserves registered activation functions on save."""
+    """GPTModelConfig with strict flat updates and callable round trips.
+
+    The upstream config supplies the builder contract. Bridge keeps inherited
+    outer/nested duplicate fields synchronized, rejects phantom overrides, and
+    serializes activation callables through its allow-listed symbolic registry.
+    """
 
     def as_dict(self) -> dict[str, Any]:
         """Serialize config while preserving the activation symbol in metadata.

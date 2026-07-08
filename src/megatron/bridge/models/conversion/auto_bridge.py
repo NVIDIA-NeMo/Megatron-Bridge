@@ -55,6 +55,7 @@ from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
+from megatron.bridge.models.metadata import set_hf_model_id_on_model_config
 from megatron.bridge.models.model_provider import (
     BuildDistributedModelKwargs,
     GetModelKwargs,
@@ -1731,6 +1732,9 @@ class AutoBridge(Generic[MegatronModelT]):
         succeeded = False
         try:
             if load_weights:
+                # HF loading must bypass random initialization for every embedded
+                # MCore config, then run the weight importer before user hooks and
+                # before distributed wrapping. Restore all temporary state below.
                 config_fields = dataclasses.fields(model_config) if dataclasses.is_dataclass(model_config) else ()
                 transformer_configs = [
                     value
@@ -1751,9 +1755,7 @@ class AutoBridge(Generic[MegatronModelT]):
                 else:
                     trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
                     pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
-                    metadata = dict(model_config.extra_checkpoint_metadata or {})
-                    metadata["hf_model_id"] = str(hf_path)
-                    model_config.extra_checkpoint_metadata = metadata
+                    set_hf_model_id_on_model_config(model_config, str(hf_path))
 
                 original_pre_wrap_hooks[:] = [
                     partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained),
@@ -1936,9 +1938,7 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_identifier = str(hf_name_or_path) if hf_name_or_path else None
 
         if hf_identifier:
-            metadata = dict(model_config.extra_checkpoint_metadata or {})
-            metadata["hf_model_id"] = hf_identifier
-            model_config.extra_checkpoint_metadata = metadata
+            set_hf_model_id_on_model_config(model_config, hf_identifier)
 
         self._model_config = model_config
         return model_config

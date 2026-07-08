@@ -98,13 +98,18 @@ class MistralBridge(MegatronModelBridge):
             unscaled_config = copy.copy(hf_config)
             unscaled_config.rope_scaling = None
             config_kwargs = super().hf_config_to_model_config_kwargs(unscaled_config)
-            config_kwargs["position_embedding_type"] = "yarn"
-            for hf_name, megatron_name in self.YARN_ROPE_SCALING_MAPPING:
-                value = rope_scaling.get(hf_name)
-                if value is not None:
-                    config_kwargs[megatron_name] = value
-            if "truncate" in rope_scaling:
-                config_kwargs["yarn_correction_range_round_to_int"] = rope_scaling["truncate"]
+            config_kwargs.update(
+                position_embedding_type="yarn",
+                yarn_rotary_scaling_factor=rope_scaling.get("factor", 1.0),
+                yarn_original_max_position_embeddings=rope_scaling.get(
+                    "original_max_position_embeddings", hf_config.max_position_embeddings
+                ),
+                yarn_beta_fast=rope_scaling.get("beta_fast", 32.0),
+                yarn_beta_slow=rope_scaling.get("beta_slow", 1.0),
+                yarn_mscale=rope_scaling.get("mscale", 1.0),
+                yarn_mscale_all_dim=rope_scaling.get("mscale_all_dim", 0.0),
+                yarn_correction_range_round_to_int=rope_scaling.get("truncate", True),
+            )
         else:
             config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
 

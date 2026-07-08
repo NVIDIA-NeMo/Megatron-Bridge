@@ -194,5 +194,5 @@ Embedded from `src/megatron/bridge/models/qwen/qwen3_bridge.py`:
 
 Notes:
 
-- `provider_bridge`: Translate HF config into a Megatron-compatible provider, including architecture quirks (e.g., `qk_layernorm=True`).
+- `hf_config_to_model_config_kwargs`: Translate HF config into the serializable model and nested TransformerConfig fields, including architecture quirks (e.g., `qk_layernorm=True`).
 - `mapping_registry`: Define exact name patterns and transformation mappings. Wildcards `*` apply the same rule across layers.
