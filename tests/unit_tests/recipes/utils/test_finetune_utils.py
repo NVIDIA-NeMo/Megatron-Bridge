@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for finetune_utils HF conversation dataset defaults."""
+"""Tests for finetune_utils Hugging Face semantic dataset defaults."""
 
 import pytest
 
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -175,7 +175,8 @@ class TestDefaultSquadConfig:
         assert cfg.hf_validation_proportion == 0.1
         assert cfg.do_validation is True
         assert cfg.do_test is False
-        assert isinstance(cfg.preprocessing, ChatSFTPreprocessingConfig)
+        assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+        assert cfg.preprocessing.separator == " "
 
     def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_squad_config(seq_length=512, packed_sequence=True)
@@ -188,6 +189,17 @@ class TestDefaultSquadConfig:
 @pytest.mark.unit
 class TestConfigDifferences:
     """Verify key differences between the two dataset configs."""
+
+    def test_semantic_presets_use_prompt_completion_without_chat_templates(self):
+        configs = (
+            default_squad_config(seq_length=512),
+            default_openmathinstruct2_config(),
+            default_gsm8k_config(),
+        )
+        for cfg in configs:
+            assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+            assert cfg.preprocessing.separator == " "
+            assert cfg.preprocessing.loss_mode == "completion"
 
     def test_different_default_seq_lengths(self):
         omi2 = default_openmathinstruct2_config()

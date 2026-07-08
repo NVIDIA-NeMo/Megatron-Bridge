@@ -437,7 +437,7 @@ def tokenize_prompt_completion_example(
                 preprocessing.truncation_method,
             )
 
-    context_ids = ([bos_id] if bos_id is not None else [])
+    context_ids = [bos_id] if bos_id is not None else []
     context_ids += [int(token_id) for token_id in prefix_token_ids]
     context_ids += prompt_ids
     if sep_id is not None:

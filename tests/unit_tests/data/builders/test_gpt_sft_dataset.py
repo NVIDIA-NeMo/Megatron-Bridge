@@ -396,7 +396,11 @@ def test_hf_source_reads_local_json(tmp_path):
 
 def test_hf_rewrite_removes_disabled_split_jsonl(monkeypatch, tmp_path):
     (tmp_path / "validation.jsonl").write_text("stale validation")
+    (tmp_path / "validation.jsonl.idx.npy").touch()
+    (tmp_path / "validation.jsonl.idx.info").touch()
     (tmp_path / "test.jsonl").write_text("stale test")
+    (tmp_path / "test.jsonl.idx.npy").touch()
+    (tmp_path / "test.jsonl.idx.info").touch()
     config = GPTSFTDatasetConfig(
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
@@ -410,7 +414,38 @@ def test_hf_rewrite_removes_disabled_split_jsonl(monkeypatch, tmp_path):
     materialize_hf_dataset(config, tmp_path)
 
     assert not (tmp_path / "validation.jsonl").exists()
+    assert not (tmp_path / "validation.jsonl.idx.npy").exists()
+    assert not (tmp_path / "validation.jsonl.idx.info").exists()
     assert not (tmp_path / "test.jsonl").exists()
+    assert not (tmp_path / "test.jsonl.idx.npy").exists()
+    assert not (tmp_path / "test.jsonl.idx.info").exists()
+
+
+def test_hf_rewrite_invalidates_memmap_index_sidecars(monkeypatch, tmp_path):
+    output_path = tmp_path / "training.jsonl"
+    output_path.write_text('{"prompt": "old", "completion": "row"}\n')
+    index_paths = (tmp_path / "training.jsonl.idx.npy", tmp_path / "training.jsonl.idx.info")
+    for index_path in index_paths:
+        index_path.touch()
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        hf_output_root=tmp_path,
+        hf_rewrite=True,
+        do_validation=False,
+        do_test=False,
+    )
+    monkeypatch.setattr(
+        builder_mod,
+        "_load_hf_examples",
+        lambda *_args: [{"prompt": "new", "completion": "row"}],
+    )
+
+    materialize_hf_dataset(config, tmp_path)
+
+    assert json.loads(output_path.read_text()) == {"prompt": "new", "completion": "row"}
+    assert not any(index_path.exists() for index_path in index_paths)
 
 
 def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatch, tmp_path):

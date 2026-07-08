@@ -1627,7 +1627,7 @@ trainer = run.Config(
     callbacks=[
         MegatronCommOverlapCallback(
             tp_comm_overlap=True,
-            ...
+            # Additional callback options can be set here.
         )
     ]
 )

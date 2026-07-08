@@ -120,7 +120,11 @@ def create_squad_dataset_config(
     dataset_root, seq_length, packed=False, pad_seq_to_mult=1, num_workers=2, pin_memory=True, persistent_workers=False
 ):
     """Create SQuAD dataset configuration for Megatron-Bridge using HF text SFT data."""
-    from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
+    from megatron.bridge.data.builders import (
+        GPTSFTDatasetConfig,
+        HFDatasetSourceConfig,
+        PromptCompletionSFTPreprocessingConfig,
+    )
     from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
     dataset_kwargs = {}
@@ -137,7 +141,7 @@ def create_squad_dataset_config(
         seed=5678,
         do_validation=True,
         do_test=False,
-        preprocessing=ChatSFTPreprocessingConfig(),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         dataset_kwargs=dataset_kwargs,
         enable_offline_packing=packed,
         offline_packing_specs=offline_packing_specs,

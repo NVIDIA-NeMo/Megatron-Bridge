@@ -107,15 +107,15 @@ Select a Hugging Face dataset with `HFDatasetSourceConfig`. A built-in `dataset_
 ```python
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.builders import (
-    ChatSFTPreprocessingConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
 )
 
 dataset = GPTSFTDatasetConfig(
     seq_length=512,
     hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
-    preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
+    preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" ", loss_mode="completion"),
     hf_validation_proportion=0.1,
     seed=5678,
     do_validation=True,

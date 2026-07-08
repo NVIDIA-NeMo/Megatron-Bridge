@@ -243,8 +243,8 @@ if __name__ == "__main__":
     train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
     executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
 
-    plugins = [] # plugins argument expects a list
-    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15, ...)
+    plugins = []  # plugins argument expects a list
+    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15)
     plugins.append(nsys)
     run.run(train_script, plugins=plugins, executor=executor)
 ```

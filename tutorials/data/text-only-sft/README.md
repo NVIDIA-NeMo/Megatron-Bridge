@@ -89,7 +89,7 @@ from megatron.bridge.data.builders import (
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=2048,
     hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
-    preprocessing=PromptCompletionSFTPreprocessingConfig(),
+    preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
     hf_validation_proportion=0.1,
     hf_output_root="/data/materialized-squad",
     hf_rewrite=False,

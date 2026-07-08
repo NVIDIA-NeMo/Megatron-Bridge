@@ -324,10 +324,25 @@ def _load_hf_examples(
 def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, Any]]) -> None:
     output_path = root / f"{output_name}.jsonl"
     root.mkdir(parents=True, exist_ok=True)
+    for index_path in _hf_jsonl_index_paths(output_path):
+        index_path.unlink(missing_ok=True)
     with output_path.open("w", encoding="utf-8") as output_file:
         for example in examples:
             output_file.write(json.dumps(example, ensure_ascii=False) + "\n")
     print_rank_0(f"Prepared Hugging Face text SFT {output_name} data at {output_path}")
+
+
+def _hf_jsonl_index_paths(output_path: Path) -> tuple[Path, Path]:
+    """Return memmap index sidecars associated with one materialized JSONL split."""
+    return Path(f"{output_path}.idx.npy"), Path(f"{output_path}.idx.info")
+
+
+def _remove_hf_materialized_split(root: Path, output_name: str) -> None:
+    """Remove one materialized split and any stale memmap index sidecars."""
+    output_path = root / f"{output_name}.jsonl"
+    output_path.unlink(missing_ok=True)
+    for index_path in _hf_jsonl_index_paths(output_path):
+        index_path.unlink(missing_ok=True)
 
 
 def _needs_hf_write(config: GPTSFTDatasetConfig, root: Path, output_name: str) -> bool:
@@ -360,9 +375,9 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
         raise ValueError("materialize_hf_dataset requires an hf_dataset source.")
     if config.hf_rewrite:
         if not config.do_validation:
-            (root / "validation.jsonl").unlink(missing_ok=True)
+            _remove_hf_materialized_split(root, "validation")
         if not config.do_test:
-            (root / "test.jsonl").unlink(missing_ok=True)
+            _remove_hf_materialized_split(root, "test")
 
     derive_validation = (
         config.do_validation and config.hf_validation_proportion is not None and config.hf_validation_dataset is None
