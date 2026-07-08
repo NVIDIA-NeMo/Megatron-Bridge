@@ -253,14 +253,13 @@ class TestFp8ParamExport:
                 return MappingT()
 
         rowwise = torch.ones(scale_shape, dtype=torch.float32)
-        fake_w = SimpleNamespace(
-            _rowwise_data=torch.zeros((2, 256), dtype=torch.uint8),
-            _rowwise_scale_inv=rowwise,
-            _fp8_dtype=None,
-            _quantizer=quantizer,
-            _is_2D_scaled=is_2d,
-            shape=(2, 256),
-        )
+        metadata = {
+            "rowwise_data": torch.zeros((2, 256), dtype=torch.uint8),
+            "rowwise_scale_inv": rowwise,
+            "quantizer": quantizer,
+            "is_2D_scaled": is_2d,
+        }
+        fake_w = SimpleNamespace(get_metadata=lambda: metadata, shape=(2, 256))
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -274,6 +273,7 @@ class TestFp8ParamExport:
             SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
         )
         assert len(tasks) == 2 and tasks[1].global_param_name == f"{gname}_scale_inv"
+        assert tasks[0].param_weight.dtype == torch.float8_e4m3fn
         assert tasks[1].param_weight.shape == expect_shape
         assert torch.all(tasks[1].param_weight == 1.0)
         assert ("block_len or not is_2d_scaled" in caplog.text) is warn_trim
@@ -289,13 +289,13 @@ class TestFp8ParamExport:
 
         monkeypatch.setitem(
             sys.modules,
-            "transformer_engine.pytorch.tensor",
-            types.ModuleType("transformer_engine.pytorch.tensor"),
+            "transformer_engine.pytorch",
+            types.ModuleType("transformer_engine.pytorch"),
         )
-        sys.modules["transformer_engine.pytorch.tensor"].Float8BlockwiseQTensor = TeTensor
+        sys.modules["transformer_engine.pytorch"].Float8BlockwiseQTensor = TeTensor
 
         holder = TeTensor()
-        holder._rowwise_scale_inv = torch.ones(1)
+        holder.get_metadata = lambda: {"rowwise_scale_inv": torch.ones(1)}
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -324,7 +324,7 @@ class TestFp8ParamExport:
         real_imp = builtins.__import__
 
         def guard(name, glb=None, loc=None, fromlist=(), level=0):
-            if name == "transformer_engine.pytorch.tensor":
+            if name == "transformer_engine.pytorch":
                 raise ImportError("no te")
             return real_imp(name, glb, loc, fromlist, level)
 
