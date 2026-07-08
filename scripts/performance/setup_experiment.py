@@ -115,6 +115,27 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     return filtered_args
 
 
+def _build_nemorun_script(
+    *,
+    script_path: str,
+    script_dir: str,
+    args: List[str],
+    kubeflow_namespace: Optional[str],
+    custom_env_vars: Dict[str, str],
+) -> run.Script:
+    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    task = run.Script(
+        path=script_path,
+        entrypoint="python",
+        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
+        args=args,
+    )
+    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+        return _kubeflow_numa_binding_script(task)
+    return task
+
+
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
     """Re-glob ``glob_pattern`` and wait until the matched log files stop growing.
 
@@ -709,15 +730,13 @@ def main(
             )
         )
 
-    nemorun_script = run.Script(
-        path=in_container_script_path,
-        entrypoint="python",
-        env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
+    nemorun_script = _build_nemorun_script(
+        script_path=in_container_script_path,
+        script_dir=in_container_script_dir,
         args=_filter_run_script_args(sys.argv[1:]),
+        kubeflow_namespace=kubeflow_namespace,
+        custom_env_vars=custom_env_vars,
     )
-    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
-        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
-        nemorun_script = _kubeflow_numa_binding_script(nemorun_script.to_command(with_entrypoint=True))
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
 
