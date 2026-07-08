@@ -281,7 +281,7 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
@@ -310,6 +310,7 @@ config = ConfigContainer(
     dataset=GPTSFTDatasetConfig(
         seq_length=512,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_validation_proportion=0.1,
         seed=5678,
         do_validation=True,

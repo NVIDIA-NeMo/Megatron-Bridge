@@ -62,7 +62,7 @@ Text SFT and PEFT use a directory containing split files named `training.jsonl`,
   test.jsonl
 ```
 
-The default text SFT dataset expects each JSONL record to contain prompt and answer fields compatible with the configured `prompt_template`. The common input/output format is:
+The default materialized backend accepts `input`/`output` prompt-completion rows. Its explicit preprocessing config tokenizes the two fields without calling a chat template:
 
 ```json
 {"input": "Question: What is Megatron Bridge?", "output": "A PyTorch-native bridge for Megatron-Core workflows."}
@@ -71,11 +71,17 @@ The default text SFT dataset expects each JSONL record to contain prompt and ans
 Configure local JSONL data with `GPTSFTDatasetConfig.dataset_root`:
 
 ```python
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 dataset = GPTSFTDatasetConfig(
     dataset_root="/data/sft_jsonl",
     seq_length=4096,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+        loss_mode="completion",
+    ),
 )
 ```
 
@@ -96,15 +102,20 @@ For preparation schemas, offline packing, finite epochs, and a complete knob ref
 
 ## Hugging Face Datasets for SFT and PEFT
 
-Select a Hugging Face dataset with `HFDatasetSourceConfig`. A built-in `dataset_name` preset owns the physical Hub path, subset, and schema adapter. This avoids repeating coupled metadata such as the SQuAD path and adapter in every recipe. Bridge never infers a schema from an arbitrary Hub path because one repository can expose multiple subsets and schemas. For a custom source, set `path_or_dataset`; native chat rows require no adapter, while non-native rows require an explicit registered `schema_adapter`.
+Select a Hugging Face dataset with `HFDatasetSourceConfig`. A built-in `dataset_name` preset owns the physical Hub path, subset, and schema adapter. This avoids repeating coupled metadata such as the SQuAD path and adapter in every recipe. Bridge never infers a schema from an arbitrary Hub path because one repository can expose multiple subsets and schemas. For a custom source, set `path_or_dataset`; rows already matching the selected chat or prompt-completion schema need no adapter.
 
 ```python
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+)
 
 dataset = GPTSFTDatasetConfig(
     seq_length=512,
     hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+    preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
     hf_validation_proportion=0.1,
     seed=5678,
     do_validation=True,
@@ -131,13 +142,14 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 ## Direct Hugging Face SFT Data
 
-`HFSFTDatasetConfig` is the direct source path shared by text chat, VLM, and audio/omni recipes. Unlike the materialized text-only SFT source above, it does not write reusable SFT JSONL. `HFSFTDatasetBuilder` loads and adapts the source, binds the processor/tokenizer and collator, and repeats examples to the sample counts requested by the iteration schedule.
+`HFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. Unlike the materialized text-only SFT source above, it does not write reusable SFT JSONL. `HFSFTDatasetBuilder` loads and adapts the source, binds the processor/tokenizer and collator, and repeats examples to the sample counts requested by the iteration schedule. Both backends use the same `ChatSFTPreprocessingConfig` or `PromptCompletionSFTPreprocessingConfig`; only their storage and packing lifecycle differs.
 
 ```python
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
 
 dataset = HFSFTDatasetConfig(
     seq_length=4096,
+    preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
     source=HFDatasetSourceConfig(
         path_or_dataset="json",
@@ -154,6 +166,21 @@ dataset = HFSFTDatasetConfig(
 ```
 
 Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields.
+
+For paired text that must not use a model chat template, select prompt-completion preprocessing instead. The prompt and completion are tokenized separately, and `loss_mode="completion"` masks the prompt:
+
+```python
+from megatron.bridge.data.builders import PromptCompletionSFTPreprocessingConfig
+
+dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
+    prompt_column="prompt",
+    completion_column="completion",
+    separator="\n",
+    loss_mode="completion",
+)
+```
+
+Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
 
 Known semantic datasets should use their preset name, for example `squad`, `gsm8k`, `openmathinstruct2`, `cord_v2`, `raven`, `rdr`, `medpix`, `cv17`, or `llava_video_178k`. Do not combine `dataset_name` with `path_or_dataset`, `subset`, or `schema_adapter`; a preset owns those coupled fields. `split`, `load_kwargs`, and `adapter_kwargs` remain available for split selection and declarative runtime options such as a video root. Presets validate published split support: `raven`, `rdr`, and `llava_video_178k` are train-only; `medpix` and `squad` have no test split; `gsm8k` has no validation split; and OpenMathInstruct-2 exposes training variants only. Disable unsupported derived validation/test splits or supply explicit compatible sources.
 

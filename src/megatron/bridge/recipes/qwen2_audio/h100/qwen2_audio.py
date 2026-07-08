@@ -18,7 +18,7 @@ from typing import Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -142,6 +142,7 @@ def _qwen2_audio_common(
         validation_source = source.with_split("validation")
     dataset_cfg = HFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=hf_path,
         source=source,
         validation_source=validation_source,

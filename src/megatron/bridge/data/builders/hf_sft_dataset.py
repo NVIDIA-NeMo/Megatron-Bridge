@@ -16,7 +16,8 @@
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import partial
 from typing import Any, Literal
 
 import torch
@@ -26,8 +27,15 @@ from transformers import AutoProcessor, AutoTokenizer
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.hf_source import HFDatasetSourceConfig, hf_dataset_supports_split, load_and_adapt_hf_dataset
+from megatron.bridge.data.sft_processing import (
+    ChatSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
+    is_text_only_prompt_completion_example,
+    normalize_sft_examples,
+    validate_sft_preprocessing_config,
+)
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
@@ -39,12 +47,18 @@ CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
 @dataclass(kw_only=True)
 class HFSFTDatasetConfig(DataloaderConfig):
-    """Serializable configuration for direct Hugging Face SFT datasets."""
+    """Serializable configuration for direct Hugging Face SFT datasets.
+
+    Chat preprocessing is the compatibility default for multimodal and
+    conversation sources. New text recipes should select chat or paired-text
+    preprocessing explicitly.
+    """
 
     seq_length: int
     source: HFDatasetSourceConfig
     validation_source: HFDatasetSourceConfig | None = None
     test_source: HFDatasetSourceConfig | None = None
+    preprocessing: SFTPreprocessingConfig = field(default_factory=ChatSFTPreprocessingConfig)
     hf_processor_path: str | None = None
     do_validation: bool = True
     do_test: bool = True
@@ -60,6 +74,7 @@ class HFSFTDatasetConfig(DataloaderConfig):
         """Validate declarative source and dataset settings."""
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
+        validate_sft_preprocessing_config(self.preprocessing)
         self.source.validate()
         if self.validation_source is not None:
             self.validation_source.validate()
@@ -130,21 +145,33 @@ def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> 
         )
 
 
-def load_hf_sft_examples(source: HFDatasetSourceConfig) -> list[dict[str, Any]]:
+def load_hf_sft_examples(
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+) -> list[dict[str, Any]]:
     """Load and normalize one declarative Hugging Face source."""
-    return load_and_adapt_hf_dataset(source)
+    return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
 def select_hf_sft_collate(
     examples: list[dict[str, Any]],
+    preprocessing: SFTPreprocessingConfig | None = None,
     collate_impl: CollateFunction | None = None,
 ) -> CollateFunction | None:
-    """Select the shared text collator while leaving multimodal inference to the dataset."""
+    """Select a shared text collator for the explicit preprocessing variant."""
     if collate_impl is not None:
         return collate_impl
-    if all(is_text_only_chat_example(example) for example in examples):
-        return text_chat_collate_fn
-    return None
+    preprocessing = preprocessing or ChatSFTPreprocessingConfig()
+    validate_sft_preprocessing_config(preprocessing)
+    if isinstance(preprocessing, ChatSFTPreprocessingConfig):
+        if all(is_text_only_chat_example(example) for example in examples):
+            return partial(text_chat_collate_fn, loss_mode=preprocessing.loss_mode)
+        if preprocessing.loss_mode != "assistant":
+            raise ValueError("Multimodal direct-HF collators currently support only assistant chat loss.")
+        return None
+    if all(is_text_only_prompt_completion_example(example, preprocessing) for example in examples):
+        return partial(text_prompt_completion_collate_fn, preprocessing=preprocessing)
+    raise ValueError("Prompt-completion preprocessing supports text-only examples.")
 
 
 def build_hf_sft_split(
@@ -158,12 +185,12 @@ def build_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    examples = load_hf_sft_examples(source)
+    examples = load_hf_sft_examples(source, config.preprocessing)
     return ConversationDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_hf_sft_collate(examples, collate_impl),
+        collate_impl=select_hf_sft_collate(examples, config.preprocessing, collate_impl),
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

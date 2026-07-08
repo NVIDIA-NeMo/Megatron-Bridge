@@ -23,7 +23,7 @@ import re
 import warnings
 from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import torch
 
@@ -135,6 +135,7 @@ class TokenizedConversation:
     input_ids: torch.Tensor
     assistant_mask: torch.Tensor
     conversation: list[dict[str, Any]]
+    final_assistant_start: int | None = None
 
 
 def normalize_energon_vlm_sample(sample: Any) -> NormalizedVLMSample:
@@ -541,6 +542,126 @@ def _chat_template_input_ids(tokenized_chat: Any) -> list[int]:
     return _as_token_id_list(input_ids)
 
 
+def _apply_tokenized_chat_template(
+    template_owner: Any,
+    conversation: Sequence[Mapping[str, Any]],
+    tokenize_kwargs: Mapping[str, Any],
+) -> Any:
+    """Apply one chat template with compatibility fallbacks."""
+    apply_chat_template = _get_explicit_attribute(template_owner, "apply_chat_template")
+    if apply_chat_template is None:
+        raise ValueError("Chat preprocessing requires a processor or tokenizer with apply_chat_template.")
+    kwargs = dict(tokenize_kwargs)
+    try:
+        return apply_chat_template(conversation, **kwargs)
+    except TypeError:
+        kwargs.pop("add_generation_prompt", None)
+        try:
+            return apply_chat_template(conversation, **kwargs)
+        except TypeError:
+            kwargs.pop("return_dict", None)
+            return apply_chat_template(conversation, **kwargs)
+
+
+def _common_token_prefix_length(left: Sequence[int], right: Sequence[int]) -> int:
+    """Return the number of identical leading token IDs."""
+    return next(
+        (index for index, (left_id, right_id) in enumerate(zip(left, right)) if left_id != right_id),
+        min(len(left), len(right)),
+    )
+
+
+def _rendered_window_start(full_ids: Sequence[int], rendered_ids: Sequence[int], template_owner: Any) -> int | None:
+    """Locate a template-truncated token window in its untruncated rendering."""
+    if not rendered_ids:
+        return 0
+    if len(rendered_ids) > len(full_ids):
+        return None
+    tokenizer = get_processor_tokenizer(template_owner)
+    truncation_side = getattr(tokenizer, "truncation_side", "right")
+    window_start = len(full_ids) - len(rendered_ids) if truncation_side == "left" else 0
+    if all(full_ids[window_start + index] == token_id for index, token_id in enumerate(rendered_ids)):
+        return window_start
+    return None
+
+
+def _infer_final_assistant_start(
+    template_owner: Any,
+    conversation: Sequence[Mapping[str, Any]],
+    tokenize_kwargs: Mapping[str, Any],
+    rendered_ids: Sequence[int],
+    *,
+    terminal_only: bool,
+) -> int | None:
+    """Map the final assistant-turn boundary into a possibly truncated render."""
+    if not conversation:
+        return None
+    if terminal_only and conversation[-1].get("role") != "assistant":
+        return len(rendered_ids)
+    final_assistant_index = next(
+        (index for index in range(len(conversation) - 1, -1, -1) if conversation[index].get("role") == "assistant"),
+        None,
+    )
+    if final_assistant_index is None:
+        return len(rendered_ids) if terminal_only else None
+    if final_assistant_index == 0:
+        return 0
+
+    untruncated_kwargs = dict(tokenize_kwargs)
+    untruncated_kwargs.pop("truncation", None)
+    untruncated_kwargs.pop("max_length", None)
+    if "truncation" in tokenize_kwargs:
+        full_chat = _apply_tokenized_chat_template(template_owner, conversation, untruncated_kwargs)
+        full_ids = _chat_template_input_ids(full_chat)
+    else:
+        full_ids = list(rendered_ids)
+    prefix_chat = _apply_tokenized_chat_template(
+        template_owner,
+        conversation[:final_assistant_index],
+        untruncated_kwargs,
+    )
+    prefix_ids = _chat_template_input_ids(prefix_chat)
+    untruncated_boundary = _common_token_prefix_length(prefix_ids, full_ids)
+    window_start = _rendered_window_start(full_ids, rendered_ids, template_owner)
+    if window_start is None:
+        # A template-specific truncation transform prevented exact alignment.
+        # Do not fall back to an earlier assistant turn.
+        return len(rendered_ids)
+    return min(max(untruncated_boundary - window_start, 0), len(rendered_ids))
+
+
+def _infer_terminal_assistant_content_start(
+    template_owner: Any,
+    conversation: Sequence[Mapping[str, Any]],
+    tokenize_kwargs: Mapping[str, Any],
+    rendered_ids: Sequence[int],
+) -> int | None:
+    """Map terminal assistant content, excluding its rendered role header."""
+    if not conversation:
+        return None
+    if conversation[-1].get("role") != "assistant":
+        return len(rendered_ids)
+
+    untruncated_kwargs = dict(tokenize_kwargs)
+    untruncated_kwargs.pop("truncation", None)
+    untruncated_kwargs.pop("max_length", None)
+    if "truncation" in tokenize_kwargs:
+        full_chat = _apply_tokenized_chat_template(template_owner, conversation, untruncated_kwargs)
+        full_ids = _chat_template_input_ids(full_chat)
+    else:
+        full_ids = list(rendered_ids)
+
+    empty_conversation = [dict(turn) for turn in conversation]
+    empty_conversation[-1]["content"] = ""
+    empty_chat = _apply_tokenized_chat_template(template_owner, empty_conversation, untruncated_kwargs)
+    empty_ids = _chat_template_input_ids(empty_chat)
+    untruncated_content_start = _common_token_prefix_length(empty_ids, full_ids)
+    window_start = _rendered_window_start(full_ids, rendered_ids, template_owner)
+    if window_start is None:
+        return len(rendered_ids)
+    return min(max(untruncated_content_start - window_start, 0), len(rendered_ids))
+
+
 def tokenize_chat_example(
     example_or_conversation: Mapping[str, Any] | Sequence[Mapping[str, Any]],
     processor: Any,
@@ -550,13 +671,19 @@ def tokenize_chat_example(
     skipped_tokens: torch.Tensor | None = None,
     boundary_config: AssistantMaskBoundaryConfig | None = None,
     warn_on_all_masked: bool = True,
+    loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+    return_final_assistant_start: bool = False,
 ) -> TokenizedConversation:
     """Render, tokenize, and construct the assistant mask for one chat row.
 
     This is the canonical preprocessing entry point shared by ``GPTSFTDataset``
     and direct Hugging Face SFT. Padding, label shifting, and sequence packing
     remain the responsibility of their respective dataset/collate layers.
+    GPT dataset callers may request the final assistant boundary for generation
+    metadata; ``last_turn`` loss infers it automatically.
     """
+    if loss_mode not in {"assistant", "last_turn", "full"}:
+        raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
     conversation = normalize_chat_conversation(example_or_conversation)
     template_kwargs = chat_template_kwargs_from_example(example_or_conversation)
     if not template_kwargs.get("tools") and tool_schemas is not None:
@@ -566,13 +693,14 @@ def tokenize_chat_example(
 
     tokenizer = get_processor_tokenizer(processor)
     tokenized_chat = None
+    selected_template_owner = None
+    selected_tokenize_kwargs = None
     seen: set[int] = set()
     for template_owner in (tokenizer, processor):
         if template_owner is None or id(template_owner) in seen:
             continue
         seen.add(id(template_owner))
-        apply_chat_template = _get_explicit_attribute(template_owner, "apply_chat_template")
-        if apply_chat_template is None:
+        if _get_explicit_attribute(template_owner, "apply_chat_template") is None:
             continue
         tokenize_kwargs: dict[str, Any] = {
             "tokenize": True,
@@ -585,58 +713,166 @@ def tokenize_chat_example(
             tokenize_kwargs["return_assistant_tokens_mask"] = True
         if max_length is not None:
             tokenize_kwargs.update({"truncation": True, "max_length": max_length})
-        try:
-            tokenized_chat = apply_chat_template(conversation, **tokenize_kwargs)
-        except TypeError:
-            tokenize_kwargs.pop("add_generation_prompt", None)
-            try:
-                tokenized_chat = apply_chat_template(conversation, **tokenize_kwargs)
-            except TypeError:
-                tokenize_kwargs.pop("return_dict", None)
-                tokenized_chat = apply_chat_template(conversation, **tokenize_kwargs)
+        tokenized_chat = _apply_tokenized_chat_template(template_owner, conversation, tokenize_kwargs)
+        selected_template_owner = template_owner
+        selected_tokenize_kwargs = tokenize_kwargs
         break
     if tokenized_chat is None:
         raise ValueError("Chat preprocessing requires a processor or tokenizer with apply_chat_template.")
 
     input_ids = torch.tensor(_chat_template_input_ids(tokenized_chat), dtype=torch.long)
-    chat_example: dict[str, Any] = {"conversation": conversation}
-    chat_example.update(template_kwargs)
-    effective_boundary_config = boundary_config or infer_assistant_mask_boundary_config(processor)
+    generation_assistant_start = None
+    last_turn_start = None
+    if return_final_assistant_start and selected_template_owner is not None and selected_tokenize_kwargs is not None:
+        generation_assistant_start = _infer_terminal_assistant_content_start(
+            selected_template_owner,
+            conversation,
+            selected_tokenize_kwargs,
+            input_ids.tolist(),
+        )
+    if loss_mode == "last_turn" and selected_template_owner is not None and selected_tokenize_kwargs is not None:
+        last_turn_start = _infer_final_assistant_start(
+            selected_template_owner,
+            conversation,
+            selected_tokenize_kwargs,
+            input_ids.tolist(),
+            terminal_only=False,
+        )
     returned_mask = None
     if isinstance(tokenized_chat, Mapping) and tokenized_chat.get("assistant_masks") is not None:
         candidate_mask = _as_token_id_list(tokenized_chat["assistant_masks"])
         if len(candidate_mask) == input_ids.numel():
             returned_mask = torch.tensor(candidate_mask, dtype=torch.bool)
+    if loss_mode == "full":
+        full_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        if skipped_tokens is not None and skipped_tokens.numel() > 0:
+            full_mask &= ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+        return TokenizedConversation(
+            input_ids=input_ids,
+            assistant_mask=full_mask,
+            conversation=conversation,
+            final_assistant_start=generation_assistant_start,
+        )
+
+    chat_example: dict[str, Any] = {"conversation": conversation}
+    chat_example.update(template_kwargs)
+    effective_boundary_config = boundary_config or infer_assistant_mask_boundary_config(processor)
     if returned_mask is not None and effective_boundary_config is None:
         assistant_mask = returned_mask
-        if skipped_tokens is not None and skipped_tokens.numel() > 0:
-            assistant_mask = assistant_mask & ~torch.isin(input_ids, skipped_tokens.to(dtype=torch.long))
-        _warn_if_all_masked(
-            assistant_mask,
-            example_or_conversation,
-            warn_on_all_masked=warn_on_all_masked,
-        )
     else:
         try:
             assistant_mask = build_assistant_loss_mask(
                 chat_example,
                 input_ids,
                 processor,
-                skipped_tokens,
+                None,
                 boundary_config=effective_boundary_config,
-                warn_on_all_masked=warn_on_all_masked,
+                warn_on_all_masked=False,
             ).to(dtype=torch.bool)
         except ValueError:
             if returned_mask is None:
                 raise
             assistant_mask = returned_mask
-            if skipped_tokens is not None and skipped_tokens.numel() > 0:
-                assistant_mask = assistant_mask & ~torch.isin(input_ids, skipped_tokens.to(dtype=torch.long))
+    if last_turn_start is not None:
+        positions = torch.arange(assistant_mask.numel(), device=assistant_mask.device)
+        last_turn_positions = torch.nonzero(
+            assistant_mask.to(dtype=torch.bool) & (positions >= last_turn_start),
+            as_tuple=False,
+        ).flatten()
+        if last_turn_positions.numel() > 0:
+            last_turn_start = int(last_turn_positions[0].item())
+        elif "truncation" not in (selected_tokenize_kwargs or {}) and bool(assistant_mask.any()):
+            # Some compatibility tokenizers and simple test doubles ignore the
+            # conversation argument when rendering a prefix. Without actual
+            # truncation, retain the historical final visible assistant span.
+            boolean_mask = assistant_mask.to(dtype=torch.bool)
+            span_starts = boolean_mask & ~torch.cat(
+                [torch.zeros(1, dtype=torch.bool, device=boolean_mask.device), boolean_mask[:-1]]
+            )
+            last_turn_start = int(torch.nonzero(span_starts, as_tuple=False).flatten()[-1].item())
+    if (
+        generation_assistant_start == input_ids.numel()
+        and conversation
+        and conversation[-1].get("role") == "assistant"
+        and "truncation" not in (selected_tokenize_kwargs or {})
+        and bool(assistant_mask.any())
+    ):
+        boolean_mask = assistant_mask.to(dtype=torch.bool)
+        span_starts = boolean_mask & ~torch.cat(
+            [torch.zeros(1, dtype=torch.bool, device=boolean_mask.device), boolean_mask[:-1]]
+        )
+        generation_assistant_start = int(torch.nonzero(span_starts, as_tuple=False).flatten()[-1].item())
+    assistant_mask = apply_chat_loss_mode(
+        assistant_mask,
+        input_ids,
+        loss_mode=loss_mode,
+        skipped_tokens=skipped_tokens,
+        last_turn_start=last_turn_start,
+    )
+    _warn_if_all_masked(
+        assistant_mask,
+        example_or_conversation,
+        warn_on_all_masked=warn_on_all_masked,
+    )
     return TokenizedConversation(
         input_ids=input_ids,
         assistant_mask=assistant_mask,
         conversation=conversation,
+        final_assistant_start=generation_assistant_start,
     )
+
+
+def apply_chat_loss_mode(
+    assistant_mask: torch.Tensor,
+    input_ids: torch.Tensor,
+    *,
+    loss_mode: Literal["assistant", "last_turn", "full"],
+    skipped_tokens: torch.Tensor | None = None,
+    last_turn_start: int | None = None,
+) -> torch.Tensor:
+    """Apply an explicit chat loss policy to one unpadded token sequence.
+
+    ``last_turn`` retains assistant tokens after the final assistant-turn
+    boundary inferred from a prefix render. If a template cannot expose that
+    boundary, it falls back to the final contiguous assistant-mask span.
+
+    Args:
+        assistant_mask: Assistant-only mask produced by the chat template or
+            boundary inference.
+        input_ids: Rendered token IDs aligned with ``assistant_mask``.
+        loss_mode: Assistant-only, final-assistant-turn, or full-sequence loss.
+        skipped_tokens: Optional token IDs that must never contribute to loss.
+        last_turn_start: Optional token boundary inferred by rendering the
+            conversation prefix before its final assistant turn.
+
+    Returns:
+        Boolean loss mask aligned with ``input_ids``.
+    """
+    if loss_mode == "assistant":
+        loss_mask = assistant_mask.to(dtype=torch.bool)
+    elif loss_mode == "full":
+        loss_mask = torch.ones_like(assistant_mask, dtype=torch.bool)
+    elif loss_mode == "last_turn":
+        assistant_mask = assistant_mask.to(dtype=torch.bool)
+        if last_turn_start is not None:
+            positions = torch.arange(assistant_mask.numel(), device=assistant_mask.device)
+            loss_mask = assistant_mask & (positions >= last_turn_start)
+        else:
+            span_starts = assistant_mask & ~torch.cat(
+                [torch.zeros(1, dtype=torch.bool, device=assistant_mask.device), assistant_mask[:-1]]
+            )
+            starts = torch.nonzero(span_starts, as_tuple=False).flatten()
+            if starts.numel() == 0:
+                loss_mask = assistant_mask
+            else:
+                positions = torch.arange(assistant_mask.numel(), device=assistant_mask.device)
+                loss_mask = assistant_mask & (positions >= starts[-1])
+    else:
+        raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
+
+    if skipped_tokens is not None and skipped_tokens.numel() > 0:
+        loss_mask = loss_mask & ~torch.isin(input_ids, skipped_tokens.to(device=input_ids.device, dtype=torch.long))
+    return loss_mask
 
 
 def find_token_span(sequence: Sequence[int] | torch.Tensor, pattern: Sequence[int], start: int = 0) -> tuple[int, int]:
@@ -1111,6 +1347,7 @@ def build_shifted_labels_and_loss_mask(
 
     shifted_loss_mask = torch.cat([mask[:, 1:], torch.zeros_like(mask[:, :1])], dim=1)
     labels = labels.masked_fill(shifted_loss_mask == 0, ignore_index)
+    shifted_loss_mask = shifted_loss_mask.masked_fill(labels == ignore_index, 0)
 
     if squeeze:
         return labels[0].contiguous(), shifted_loss_mask[0].contiguous()

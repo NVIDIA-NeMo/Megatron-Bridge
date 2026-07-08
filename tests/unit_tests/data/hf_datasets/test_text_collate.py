@@ -15,7 +15,8 @@
 import pytest
 import torch
 
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
+from megatron.bridge.data.sft_processing import PromptCompletionSFTPreprocessingConfig
 
 
 pytestmark = pytest.mark.unit
@@ -92,6 +93,10 @@ class _TextChatTokenizer:
             "input_ids": torch.tensor(input_ids, dtype=torch.long),
             "attention_mask": torch.tensor(attention_mask, dtype=torch.long),
         }
+
+    def encode(self, text, *, add_special_tokens=False):
+        assert add_special_tokens is False
+        return [ord(character) for character in text]
 
 
 class _ChatMLBoundaryTokenizer:
@@ -328,3 +333,26 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
     assert "cu_seqlens_argmin" not in batch
     assert "cu_seqlens_unpadded" not in batch
     assert "cu_seqlens_unpadded_argmin" not in batch
+
+
+@pytest.mark.parametrize("enable_in_batch_packing", [False, True])
+def test_text_prompt_completion_collate_masks_prompt_without_chat_template(enable_in_batch_packing):
+    tokenizer = _TextChatTokenizer()
+    tokenizer.apply_chat_template = lambda *args, **kwargs: pytest.fail("chat template must not be called")
+    preprocessing = PromptCompletionSFTPreprocessingConfig(
+        prompt_column="question",
+        completion_column="answer",
+        separator=" ",
+    )
+
+    batch = text_prompt_completion_collate_fn(
+        [{"question": "Q", "answer": "A", "id": 7}],
+        tokenizer,
+        preprocessing=preprocessing,
+        enable_in_batch_packing=enable_in_batch_packing,
+    )
+
+    assert batch["tokens"].tolist() == [[ord("Q"), ord(" "), ord("A"), tokenizer.eos_token_id]]
+    assert batch["labels"].tolist() == [[ord(" "), ord("A"), tokenizer.eos_token_id, -100]]
+    assert batch["loss_mask"].tolist() == [[1.0, 1.0, 1.0, 0.0]]
+    assert batch["metadata"] == [{"id": 7}]

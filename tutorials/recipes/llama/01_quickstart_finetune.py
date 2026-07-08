@@ -87,10 +87,13 @@ def main() -> None:
     # config.dataset.hf_output_root = "/path/to/materialized/squad"
 
     # Or replace the entire dataset config for custom local JSONL data:
-    # from megatron.bridge.data.builders import GPTSFTDatasetConfig
+    # from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
     # config.dataset = GPTSFTDatasetConfig(
     #     dataset_root="/path/to/your/dataset_dir",  # expects training/validation/test jsonl files
     #     seq_length=config.model.seq_length,
+    #     preprocessing=PromptCompletionSFTPreprocessingConfig(
+    #         prompt_column="input", completion_column="output", separator=" "
+    #     ),
     # )
 
     # === Adjust learning rate ===

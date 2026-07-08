@@ -18,7 +18,10 @@ from pathlib import PosixPath
 import pytest
 from megatron.core.msc_utils import MultiStorageClientFeature
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    GPTSFTDatasetConfig,
+)
 from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
@@ -96,7 +99,8 @@ class TestGPTSFTDatasetBuilder:
         dataset, path = get_dataset(ensure_test_data)
         default_pack_path = dataset.default_pack_path
 
-        assert PosixPath(default_pack_path) == PosixPath(f"{path}/packed/null_pad_seq_to_mult1")
+        assert PosixPath(default_pack_path).parent == PosixPath(f"{path}/packed")
+        assert PosixPath(default_pack_path).name.startswith("null_pad_seq_to_mult1_sft_")
 
     def test_train_path_packed(self, ensure_test_data):
         npy_path = f"{ensure_test_data}/datasets/finetune/test.npy"
@@ -109,9 +113,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert PosixPath(train_path_packed) == PosixPath(
-            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/training_1.idx.parquet"
-        )
+        assert PosixPath(train_path_packed) == PosixPath(dataset.default_pack_path / "training_1.idx.parquet")
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 
@@ -129,9 +131,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert PosixPath(validation_path_packed) == PosixPath(
-            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/validation_1.idx.parquet"
-        )
+        assert PosixPath(validation_path_packed) == PosixPath(dataset.default_pack_path / "validation_1.idx.parquet")
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
         try:
@@ -161,9 +161,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         train_path_packed = dataset.train_path_packed
 
-        assert train_path_packed == msc.Path(
-            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/training_1.idx.parquet"
-        )
+        assert train_path_packed == msc.Path(str(dataset.default_pack_path / "training_1.idx.parquet"))
 
         # Validation
         dataset, _ = get_dataset(ensure_test_data, packed_val_data_path=npy_path)
@@ -174,9 +172,7 @@ class TestGPTSFTDatasetBuilder:
         dataset, _ = get_dataset(ensure_test_data)
         validation_path_packed = dataset.validation_path_packed
 
-        assert validation_path_packed == msc.Path(
-            f"{ensure_test_data}/datasets/finetune/packed/null_pad_seq_to_mult1/validation_1.idx.parquet"
-        )
+        assert validation_path_packed == msc.Path(str(dataset.default_pack_path / "validation_1.idx.parquet"))
 
         dataset, _ = get_dataset(ensure_test_data, packed_sequence_size=-1)
 
@@ -228,11 +224,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
         from unittest.mock import patch
 
         # Create builder with dataset_kwargs
-        dataset_kwargs = {
-            "chat": True,
-            "use_hf_tokenizer_chat_template": True,
-            "tool_schemas": {"type": "function"},
-        }
+        dataset_kwargs = {"tool_schemas": {"type": "function"}}
 
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer = build_tokenizer(tokenizer_config)
@@ -248,6 +240,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
                 seq_length=2048,
                 enable_offline_packing=True,
                 offline_packing_specs=offline_packing_specs,
+                preprocessing=ChatSFTPreprocessingConfig(),
                 dataset_kwargs=dataset_kwargs,
             ),
             tokenizer=tokenizer,
@@ -266,10 +259,15 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
             # Verify dataset_kwargs were passed
             for call in mock_prepare.call_args_list:
                 call_kwargs = call[1]
-                assert call_kwargs["dataset_kwargs"] == dataset_kwargs
+                assert call_kwargs["dataset_kwargs"] == {
+                    "chat": True,
+                    "use_hf_tokenizer_chat_template": True,
+                    "chat_loss_mode": "assistant",
+                    **dataset_kwargs,
+                }
 
-    def test_dataset_kwargs_empty_by_default(self, tmp_path):
-        """Test that dataset_kwargs defaults to empty dict."""
+    def test_implicit_local_preprocessing_uses_legacy_defaults(self, tmp_path):
+        """Test that omitted preprocessing preserves established local behavior."""
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer = build_tokenizer(tokenizer_config)
 
@@ -288,12 +286,6 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
 
-        # Add dataset_kwargs for chat
-        dataset_kwargs = {
-            "chat": True,
-            "use_hf_tokenizer_chat_template": True,
-        }
-
         offline_packing_specs = PackedSequenceSpecs(
             packed_sequence_size=2048,
             tokenizer_model_name="test_model",
@@ -305,7 +297,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
                 seq_length=2048,
                 enable_offline_packing=True,
                 offline_packing_specs=offline_packing_specs,
-                dataset_kwargs=dataset_kwargs,
+                preprocessing=ChatSFTPreprocessingConfig(),
             ),
             tokenizer=mock_tokenizer,
         )
@@ -329,11 +321,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
             }
         ]
 
-        dataset_kwargs = {
-            "chat": True,
-            "use_hf_tokenizer_chat_template": True,
-            "tool_schemas": tool_schemas,
-        }
+        dataset_kwargs = {"tool_schemas": tool_schemas}
 
         offline_packing_specs = PackedSequenceSpecs(
             packed_sequence_size=2048,
@@ -346,6 +334,7 @@ class TestGPTSFTDatasetBuilderWithChatTemplates:
                 seq_length=2048,
                 enable_offline_packing=True,
                 offline_packing_specs=offline_packing_specs,
+                preprocessing=ChatSFTPreprocessingConfig(),
                 dataset_kwargs=dataset_kwargs,
             ),
             tokenizer=mock_tokenizer,

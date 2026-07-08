@@ -17,7 +17,13 @@
 import logging
 from typing import Callable, List, Optional, Tuple
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    HFSFTDatasetConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
@@ -223,6 +229,11 @@ def apply_dataset_override(
         config.dataset = GPTSFTDatasetConfig(
             seq_length=resolved_seq_length,
             dataset_root=dataset_root,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input",
+                completion_column="output",
+                separator=" ",
+            ),
             dataloader_type="batch",
             seed=5678,
         )
@@ -246,6 +257,7 @@ def apply_dataset_override(
     elif dataset_type == "vlm-hf":
         config.dataset = HFSFTDatasetConfig(
             seq_length=resolved_seq_length,
+            preprocessing=ChatSFTPreprocessingConfig(),
             hf_processor_path=None,
             source=HFDatasetSourceConfig(dataset_name="cord_v2"),
             num_workers=2,

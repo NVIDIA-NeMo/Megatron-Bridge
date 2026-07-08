@@ -16,7 +16,7 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, HFSFTDatasetConfig
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -405,6 +405,7 @@ def _sft_common_vlm() -> ConfigContainer:
     # hf_processor_path must be set by model-specific config
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
@@ -508,6 +509,7 @@ def _peft_common_vlm() -> ConfigContainer:
     # hf_processor_path must be set by model-specific config
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,

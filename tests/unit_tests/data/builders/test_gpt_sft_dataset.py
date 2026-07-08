@@ -7,9 +7,11 @@ import pytest
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
     FinetuningDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
 )
 from megatron.bridge.data.builders import gpt_sft_dataset as builder_mod
 from megatron.bridge.data.builders.gpt_sft_dataset import (
@@ -37,6 +39,7 @@ def _hf_config(tmp_path, **source_overrides):
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(**source_kwargs),
         hf_output_root=tmp_path,
+        preprocessing=ChatSFTPreprocessingConfig(),
         seed=5678,
         do_test=False,
     )
@@ -47,6 +50,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=128,
         hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(),
         hf_output_root=str(tmp_path),
         hf_validation_proportion=0.1,
         seed=5678,
@@ -62,6 +66,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     assert isinstance(restored.hf_dataset, HFDatasetSourceConfig)
     assert restored.hf_dataset.dataset_name == "squad"
     assert restored.offline_packing_specs.packed_sequence_size == 128
+    assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
     assert "tokenizer" not in serialized
 
 
@@ -146,11 +151,11 @@ def test_hf_source_rejects_competing_validation_modes(tmp_path):
         config.validate()
 
 
-def test_local_jsonl_source_resolves_without_hf_defaults(monkeypatch, tmp_path):
+def test_local_jsonl_source_uses_explicit_prompt_completion_preprocessing(monkeypatch, tmp_path):
     config = GPTSFTDatasetConfig(
         seq_length=256,
         dataset_root=tmp_path,
-        dataset_kwargs={"prompt_template": "{input} {output}"},
+        preprocessing=PromptCompletionSFTPreprocessingConfig(),
     )
     monkeypatch.setattr(
         builder_mod,
@@ -159,7 +164,40 @@ def test_local_jsonl_source_resolves_without_hf_defaults(monkeypatch, tmp_path):
     )
 
     assert resolve_gpt_sft_dataset_root(config) == tmp_path
-    assert normalize_gpt_sft_dataset_kwargs(config) == {"prompt_template": "{input} {output}"}
+    dataset_kwargs = normalize_gpt_sft_dataset_kwargs(config)
+    assert dataset_kwargs["chat"] is False
+    assert isinstance(dataset_kwargs["prompt_completion_config"], PromptCompletionSFTPreprocessingConfig)
+
+
+def test_local_jsonl_source_preserves_implicit_legacy_preprocessing(tmp_path):
+    config = GPTSFTDatasetConfig(seq_length=256, dataset_root=tmp_path)
+
+    assert normalize_gpt_sft_dataset_kwargs(config) == {}
+
+
+def test_config_rejects_combining_explicit_and_legacy_preprocessing(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=256,
+        dataset_root=tmp_path,
+        preprocessing=ChatSFTPreprocessingConfig(),
+        dataset_kwargs={"chat": True},
+    )
+
+    with pytest.raises(ValueError, match="Do not combine explicit preprocessing"):
+        config.validate()
+
+
+def test_config_warns_and_preserves_legacy_preprocessing_kwargs(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=256,
+        dataset_root=tmp_path,
+        dataset_kwargs={"prompt_template": "{input} {output}", "label_key": "output"},
+    )
+
+    with pytest.warns(DeprecationWarning, match="preprocessing through dataset_kwargs"):
+        dataset_kwargs = normalize_gpt_sft_dataset_kwargs(config)
+
+    assert dataset_kwargs == config.dataset_kwargs
 
 
 def test_hf_source_gets_chat_normalization_defaults(tmp_path):
@@ -169,8 +207,20 @@ def test_hf_source_gets_chat_normalization_defaults(tmp_path):
     assert normalize_gpt_sft_dataset_kwargs(config) == {
         "chat": True,
         "use_hf_tokenizer_chat_template": True,
+        "chat_loss_mode": "assistant",
         "pad_to_max_length": True,
     }
+
+
+def test_hf_source_preserves_implicit_chat_compatibility(tmp_path):
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    assert normalize_gpt_sft_dataset_kwargs(config)["chat"] is True
 
 
 def test_default_hf_materialization_root_fingerprints_full_source(monkeypatch):
@@ -234,6 +284,27 @@ def test_named_and_equivalent_custom_sources_share_materialization_identity(monk
     assert resolve_gpt_sft_dataset_root(named) == resolve_gpt_sft_dataset_root(custom)
 
 
+def test_materialization_identity_includes_preprocessing(monkeypatch):
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: f"cache/{name}")
+    source = HFDatasetSourceConfig(path_or_dataset="json")
+    chat = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=source,
+        preprocessing=ChatSFTPreprocessingConfig(),
+        do_validation=False,
+        do_test=False,
+    )
+    paired = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=source,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(),
+        do_validation=False,
+        do_test=False,
+    )
+
+    assert resolve_gpt_sft_dataset_root(chat) != resolve_gpt_sft_dataset_root(paired)
+
+
 def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
     calls = []
 
@@ -262,8 +333,8 @@ def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
     assert [call.split for call in calls] == ["train", "train[90%:]"]
     training_row = json.loads((tmp_path / "training.jsonl").read_text().splitlines()[0])
     validation_row = json.loads((tmp_path / "validation.jsonl").read_text().splitlines()[0])
-    assert training_row["messages"][0]["content"] == "train"
-    assert validation_row["messages"][0]["content"] == "train[90%:]"
+    assert training_row["conversation"][0]["content"] == "train"
+    assert validation_row["conversation"][0]["content"] == "train[90%:]"
     assert not (tmp_path / "test.jsonl").exists()
 
 
@@ -312,13 +383,15 @@ def test_hf_source_reads_local_json(tmp_path):
             load_kwargs={"data_files": {"train": str(source_path)}},
         ),
         hf_output_root=output_root,
+        preprocessing=ChatSFTPreprocessingConfig(),
         do_validation=False,
         do_test=False,
     )
 
     materialize_hf_dataset(config, output_root)
 
-    assert json.loads((output_root / "training.jsonl").read_text()) == json.loads(source_path.read_text())
+    output_row = json.loads((output_root / "training.jsonl").read_text())
+    assert output_row["conversation"] == json.loads(source_path.read_text())["messages"]
 
 
 def test_hf_rewrite_removes_disabled_split_jsonl(monkeypatch, tmp_path):
@@ -366,6 +439,7 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     assert test is None
     assert len(dataset_calls) == 2
     assert dataset_calls[0][1]["dataset_kwargs"]["chat"] is True
+    assert dataset_calls[0][1]["dataset_kwargs"]["chat_loss_mode"] == "assistant"
 
 
 def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):
@@ -446,3 +520,57 @@ def test_deprecated_config_and_builder_delegate_to_canonical_types(tmp_path):
         builder = FinetuningDatasetBuilder(dataset_root=tmp_path, tokenizer=object(), seq_length=128)
     assert isinstance(builder, GPTSFTDatasetBuilder)
     assert isinstance(builder.config, GPTSFTDatasetConfig)
+
+
+def test_deprecated_builder_preserves_legacy_prompt_kwargs(tmp_path):
+    legacy_kwargs = {
+        "prompt_template": "Context: {context} Question: {question} Answer: {answer}",
+        "label_key": "answer",
+        "truncation_field": "context,question",
+        "add_sep": True,
+    }
+
+    with pytest.warns(DeprecationWarning):
+        builder = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=object(),
+            seq_length=128,
+            dataset_kwargs=legacy_kwargs,
+        )
+
+    assert builder.dataset_kwargs == legacy_kwargs
+
+
+def test_deprecated_builder_fingerprints_legacy_prompt_semantics(tmp_path):
+    class _PackingTokenizer:
+        _tokenizer = object()
+
+    tokenizer = _PackingTokenizer()
+    with pytest.warns(DeprecationWarning):
+        first = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=tokenizer,
+            seq_length=128,
+            dataset_kwargs={"prompt_template": "{input} {output}"},
+        )
+    with pytest.warns(DeprecationWarning):
+        second = FinetuningDatasetBuilder(
+            dataset_root=tmp_path,
+            tokenizer=tokenizer,
+            seq_length=128,
+            dataset_kwargs={"prompt_template": "Question: {input} Answer: {output}"},
+        )
+
+    assert first.default_pack_path != second.default_pack_path
+
+
+def test_deprecated_config_rejects_runtime_objects_in_legacy_kwargs(tmp_path):
+    with pytest.warns(DeprecationWarning):
+        config = FinetuningDatasetConfig(
+            seq_length=128,
+            dataset_root=tmp_path,
+            dataset_kwargs={"prompt_template": lambda value: value},
+        )
+
+    with pytest.raises(TypeError, match="declarative values"):
+        config.validate()

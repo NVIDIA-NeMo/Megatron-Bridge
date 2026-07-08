@@ -19,9 +19,10 @@ def test_native_adapter_preserves_supported_conversation_columns(column):
     assert adapt_hf_dataset([row], adapter_name=None) == [row]
 
 
-def test_native_adapter_rejects_unknown_schema():
-    with pytest.raises(ValueError, match="messages.*conversation.*conversations"):
-        adapt_hf_dataset([{"prompt": "question", "answer": "answer"}], adapter_name=None)
+def test_native_adapter_preserves_schema_for_preprocessing_validation():
+    row = {"prompt": "question", "answer": "answer"}
+
+    assert adapt_hf_dataset([row], adapter_name=None) == [row]
 
 
 def test_text_adapters_normalize_squad_and_gsm8k():
@@ -35,7 +36,9 @@ def test_text_adapters_normalize_squad_and_gsm8k():
     )
 
     assert squad[0]["original_answers"] == ["a", "also a"]
-    assert squad[0]["messages"][-1]["content"] == "a"
+    assert squad[0]["prompt"] == "Context: ctx Question: q Answer:"
+    assert squad[0]["completion"] == "a"
+    assert gsm8k[0]["completion"] == "work\n#### 2"
     assert gsm8k[0]["original_answers"] == ["2"]
 
 

@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.data.builders.gpt_sft_dataset import GPTSFTDatasetBuilder
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
@@ -38,7 +38,7 @@ def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, m
         ),
         tokenizer=MagicMock(),
     )
-    expected_path = tmp_path / "packed" / "mock-tokenizer_pad_seq_to_mult8"
+    expected_path = tmp_path / "packed" / f"mock-tokenizer_pad_seq_to_mult8_sft_{builder._packing_fingerprint}"
 
     monkeypatch.setattr(Path, "exists", lambda _: False)
 
@@ -51,3 +51,32 @@ def test_default_pack_path_ignores_shared_fs_mkdir_race(tmp_path, monkeypatch, m
     monkeypatch.setattr(Path, "mkdir", raise_mkdir)
 
     assert builder.default_pack_path == expected_path
+
+
+def test_default_pack_path_fingerprints_preprocessing(tmp_path):
+    specs = PackedSequenceSpecs(
+        packed_sequence_size=128,
+        tokenizer_model_name="mock-tokenizer",
+        pad_seq_to_mult=8,
+    )
+    prompt_builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=2048,
+            enable_offline_packing=True,
+            offline_packing_specs=specs,
+        ),
+        tokenizer=MagicMock(),
+    )
+    chat_builder = GPTSFTDatasetBuilder(
+        config=GPTSFTDatasetConfig(
+            dataset_root=tmp_path,
+            seq_length=2048,
+            preprocessing=ChatSFTPreprocessingConfig(),
+            enable_offline_packing=True,
+            offline_packing_specs=specs,
+        ),
+        tokenizer=MagicMock(),
+    )
+
+    assert prompt_builder.default_pack_path != chat_builder.default_pack_path

@@ -66,7 +66,7 @@ class MockVLMConversationProvider(DatasetProvider):
     # HF AutoProcessor instance will be set during build
     _processor: Optional[Any] = None
 
-    # Enable batch-level online sequence packing
+    # Enable in-batch sequence packing
     enable_in_batch_packing: bool = False
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False

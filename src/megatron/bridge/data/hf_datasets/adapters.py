@@ -28,13 +28,19 @@ from megatron.bridge.utils.common_utils import resolve_path
 
 HFDatasetAdapter = Callable[[Mapping[str, Any], Mapping[str, Any]], dict[str, Any] | None]
 
+# Adapters only translate source-specific columns into canonical SFT rows. They
+# deliberately do not render chat templates or tokenize; the selected shared
+# preprocessing config owns those model semantics for both dataset backends.
 
-def _messages_example(prompt: str, answer: str, original_answers: list[str] | None = None) -> dict[str, Any]:
+
+def _prompt_completion_example(
+    prompt: str,
+    completion: str,
+    original_answers: list[str] | None = None,
+) -> dict[str, Any]:
     example: dict[str, Any] = {
-        "messages": [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": answer},
-        ]
+        "prompt": prompt,
+        "completion": completion,
     }
     if original_answers is not None:
         example["original_answers"] = original_answers
@@ -53,26 +59,23 @@ def _native_conversation_adapter(example: Mapping[str, Any], kwargs: Mapping[str
         return {"conversation": example[conversation_column], **extra}
     if example.get(conversations_column) is not None:
         return {"conversations": example[conversations_column], **extra}
-    raise ValueError(
-        "Hugging Face SFT rows must contain a messages, conversation, or conversations column, "
-        "or configure a schema_adapter."
-    )
+    return dict(example)
 
 
 def _squad_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
     answers = example["answers"]["text"]
     prompt = f"Context: {example['context']} Question: {example['question']} Answer:"
-    return _messages_example(prompt, answers[0], list(answers))
+    return _prompt_completion_example(prompt, answers[0], list(answers))
 
 
 def _gsm8k_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
     answer = str(example["answer"])
     final_answer = answer.split("####")[-1].strip() if "####" in answer else answer.strip()
-    return _messages_example(f"Question: {example['question']} Answer:", answer, [final_answer])
+    return _prompt_completion_example(f"Question: {example['question']} Answer:", answer, [final_answer])
 
 
 def _openmathinstruct2_adapter(example: Mapping[str, Any], _: Mapping[str, Any]) -> dict[str, Any]:
-    return _messages_example(
+    return _prompt_completion_example(
         f"Problem: {example['problem']} Solution:",
         str(example["generated_solution"]),
         [str(example["expected_answer"])],

@@ -35,8 +35,8 @@ class HFDatasetSourceConfig:
     Exactly one source mode is required. ``dataset_name`` selects a built-in
     dataset preset that owns its Hub path, subset, and schema adapter.
     ``path_or_dataset`` selects a custom source; ``schema_adapter`` is optional
-    when its rows already contain ``messages``, ``conversation``, or legacy
-    ``conversations``.
+    when its rows already match the selected chat or prompt-completion
+    preprocessing schema.
     """
 
     dataset_name: str | None = None

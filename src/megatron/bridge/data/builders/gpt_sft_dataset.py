@@ -41,11 +41,58 @@ from megatron.bridge.data.hf_source import (
     load_and_adapt_hf_dataset,
     resolve_hf_dataset_source,
 )
+from megatron.bridge.data.sft_processing import (
+    ChatSFTPreprocessingConfig,
+    PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
+    normalize_sft_examples,
+    validate_sft_preprocessing_config,
+)
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
 
 logger = logging.getLogger(__name__)
+
+_SEMANTIC_DATASET_KWARGS = {
+    "add_bos",
+    "add_eos",
+    "add_sep",
+    "answer_only_loss",
+    "chat",
+    "chat_loss_mode",
+    "label_key",
+    "prompt_completion_config",
+    "prompt_template",
+    "truncation_field",
+    "truncation_method",
+    "use_hf_tokenizer_chat_template",
+}
+
+
+def _default_gpt_sft_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
+    """Return preprocessing compatible with the established local JSONL schema."""
+    return PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    )
+
+
+def _packing_fingerprint(config: "GPTSFTDatasetConfig", dataset_kwargs: dict[str, Any] | None) -> str:
+    """Fingerprint every setting that can change builder-managed packed rows."""
+    preprocessing = resolve_gpt_sft_preprocessing(config)
+    packing_identity = {
+        "seq_length": config.seq_length,
+        "seed": config.seed,
+        "preprocessing_explicit": config.preprocessing is not None,
+        "preprocessing_type": type(preprocessing).__name__,
+        "preprocessing": asdict(preprocessing),
+        "dataset_kwargs": dataset_kwargs,
+    }
+    return hashlib.sha256(
+        json.dumps(packing_identity, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    ).hexdigest()[:12]
 
 
 @dataclass(kw_only=True)
@@ -54,7 +101,9 @@ class GPTSFTDatasetConfig(DataloaderConfig):
 
     Exactly one source is required: ``dataset_root`` selects existing local
     JSONL/packed artifacts, while ``hf_dataset`` selects a declarative Hugging
-    Face source that is materialized before construction.
+    Face source that is materialized before construction. New callers should
+    set ``preprocessing`` explicitly. ``None`` preserves the established local
+    prompt-completion and Hugging Face chat defaults for compatibility.
     """
 
     seq_length: int
@@ -68,6 +117,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: int | None = None
+    preprocessing: SFTPreprocessingConfig | None = None
     enable_offline_packing: bool = False
     offline_packing_specs: PackedSequenceSpecs | None = None
     dataset_kwargs: dict[str, Any] | None = None
@@ -134,6 +184,7 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("hf_test_dataset requires do_test=True.")
         if self.seq_length <= 0:
             raise ValueError("seq_length must be greater than 0.")
+        validate_sft_preprocessing_config(resolve_gpt_sft_preprocessing(self))
         if self.enable_offline_packing and self.offline_packing_specs is None:
             raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
         if self.offline_packing_specs is not None and not self.enable_offline_packing:
@@ -153,6 +204,20 @@ class GPTSFTDatasetConfig(DataloaderConfig):
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         if self.dataset_kwargs is not None and "max_num_samples" in self.dataset_kwargs:
             raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
+        semantic_kwargs = _SEMANTIC_DATASET_KWARGS.intersection(self.dataset_kwargs or {})
+        if semantic_kwargs:
+            keys = ", ".join(sorted(semantic_kwargs))
+            if self.preprocessing is not None:
+                raise ValueError(
+                    f"Do not combine explicit preprocessing with deprecated semantic dataset_kwargs: {keys}."
+                )
+            warnings.warn(
+                "SFT preprocessing through dataset_kwargs is deprecated; set preprocessing to "
+                "ChatSFTPreprocessingConfig or PromptCompletionSFTPreprocessingConfig instead. "
+                f"Deprecated keys: {keys}.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
 
     def finalize(self) -> None:
         """Finalize dataloader settings and validate this config."""
@@ -177,6 +242,15 @@ class FinetuningDatasetConfig(GPTSFTDatasetConfig):
         )
 
 
+def resolve_gpt_sft_preprocessing(config: GPTSFTDatasetConfig) -> SFTPreprocessingConfig:
+    """Resolve explicit preprocessing or source-compatible legacy defaults."""
+    if config.preprocessing is not None:
+        return config.preprocessing
+    if config.hf_dataset is not None:
+        return ChatSFTPreprocessingConfig()
+    return _default_gpt_sft_preprocessing()
+
+
 def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
     """Resolve the local JSONL root for the configured source."""
     config.validate()
@@ -187,6 +261,7 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
     assert source is not None
     if config.hf_output_root is not None:
         return Path(config.hf_output_root)
+    preprocessing = resolve_gpt_sft_preprocessing(config)
     materialization_identity = {
         "source": asdict(resolve_hf_dataset_source(source)),
         "validation_source": (
@@ -197,6 +272,8 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
         "validation_seed": config.seed if config.hf_validation_proportion is not None else None,
         "do_validation": config.do_validation,
         "do_test": config.do_test,
+        "preprocessing": asdict(preprocessing),
+        "preprocessing_type": type(preprocessing).__name__,
     }
     encoded_identity = json.dumps(
         materialization_identity,
@@ -211,21 +288,37 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
 
 
 def normalize_gpt_sft_dataset_kwargs(config: GPTSFTDatasetConfig) -> dict[str, Any]:
-    """Return dataset-construction kwargs normalized for the selected source."""
+    """Return runtime dataset kwargs for the selected preprocessing variant."""
+    config.validate()
     dataset_kwargs = dict(config.dataset_kwargs or {})
-    if config.hf_dataset is not None:
-        return {
+    if config.preprocessing is None:
+        if config.hf_dataset is not None:
+            return {
+                "chat": True,
+                "use_hf_tokenizer_chat_template": True,
+                **dataset_kwargs,
+            }
+        return dataset_kwargs
+    preprocessing = resolve_gpt_sft_preprocessing(config)
+    if isinstance(preprocessing, ChatSFTPreprocessingConfig):
+        preprocessing_kwargs = {
             "chat": True,
             "use_hf_tokenizer_chat_template": True,
-            **dataset_kwargs,
+            "chat_loss_mode": preprocessing.loss_mode,
         }
-    return dataset_kwargs
+    else:
+        preprocessing_kwargs = {
+            "chat": False,
+            "prompt_completion_config": preprocessing,
+        }
+    return {**preprocessing_kwargs, **dataset_kwargs}
 
 
 def _load_hf_examples(
     source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
 ) -> list[dict[str, Any]]:
-    return load_and_adapt_hf_dataset(source)
+    return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
 def _write_hf_examples(root: Path, output_name: str, examples: list[dict[str, Any]]) -> None:
@@ -256,7 +349,7 @@ def _materialize_hf_split(
         _write_hf_examples(
             root,
             output_name,
-            _load_hf_examples(source),
+            _load_hf_examples(source, resolve_gpt_sft_preprocessing(config)),
         )
 
 
@@ -280,7 +373,7 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
         if write_train or write_validation:
             from datasets import Dataset
 
-            examples = _load_hf_examples(source)
+            examples = _load_hf_examples(source, resolve_gpt_sft_preprocessing(config))
             split_dataset = Dataset.from_list(examples).train_test_split(
                 test_size=config.hf_validation_proportion,
                 seed=config.seed,
@@ -413,6 +506,7 @@ class GPTSFTDatasetBuilder:
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
         )
         self._rewrite_packed_data = config.hf_dataset is not None and config.hf_rewrite
+        self._packing_fingerprint = _packing_fingerprint(config, config.dataset_kwargs)
 
         self.do_validation = config.do_validation
         self.do_test = config.do_test
@@ -642,7 +736,9 @@ class GPTSFTDatasetBuilder:
         """
         tokenizer_model_name = self._extract_tokenizer_model_name()
         default_pack_path = (
-            self.dataset_root / "packed" / f"{tokenizer_model_name}_pad_seq_to_mult{self._pad_seq_to_mult}"
+            self.dataset_root
+            / "packed"
+            / (f"{tokenizer_model_name}_pad_seq_to_mult{self._pad_seq_to_mult}_sft_{self._packing_fingerprint}")
         )
         if not default_pack_path.exists():
             try:
@@ -784,6 +880,8 @@ class FinetuningDatasetBuilder(GPTSFTDatasetBuilder):
         do_validation: bool = True,
         do_test: bool = True,
     ) -> None:
+        legacy_dataset_kwargs = dict(dataset_kwargs or {})
+        validate_declarative_mapping(legacy_dataset_kwargs, field_name="dataset_kwargs")
         warnings.warn(
             "FinetuningDatasetBuilder is deprecated; use megatron.bridge.data.builders.GPTSFTDatasetBuilder instead.",
             DeprecationWarning,
@@ -798,7 +896,7 @@ class FinetuningDatasetBuilder(GPTSFTDatasetBuilder):
                 max_train_samples=max_train_samples,
                 enable_offline_packing=enable_offline_packing,
                 offline_packing_specs=offline_packing_specs,
-                dataset_kwargs=dataset_kwargs,
+                dataset_kwargs=legacy_dataset_kwargs,
                 do_validation=do_validation,
                 do_test=do_test,
             ),

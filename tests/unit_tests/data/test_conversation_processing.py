@@ -296,6 +296,8 @@ class _LlamaBoundaryProcessor(_ChatMLBoundaryProcessor):
 class _LlamaPreprocessingTokenizer(_LlamaBoundaryProcessor._Tok):
     def apply_chat_template(self, conversation, tokenize=True, **kwargs):
         assert tokenize is True
+        if [turn["role"] for turn in conversation] == ["user"]:
+            return {"input_ids": [300, 42, 303]}
         assert [turn["role"] for turn in conversation] == ["user", "assistant"]
         return {"input_ids": [300, 42, 303, 302, 42, 303]}
 
@@ -548,6 +550,280 @@ def test_gpt_sft_and_direct_hf_share_llama_preprocessing():
     assert gpt_sft["loss_mask"].tolist() == shared.assistant_mask.tolist()
     assert direct_hf["input_ids"].tolist() == [shared.input_ids.tolist()]
     assert direct_hf["loss_mask"].tolist() == [[False, False, False, True, True, False]]
+
+
+def test_chat_full_loss_does_not_require_assistant_markers():
+    class _FullLossTokenizer:
+        chat_template = "{{ messages }}"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del conversation, kwargs
+            return {"input_ids": [1, 2, 3]}
+
+    tokenized = tokenize_chat_example(
+        {"messages": [{"role": "user", "content": "plain text"}]},
+        _FullLossTokenizer(),
+        loss_mode="full",
+    )
+
+    assert tokenized.assistant_mask.tolist() == [True, True, True]
+
+
+def test_chat_last_turn_loss_keeps_final_assistant_span():
+    class _MultiTurnTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del kwargs
+            if len(conversation) == 3:
+                return {
+                    "input_ids": [1, 2, 3],
+                    "assistant_masks": [0, 1, 0],
+                }
+            return {
+                "input_ids": [1, 2, 3, 4, 5],
+                "assistant_masks": [0, 1, 0, 1, 1],
+            }
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _MultiTurnTokenizer(),
+        loss_mode="last_turn",
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, True, True]
+
+
+def test_chat_last_turn_selects_turn_before_removing_skipped_tokens():
+    class _MultiTurnTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del kwargs
+            if len(conversation) == 2:
+                return {
+                    "input_ids": [1, 2, 3],
+                    "assistant_masks": [0, 1, 0],
+                }
+            return {
+                "input_ids": [1, 2, 3, 99, 5],
+                "assistant_masks": [0, 1, 0, 1, 1],
+            }
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _MultiTurnTokenizer(),
+        skipped_tokens=torch.tensor([99]),
+        loss_mode="last_turn",
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False, True]
+
+
+def test_chat_last_turn_uses_conversation_boundary_across_mask_gaps():
+    class _MultiTurnTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del kwargs
+            if len(conversation) == 3:
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            if conversation[-1]["content"] == "":
+                return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 1, 0, 0]}
+            return {
+                "input_ids": [1, 2, 3, 4, 5, 6],
+                "assistant_masks": [0, 1, 0, 1, 0, 1],
+            }
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _MultiTurnTokenizer(),
+        loss_mode="last_turn",
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, True, False, True]
+
+
+def test_chat_last_turn_does_not_fall_back_when_final_turn_is_entirely_skipped():
+    class _MultiTurnTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del kwargs
+            if len(conversation) == 3:
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            return {
+                "input_ids": [1, 2, 3, 4, 5, 6],
+                "assistant_masks": [0, 1, 0, 1, 0, 1],
+            }
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _MultiTurnTokenizer(),
+        skipped_tokens=torch.tensor([4, 6]),
+        loss_mode="last_turn",
+        warn_on_all_masked=False,
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False, False, False, False]
+
+
+def test_chat_last_turn_right_truncation_does_not_train_earlier_turn():
+    class _RightTruncatingTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        truncation_side = "right"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            if len(conversation) == 3:
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            if kwargs.get("truncation"):
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            return {"input_ids": [1, 2, 3, 4, 5, 6], "assistant_masks": [0, 1, 0, 1, 1, 1]}
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _RightTruncatingTokenizer(),
+        max_length=3,
+        loss_mode="last_turn",
+        warn_on_all_masked=False,
+    )
+
+    assert tokenized.assistant_mask.tolist() == [False, False, False]
+    assert tokenized.final_assistant_start is None
+
+
+def test_chat_last_turn_maps_boundary_through_left_truncation():
+    class _LeftTruncatingTokenizer:
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        truncation_side = "left"
+
+        def apply_chat_template(self, conversation, **kwargs):
+            if len(conversation) == 3:
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            if kwargs.get("truncation"):
+                return {"input_ids": [4, 5, 6], "assistant_masks": [1, 0, 1]}
+            return {"input_ids": [1, 2, 3, 4, 5, 6], "assistant_masks": [0, 1, 0, 1, 0, 1]}
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _LeftTruncatingTokenizer(),
+        max_length=3,
+        loss_mode="last_turn",
+    )
+
+    assert tokenized.assistant_mask.tolist() == [True, False, True]
+    assert tokenized.final_assistant_start is None
+
+
+@pytest.mark.parametrize("loss_mode", ["assistant", "full"])
+def test_gpt_chat_context_answer_split_is_independent_of_loss_mask(loss_mode):
+    class _MultiTurnTokenizer:
+        eos_id = 6
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        added_tokens_decoder = {4: "<image>"}
+
+        def __init__(self):
+            self._tokenizer = self
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del kwargs
+            if len(conversation) == 3:
+                return {"input_ids": [1, 2, 3], "assistant_masks": [0, 1, 0]}
+            if conversation[-1]["content"] == "":
+                return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 1, 0, 0]}
+            return {
+                "input_ids": [1, 2, 3, 4, 5, 6],
+                "assistant_masks": [0, 1, 0, 0, 1, 1],
+            }
+
+    result = _chat_preprocess(
+        {
+            "messages": [
+                {"role": "user", "content": "first"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "user", "content": "second"},
+                {"role": "assistant", "content": "second answer"},
+            ]
+        },
+        _MultiTurnTokenizer(),
+        loss_mode=loss_mode,
+    )
+
+    assert result["context_ids"].tolist() == [1, 2, 3, 4]
+    assert result["answer_ids"].tolist() == [5, 6]
+
+
+def test_gpt_chat_row_ending_in_user_content_has_no_answer_split():
+    class _TrailingUserTokenizer:
+        eos_id = 5
+        chat_template = "{% generation %}{{ messages }}{% endgeneration %}"
+        added_tokens_decoder = {}
+
+        def __init__(self):
+            self._tokenizer = self
+
+        def apply_chat_template(self, conversation, **kwargs):
+            del conversation, kwargs
+            return {
+                "input_ids": [1, 2, 3, 4, 5],
+                "assistant_masks": [0, 1, 0, 0, 0],
+            }
+
+    result = _chat_preprocess(
+        {
+            "messages": [
+                {"role": "assistant", "content": "earlier answer"},
+                {"role": "user", "content": "new question"},
+            ]
+        },
+        _TrailingUserTokenizer(),
+        loss_mode="last_turn",
+    )
+
+    assert result["loss_mask"].tolist() == [False, True, False, False, False]
+    assert result["context_ids"].tolist() == [1, 2, 3, 4, 5]
+    assert result["answer_ids"].tolist() == []
 
 
 def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers():

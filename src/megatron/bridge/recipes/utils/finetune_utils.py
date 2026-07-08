@@ -16,7 +16,12 @@
 
 from typing import Any
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    SFTPreprocessingConfig,
+)
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
@@ -61,6 +66,7 @@ def _text_hf_dataset_config(
     do_test: bool = False,
     enable_offline_packing: bool = False,
     offline_packing_specs: PackedSequenceSpecs | None = None,
+    preprocessing: SFTPreprocessingConfig | None = None,
     dataset_kwargs: dict[str, Any] | None = None,
     val_proportion: float | None = None,
     num_workers: int = 2,
@@ -74,6 +80,7 @@ def _text_hf_dataset_config(
         hf_validation_proportion=val_proportion,
         do_validation=do_validation,
         do_test=do_test,
+        preprocessing=preprocessing or ChatSFTPreprocessingConfig(),
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
@@ -106,7 +113,7 @@ def default_squad_config(
         - 10% validation slice
         - Seed 5678 (different from pretrain seed 1234)
     """
-    dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    dataset_kwargs = {}
     offline_packing_specs = None
     if packed_sequence:
         dataset_kwargs["pad_to_max_length"] = True

@@ -76,8 +76,8 @@ cfg.model.context_parallel_size = 2
 
 LLM packed SFT config surface:
 
-```110:125:src/megatron/bridge/recipes/utils/finetune_utils.py
-dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+```109:128:src/megatron/bridge/recipes/utils/finetune_utils.py
+dataset_kwargs = {}
 offline_packing_specs = None
 if packed_sequence:
     dataset_kwargs["pad_to_max_length"] = True
@@ -85,6 +85,7 @@ if packed_sequence:
 
 return _text_hf_dataset_config(
     ...
+    preprocessing=ChatSFTPreprocessingConfig(),
     enable_offline_packing=packed_sequence,
     offline_packing_specs=offline_packing_specs,
     dataset_kwargs=dataset_kwargs,

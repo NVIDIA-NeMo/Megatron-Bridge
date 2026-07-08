@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core dataset types for HF conversation-style examples."""
+"""Core repeating dataset type for direct Hugging Face SFT examples."""
 
 import inspect
 from collections.abc import Callable
@@ -45,11 +45,11 @@ def _collate_kwargs_for_impl(
 
 
 class ConversationDataset(torch.utils.data.Dataset):
-    """Repeating wrapper over a list of HF-style conversation examples.
+    """Repeating wrapper over normalized HF-style SFT examples.
 
-    - Each base example is expected to contain a "conversation" key following
-      processor.apply_chat_template conventions. Optional modality fields like
-      "audio" are passed through and consumed by the collate function.
+    - Examples may use structured conversations or paired prompt-completion
+      text, as selected by the owning dataset config. Optional modality fields
+      are passed through and consumed by the collate function.
     - Dataset length is set to a target length and indexes wrap around the
       underlying list to meet the requested size.
     - A `collate_fn` attribute is exposed so the framework can pass it to the

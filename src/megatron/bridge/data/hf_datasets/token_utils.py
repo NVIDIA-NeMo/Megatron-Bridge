@@ -71,7 +71,7 @@ def extract_skipped_token_ids(processor):
     tokenizer = get_processor_tokenizer(processor)
 
     skipped_token_ids = []
-    for key, val in tokenizer.added_tokens_decoder.items():
+    for key, val in getattr(tokenizer, "added_tokens_decoder", {}).items():
         if str(val) in PAD_TOKENS:
             skipped_token_ids.append(key)
 

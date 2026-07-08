@@ -15,10 +15,11 @@
 """Hugging Face conversation datasets, schema adapters, and text collators."""
 
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
 
 
 __all__ = [
     "ConversationDataset",
     "text_chat_collate_fn",
+    "text_prompt_completion_collate_fn",
 ]

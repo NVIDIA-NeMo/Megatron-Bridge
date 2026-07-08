@@ -4,7 +4,13 @@ import pytest
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.base import DatasetBuildContext
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetBuilder, HFSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    HFDatasetSourceConfig,
+    HFSFTDatasetBuilder,
+    HFSFTDatasetConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 from megatron.bridge.data.builders import hf_sft_dataset as builder_module
 from megatron.bridge.data.builders.hf_sft_dataset import load_hf_sft_processor, select_hf_sft_collate
 from megatron.bridge.data.hf_source import resolve_hf_dataset_source
@@ -91,6 +97,30 @@ def test_builder_leaves_multimodal_conversations_to_processor_collators(media_ty
     assert select_hf_sft_collate([row]) is None
 
 
+def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(monkeypatch):
+    row = {
+        "messages": [
+            {"role": "user", "content": [{"type": "image", "image": object()}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+        ]
+    }
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/vlm"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    train, _, _ = HFSFTDatasetBuilder(config, collate_impl=lambda *_args, **_kwargs: {}).build(
+        DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
+    )
+
+    assert train is not None
+    assert "conversation" in train[0]
+    assert "messages" not in train[0]
+
+
 @pytest.mark.parametrize(
     "row",
     [
@@ -104,6 +134,18 @@ def test_builder_leaves_multimodal_conversations_to_processor_collators(media_ty
 )
 def test_builder_preserves_top_level_media_for_processor_collators(row):
     assert select_hf_sft_collate([row]) is None
+
+
+def test_builder_rejects_unsupported_multimodal_chat_loss_mode():
+    row = {
+        "conversation": [
+            {"role": "user", "content": [{"type": "image", "image": object()}]},
+            {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+        ]
+    }
+
+    with pytest.raises(ValueError, match="only assistant chat loss"):
+        select_hf_sft_collate([row], ChatSFTPreprocessingConfig(loss_mode="full"))
 
 
 def test_builder_does_not_classify_mixed_rows_from_first_text_example():
@@ -266,10 +308,59 @@ def test_hf_sft_config_round_trip_is_declarative():
     restored = instantiate(serialized)
 
     assert isinstance(restored, HFSFTDatasetConfig)
+    assert restored.preprocessing.loss_mode == "assistant"
     assert restored.source.load_kwargs == config.source.load_kwargs
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
+
+
+def test_prompt_completion_config_round_trip_is_declarative():
+    config = HFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(path_or_dataset="json"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="question",
+            completion_column="answer",
+            separator="\n",
+            loss_mode="full",
+        ),
+        do_validation=False,
+        do_test=False,
+    )
+
+    restored = instantiate(ConfigContainer._convert_value_to_dict(config))
+
+    assert isinstance(restored.preprocessing, PromptCompletionSFTPreprocessingConfig)
+    assert restored.preprocessing.prompt_column == "question"
+    assert restored.preprocessing.loss_mode == "full"
+
+
+def test_builder_uses_prompt_completion_without_chat_template(monkeypatch):
+    row = {"question": "2 + 2 =", "answer": "4"}
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
+    tokenizer = _Tokenizer()
+    tokenizer.encode = lambda text, add_special_tokens=False: [ord(character) for character in text]
+    tokenizer.apply_chat_template = lambda *args, **kwargs: pytest.fail("prompt-completion must not render chat")
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/paired"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="question",
+            completion_column="answer",
+            add_eos=True,
+        ),
+        pad_to_multiple_of=1,
+        do_validation=False,
+        do_test=False,
+    )
+
+    train, _, _ = HFSFTDatasetBuilder(config).build(DatasetBuildContext(1, 0, 0, tokenizer=tokenizer))
+
+    assert train is not None
+    batch = train.collate_fn([train[0]])
+    assert batch["tokens"].tolist()[0][-2:] == [ord("4"), tokenizer.eos_token_id]
+    assert batch["loss_mask"].sum().item() == 2
 
 
 def test_hf_sft_config_resolves_canonical_builder(monkeypatch):

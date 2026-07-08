@@ -37,11 +37,16 @@ The [01_quickstart_finetune.py](01_quickstart_finetune.py) recipe finetunes Llam
 To plug in your own JSONL dataset, swap the dataset config in that script:
 
 ```python
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 config.dataset = GPTSFTDatasetConfig(
     dataset_root="/path/to/dataset_dir",  # contains training/validation/test jsonl files
     seq_length=config.model.seq_length,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    ),
 )
 ```
 

@@ -45,7 +45,12 @@ from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.base import DatasetBuildContext
-from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetBuilder, HFSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    HFDatasetSourceConfig,
+    HFSFTDatasetBuilder,
+    HFSFTDatasetConfig,
+)
 from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -376,6 +381,7 @@ def _build_dataset_config(args: argparse.Namespace) -> HFSFTDatasetConfig:
     do_validation = auto_validation if args.do_validation is None else args.do_validation
     dataset_config = HFSFTDatasetConfig(
         seq_length=args.seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=args.processor_path or args.hf_model,
         source=source,
         num_workers=args.num_workers,

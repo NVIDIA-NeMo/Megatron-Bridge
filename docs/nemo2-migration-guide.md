@@ -226,7 +226,7 @@ llm.finetune(
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
 from megatron.bridge.models import GPTModelProvider
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
@@ -243,6 +243,9 @@ def create_finetune_config():
         dataset=GPTSFTDatasetConfig(
             dataset_root="/path/to/sft/data",
             seq_length=2048,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input", completion_column="output", separator=" "
+            ),
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
@@ -615,12 +618,15 @@ data = FineTuningDataModule(
 ##### Now: Megatron Bridge GPTSFTDatasetConfig
 
 ```python
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.training.config import TrainingConfig
 
 dataset_config = GPTSFTDatasetConfig(
     dataset_root="/path/to/instruction_data",
     seq_length=2048,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input", completion_column="output", separator=" "
+    ),
     do_validation=True,
     do_test=False,
     # Dataloader options (inherited from DataloaderConfig)
@@ -1327,7 +1333,7 @@ Full fine-tuning without PEFT - all model parameters are updated:
 ```python
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.finetune import finetune
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 config = ConfigContainer(
     model=GPTModelProvider(),
@@ -1340,6 +1346,9 @@ config = ConfigContainer(
     dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(
@@ -1371,6 +1380,9 @@ config = ConfigContainer(
     dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(

@@ -16,7 +16,7 @@
 
 import pytest
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -175,8 +175,7 @@ class TestDefaultSquadConfig:
         assert cfg.hf_validation_proportion == 0.1
         assert cfg.do_validation is True
         assert cfg.do_test is False
-        assert cfg.dataset_kwargs["chat"] is True
-        assert cfg.dataset_kwargs["use_hf_tokenizer_chat_template"] is True
+        assert isinstance(cfg.preprocessing, ChatSFTPreprocessingConfig)
 
     def test_packed_sequence_request_enables_offline_packing(self):
         cfg = default_squad_config(seq_length=512, packed_sequence=True)

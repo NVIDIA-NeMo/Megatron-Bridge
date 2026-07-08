@@ -127,7 +127,7 @@ class TestChatPreprocess:
         assert isinstance(result["answer_ids"], torch.Tensor)
 
         # Verify apply_chat_template was called
-        mock_hf_tokenizer.apply_chat_template.assert_called_once()
+        assert mock_hf_tokenizer.apply_chat_template.called
 
     def test_chat_preprocess_without_generation_keyword_uses_boundary_config(self):
         """Test chat preprocessing uses assistant boundary markers when generation masks are unavailable."""
@@ -230,7 +230,12 @@ class TestChatPreprocess:
             "assistant_masks": [0, 0, 1, 1],
         }
 
-        source = {"conversations": [{"from": "User", "value": "Test"}]}
+        source = {
+            "conversations": [
+                {"from": "User", "value": "Test"},
+                {"from": "Assistant", "value": "Answer"},
+            ]
+        }
 
         result = _chat_preprocess(source, mock_tokenizer)
 
@@ -1071,7 +1076,12 @@ class TestContextAnswerSplit:
             "assistant_masks": [0, 0, 0, 1, 1, 1],  # First 3 are context
         }
 
-        source = {"conversations": [{"from": "User", "value": "Test"}]}
+        source = {
+            "conversations": [
+                {"from": "User", "value": "Test"},
+                {"from": "Assistant", "value": "Answer"},
+            ]
+        }
 
         result = _chat_preprocess(source, mock_tokenizer)
 

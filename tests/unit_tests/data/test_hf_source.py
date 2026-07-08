@@ -196,7 +196,8 @@ def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
 
     adapted = load_and_adapt_hf_dataset(source)
 
-    assert adapted[0]["messages"][-1] == {"role": "assistant", "content": "a"}
+    assert adapted[0]["prompt"] == "Context: ctx Question: q Answer:"
+    assert adapted[0]["completion"] == "a"
 
 
 def test_source_loads_and_concatenates_multiple_subsets(monkeypatch):

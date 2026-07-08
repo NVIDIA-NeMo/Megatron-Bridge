@@ -199,7 +199,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
     # Default dataloader type for VLM providers
     dataloader_type: Optional[Literal["single", "cyclic", "external"]] = "single"
 
-    # Enable batch-level online sequence packing
+    # Enable in-batch sequence packing
     enable_in_batch_packing: bool = False
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False

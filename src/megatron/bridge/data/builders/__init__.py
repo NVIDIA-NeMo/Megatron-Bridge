@@ -12,6 +12,11 @@ from megatron.bridge.data.builders.hf_sft_dataset import (
     hf_sft_train_valid_test_datasets_provider,
 )
 from megatron.bridge.data.hf_source import HFDatasetSourceConfig
+from megatron.bridge.data.sft_processing import (
+    ChatSFTPreprocessingConfig,
+    PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
+)
 
 
 # =============================================================================
@@ -24,9 +29,12 @@ FinetuningDatasetConfig = _gpt_sft_dataset.FinetuningDatasetConfig
 __all__ = [
     "GPTSFTDatasetBuilder",
     "GPTSFTDatasetConfig",
+    "ChatSFTPreprocessingConfig",
     "HFDatasetSourceConfig",
     "HFSFTDatasetBuilder",
     "HFSFTDatasetConfig",
+    "PromptCompletionSFTPreprocessingConfig",
+    "SFTPreprocessingConfig",
     "gpt_sft_train_valid_test_datasets_provider",
     "hf_sft_train_valid_test_datasets_provider",
     # Deprecated compatibility exports.

@@ -18,7 +18,7 @@ import math
 import os
 import re
 from pathlib import Path
-from typing import Mapping
+from typing import Literal, Mapping
 
 import datasets
 import numpy as np
@@ -34,6 +34,12 @@ from megatron.bridge.data.datasets.utils import (
     _OnlineSampleMapping,
     _preprocess,
     _tokenize,
+)
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sft_processing import (
+    PromptCompletionSFTPreprocessingConfig,
+    sft_example_metadata,
+    tokenize_prompt_completion_example,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.safe_pickle import safe_load_npy
@@ -124,6 +130,8 @@ def create_sft_dataset(
     pad_seq_to_mult: int = 1,
     chat: bool = False,
     use_hf_tokenizer_chat_template: bool = False,
+    chat_loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+    prompt_completion_config: PromptCompletionSFTPreprocessingConfig | None = None,
     tool_schemas: str | dict | None = None,
     **kwargs,
 ) -> "GPTSFTDataset":
@@ -176,6 +184,9 @@ def create_sft_dataset(
         chat (bool, optional): If True, creates a `GPTSFTChatDataset`. Defaults to False.
         use_hf_tokenizer_chat_template (bool, optional): If True, uses HuggingFace tokenizer's chat template
             via `apply_chat_template` method. Only applies when `chat=True`. Defaults to False.
+        chat_loss_mode: Tokens that contribute to loss for HF-template chat preprocessing.
+        prompt_completion_config: Explicit paired-text preprocessing. When set,
+            prompt and completion are tokenized separately without a chat template.
         tool_schemas (str | dict | None, optional): Tool schemas for function calling support.
             Can be a JSON string or a dict. Only applies when `chat=True` and
             `use_hf_tokenizer_chat_template=True`. Defaults to None.
@@ -206,6 +217,7 @@ def create_sft_dataset(
         "prompt_template": prompt_template,
         "truncation_method": truncation_method,
         "get_attention_mask_from_fusion": get_attention_mask_from_fusion,
+        "prompt_completion_config": prompt_completion_config,
     }
 
     # Check for .npy packed dataset (legacy format)
@@ -242,6 +254,7 @@ def create_sft_dataset(
         return GPTSFTChatDataset(
             **gpt_sft_dataset_kwargs,
             use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
+            loss_mode=chat_loss_mode,
             tool_schemas=tool_schemas,
             **kwargs,
         )
@@ -285,6 +298,7 @@ class GPTSFTDataset(Dataset):
         output_original_text: bool = False,
         ceil_to_power_2: bool = False,
         get_attention_mask_from_fusion: bool = True,
+        prompt_completion_config: PromptCompletionSFTPreprocessingConfig | None = None,
     ):
         """
         file_path: Path to a JSONL GPT supervised fine-tuning dataset.
@@ -333,6 +347,8 @@ class GPTSFTDataset(Dataset):
         output_original_text (bool): if true, will keep the original text in the output alongside the tokenized ids.
         get_attention_mask_from_fusion (bool): if true, lets attention kernel handle creation of causal mask instead
             of adding it to the batch dict.
+        prompt_completion_config: Explicit paired-text preprocessing that replaces
+            the legacy prompt-template settings when set.
         """
         self.tokenizer = tokenizer
         self.file_path = file_path
@@ -361,6 +377,9 @@ class GPTSFTDataset(Dataset):
         self.output_original_text = output_original_text
         self.ceil_to_power_2 = ceil_to_power_2
         self.get_attention_mask_from_fusion = get_attention_mask_from_fusion
+        self.prompt_completion_config = prompt_completion_config
+        if self.prompt_completion_config is not None:
+            self.prompt_completion_config.validate()
 
         if special_tokens is None:
             self.special_tokens = {
@@ -400,6 +419,8 @@ class GPTSFTDataset(Dataset):
             )
 
     def _maybe_validate_prompt_template(self):
+        if self.prompt_completion_config is not None:
+            return
         assert self.prompt_template is not None, (
             f"we need prompt_template to combine contexts and label {self.label_key}"
         )
@@ -631,6 +652,41 @@ class GPTSFTDataset(Dataset):
         Truncation is carried out when needed, but it is performed only on the prompt side.
         BOS, EOS, and SEP, are added if specified.
         """
+        if self.prompt_completion_config is not None:
+            prefix_token_ids = [self.tokenizer.eos_id] * self.virtual_tokens
+            tokenized = tokenize_prompt_completion_example(
+                example,
+                self.tokenizer,
+                self.prompt_completion_config,
+                max_length=self.max_seq_length,
+                skipped_tokens=extract_skipped_token_ids(self.tokenizer),
+                allow_missing_completion=self.is_test,
+                prefix_token_ids=prefix_token_ids,
+                minimum_completion_length=self.tokens_to_generate,
+                sep_token_id=getattr(self, "sep_id", None),
+            )
+            input_ids = tokenized.input_ids.tolist()
+            context_ids = tokenized.prompt_ids.tolist()
+            answer_ids = tokenized.completion_ids.tolist()
+            metadata = sft_example_metadata(example, self.prompt_completion_config)
+            if self.output_original_text:
+                for key in (
+                    self.prompt_completion_config.prompt_column,
+                    self.prompt_completion_config.completion_column,
+                ):
+                    if key in example:
+                        metadata[key] = example[key]
+            return {
+                "input_ids": input_ids,
+                "loss_mask": tokenized.loss_mask.tolist(),
+                "answer_start_idx": len(context_ids),
+                "context_ids": context_ids,
+                "context_length": len(context_ids),
+                "answer_ids": answer_ids,
+                "metadata": metadata,
+                "token_count": len(input_ids),
+            }
+
         prompt_template_values = []
         for c in self.prompt_template_keys:
             try:
@@ -711,6 +767,9 @@ class GPTSFTDataset(Dataset):
         input_ids = processed_example["input_ids"]
         if self._is_autogenerated(processed_example):
             return [0.0] * len(input_ids)
+
+        if "loss_mask" in processed_example:
+            return [float(value) for value in processed_example["loss_mask"]]
 
         answer_start_idx = processed_example["answer_start_idx"]
         if self.answer_only_loss:
@@ -1084,6 +1143,7 @@ class GPTSFTChatDataset(GPTSFTDataset):
         file_path: str,
         tokenizer: MegatronTokenizer,
         use_hf_tokenizer_chat_template: bool = False,
+        loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
         tool_schemas: str | dict | None = None,
         **kwargs,
     ):
@@ -1109,10 +1169,14 @@ class GPTSFTChatDataset(GPTSFTDataset):
             file_path: Path to the dataset file
             tokenizer: Tokenizer instance
             use_hf_tokenizer_chat_template: If True, use HuggingFace tokenizer's apply_chat_template
+            loss_mode: Assistant-only, final-assistant-turn, or full-sequence loss.
             tool_schemas: Tool schemas for function calling (JSON string or dict)
             **kwargs: Additional arguments passed to parent GPTSFTDataset
         """
         self.use_hf_tokenizer_chat_template = use_hf_tokenizer_chat_template
+        self.loss_mode = loss_mode
+        if self.loss_mode not in {"assistant", "last_turn", "full"}:
+            raise ValueError("Chat SFT loss_mode must be assistant, last_turn, or full.")
         self.tool_schemas = tool_schemas
 
         # Parse tool_schemas if it's a JSON string
@@ -1174,7 +1238,12 @@ class GPTSFTChatDataset(GPTSFTDataset):
             )
         else:
             # Use HuggingFace chat template preprocessing
-            result = _chat_preprocess(example, self.tokenizer, self.tool_schemas)
+            result = _chat_preprocess(
+                example,
+                self.tokenizer,
+                self.tool_schemas,
+                loss_mode=self.loss_mode,
+            )
 
         # store metadata in dataset, in case user may have keys required in the prediction json files
         conversation_keys = ("conversation", "conversations", "messages")
