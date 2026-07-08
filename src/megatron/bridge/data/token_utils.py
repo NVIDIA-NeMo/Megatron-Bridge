@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Tokenizer-related helpers and common special-token utilities.
-"""
+"""Tokenizer-related helpers and common special-token utilities."""
 
 import torch
 

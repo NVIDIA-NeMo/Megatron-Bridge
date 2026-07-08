@@ -188,6 +188,21 @@ Known semantic datasets should use their preset name, for example `squad`, `gsm8
 
 For text chat, `hf_processor_path=None` reuses the training tokenizer only when that tokenizer already defines the intended chat template. Otherwise select a vocabulary-compatible instruction processor explicitly, as above.
 
+### SFT Implementation Layout
+
+The package structure separates declarative construction, runtime storage, source loading, and batch collation:
+
+| Responsibility | Module |
+| --- | --- |
+| Materialized JSONL/offline-packed config and builder | `megatron.bridge.data.builders.gpt_sft` |
+| Direct Hugging Face config and builder | `megatron.bridge.data.builders.direct_hf_sft` |
+| GPT SFT runtime datasets | `megatron.bridge.data.datasets.gpt_sft` |
+| Direct normalized-example runtime dataset | `megatron.bridge.data.datasets.direct_sft` |
+| Hugging Face source loading and schema adapters | `megatron.bridge.data.sources.hf`, `megatron.bridge.data.sources.hf_adapters` |
+| Shared text SFT collators | `megatron.bridge.data.collators.sft` |
+
+The direct runtime dataset is named `DirectSFTDataset` because it receives normalized examples and has no Hugging Face loading responsibility. Source-specific work remains in the builder and source modules.
+
 For hosted datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct Hugging Face SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
 
 ## VLM Fine-Tuning Data

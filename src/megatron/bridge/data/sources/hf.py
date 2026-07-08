@@ -23,7 +23,7 @@ import torch
 from datasets import concatenate_datasets, load_dataset
 
 from megatron.bridge.data.base import validate_declarative_mapping
-from megatron.bridge.data.hf_datasets.adapters import (
+from megatron.bridge.data.sources.hf_adapters import (
     adapt_hf_dataset,
     prepare_hf_dataset_for_adapter,
     validate_hf_dataset_adapter,

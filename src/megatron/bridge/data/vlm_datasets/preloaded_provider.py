@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 from transformers import AutoProcessor
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -211,7 +211,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
         split_path: Optional[str],
         target_length: int,
         processor: Any,
-    ) -> Optional[ConversationDataset]:
+    ) -> Optional[DirectSFTDataset]:
         if not split_path or target_length <= 0:
             return None
         raw_examples = _load_preloaded_examples(split_path)
@@ -224,7 +224,7 @@ class PreloadedVLMConversationProvider(DatasetProvider):
         if not base_examples:
             logging.warning(f"No usable examples parsed from {split_path}")
             return None
-        return ConversationDataset(
+        return DirectSFTDataset(
             base_examples=base_examples,
             target_length=target_length,
             processor=processor,

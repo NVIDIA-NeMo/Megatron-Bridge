@@ -57,10 +57,10 @@ from megatron.bridge.data.conversation_processing import (
     chat_template_kwargs_from_example,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.hf_source import hf_dataset_supports_split
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
+from megatron.bridge.data.sources.hf import hf_dataset_supports_split
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,

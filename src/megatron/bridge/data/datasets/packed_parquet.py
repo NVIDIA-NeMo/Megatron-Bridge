@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 from megatron.core.msc_utils import MultiStorageClientFeature
 
-from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTPackedDataset
 
 
 if TYPE_CHECKING:

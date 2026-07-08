@@ -74,7 +74,7 @@ evidence:
   - docs/training/hierarchical-context-parallel.md
   - src/megatron/bridge/data/datasets/packed_sequence.py
   - src/megatron/bridge/data/datasets/packed_parquet.py
-  - src/megatron/bridge/data/datasets/sft.py
+  - src/megatron/bridge/data/datasets/gpt_sft.py
   - src/megatron/bridge/training/utils/packed_seq_utils.py
   - src/megatron/bridge/training/gpt_step.py
   - src/megatron/bridge/data/sequence_batching.py
@@ -89,7 +89,7 @@ evidence:
   - src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/model.py
   - tests/functional_tests/test_groups/training/test_seqpacking_cp_example.py
   - tests/unit_tests/data/datasets/test_packed_parquet.py
-  - tests/unit_tests/data/datasets/test_sft.py
+  - tests/unit_tests/data/datasets/test_gpt_sft.py
   - tests/unit_tests/data/vlm_datasets/test_batching.py
   - tests/unit_tests/training/utils/test_packed_seq_utils.py
   - tests/unit_tests/training/test_config.py

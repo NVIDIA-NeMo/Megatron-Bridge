@@ -24,12 +24,12 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
+from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
 from megatron.bridge.data.datasets.packed_parquet import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
 )
 from megatron.bridge.data.datasets.packing_utils import create_hist, create_packing_strategy, fill_packing_strategy
-from megatron.bridge.data.datasets.sft import create_sft_dataset
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 

@@ -17,6 +17,7 @@ import json
 import pytest
 import torch
 
+from megatron.bridge.data.collators.sft import text_chat_collate_fn
 from megatron.bridge.data.conversation_processing import (
     AssistantMaskBoundaryConfig,
     NormalizedVLMSample,
@@ -37,7 +38,6 @@ from megatron.bridge.data.conversation_processing import (
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _chat_preprocess
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
 
 
 pytestmark = pytest.mark.unit

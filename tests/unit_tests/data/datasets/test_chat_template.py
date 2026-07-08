@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 
 
@@ -300,7 +300,7 @@ class TestChatPreprocess:
 class TestGPTSFTChatDataset:
     """Test cases for GPTSFTChatDataset with HF chat template support."""
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_init_with_hf_template(self, mock_dataset_class):
         """Test GPTSFTChatDataset initialization with HF chat template enabled."""
         # Mock the indexed dataset
@@ -327,7 +327,7 @@ class TestGPTSFTChatDataset:
         assert dataset.use_hf_tokenizer_chat_template is True
         assert dataset.tool_schemas is None
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_init_with_tool_schemas_json(self, mock_dataset_class):
         """Test tool schemas parsing from JSON string."""
         mock_dataset = MagicMock()
@@ -354,7 +354,7 @@ class TestGPTSFTChatDataset:
         assert len(dataset.tool_schemas) == 1
         assert dataset.tool_schemas[0]["type"] == "function"
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_init_without_chat_template(self, mock_dataset_class):
         """Test that error is raised when tokenizer lacks chat template."""
         mock_dataset = MagicMock()
@@ -376,7 +376,7 @@ class TestGPTSFTChatDataset:
                 use_hf_tokenizer_chat_template=True,
             )
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_legacy_mode(self, mock_dataset_class):
         """Test GPTSFTChatDataset in legacy mode (no HF template)."""
         mock_dataset = MagicMock()
@@ -397,7 +397,7 @@ class TestGPTSFTChatDataset:
 
         assert dataset.use_hf_tokenizer_chat_template is False
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_process_example_uses_chat_preprocess(self, mock_dataset_class):
         """Test that _process_example uses _chat_preprocess when enabled."""
         mock_dataset = MagicMock()
@@ -444,7 +444,7 @@ class TestGPTSFTChatDataset:
         # Verify conversations not in metadata by default
         assert "conversations" not in result["metadata"]
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_collate_fn_handles_loss_mask(self, mock_dataset_class):
         """Test that collate_fn handles loss_mask correctly."""
         mock_dataset = MagicMock()
@@ -503,7 +503,7 @@ class TestGPTSFTChatDataset:
 class TestCreateSFTDataset:
     """Test cases for create_sft_dataset factory function."""
 
-    @patch("megatron.bridge.data.datasets.sft.GPTSFTChatDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset")
     def test_create_chat_dataset_with_template(self, mock_chat_class):
         """Test creating chat dataset with HF template."""
         from pathlib import Path
@@ -525,7 +525,7 @@ class TestCreateSFTDataset:
         assert call_kwargs["use_hf_tokenizer_chat_template"] is True
         assert call_kwargs["tool_schemas"] == {"type": "function"}
 
-    @patch("megatron.bridge.data.datasets.sft.GPTSFTPackedDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTPackedDataset")
     def test_create_packed_dataset_priority(self, mock_packed_class):
         """Test that .npy files create GPTSFTPackedDataset even with chat=True."""
         from pathlib import Path
@@ -735,7 +735,7 @@ class TestPackedDatasetNaNFix:
 class TestOutputOriginalText:
     """Test cases for output_original_text with different formats."""
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_output_original_text_with_messages(self, mock_dataset_class):
         """Test that output_original_text works with messages format."""
         mock_dataset = MagicMock()
@@ -777,7 +777,7 @@ class TestOutputOriginalText:
         assert result["metadata"]["messages"] == example["messages"]
         assert result["metadata"]["extra_field"] == "value"
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_output_original_text_with_conversations(self, mock_dataset_class):
         """Test that output_original_text works with conversations format."""
         mock_dataset = MagicMock()
@@ -817,7 +817,7 @@ class TestOutputOriginalText:
         assert "conversations" in result["metadata"]
         assert result["metadata"]["conversations"] == example["conversations"]
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_output_original_text_with_conversation(self, mock_dataset_class):
         """Test that output_original_text works with singular conversation format."""
         mock_dataset = MagicMock()
@@ -874,7 +874,7 @@ class TestToolSchemasEdgeCases:
             "input_ids": [1, 10, 20, 2],
         }
 
-        with patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset"):
+        with patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset"):
             dataset = GPTSFTChatDataset(
                 file_path="test.jsonl",
                 tokenizer=mock_tokenizer,
@@ -918,7 +918,7 @@ class TestToolSchemasEdgeCases:
     def test_invalid_tool_schemas_json(self):
         """Test that invalid JSON in tool_schemas raises error."""
         with pytest.raises(json.JSONDecodeError):
-            with patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset"):
+            with patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset"):
                 mock_tokenizer = MagicMock()
                 mock_hf_tokenizer = MagicMock()
                 mock_tokenizer._tokenizer = mock_hf_tokenizer
@@ -937,7 +937,7 @@ class TestToolSchemasEdgeCases:
 class TestTruncationWithChatTemplates:
     """Test cases for truncation behavior with chat templates."""
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_truncation_happens_in_collate_fn(self, mock_dataset_class):
         """Test that truncation happens in collate_fn, not _process_example."""
         mock_dataset = MagicMock()
@@ -973,7 +973,7 @@ class TestTruncationWithChatTemplates:
         assert "loss_mask" in result
         assert len(result["loss_mask"]) == len(result["input_ids"])
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_collate_fn_truncation_warning(self, mock_dataset_class):
         """Test collate_fn handles truncation gracefully."""
         mock_dataset = MagicMock()
@@ -1011,7 +1011,7 @@ class TestTruncationWithChatTemplates:
         # Verify truncation occurred
         assert result["tokens"].shape[1] <= dataset.max_seq_length
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_truncation_warns_when_loss_mask_empty(self, mock_dataset_class):
         """Test that truncation warns and fixes when all assistant tokens are removed."""
 
@@ -1046,7 +1046,7 @@ class TestTruncationWithChatTemplates:
         ]
 
         # Capture log warnings
-        with patch("megatron.bridge.data.datasets.sft.logger") as mock_logger:
+        with patch("megatron.bridge.data.datasets.gpt_sft.logger") as mock_logger:
             result = dataset.collate_fn(batch)
 
             # Should have logged warning
@@ -1183,7 +1183,7 @@ class TestEOSIndexFixInPackedDataset:
 class TestPackedChatDatasetIntegration:
     """Integration tests for packed chat datasets."""
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_chat_dataset_with_loss_mask_field(self, mock_dataset_class):
         """Test that chat dataset with HF template produces loss_mask field."""
         mock_dataset = MagicMock()
@@ -1337,7 +1337,7 @@ class TestCuSeqlensUnpaddedCalculation:
 class TestBackwardCompatibilityLossMask:
     """Test backward compatibility for loss_mask field naming."""
 
-    @patch("megatron.bridge.data.datasets.sft._JSONLMemMapDataset")
+    @patch("megatron.bridge.data.datasets.gpt_sft._JSONLMemMapDataset")
     def test_legacy_chat_dataset_uses_loss_mask(self, mock_dataset_class):
         """Test that legacy chat dataset (non-HF template) uses loss_mask."""
         mock_dataset = MagicMock()
@@ -1356,7 +1356,7 @@ class TestBackwardCompatibilityLossMask:
         )
 
         # Mock _preprocess to return loss_mask
-        with patch("megatron.bridge.data.datasets.sft._preprocess") as mock_preprocess:
+        with patch("megatron.bridge.data.datasets.gpt_sft._preprocess") as mock_preprocess:
             mock_preprocess.return_value = {
                 "input_ids": torch.tensor([1, 2, 3, 4]),
                 "loss_mask": torch.tensor([0, 1, 1, 1]),
@@ -1378,12 +1378,12 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         """Test that .npy files ignore chat flag (packed has priority)."""
         from pathlib import Path
 
-        from megatron.bridge.data.datasets.sft import create_sft_dataset
+        from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
 
-        with patch("megatron.bridge.data.datasets.sft._safe_load_packed_npy") as mock_load:
+        with patch("megatron.bridge.data.datasets.gpt_sft._safe_load_packed_npy") as mock_load:
             mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy
@@ -1396,7 +1396,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
             )
 
             # Verify it's a packed dataset
-            from megatron.bridge.data.datasets.sft import GPTSFTPackedDataset
+            from megatron.bridge.data.datasets.gpt_sft import GPTSFTPackedDataset
 
             assert isinstance(dataset, GPTSFTPackedDataset)
 
@@ -1404,9 +1404,9 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         """Test that dataset_kwargs flow through create_sft_dataset to chat dataset."""
         from pathlib import Path
 
-        from megatron.bridge.data.datasets.sft import create_sft_dataset
+        from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
 
-        with patch("megatron.bridge.data.datasets.sft.GPTSFTChatDataset") as mock_chat:
+        with patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset") as mock_chat:
             mock_tokenizer = MagicMock()
 
             tool_schemas = [{"type": "function"}]

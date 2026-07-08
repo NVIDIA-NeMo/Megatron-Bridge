@@ -2,8 +2,8 @@
 
 import pytest
 
-from megatron.bridge.data import hf_source as source_module
-from megatron.bridge.data.hf_source import (
+from megatron.bridge.data.sources import hf as source_module
+from megatron.bridge.data.sources.hf import (
     HFDatasetSourceConfig,
     hf_dataset_supports_split,
     load_and_adapt_hf_dataset,

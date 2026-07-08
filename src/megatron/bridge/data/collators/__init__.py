@@ -12,14 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hugging Face conversation datasets, schema adapters, and text collators."""
+"""Runtime dataset collators."""
 
-from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
+from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 
 
-__all__ = [
-    "ConversationDataset",
-    "text_chat_collate_fn",
-    "text_prompt_completion_collate_fn",
-]
+__all__ = ["text_chat_collate_fn", "text_prompt_completion_collate_fn"]

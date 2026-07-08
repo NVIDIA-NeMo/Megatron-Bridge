@@ -13,8 +13,8 @@ from megatron.bridge.data.builders import (
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.builders import gpt_sft_dataset as builder_mod
-from megatron.bridge.data.builders.gpt_sft_dataset import (
+from megatron.bridge.data.builders import gpt_sft as builder_mod
+from megatron.bridge.data.builders.gpt_sft import (
     FinetuningDatasetBuilder,
     GPTSFTDatasetBuilder,
     materialize_hf_dataset,
@@ -22,7 +22,7 @@ from megatron.bridge.data.builders.gpt_sft_dataset import (
     resolve_gpt_sft_dataset_root,
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_source import resolve_hf_dataset_source
+from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
 

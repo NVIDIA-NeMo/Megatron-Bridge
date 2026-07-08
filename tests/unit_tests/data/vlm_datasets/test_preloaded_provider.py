@@ -160,7 +160,7 @@ def test_preloaded_provider_forwards_deferred_packing_flag(monkeypatch):
 
     captured_kwargs = []
 
-    class CapturingConversationDataset:
+    class CapturingDirectSFTDataset:
         def __init__(self, **kwargs):
             captured_kwargs.append(kwargs)
             self._length = kwargs["target_length"]
@@ -169,7 +169,7 @@ def test_preloaded_provider_forwards_deferred_packing_flag(monkeypatch):
             return self._length
 
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
-    monkeypatch.setattr(pre, "ConversationDataset", CapturingConversationDataset)
+    monkeypatch.setattr(pre, "DirectSFTDataset", CapturingDirectSFTDataset)
 
     provider = pre.PreloadedVLMConversationProvider(
         seq_length=16,

@@ -15,7 +15,7 @@
 import pytest
 import torch
 
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
+from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.sft_processing import PromptCompletionSFTPreprocessingConfig
 
 

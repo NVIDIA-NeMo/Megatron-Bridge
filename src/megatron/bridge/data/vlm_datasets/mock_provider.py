@@ -29,7 +29,7 @@ import numpy
 from PIL import Image
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
+from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -38,7 +38,7 @@ class MockVLMConversationProvider(DatasetProvider):
     """DatasetProvider for generic mock VLM conversation datasets.
 
     Builds train/valid/test datasets using a HF AutoProcessor and the
-    `ConversationDataset` implementation. Intended to work across
+    `DirectSFTDataset` implementation. Intended to work across
     different VLM models whose processors support the conversation schema.
     """
 
@@ -144,10 +144,10 @@ class MockVLMConversationProvider(DatasetProvider):
 
         base_examples = self._make_base_examples()
 
-        def _maybe_make(size: int) -> Optional[ConversationDataset]:
+        def _maybe_make(size: int) -> Optional[DirectSFTDataset]:
             if not size or size <= 0:
                 return None
-            return ConversationDataset(
+            return DirectSFTDataset(
                 base_examples=base_examples,
                 target_length=size,
                 processor=self._processor,

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core repeating dataset type for direct Hugging Face SFT examples."""
+"""Runtime dataset for direct SFT examples."""
 
 import inspect
 from collections.abc import Callable
@@ -44,8 +44,8 @@ def _collate_kwargs_for_impl(
     return supported_kwargs
 
 
-class ConversationDataset(torch.utils.data.Dataset):
-    """Repeating wrapper over normalized HF-style SFT examples.
+class DirectSFTDataset(torch.utils.data.Dataset):
+    """Repeating wrapper over normalized SFT examples.
 
     - Examples may use structured conversations or paired prompt-completion
       text, as selected by the owning dataset config. Optional modality fields
@@ -81,7 +81,7 @@ class ConversationDataset(torch.utils.data.Dataset):
 
             if collate_key not in COLLATE_FNS:
                 raise ValueError(
-                    f"No conversation collate function registered for processor type '{collate_key}'. "
+                    f"No SFT collate function registered for processor type '{collate_key}'. "
                     "Add it to COLLATE_FNS or pass collate_impl explicitly."
                 )
             collate_impl = COLLATE_FNS[collate_key]

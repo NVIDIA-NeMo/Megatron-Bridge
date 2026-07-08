@@ -3316,7 +3316,7 @@ class TestEpochBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_epoch_based_training_rejects_repeating_hf_conversation_dataset(self):
+    def test_epoch_based_training_rejects_direct_hf_sft_dataset(self):
         train_cfg = create_test_training_config(train_iters=None, num_epochs=1.0)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
@@ -3467,7 +3467,7 @@ class TestDatasetSequenceLengthValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_hf_conversation_dataset_sequence_length_mismatch_fails(self, monkeypatch):
+    def test_direct_hf_sft_dataset_sequence_length_mismatch_fails(self, monkeypatch):
         """Test that direct HF conversation configs enforce model sequence length."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
         dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=1024)
@@ -3486,7 +3486,7 @@ class TestDatasetSequenceLengthValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_hf_conversation_dataset_sequence_length_match_passes(self, monkeypatch):
+    def test_direct_hf_sft_dataset_sequence_length_match_passes(self, monkeypatch):
         """Test that direct HF conversation configs accept matching sequence length."""
         gpt_model_cfg = create_test_gpt_config(seq_length=512)
         dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)

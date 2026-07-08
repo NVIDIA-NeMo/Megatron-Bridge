@@ -1,29 +1,29 @@
 """Canonical dataset Config + Builder APIs."""
 
-from megatron.bridge.data.builders import gpt_sft_dataset as _gpt_sft_dataset
-from megatron.bridge.data.builders.direct_hf_sft_dataset import (
+from megatron.bridge.data.builders import gpt_sft as _gpt_sft
+from megatron.bridge.data.builders.direct_hf_sft import (
     DirectHFSFTDatasetBuilder,
     DirectHFSFTDatasetConfig,
     direct_hf_sft_train_valid_test_datasets_provider,
 )
-from megatron.bridge.data.builders.gpt_sft_dataset import (
+from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetBuilder,
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
 )
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
 )
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
 
 
 # =============================================================================
 # Deprecated compatibility exports
 # =============================================================================
-FinetuningDatasetBuilder = _gpt_sft_dataset.FinetuningDatasetBuilder
-FinetuningDatasetConfig = _gpt_sft_dataset.FinetuningDatasetConfig
+FinetuningDatasetBuilder = _gpt_sft.FinetuningDatasetBuilder
+FinetuningDatasetConfig = _gpt_sft.FinetuningDatasetConfig
 
 
 __all__ = [

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared text-only collators for direct Hugging Face SFT."""
+"""Shared text-only collators for direct SFT."""
 
 from __future__ import annotations
 
@@ -30,13 +30,13 @@ from megatron.bridge.data.conversation_processing import (
     tokenize_chat_example,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.sequence_batching import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
     sft_example_metadata,
     tokenize_prompt_completion_example,
 )
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 
 
 _CONVERSATION_KEYS = ("conversation", "messages", "conversations")

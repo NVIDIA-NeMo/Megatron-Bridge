@@ -79,7 +79,7 @@ class TestVLMDirectHFMasking:
 
         provider = get_dataset_provider(config)
         with patch(
-            "megatron.bridge.data.builders.direct_hf_sft_dataset.load_and_adapt_hf_dataset",
+            "megatron.bridge.data.builders.direct_hf_sft.load_and_adapt_hf_dataset",
             side_effect=lambda source: make_short_conversations(),
         ):
             train_ds, _, _ = provider([2, 0, 0], config, tokenizer=None)

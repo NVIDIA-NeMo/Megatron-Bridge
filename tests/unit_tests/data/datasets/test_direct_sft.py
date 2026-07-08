@@ -3,8 +3,8 @@
 import pytest
 import torch
 
-from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
+from megatron.bridge.data.collators.sft import text_chat_collate_fn
+from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 
 
 pytestmark = pytest.mark.unit
@@ -35,8 +35,8 @@ def _custom_collate(
     }
 
 
-def test_conversation_dataset_repeats_examples_to_target_length():
-    dataset = ConversationDataset(
+def test_direct_sft_dataset_repeats_examples_to_target_length():
+    dataset = DirectSFTDataset(
         base_examples=[_example()],
         target_length=3,
         processor=_Processor(),
@@ -47,7 +47,7 @@ def test_conversation_dataset_repeats_examples_to_target_length():
     assert dataset[2] == dataset[0]
 
 
-def test_conversation_dataset_binds_shared_text_collate():
+def test_direct_sft_dataset_binds_shared_text_collate():
     class _Tokenizer:
         pad_token_id = 0
         added_tokens_decoder = {}
@@ -64,7 +64,7 @@ def test_conversation_dataset_binds_shared_text_collate():
             {"role": "assistant", "content": "pong"},
         ]
     }
-    dataset = ConversationDataset(
+    dataset = DirectSFTDataset(
         base_examples=[example],
         target_length=1,
         processor=_Tokenizer(),
@@ -79,8 +79,8 @@ def test_conversation_dataset_binds_shared_text_collate():
     assert batch["loss_mask"].tolist() == [[1.0, 1.0, 0.0]]
 
 
-def test_conversation_dataset_forwards_supported_packing_options():
-    dataset = ConversationDataset(
+def test_direct_sft_dataset_forwards_supported_packing_options():
+    dataset = DirectSFTDataset(
         base_examples=[_example()],
         target_length=1,
         processor=_Processor(),
@@ -97,13 +97,13 @@ def test_conversation_dataset_forwards_supported_packing_options():
     }
 
 
-def test_conversation_dataset_rejects_collate_without_packing_support():
+def test_direct_sft_dataset_rejects_collate_without_packing_support():
     def _legacy_collate(examples, processor):
         del processor
         return {"count": len(examples)}
 
     with pytest.raises(ValueError, match="does not accept enable_in_batch_packing=True"):
-        ConversationDataset(
+        DirectSFTDataset(
             base_examples=[_example()],
             target_length=1,
             processor=_Processor(),
@@ -112,21 +112,21 @@ def test_conversation_dataset_rejects_collate_without_packing_support():
         )
 
 
-def test_conversation_dataset_requires_registered_or_explicit_collate():
-    with pytest.raises(ValueError, match="No conversation collate function registered"):
-        ConversationDataset(
+def test_direct_sft_dataset_requires_registered_or_explicit_collate():
+    with pytest.raises(ValueError, match="No SFT collate function registered"):
+        DirectSFTDataset(
             base_examples=[_example()],
             target_length=1,
             processor=_Processor(),
         )
 
 
-def test_conversation_dataset_collate_returns_tensors():
+def test_direct_sft_dataset_collate_returns_tensors():
     def _tensor_collate(examples, processor, **kwargs):
         del examples, processor, kwargs
         return {"tokens": torch.tensor([[1, 2]])}
 
-    dataset = ConversationDataset(
+    dataset = DirectSFTDataset(
         base_examples=[_example()],
         target_length=1,
         processor=_Processor(),

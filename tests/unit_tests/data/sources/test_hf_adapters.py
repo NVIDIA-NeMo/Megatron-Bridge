@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from megatron.bridge.data.hf_datasets import adapters as adapter_module
-from megatron.bridge.data.hf_datasets.adapters import adapt_hf_dataset, prepare_hf_dataset_for_adapter
+from megatron.bridge.data.sources import hf_adapters as adapter_module
+from megatron.bridge.data.sources.hf_adapters import adapt_hf_dataset, prepare_hf_dataset_for_adapter
 
 
 pytestmark = pytest.mark.unit

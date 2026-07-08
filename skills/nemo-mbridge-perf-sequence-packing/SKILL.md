@@ -53,7 +53,7 @@ cfg.dataset.dataset_kwargs["pad_to_max_length"] = True
 ```
 
 **Note:** `pad_cu_seqlens = True` also requires a metadata JSON file alongside
-the packed dataset (asserted in `src/megatron/bridge/data/datasets/sft.py`).
+the packed dataset (asserted in `src/megatron/bridge/data/datasets/gpt_sft.py`).
 Custom packed datasets that omit the metadata file will hit an assertion at
 dataset initialization.
 
@@ -185,7 +185,7 @@ uv run python -m pytest tests/unit_tests/training/test_config.py -k "packed_sequ
 uv run python -m pytest tests/unit_tests/data/vlm_datasets/test_batching.py -v && \
 uv run python -m pytest tests/unit_tests/training/test_vlm_step.py -k "deferred_in_batch_packing or packed_metadata" -v && \
 uv run python -m pytest tests/unit_tests/data/datasets/test_packed_parquet.py -k "negative_index_zeroes_loss_mask" -v && \
-uv run python -m pytest tests/unit_tests/data/datasets/test_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
+uv run python -m pytest tests/unit_tests/data/datasets/test_gpt_sft.py -k "mapped_padding_rows_do_not_contribute_to_loss" -v
 ```
 
 Success criteria:

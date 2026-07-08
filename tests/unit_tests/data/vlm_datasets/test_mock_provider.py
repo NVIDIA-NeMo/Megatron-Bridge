@@ -69,7 +69,7 @@ def test_mock_provider_forwards_deferred_packing_flag(monkeypatch):
 
     captured_kwargs = []
 
-    class CapturingConversationDataset:
+    class CapturingDirectSFTDataset:
         def __init__(self, **kwargs):
             captured_kwargs.append(kwargs)
             self._length = kwargs["target_length"]
@@ -78,7 +78,7 @@ def test_mock_provider_forwards_deferred_packing_flag(monkeypatch):
             return self._length
 
     monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", staticmethod(lambda *a, **k: Gemma3Processor()))
-    monkeypatch.setattr(mock, "ConversationDataset", CapturingConversationDataset)
+    monkeypatch.setattr(mock, "DirectSFTDataset", CapturingDirectSFTDataset)
 
     provider = mock.MockVLMConversationProvider(
         seq_length=16,

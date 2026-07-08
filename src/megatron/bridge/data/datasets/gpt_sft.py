@@ -35,12 +35,12 @@ from megatron.bridge.data.datasets.utils import (
     _preprocess,
     _tokenize,
 )
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.sft_processing import (
     PromptCompletionSFTPreprocessingConfig,
     sft_example_metadata,
     tokenize_prompt_completion_example,
 )
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.safe_pickle import safe_load_npy
 

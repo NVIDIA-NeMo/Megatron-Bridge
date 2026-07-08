@@ -39,7 +39,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig, load_and_adapt_hf_dataset
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_and_adapt_hf_dataset
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 

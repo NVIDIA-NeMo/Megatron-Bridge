@@ -29,24 +29,24 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
+from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset, get_dataset_root
 from megatron.bridge.data.datasets.packed_parquet import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.datasets.sft import create_sft_dataset, get_dataset_root
-from megatron.bridge.data.hf_source import (
-    HFDatasetSourceConfig,
-    hf_dataset_supports_split,
-    load_and_adapt_hf_dataset,
-    resolve_hf_dataset_source,
-)
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,
     SFTPreprocessingConfig,
     normalize_sft_examples,
     validate_sft_preprocessing_config,
+)
+from megatron.bridge.data.sources.hf import (
+    HFDatasetSourceConfig,
+    hf_dataset_supports_split,
+    load_and_adapt_hf_dataset,
+    resolve_hf_dataset_source,
 )
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0

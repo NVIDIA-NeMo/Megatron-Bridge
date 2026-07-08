@@ -16,7 +16,7 @@ import types
 
 import torch
 
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids, json2token
+from megatron.bridge.data.token_utils import extract_skipped_token_ids, json2token
 
 
 class _DummyTokenizer:

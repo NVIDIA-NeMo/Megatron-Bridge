@@ -50,17 +50,17 @@ from megatron.bridge.data.base import (
 from megatron.bridge.data.base import (
     DatasetBuildContext as DatasetBuildContext,
 )
-from megatron.bridge.data.builders.direct_hf_sft_dataset import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
 # Config + Builder APIs from megatron.bridge.data.builders.
-from megatron.bridge.data.builders.gpt_sft_dataset import (
+from megatron.bridge.data.builders.gpt_sft import (
     FinetuningDatasetConfig as FinetuningDatasetConfig,
 )
-from megatron.bridge.data.builders.gpt_sft_dataset import (
+from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
 )
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig as HFDatasetSourceConfig
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig

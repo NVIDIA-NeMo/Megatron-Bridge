@@ -2,9 +2,9 @@
 
 import pytest
 
-from megatron.bridge.data.datasets.sft import GPTSFTDataset
+from megatron.bridge.data.collators.sft import text_prompt_completion_collate_fn
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTDataset
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.text_collate import text_prompt_completion_collate_fn
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     PromptCompletionSFTPreprocessingConfig,

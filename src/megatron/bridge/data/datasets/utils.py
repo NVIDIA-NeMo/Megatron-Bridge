@@ -938,7 +938,7 @@ def _chat_preprocess(
     output
     """
     from megatron.bridge.data.conversation_processing import tokenize_chat_example
-    from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+    from megatron.bridge.data.token_utils import extract_skipped_token_ids
 
     try:
         tokenized = tokenize_chat_example(

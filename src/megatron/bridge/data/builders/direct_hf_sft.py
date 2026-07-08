@@ -25,21 +25,21 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
+from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
-from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
-from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
-from megatron.bridge.data.hf_source import (
-    HFDatasetSourceConfig,
-    hf_dataset_supports_split,
-    load_and_adapt_hf_dataset,
-    prepare_hf_dataset_sources,
-)
+from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     SFTPreprocessingConfig,
     is_text_only_prompt_completion_example,
     normalize_sft_examples,
     validate_sft_preprocessing_config,
+)
+from megatron.bridge.data.sources.hf import (
+    HFDatasetSourceConfig,
+    hf_dataset_supports_split,
+    load_and_adapt_hf_dataset,
+    prepare_hf_dataset_sources,
 )
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -186,12 +186,12 @@ def build_direct_hf_sft_split(
     processor: Any,
     *,
     collate_impl: CollateFunction | None = None,
-) -> ConversationDataset | None:
+) -> DirectSFTDataset | None:
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
-    return ConversationDataset(
+    return DirectSFTDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
@@ -221,7 +221,7 @@ class DirectHFSFTDatasetBuilder:
     def build(
         self,
         context: DatasetBuildContext,
-    ) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
+    ) -> tuple[DirectSFTDataset | None, DirectSFTDataset | None, DirectSFTDataset | None]:
         """Build train, validation, and test datasets for requested sample counts."""
         if (
             self.config.do_validation
@@ -288,7 +288,7 @@ def direct_hf_sft_train_valid_test_datasets_provider(
     dataset_config: DirectHFSFTDatasetConfig,
     tokenizer: MegatronTokenizer | None = None,
     pg_collection: ProcessGroupCollection | None = None,
-) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
+) -> tuple[DirectSFTDataset | None, DirectSFTDataset | None, DirectSFTDataset | None]:
     """Build direct-HF SFT datasets through the canonical runtime builder."""
     context = DatasetBuildContext(
         train_samples=train_val_test_num_samples[0],

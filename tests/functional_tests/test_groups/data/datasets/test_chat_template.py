@@ -24,7 +24,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, create_sft_dataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 

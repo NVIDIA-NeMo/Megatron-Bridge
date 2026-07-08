@@ -1,6 +1,6 @@
 # Direct Hugging Face SFT Dataset Tutorial
 
-Use `DirectHFSFTDatasetConfig` for direct Hugging Face SFT processing. The training framework resolves `DirectHFSFTDatasetBuilder`, which loads a declarative source, applies an optional schema adapter, binds the processor/tokenizer and collator, and constructs schedule-sized `ConversationDataset` splits.
+Use `DirectHFSFTDatasetConfig` for direct Hugging Face SFT processing. The training framework resolves `DirectHFSFTDatasetBuilder`, which loads a declarative source, applies an optional schema adapter, binds the processor/tokenizer and collator, and constructs schedule-sized `DirectSFTDataset` splits.
 
 This tutorial starts with text chat, but the same Config + Builder path supports paired text, vision, video, audio, and omni rows. Text rows use the same preprocessing configs and tokenization helpers as the materialized text-only SFT path. Multimodal rows use chat preprocessing plus the configured Hugging Face processor and its registered model collator.
 

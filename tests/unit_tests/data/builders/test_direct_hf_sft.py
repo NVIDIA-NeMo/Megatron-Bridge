@@ -13,12 +13,12 @@ from megatron.bridge.data.builders import (
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.builders import direct_hf_sft_dataset as builder_module
-from megatron.bridge.data.builders.direct_hf_sft_dataset import (
+from megatron.bridge.data.builders import direct_hf_sft as builder_module
+from megatron.bridge.data.builders.direct_hf_sft import (
     load_direct_hf_sft_processor,
     select_direct_hf_sft_collate,
 )
-from megatron.bridge.data.hf_source import resolve_hf_dataset_source
+from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
 

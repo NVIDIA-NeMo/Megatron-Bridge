@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
-from megatron.bridge.data.hf_datasets.token_utils import json2token
+from megatron.bridge.data.token_utils import json2token
 from megatron.bridge.utils.common_utils import resolve_path
 
 
