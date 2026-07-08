@@ -46,7 +46,6 @@ def test_set_determinism_env_vars_writes_three_keys():
         gpu="h100",
         compute_dtype="bf16",
         train_task="pretrain",
-        num_gpus=64,
     )
     executor = MagicMock()
     executor.env_vars = {}
@@ -56,15 +55,3 @@ def test_set_determinism_env_vars_writes_three_keys():
     assert executor.env_vars["NCCL_ALGO"] == "Ring"
     assert executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
     assert executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
-
-
-def test_perf_env_plugin_num_gpus_is_optional():
-    plugin = PerfEnvPlugin(
-        model_family_name="llama",
-        model_recipe_name="llama3_70b",
-        gpu="h100",
-        compute_dtype="bf16",
-        train_task="pretrain",
-    )
-
-    assert plugin.num_gpus is None

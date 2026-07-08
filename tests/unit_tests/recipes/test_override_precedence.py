@@ -23,10 +23,21 @@ silent wipes after upstream PR #3470 (2026-04-23).
 
 import sys
 from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
+
+
+@pytest.fixture(autouse=True)
+def _mock_cuda_device_properties():
+    """Keep recipe construction independent of the test host's GPUs."""
+    properties = MagicMock(major=9, name="NVIDIA H100")
+    with patch("torch.cuda.get_device_properties", return_value=properties):
+        yield
 
 
 def _build_base_args(**overrides):
