@@ -40,6 +40,32 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
     def __init__(self, model, inference_context=None):
         super().__init__(model, inference_context=inference_context)
 
+    def run_one_forward_step(self, inference_input: Dict[str, Any], recv_buffer_seq_len: Optional[int] = None):
+        """Run a single forward pass, rejecting pipeline parallelism.
+
+        This wrapper only implements the tensor-parallel / no-pipeline path
+        (``forward_pass_without_pipeline_parallel``), whose inputs are keyed on
+        ``input_ids`` and include the multimodal tensors (``pixel_values`` /
+        ``image_grid_thw``). The base-class pipeline path instead reads
+        ``inference_input["tokens"]`` and drops those multimodal inputs, so it cannot
+        run this VLM. Fail fast with a clear error instead of raising a cryptic
+        ``KeyError: 'tokens'`` deep inside the pipeline path.
+
+        Args:
+            inference_input: The prepared model inputs for the current context window.
+            recv_buffer_seq_len: Optional pipeline recv-buffer sequence length (unused here).
+
+        Returns:
+            The output logits from the tensor-parallel forward pass.
+        """
+        if getattr(self.config, "pipeline_model_parallel_size", 1) > 1:
+            raise NotImplementedError(
+                "QwenVLInferenceWrapper does not support pipeline parallelism "
+                "(pipeline_model_parallel_size > 1); run VLM inference with "
+                "pipeline_model_parallel_size=1."
+            )
+        return super().run_one_forward_step(inference_input, recv_buffer_seq_len)
+
     def prep_inference_input(
         self,
         prompts_tokens: torch.Tensor,

@@ -156,3 +156,28 @@ class TestQwenVLInferenceWrapper:
             runtime_gather_output=True,
         )
         assert result.equal(torch.tensor([[[0.1, 0.9]]]))
+
+    def test_run_one_forward_step_rejects_pipeline_parallel(self, wrapper):
+        # The base pipeline path reads inference_input["tokens"] (absent here, only
+        # "input_ids" is provided) and drops the multimodal inputs, so PP must be rejected
+        # with a clear error rather than a cryptic KeyError.
+        wrapper.config = MagicMock()
+        wrapper.config.pipeline_model_parallel_size = 2
+
+        with pytest.raises(NotImplementedError, match="pipeline parallelism"):
+            wrapper.run_one_forward_step({"input_ids": torch.tensor([[1, 2, 3]])})
+
+    def test_run_one_forward_step_delegates_without_pipeline_parallel(self, wrapper):
+        wrapper.config = MagicMock()
+        wrapper.config.pipeline_model_parallel_size = 1
+        inference_input = {"input_ids": torch.tensor([[1, 2, 3]])}
+
+        with patch(
+            "megatron.core.inference.model_inference_wrappers.abstract_model_inference_wrapper."
+            "AbstractModelInferenceWrapper.run_one_forward_step",
+            return_value="logits",
+        ) as mock_super:
+            result = wrapper.run_one_forward_step(inference_input)
+
+        mock_super.assert_called_once_with(inference_input, None)
+        assert result == "logits"
