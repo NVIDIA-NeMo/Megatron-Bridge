@@ -309,6 +309,21 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP = replace(
     num_distributed_optimizer_instances=1,
 )
 
+# Hybrid-FSDP (HSDP)
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_HSDP = replace(
+    DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FSDP,
+    num_gpus=128,
+    global_batch_size=256,
+    micro_batch_size=1,
+    expert_model_parallel_size=32,
+    num_distributed_optimizer_instances=2,
+    outer_dp_sharding_strategy="optim",
+    cuda_graph_impl="full_iteration",
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=False,
+)
+
+DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_HSDP = DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_HSDP
 # =============================================================================
 # DeepSeek V3 Pretrain - Large Scale Proxy
 # =============================================================================
@@ -397,6 +412,8 @@ __all__ = [
     # FSDP (FSDP, GBS=256 for GB300)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_FSDP",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_FSDP",
+    # Hybrid-FSDP (HSDP)
+    "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_HSDP",
     # Large Scale Proxy
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_LARGE_SCALE",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB200_FP8_MX_LARGE_SCALE",
