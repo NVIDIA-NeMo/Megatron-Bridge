@@ -17,6 +17,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _gemma_module = importlib.import_module("megatron.bridge.recipes.gemma")
 _GEMMA2_RECIPE_FUNCS = [
@@ -102,7 +104,7 @@ def _assert_basic_config(cfg):
     if hasattr(cfg.dataset, "sequence_length"):
         assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
     elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / HFDatasetConfig
+        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / DatasetProvider
     else:
         # Some other dataset type
         assert cfg.dataset is not None
@@ -112,7 +114,7 @@ def _assert_basic_config(cfg):
 def test_each_gemma2_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer for SFT/PEFT configs
     is_sft_or_peft = "sft" in recipe_func.__name__ or "peft" in recipe_func.__name__
@@ -154,7 +156,7 @@ def test_gemma2_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each Gemma2 SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer
     from unittest.mock import MagicMock
@@ -189,7 +191,7 @@ def test_gemma2_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mo
     """Test that each Gemma2 PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer
     from unittest.mock import MagicMock
@@ -224,7 +226,7 @@ def test_gemma2_sft_has_no_peft(recipe_func: Callable, monkeypatch: pytest.Monke
     """Test that SFT configurations have no PEFT config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer
     from unittest.mock import MagicMock
@@ -251,7 +253,7 @@ def test_gemma2_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     """Test that PEFT configurations are correctly applied for different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer
     from unittest.mock import MagicMock
@@ -278,7 +280,7 @@ def test_gemma2_9b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
     from megatron.bridge.recipes.gemma import gemma2_9b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # Mock AutoTokenizer
     from unittest.mock import MagicMock
@@ -304,7 +306,7 @@ def test_gemma2_9b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma2_9b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     from unittest.mock import MagicMock
 
@@ -330,7 +332,7 @@ def test_gemma2_9b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma2_9b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     from unittest.mock import MagicMock
 
@@ -356,7 +358,7 @@ def test_gemma2_27b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma2_27b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     from unittest.mock import MagicMock
 
@@ -382,7 +384,7 @@ def test_gemma2_27b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.gemma import gemma2_27b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     from unittest.mock import MagicMock
 

@@ -156,13 +156,13 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
-        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
+        dataset.enable_offline_packing=true \
+        dataset.offline_packing_specs.pad_seq_to_mult=$([ "$CP" -gt 1 ] && echo $((CP * 2)) || echo 1) \
+        dataset.offline_packing_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --mode finetune"
     CMD="$CMD --recipe ${RECIPE_NAME}"
 
     # Collapse newlines so bash -c receives a single command

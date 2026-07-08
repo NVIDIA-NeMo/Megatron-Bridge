@@ -17,7 +17,7 @@ import re
 from typing import List, Optional
 
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, MegatronParamMapping
-from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map
+from megatron.bridge.models.conversion.quant_mapping import convert_to_amax_map, derive_kv_bmm_amax_map
 
 
 class MegatronMappingRegistry:
@@ -120,6 +120,7 @@ class MegatronMappingRegistry:
         original_mappings = list(self.mappings)
         self.mappings.extend(convert_to_amax_map(original_mappings, ".weight_quantizer._amax"))
         self.mappings.extend(convert_to_amax_map(original_mappings, ".input_quantizer._amax"))
+        self.mappings.extend(derive_kv_bmm_amax_map(original_mappings))
 
     def _convert_pattern_to_regex(self, pattern: str) -> str:
         """Convert a pattern with wildcards to regex pattern.

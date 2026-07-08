@@ -18,7 +18,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
     NemotronVLModelProvider,
@@ -55,7 +55,7 @@ def mock_hf_config(mock_llm_config):
 
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 

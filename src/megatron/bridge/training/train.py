@@ -319,6 +319,11 @@ def train(
     print_rank_0(f"Starting training loop at iteration {start_iteration}")
     p2p_communicator = P2PCommunicator(pp_group=pg_collection.pp, config=model_config)
     dp_size = pg_collection.dp.size()
+    # Anchor for interval-average throughput logging: training_log reports the FLOPS
+    # performed over each logging interval as the delta of
+    # floating_point_operations_so_far. Seed it with the current cumulative (0 fresh,
+    # or the checkpoint value on resume) so the first interval's delta is correct.
+    global_state._flops_at_last_log = global_state.train_state.floating_point_operations_so_far
     if hasattr(config.model, "dist_train") and getattr(config.model.dist_train, "use_dist_train", False) is True:
         forward_backward_func = forward_backward_pipelining_without_interleaving
         p2p_communicator = config.model._p2p_communicator
@@ -440,6 +445,7 @@ def train(
         global_state._flops_seqlen_sum = 0
         global_state._flops_seqlen_sq_sum = 0
         global_state._flops_vision_patches = 0
+        global_state._flops_requires_global_reduce = False
 
         (
             loss_dict,
@@ -546,43 +552,17 @@ def train(
             assert num_skipped_samples_in_batch == 0
         global_state.train_state.skipped_train_samples += num_skipped_samples_in_batch
 
-        # Read accumulated FLOPS metadata from forward_step micro-batches.
-        # These are per-DP-rank totals; scale by dp_size for global estimate.
-        # In VPP (interleaved pipeline) mode, forward_step_func is called once per
-        # virtual-stage per microbatch (i.e. num_microbatches * vp_size times), but
-        # the FLOPS formula already accounts for ALL layers in the full model.
-        # Therefore we must divide the accumulator by vp_size to avoid over-counting.
-        local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
-        local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
-        num_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
-        # Coerce to int — getattr on MagicMock test doubles returns a MagicMock
-        # (not the default), which breaks the numeric comparisons below.
-        if not isinstance(local_seqlen_sum, int):
-            local_seqlen_sum = 0
-        if not isinstance(local_seqlen_sq_sum, int):
-            local_seqlen_sq_sum = 0
-        if not isinstance(num_vision_patches, int):
-            num_vision_patches = 0
-
-        # Correct for VPP over-counting: each microbatch's seqlen is accumulated
-        # once per virtual stage, but FLOPS formula already covers all stages.
-        vp_size = config.model.virtual_pipeline_model_parallel_size
-        if isinstance(vp_size, int) and vp_size > 1:
-            local_seqlen_sum = local_seqlen_sum // vp_size
-            local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-            num_vision_patches = num_vision_patches // vp_size
-
-        if local_seqlen_sum > 0:
-            seqlen_sum = local_seqlen_sum * dp_size
-            seqlen_squared_sum = local_seqlen_sq_sum * dp_size
-        else:
-            # Fallback for step functions that don't set accumulators
-            seqlen_sum = None
-            seqlen_squared_sum = None
-
-        # Vision patches: local accumulation * dp_size for global
-        num_vision_patches = num_vision_patches * dp_size if num_vision_patches > 0 else 0
-
+        # Resolve this step's data-parallel-global FLOPS sequence stats and fold the
+        # step's FLOPS into the running total. Dense BSHD batches extrapolate exact
+        # fixed-length stats from the local DP rank; THD batches request one exact SUM
+        # all-reduce over the pure DP group because packed sub-sequence lengths can
+        # differ by rank.
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = flop_utils.resolve_global_flops_seqlen_stats(
+            global_state,
+            data_parallel_size=dp_size,
+            vp_size=config.model.virtual_pipeline_model_parallel_size,
+            dp_group=pg_collection.dp,
+        )
         num_floating_point_operations_in_batch = flop_utils.num_floating_point_operations(
             config,
             batch_size=batch_size,
@@ -630,9 +610,13 @@ def train(
                 global_state,
                 history_wct,
                 model,
-                log_max_attention_logit,
+                pg_collection=pg_collection,
+                log_max_attention_logit=log_max_attention_logit,
                 loaded_iteration=start_iteration,
-                seq_length=seqlen_sum // batch_size if seqlen_sum else None,
+                # training_log recomputes seqlen/FLOPS from the (log-step) accumulators
+                # itself; pass None so it uses that path (the per-step seqlen_sum is no
+                # longer materialized on the hot path).
+                seq_length=None,
             )
 
         if (
@@ -646,16 +630,8 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.pause()
             timers("interval-time").stop()
-            if config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather:
-                # disable_forward_pre_hook(param_sync=True) below force-syncs params for eval.
-                # Copy the main params to param buffer before the forced AllGather.
-                for model_chunk in model:
-                    model_chunk.zero_grad_buffer()
-                for optim_instance in optimizer.chained_optimizers:
-                    if isinstance(optim_instance, DistributedOptimizer):
-                        optim_instance._copy_main_params_to_param_buffer()
             if should_toggle_forward_pre_hook:
-                disable_forward_pre_hook(model)
+                disable_forward_pre_hook(model, optimizer=optimizer)
                 pre_hook_enabled = False
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect all objects.
@@ -699,6 +675,7 @@ def train(
         )
         maybe_check_weight_hash_across_dp_replicas(
             model,
+            optimizer,
             config.train.check_weight_hash_across_dp_replicas_interval,
             global_state.train_state.step,
             should_toggle_forward_pre_hook,
@@ -762,7 +739,7 @@ def train(
 
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
     if pre_hook_enabled:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
 
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
@@ -869,7 +846,7 @@ def train_step(
 
         if cfg.dataset.dataloader_type == "batch":
             # Finetuning path to support variable-length sequences
-            from megatron.bridge.data.finetuning import prepare_finetuning_batch
+            from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
             forward_backward_data_iterator, seq_length = prepare_finetuning_batch(
                 data_iterator=data_iterator,
@@ -1052,6 +1029,7 @@ def maybe_report_stragglers(
 
 def maybe_check_weight_hash_across_dp_replicas(
     model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     check_weight_hash_across_dp_replicas_interval: Optional[int],
     iteration: int,
     should_toggle_forward_pre_hook: bool,
@@ -1060,6 +1038,7 @@ def maybe_check_weight_hash_across_dp_replicas(
 
     Args:
         model: List of model chunks to validate.
+        optimizer: Optimizer used to stage params before disabling the pre-hook.
         check_weight_hash_across_dp_replicas_interval: Interval at which to verify; ``None`` to skip.
         iteration: Zero-based training iteration counter.
         should_toggle_forward_pre_hook: Whether the pre-hook must be disabled during the check.
@@ -1070,7 +1049,7 @@ def maybe_check_weight_hash_across_dp_replicas(
         return
 
     if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
     assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
         "Parameter hashes not matching across DP replicas"
     )
@@ -1128,24 +1107,32 @@ def enable_forward_pre_hook(model: list[DDP]) -> None:
         model_chunk.enable_forward_pre_hook()
 
 
-def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
+def disable_forward_pre_hook(
+    model: list[DDP], optimizer: Optional[MegatronOptimizer] = None, param_sync: bool = True
+) -> None:
     """Disable forward pre-hook for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP
+        optimizer: Optional optimizer used to stage params before forced sync.
         param_sync: Whether to synchronize parameters across model chunks
     """
+    if param_sync and optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
-def force_param_sync(model: list[DDP]) -> None:
+def force_param_sync(model: list[DDP], optimizer: Optional[MegatronOptimizer] = None) -> None:
     """Force parameter synchronization for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP.
+        optimizer: Optional optimizer used to stage params before forced sync.
     """
+    if optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.start_param_sync(force_sync=True)
@@ -1296,7 +1283,7 @@ def save_checkpoint_and_time(
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:
-        force_param_sync(model)
+        force_param_sync(model, optimizer=optimizer)
 
     # Free overlap param-gather buffers and release cached GPU memory so
     # that the async checkpoint worker process has enough GPU headroom for

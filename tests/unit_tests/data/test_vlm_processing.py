@@ -28,9 +28,12 @@ from megatron.bridge.data.vlm_processing import (
     build_assistant_loss_mask,
     build_shifted_labels_and_loss_mask,
     gather_assistant_text_segments,
+    get_processor_tokenizer,
+    infer_assistant_mask_boundary_config,
     normalize_energon_vlm_sample,
     normalize_hf_vlm_example,
     normalized_vlm_sample_to_hf_example,
+    shared_chat_template_kwargs_from_examples,
 )
 
 
@@ -99,6 +102,27 @@ class _GenerationMaskTokenizer(_Tokenizer):
         assert return_assistant_tokens_mask is True
         assert conversation[-1]["role"] == "assistant"
         return {"input_ids": [1, 2, 3, 4], "assistant_masks": [0, 0, 1, 0]}
+
+
+def test_get_processor_tokenizer_unwraps_megatron_layers_but_keeps_hf_backend_private():
+    class RawHFTokenizer:
+        added_tokens_decoder = {}
+
+        def __init__(self):
+            self._tokenizer = object()
+
+        def __call__(self, text, **kwargs):
+            return {"input_ids": [1, 2, 3]}
+
+    raw_tokenizer = RawHFTokenizer()
+
+    class MegatronHFTokenizerWrapper:
+        tokenizer = raw_tokenizer
+
+    class MegatronTokenizerTextWrapper:
+        _tokenizer = MegatronHFTokenizerWrapper()
+
+    assert get_processor_tokenizer(MegatronTokenizerTextWrapper()) is raw_tokenizer
 
 
 class _ToolsGenerationMaskTokenizer(_GenerationMaskTokenizer):
@@ -180,12 +204,17 @@ class _ChatMLProcessor(_Processor):
 
 
 class _ChatMLBoundaryTokenizer(_Tokenizer):
-    chat_template = "<|im_start|>user\n{{ content }}<|im_end|><|im_start|>assistant\n{{ content }}<|im_end|>"
+    chat_template = "<|im_start|>user\n{{ content }}<|im_end|>\n<|im_start|>assistant\n{{ content }}<|im_end|>\n"
 
     def __call__(self, text, add_special_tokens=False):
         mapping = {
             "<|im_start|>assistant\n": [102],
+            "<|im_start|>system\n": [105],
+            "<|im_start|>developer\n": [106],
+            "<|im_start|>user\n": [100],
+            "<|im_start|>tool\n": [107],
             "<|im_end|>": [103],
+            "<|im_end|>\n": [103, 104],
             "answer": [3, 4],
         }
         return {"input_ids": mapping.get(text, [42])}
@@ -195,6 +224,111 @@ class _ChatMLBoundaryProcessor(_Processor):
     def __init__(self):
         super().__init__()
         self.tokenizer = _ChatMLBoundaryTokenizer()
+
+
+class _ProcessorTemplateBoundaryProcessor(_ChatMLBoundaryProcessor):
+    chat_template = "<|turn>model\n{{ content }}<turn|>"
+
+    class _Tok(_Tokenizer):
+        chat_template = ""
+
+        def __call__(self, text, add_special_tokens=False):
+            mapping = {
+                "<|turn>model\n": [202],
+                "<turn|>": [203],
+                "answer": [3, 4],
+            }
+            return {"input_ids": mapping.get(text, [42])}
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = self._Tok()
+
+
+class _JinjaSeparatedChatMLBoundaryProcessor(_ChatMLBoundaryProcessor):
+    class _Tok(_ChatMLBoundaryTokenizer):
+        chat_template = "<|im_start|>assistant\n{{ content }}<|im_end|>{% if not loop.last %}{{ '\\n' }}{% endif %}"
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = self._Tok()
+
+
+class _ZeroGenerationMaskTokenizer(_ChatMLBoundaryTokenizer):
+    chat_template = (
+        "<|im_start|>user\n{{ content }}<|im_end|>\n"
+        "<|im_start|>assistant\n{% generation %}{{ content }}<|im_end|>\n{% endgeneration %}"
+    )
+
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        assert return_assistant_tokens_mask is True
+        return {
+            "input_ids": [100, 3, 103, 104, 102, 3, 4, 103, 104],
+            "assistant_masks": [0] * 9,
+        }
+
+
+class _ZeroGenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _ZeroGenerationMaskTokenizer()
+
+
+class _ContentOnlyGenerationMaskTokenizer(_ZeroGenerationMaskTokenizer):
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        assert return_assistant_tokens_mask is True
+        return {
+            "input_ids": [100, 3, 103, 104, 102, 3, 4, 103, 104],
+            "assistant_masks": [0, 0, 0, 0, 0, 1, 1, 0, 0],
+        }
+
+
+class _ContentOnlyGenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _ContentOnlyGenerationMaskTokenizer()
+
+
+class _TruncatedZeroGenerationMaskTokenizer(_ZeroGenerationMaskTokenizer):
+    def apply_chat_template(
+        self,
+        conversation,
+        tokenize=True,
+        add_generation_prompt=False,
+        return_dict=False,
+        return_assistant_tokens_mask=False,
+    ):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        assert return_assistant_tokens_mask is True
+        return {"input_ids": [100, 3], "assistant_masks": [0, 0]}
+
+
+class _TruncatedZeroGenerationMaskProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _TruncatedZeroGenerationMaskTokenizer()
 
 
 def test_gather_assistant_text_segments_handles_structured_and_string_content():
@@ -261,6 +395,14 @@ def test_build_assistant_loss_mask_forwards_tools_to_hf_generation_mask():
     assert processor.tokenizer.template_kwargs == [{"tools": tools}]
 
 
+def test_shared_chat_template_kwargs_from_examples_requires_shared_tools():
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+
+    assert shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": tools}]) == {"tools": tools}
+    with pytest.raises(ValueError, match="same chat-template tools"):
+        shared_chat_template_kwargs_from_examples([{"tools": tools}, {"tools": []}])
+
+
 def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
     example = {
         "conversation": [
@@ -287,6 +429,28 @@ def test_build_assistant_loss_mask_raises_without_template_or_boundary_config():
         build_assistant_loss_mask(example, input_ids, _ChatMLProcessor())
 
 
+def test_infer_assistant_mask_boundary_config_from_chatml_template():
+    boundary_config = infer_assistant_mask_boundary_config(_ChatMLBoundaryProcessor())
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {
+        "assistant": [102],
+        "system": [105],
+        "developer": [106],
+        "user": [100],
+        "tool": [107],
+    }
+    assert all(token_ids == [103, 104] for token_ids in boundary_config.role_end_tokens.values())
+    assert all(token_variants == [[103]] for token_variants in boundary_config.role_end_token_variants.values())
+
+
+def test_infer_assistant_mask_boundary_config_handles_jinja_separated_chatml_newline():
+    boundary_config = infer_assistant_mask_boundary_config(_JinjaSeparatedChatMLBoundaryProcessor())
+
+    assert boundary_config is not None
+    assert boundary_config.role_end_tokens["assistant"] == [103, 104]
+
+
 def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers():
     boundary_config = assistant_mask_boundary_config_from_markers(
         _ChatMLBoundaryProcessor(),
@@ -298,6 +462,14 @@ def test_assistant_mask_boundary_config_from_markers_tokenizes_declared_markers(
     assert boundary_config.role_end_tokens == {"assistant": [103]}
 
 
+def test_infer_assistant_mask_boundary_config_uses_processor_template_when_tokenizer_template_is_empty():
+    boundary_config = infer_assistant_mask_boundary_config(_ProcessorTemplateBoundaryProcessor())
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {"assistant": [202]}
+    assert boundary_config.role_end_tokens == {"assistant": [203]}
+
+
 def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_tokenize():
     with pytest.raises(ValueError, match="Unable to tokenize assistant loss-mask boundary markers"):
         assistant_mask_boundary_config_from_markers(
@@ -305,6 +477,137 @@ def test_assistant_mask_boundary_config_from_markers_raises_when_markers_cannot_
             assistant_start="<|im_start|>assistant\n",
             assistant_end="<|im_end|>",
         )
+
+
+def test_build_assistant_loss_mask_uses_inferred_boundary_config():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "answer"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 4, 103, 104, 102, 3, 4, 103, 104])
+    processor = _ChatMLBoundaryProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_falls_back_when_hf_generation_mask_is_all_zero():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 103, 104, 102, 3, 4, 103, 104])
+    processor = _ZeroGenerationMaskProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_augments_nonzero_hf_mask_with_assistant_end_tokens():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 103, 104, 102, 3, 4, 103, 104])
+    processor = _ContentOnlyGenerationMaskProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0]
+
+
+def test_build_assistant_loss_mask_falls_back_to_end_without_newline_before_right_padding():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3, 103, 104, 102, 3, 4, 103, 0, 0])
+    processor = _ChatMLBoundaryProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0]
+
+
+def test_build_assistant_loss_mask_uses_earliest_end_variant_before_later_user_turn():
+    input_ids = torch.tensor([102, 3, 103, 100, 16, 103, 104])
+    processor = _ChatMLBoundaryProcessor()
+
+    mask = build_assistant_loss_mask(
+        [
+            {"role": "assistant", "content": "answer"},
+            {"role": "user", "content": "question"},
+        ],
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+    )
+
+    assert mask.tolist() == [0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+
+
+def test_build_assistant_loss_mask_fails_closed_when_no_end_boundary_precedes_padding():
+    input_ids = torch.tensor([102, 3, 4, 0, 0])
+    processor = _ChatMLBoundaryProcessor()
+
+    with pytest.raises(ValueError, match="did not match any loss-contributing spans"):
+        build_assistant_loss_mask(
+            [{"role": "assistant", "content": "answer"}],
+            input_ids,
+            processor,
+            boundary_config=infer_assistant_mask_boundary_config(processor),
+        )
+
+
+def test_build_assistant_loss_mask_keeps_valid_all_zero_hf_mask_when_assistant_is_truncated():
+    example = {
+        "conversation": [
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "content": "answer"},
+        ]
+    }
+    input_ids = torch.tensor([100, 3])
+    processor = _TruncatedZeroGenerationMaskProcessor()
+
+    mask = build_assistant_loss_mask(
+        example,
+        input_ids,
+        processor,
+        boundary_config=infer_assistant_mask_boundary_config(processor),
+        warn_on_all_masked=False,
+    )
+
+    assert mask.tolist() == [0.0, 0.0]
 
 
 def test_build_assistant_loss_mask_uses_marker_boundary_config():
@@ -468,6 +771,19 @@ def test_build_assistant_loss_mask_boundary_config_trims_leading_delimiters():
     assert mask.tolist() == [0.0, 0.0, 1.0, 1.0]
 
 
+def test_build_assistant_loss_mask_boundary_config_trims_leading_sequences_only_when_complete():
+    input_ids = torch.tensor([102, 55, 3, 56, 4, 101, 102, 55, 56, 5, 101])
+    boundary_config = AssistantMaskBoundaryConfig(
+        role_start_tokens={"assistant": [102]},
+        role_end_tokens={"assistant": [101]},
+        trim_leading_token_sequences=([55, 56],),
+    )
+
+    mask = build_assistant_loss_mask([], input_ids, _Processor(), boundary_config=boundary_config)
+
+    assert mask.tolist() == [0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 1.0]
+
+
 def test_build_assistant_loss_mask_applies_skipped_tokens_to_boundary_mask():
     example = {
         "conversation": [
@@ -629,6 +945,31 @@ def test_normalize_energon_vlm_sample_decodes_chatml_and_converts_images():
     assert normalized.videos is None
 
 
+def test_normalize_energon_vlm_sample_preserves_tools_and_tool_calls():
+    tools = [{"type": "function", "function": {"name": "lookup"}}]
+    tool_calls = [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]
+    sample = ChatMLSample(
+        **sample_metadata_kwargs(key="sample-tools", restore_key=(), subflavors={}),
+        conversation=json.dumps(
+            {
+                "messages": [
+                    {"role": "user", "content": "Weather?"},
+                    {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                ],
+                "tools": tools,
+            }
+        ),
+    )
+
+    normalized = normalize_energon_vlm_sample(sample)
+    example = normalized_vlm_sample_to_hf_example(normalized)
+
+    assert normalized.tools == tools
+    assert normalized.conversation[1]["tool_calls"] == tool_calls
+    assert example["tools"] == tools
+    assert example["conversation"][1]["tool_calls"] == tool_calls
+
+
 def test_normalize_hf_vlm_example_keeps_structured_conversation_and_top_level_media():
     image = object()
     conversation = [
@@ -639,6 +980,7 @@ def test_normalize_hf_vlm_example_keeps_structured_conversation_and_top_level_me
         "conversation": conversation,
         "image": image,
         "audio": "audio-payload",
+        "tools": [{"type": "function", "function": {"name": "lookup"}}],
     }
 
     normalized = normalize_hf_vlm_example(example)
@@ -648,3 +990,4 @@ def test_normalize_hf_vlm_example_keeps_structured_conversation_and_top_level_me
     assert normalized.images == [image]
     assert normalized.videos is None
     assert normalized.audio == "audio-payload"
+    assert normalized.tools == example["tools"]

@@ -57,7 +57,7 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +81,7 @@ class Gemma4VLBridge(Gemma4Bridge):
     """
 
     def provider_bridge(
-        self, hf_pretrained: PreTrainedVLM
+        self, hf_pretrained: PreTrainedCausalLM
     ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
@@ -152,6 +152,14 @@ class Gemma4VLBridge(Gemma4Bridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4VLModelProvider | Gemma4DenseVLProvider) -> dict:
+        """Convert a Gemma 4 VL provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        final_logit_softcapping = hf_config.pop("final_logit_softcapping")
+        hf_config.setdefault("text_config", {})["final_logit_softcapping"] = final_logit_softcapping
+        return hf_config
+
     def _conversion_mode(self) -> str:
         mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")
         mode = mode.lower()
@@ -183,12 +191,6 @@ class Gemma4VLBridge(Gemma4Bridge):
     def _text_config(self):
         hf_config = getattr(self, "hf_config", None)
         return getattr(hf_config, "text_config", None)
-
-    def _is_dense_e4b_config(self) -> bool:
-        if getattr(self, "_is_dense", False):
-            return True
-        text_config = self._text_config()
-        return text_config is not None and not getattr(text_config, "enable_moe_block", True)
 
     def _hf_layer_prefix(self) -> str:
         """VLM text weights live under ``model.language_model.*``."""
@@ -238,35 +240,9 @@ class Gemma4VLBridge(Gemma4Bridge):
             hf_weights[role] = fused.to(weight.dtype)
         return hf_weights
 
-    def maybe_modify_loaded_hf_weight(
-        self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """Handle special weight loading for Gemma 4 VLM."""
-        if self._is_dense_e4b_config() and isinstance(hf_param, dict) and "v" in hf_param:
-            k_name = hf_param["k"]
-            v_name = hf_param["v"]
-            q_name = hf_param["q"]
-            if k_name not in hf_state_dict and v_name not in hf_state_dict:
-                q_weight = hf_state_dict[q_name]
-                text_config = self._text_config()
-                num_q_heads = getattr(text_config, "num_attention_heads", 8)
-                num_kv_heads = getattr(text_config, "num_key_value_heads", 2)
-                layer_match = re.search(r"layers\.(\d+)\.", q_name)
-                layer_types = getattr(text_config, "layer_types", None)
-                if layer_match and layer_types:
-                    layer_idx = int(layer_match.group(1))
-                    if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
-                        num_kv_heads = getattr(text_config, "num_global_key_value_heads", num_kv_heads)
-                kv_head_dim = q_weight.shape[0] // num_q_heads
-                kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
-                k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
-                return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
-
-        return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
-
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Dispatch to Dense or MoE VLM mappings."""
-        if self._is_dense_e4b_config():
+        if self._is_dense_config():
             if self._conversion_mode() == "text":
                 return self._dense_mapping_registry(megatron_prefix="")
             return self._dense_vl_mapping_registry()

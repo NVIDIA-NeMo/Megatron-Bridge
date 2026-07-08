@@ -18,8 +18,13 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.sequence_batching import (
+    build_mcore_thd_sequence_batch_from_rows,
+    prepare_padded_or_packed_sequence_batch,
+    use_processor_right_padding,
+)
 from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_datasets.token_utils import extract_skipped_token_ids
 from megatron.bridge.data.vlm_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -32,8 +37,12 @@ MISSING_QWEN_VL_UTILS_MSG = (
     "qwen_vl_utils is required for Qwen2.5 VL processing. Please `pip install qwen-vl-utils` or"
     " provide compatible vision preprocessing."
 )
+QWEN_VL_MIN_PIXELS = 200704
+QWEN_VL_MAX_PIXELS = 1003520
 CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
-CHATML_TURN_END = "<|im_end|>"
+CHATML_ASSISTANT_END = "<|im_end|>\n"
+CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
+QWEN_VISUAL_KEYS = (*THW_GRID_VISUAL_KEYS, "second_per_grid_ts")
 
 try:
     from qwen_vl_utils import process_vision_info
@@ -46,11 +55,19 @@ except ImportError:
 def qwen2_5_collate_fn(
     examples: list,
     processor,
-    min_pixels: int = 200704,
-    max_pixels: int = 1003520,
+    min_pixels: int | None = QWEN_VL_MIN_PIXELS,
+    max_pixels: int | None = QWEN_VL_MAX_PIXELS,
+    visual_keys: object = None,
     require_assistant_matches: bool = False,
+    sequence_length: int | None = None,
+    pad_to_max_length: bool = False,
+    pad_to_multiple_of: int = 128,
+    enable_in_batch_packing: bool = False,
+    in_batch_packing_pad_to_multiple_of: int = 1,
 ) -> dict[str, torch.Tensor]:
     """Collate function for Qwen2.5 VL model."""
+    del visual_keys
+
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
@@ -58,7 +75,9 @@ def qwen2_5_collate_fn(
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
         assistant_start=CHATML_ASSISTANT_START,
-        assistant_end=CHATML_TURN_END,
+        assistant_end=CHATML_ASSISTANT_END,
+        assistant_end_fallbacks=("<|im_end|>",),
+        role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
 
     texts = [
@@ -90,43 +109,128 @@ def qwen2_5_collate_fn(
         per_example_videos.append(videos)
         has_media.append(len(imgs) > 0 or len(videos) > 0)
 
+    if enable_in_batch_packing:
+        sequence_rows = []
+        visual_values: dict[str, list[torch.Tensor]] = {key: [] for key in QWEN_VISUAL_KEYS}
+        with use_processor_right_padding(processor):
+            for example, text, images, videos in zip(
+                examples, texts, per_example_images, per_example_videos, strict=True
+            ):
+                processor_kwargs = {
+                    "text": [text],
+                    "padding": False,
+                    "return_tensors": "pt",
+                }
+                if min_pixels is not None:
+                    processor_kwargs["min_pixels"] = min_pixels
+                if max_pixels is not None:
+                    processor_kwargs["max_pixels"] = max_pixels
+                if images:
+                    processor_kwargs["images"] = images
+                if videos:
+                    processor_kwargs["videos"] = videos
+
+                sample_batch = {
+                    key: value.contiguous() if isinstance(value, torch.Tensor) else value
+                    for key, value in processor(**processor_kwargs).items()
+                }
+                input_ids = sample_batch["input_ids"][0]
+                attention_mask = sample_batch.get("attention_mask")
+                if attention_mask is None:
+                    attention_mask = torch.ones_like(input_ids)
+                else:
+                    attention_mask = attention_mask[0]
+                position_ids = sample_batch.get("position_ids")
+                if position_ids is None:
+                    position_ids = torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
+                else:
+                    position_ids = position_ids[0]
+
+                loss_mask = build_assistant_loss_mask(
+                    example,
+                    input_ids,
+                    processor,
+                    skipped_tokens,
+                    boundary_config=boundary_config,
+                    warn_on_all_masked=not require_assistant_matches,
+                ).to(device=input_ids.device, dtype=torch.float32)
+                labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
+                if skipped_tokens.numel() > 0:
+                    labels = labels.masked_fill(
+                        torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
+                    )
+                shifted_loss_mask = torch.cat([loss_mask[1:], loss_mask.new_zeros(1)])
+                sequence_rows.append(
+                    {
+                        "input_ids": input_ids,
+                        "attention_mask": attention_mask,
+                        "position_ids": position_ids,
+                        "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
+                        "loss_mask": shifted_loss_mask,
+                    }
+                )
+
+                for key in QWEN_VISUAL_KEYS:
+                    value = sample_batch.get(key)
+                    if not isinstance(value, torch.Tensor):
+                        continue
+                    if key in {"pixel_values", "pixel_values_videos"} and value.dim() == 5:
+                        value = value.flatten(0, 1)
+                    elif key in {"image_grid_thw", "video_grid_thw"} and value.dim() == 3:
+                        value = value.flatten(0, 1)
+                    visual_values[key].append(value)
+
+        packed_batch = build_mcore_thd_sequence_batch_from_rows(
+            sequence_rows,
+            sequence_length=sequence_length,
+            pad_token_id=0,
+            ignore_index=IGNORE_INDEX,
+            pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        )
+        packed_batch["visual_inputs"] = GenericVisualInputs(
+            **{key: torch.cat(values, dim=0) for key, values in visual_values.items() if values}
+        )
+        return packed_batch
+
     idx_with = [i for i, h in enumerate(has_media) if h]
     idx_without = [i for i, h in enumerate(has_media) if not h]
 
     batch_with = None
     batch_without = None
 
-    if idx_with:
-        texts_with = [texts[i] for i in idx_with]
-        images_with = [per_example_images[i] for i in idx_with]
-        videos_with = [per_example_videos[i] for i in idx_with]
-        processor_kwargs = {
-            "text": texts_with,
-            "padding": True,
-            "return_tensors": "pt",
-            "min_pixels": min_pixels,
-            "max_pixels": max_pixels,
-        }
-        if any(images_with):
-            processor_kwargs["images"] = images_with
-        if any(videos_with):
-            processor_kwargs["videos"] = videos_with
-        batch_with = {
-            key: value.contiguous() if isinstance(value, torch.Tensor) else value
-            for key, value in processor(**processor_kwargs).items()
-        }
+    with use_processor_right_padding(processor):
+        if idx_with:
+            texts_with = [texts[i] for i in idx_with]
+            images_with = [per_example_images[i] for i in idx_with]
+            videos_with = [per_example_videos[i] for i in idx_with]
+            processor_kwargs = {
+                "text": texts_with,
+                "padding": True,
+                "return_tensors": "pt",
+            }
+            if min_pixels is not None:
+                processor_kwargs["min_pixels"] = min_pixels
+            if max_pixels is not None:
+                processor_kwargs["max_pixels"] = max_pixels
+            if any(images_with):
+                processor_kwargs["images"] = images_with
+            if any(videos_with):
+                processor_kwargs["videos"] = videos_with
+            batch_with = {
+                key: value.contiguous() if isinstance(value, torch.Tensor) else value
+                for key, value in processor(**processor_kwargs).items()
+            }
 
-    if idx_without:
-        texts_without = [texts[i] for i in idx_without]
-        batch_without = {
-            key: value.contiguous() if isinstance(value, torch.Tensor) else value
-            for key, value in processor(
-                text=texts_without,
-                padding=True,
-                return_tensors="pt",
-            ).items()
-        }
-
+        if idx_without:
+            texts_without = [texts[i] for i in idx_without]
+            batch_without = {
+                key: value.contiguous() if isinstance(value, torch.Tensor) else value
+                for key, value in processor(
+                    text=texts_without,
+                    padding=True,
+                    return_tensors="pt",
+                ).items()
+            }
     # Merge batches back to original order
     if batch_with is not None and batch_without is None:
         batch = batch_with
@@ -166,7 +270,7 @@ def qwen2_5_collate_fn(
                 attention_mask[i] = attn_without[row]
             batch["attention_mask"] = attention_mask
         # Carry over vision tensors if present
-        for key in THW_GRID_VISUAL_KEYS:
+        for key in QWEN_VISUAL_KEYS:
             if key in batch_with:
                 batch[key] = batch_with[key]
 
@@ -206,8 +310,18 @@ def qwen2_5_collate_fn(
         pixel_values_videos=batch.get("pixel_values_videos"),
         image_grid_thw=batch.get("image_grid_thw"),
         video_grid_thw=batch.get("video_grid_thw"),
+        second_per_grid_ts=batch.get("second_per_grid_ts"),
     )
-    for key in THW_GRID_VISUAL_KEYS:
+    for key in QWEN_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
+    prepare_padded_or_packed_sequence_batch(
+        batch,
+        sequence_length=sequence_length,
+        pad_to_max_length=pad_to_max_length,
+        pad_to_multiple_of=pad_to_multiple_of,
+        enable_in_batch_packing=enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        ignore_index=IGNORE_INDEX,
+    )
     return batch

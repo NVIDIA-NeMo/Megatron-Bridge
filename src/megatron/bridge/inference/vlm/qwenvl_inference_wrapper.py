@@ -55,11 +55,48 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
         image_grid_thw = None
         mm_token_type_ids = None
 
-        if image_dict and image_dict[0] is not None:
-            image_dict = image_dict[0]
-            pixel_values = _to_cuda_optional(image_dict.get("pixel_values"))
-            image_grid_thw = _to_cuda_optional(image_dict.get("image_grid_thw"))
-            mm_token_type_ids = _to_cuda_optional(image_dict.get("mm_token_type_ids"))
+        if image_dict:
+            pixel_values_per_request = [
+                _to_cuda_optional(request.get("pixel_values")) for request in image_dict if request is not None
+            ]
+            pixel_values_per_request = [value for value in pixel_values_per_request if value is not None]
+            if pixel_values_per_request:
+                pixel_values = torch.cat(pixel_values_per_request, dim=0)
+
+            image_grids_per_request = [
+                _to_cuda_optional(request.get("image_grid_thw")) for request in image_dict if request is not None
+            ]
+            image_grids_per_request = [value for value in image_grids_per_request if value is not None]
+            if image_grids_per_request:
+                image_grid_thw = torch.cat(image_grids_per_request, dim=0)
+
+            mm_token_type_ids_per_request = [
+                _to_cuda_optional(request.get("mm_token_type_ids")) if request is not None else None
+                for request in image_dict
+            ]
+            mm_token_type_ids_template = next(
+                (value for value in mm_token_type_ids_per_request if value is not None), None
+            )
+            if mm_token_type_ids_template is not None:
+                padded_mm_token_type_ids = []
+                for value in mm_token_type_ids_per_request:
+                    if value is None:
+                        value = torch.zeros(
+                            1,
+                            seq_length,
+                            dtype=mm_token_type_ids_template.dtype,
+                            device=mm_token_type_ids_template.device,
+                        )
+                    elif value.size(1) < seq_length:
+                        pad = torch.zeros(
+                            value.size(0),
+                            seq_length - value.size(1),
+                            dtype=value.dtype,
+                            device=value.device,
+                        )
+                        value = torch.cat([value, pad], dim=-1)
+                    padded_mm_token_type_ids.append(value)
+                mm_token_type_ids = torch.cat(padded_mm_token_type_ids, dim=0)
 
         out: Dict[str, Any] = {
             "input_ids": prompts_tokens,
@@ -67,14 +104,6 @@ class QwenVLInferenceWrapper(AbstractModelInferenceWrapper):
             "image_grid_thw": image_grid_thw,
         }
         if mm_token_type_ids is not None:
-            if mm_token_type_ids.size(1) < seq_length:
-                pad = torch.zeros(
-                    mm_token_type_ids.size(0),
-                    seq_length - mm_token_type_ids.size(1),
-                    dtype=mm_token_type_ids.dtype,
-                    device=mm_token_type_ids.device,
-                )
-                mm_token_type_ids = torch.cat([mm_token_type_ids, pad], dim=-1)
             out["mm_token_type_ids"] = mm_token_type_ids
 
         out["position_ids"] = (

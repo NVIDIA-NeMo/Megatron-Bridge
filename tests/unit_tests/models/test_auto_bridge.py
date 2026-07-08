@@ -364,6 +364,59 @@ class TestAutoBridge:
                 assert result.hf_pretrained == mock_model
                 mock_from_pretrained.assert_called_once_with(model_id, trust_remote_code=True)
 
+    def test_from_hf_pretrained_passes_causal_wrapper_to_vlm_provider_bridge(self):
+        """Test VLM provider construction receives the actual AutoBridge wrapper type."""
+        model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+        vlm_config = Mock(spec=PretrainedConfig)
+        vlm_config.architectures = ["Qwen2_5_VLForConditionalGeneration"]
+        wrapper = PreTrainedCausalLM(model_name_or_path=model_id)
+        wrapper.config = vlm_config
+
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry",
+                return_value=vlm_config,
+            ),
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained",
+                return_value=wrapper,
+            ),
+            patch.object(AutoBridge, "_model_bridge", mock_model_bridge),
+        ):
+            bridge = AutoBridge.from_hf_pretrained(model_id)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        assert provider is mock_provider
+        assert isinstance(bridge.hf_pretrained, PreTrainedCausalLM)
+        assert bridge.hf_pretrained.config is vlm_config
+        mock_model_bridge.provider_bridge.assert_called_once_with(wrapper)
+
+    def test_from_hf_config_passes_causal_wrapper_to_vlm_provider_bridge(self):
+        """Test config-only VLM provider construction receives a config-backed causal wrapper."""
+        model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+        vlm_config = PretrainedConfig(name_or_path=model_id)
+        vlm_config.architectures = ["Qwen2_5_VLForConditionalGeneration"]
+
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge.from_hf_config(vlm_config)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        provider_input = mock_model_bridge.provider_bridge.call_args.args[0]
+        assert provider is mock_provider
+        assert isinstance(provider_input, PreTrainedCausalLM)
+        assert not provider_input.has_model
+        assert not hasattr(provider_input, "state")
+        assert provider_input.config is vlm_config
+        assert provider_input.model_name_or_path == model_id
+
     def test_from_pretrained_with_additional_kwargs(self):
         """Test from_pretrained with various kwargs."""
         # Setup mocks

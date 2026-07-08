@@ -746,3 +746,13 @@ class TestQwen35MoEBridge:
 
         fused_expert_mappings = [m for m in registry.mappings if type(m).__name__ == "FusedExpertMapping"]
         assert len(fused_expert_mappings) > 0
+
+        # Sequential (non-grouped) expert mappings must also be present, for moe_grouped_gemm=False
+        # (e.g. ModelOpt pruning). Guards against accidental removal.
+        seq_params = [
+            getattr(m, "megatron_param", "")
+            for m in registry.mappings
+            if "experts.local_experts." in getattr(m, "megatron_param", "")
+        ]
+        assert any(p.endswith("linear_fc1.weight") for p in seq_params)
+        assert any(p.endswith("linear_fc2.weight") for p in seq_params)

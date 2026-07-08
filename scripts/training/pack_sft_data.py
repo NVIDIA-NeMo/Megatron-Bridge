@@ -57,11 +57,16 @@ def main() -> None:
         "--packed-val-data-path", default=None, help="Optional output path for packed validation data."
     )
     parser.add_argument("--packed-metadata-path", default=None, help="Optional output path for packing metadata.")
+    parser.add_argument(
+        "--num-tokenizer-workers",
+        type=int,
+        default=1,
+        help="Tokenizer worker processes. Values less than or equal to 1 run serially (default: 1).",
+    )
     args = parser.parse_args()
 
     import megatron.bridge.recipes as all_recipes
     from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
-    from megatron.bridge.data.builders.hf_dataset import HFDatasetBuilder, HFDatasetConfig
     from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
     from megatron.bridge.training.config import DataloaderConfig
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
@@ -89,18 +94,17 @@ def main() -> None:
 
     if cfg.dataset is None:
         sys.exit("Error: recipe has no dataset configuration.")
-    if cfg.dataset.packed_sequence_specs is None:
-        sys.exit(f"Error: recipe '{args.recipe}' does not use packed sequences.")
+    if not getattr(cfg.dataset, "enable_offline_packing", False):
+        sys.exit(f"Error: recipe '{args.recipe}' does not enable offline packed sequences.")
+    offline_packing_specs = getattr(cfg.dataset, "offline_packing_specs", None)
+    if offline_packing_specs is None:
+        sys.exit(f"Error: recipe '{args.recipe}' has no offline packing specs.")
 
-    # Cap tokenizer workers to avoid /dev/shm OOM from multiprocessing shared memory.
-    # Default is -1 (all CPUs) which exhausts /dev/shm even on CPU nodes.
-    # Use 1 worker to avoid /dev/shm OOM: num_workers==1 runs single-threaded
-    # with no multiprocessing shared memory (see packed_sequence._retrieve_tokenized).
-    cfg.dataset.packed_sequence_specs.num_tokenizer_workers = 1
+    offline_packing_specs.num_tokenizer_workers = args.num_tokenizer_workers
 
     print(f"Recipe:   {args.recipe}")
-    print(f"Seq len:  {cfg.dataset.packed_sequence_specs.packed_sequence_size}")
-    print(f"Workers:  {cfg.dataset.packed_sequence_specs.num_tokenizer_workers} (single-threaded, no /dev/shm)")
+    print(f"Seq len:  {offline_packing_specs.packed_sequence_size}")
+    print(f"Workers:  {offline_packing_specs.num_tokenizer_workers}")
     print()
 
     print("Building tokenizer...")
@@ -110,8 +114,7 @@ def main() -> None:
     dataset_config = cfg.dataset
     dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
 
-    BuilderClass = HFDatasetBuilder if isinstance(dataset_config, HFDatasetConfig) else FinetuningDatasetBuilder
-    builder = BuilderClass(
+    builder = FinetuningDatasetBuilder(
         tokenizer=tokenizer,
         **{
             field.name: getattr(dataset_config, field.name)
@@ -138,13 +141,13 @@ def main() -> None:
             input_path=Path(args.train_input_path),
             output_path=Path(args.packed_train_data_path),
             output_metadata_path=packed_metadata_path,
-            packed_sequence_size=cfg.dataset.packed_sequence_specs.packed_sequence_size,
+            packed_sequence_size=offline_packing_specs.packed_sequence_size,
             tokenizer=tokenizer,
             max_seq_length=cfg.dataset.seq_length,
             seed=cfg.dataset.seed,
             dataset_kwargs=cfg.dataset.dataset_kwargs,
-            pad_seq_to_mult=cfg.dataset.packed_sequence_specs.pad_seq_to_mult,
-            num_tokenizer_workers=cfg.dataset.packed_sequence_specs.num_tokenizer_workers,
+            pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
+            num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
         )
 
         if args.val_input_path and args.packed_val_data_path:
@@ -152,26 +155,19 @@ def main() -> None:
                 input_path=Path(args.val_input_path),
                 output_path=Path(args.packed_val_data_path),
                 output_metadata_path=packed_metadata_path,
-                packed_sequence_size=cfg.dataset.packed_sequence_specs.packed_sequence_size,
+                packed_sequence_size=offline_packing_specs.packed_sequence_size,
                 tokenizer=tokenizer,
                 max_seq_length=cfg.dataset.seq_length,
                 seed=cfg.dataset.seed,
                 dataset_kwargs=cfg.dataset.dataset_kwargs,
-                pad_seq_to_mult=cfg.dataset.packed_sequence_specs.pad_seq_to_mult,
-                num_tokenizer_workers=cfg.dataset.packed_sequence_specs.num_tokenizer_workers,
+                pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
+                num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
             )
         elif args.val_input_path or args.packed_val_data_path:
             sys.exit("Error: --val-input-path and --packed-val-data-path must be provided together.")
 
         print("Done.")
         return
-
-    # For HF datasets, download + apply process_example_fn -> training.jsonl. The
-    # packer in prepare_packed_data() reads that JSONL; without this step the
-    # cache directory is empty and packing fails with FileNotFoundError.
-    if isinstance(builder, HFDatasetBuilder):
-        print("Preparing HF dataset (download + tokenize examples to JSONL)...")
-        builder.prepare_data()
 
     builder.prepare_packed_data()
 
