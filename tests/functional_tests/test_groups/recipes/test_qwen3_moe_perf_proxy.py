@@ -51,7 +51,7 @@ def _qwen3_moe_proxy(
 
 
 class TestQwen3MoePerfProxy:
-    """Train reduced production configs on matching eight-GPU runners."""
+    """Train reduced production configs on model-specific L0 runners."""
 
     @pytest.mark.run_only_on("GPU")
     def test_h100_fp8cs(self):
