@@ -83,7 +83,7 @@ dependencies = [
     "tensorboard>=2.19.0",
     "typing-extensions",
     "rich",
-    "wandb>=0.25.0",
+    "wandb>=0.28.0",  # To address CVE-2026-39821 (golang.org/x/net >= v0.55.0 in wandb-core)
     "six>=1.17.0",
     "regex>=2024.11.6",
     "pyyaml>=6.0.2",
