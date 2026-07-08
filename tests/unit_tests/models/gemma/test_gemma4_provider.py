@@ -27,11 +27,41 @@ from megatron.bridge.models.gemma.gemma4_provider import (
     _install_gemma4_dense_load_state_aliases,
 )
 from megatron.bridge.models.gemma.modeling_gemma4 import (
+    Gemma4OutputLayer,
     _gemma4_checkpointed_forward,
     _install_tied_kv,
     _patch_ple_block_threading,
 )
+from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+class _IdentityOutputLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+
+    def forward(self, hidden_states, *args, **kwargs):
+        return hidden_states, None
+
+
+class _ModelWithOutputLayer(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.output_layer = _IdentityOutputLayer(config)
+
+
+def _build_dense_model(provider, model):
+    provider._gemma4_dense_finalized = True
+    with (
+        patch("megatron.core.models.gpt.GPTModel", return_value=model),
+        patch("megatron.bridge.models.gemma.gemma4_provider.Gemma4DenseRotaryEmbedding"),
+        patch("megatron.bridge.models.gemma.gemma4_provider._attach_ple_modules"),
+        patch("megatron.bridge.models.gemma.gemma4_provider.wire_gemma4_kv_sharing"),
+        patch("megatron.bridge.models.gemma.gemma4_provider._install_ple_forward"),
+        patch("megatron.bridge.models.gemma.gemma4_provider._install_gemma4_dense_load_state_aliases"),
+    ):
+        return provider.build()
 
 
 class TestGemma4DenseProviderDefaults:
@@ -65,6 +95,7 @@ class TestGemma4DenseProviderDefaults:
             ("num_kv_shared_layers", 18),
             ("per_layer_embed_vocab_size", 262_144),
             ("per_layer_embed_dim", 256),
+            ("final_logit_softcapping", 30.0),
             ("num_moe_experts", None),
             ("moe_router_topk", None),
             ("moe_ffn_hidden_size", None),
@@ -95,6 +126,38 @@ class TestGemma4DenseProviderDefaults:
     def test_provide_rejects_virtual_pipeline_stage(self, provider):
         with pytest.raises(NotImplementedError, match="PP=1"):
             provider.provide(vp_stage=0)
+
+    def test_build_applies_final_logit_softcapping_once(self, provider):
+        """Dense output must match HF's single tanh softcap in the saturation regime."""
+        built = _build_dense_model(provider, _ModelWithOutputLayer(provider))
+
+        raw_logits = torch.tensor([[-120.0, -30.0, 0.0, 30.0, 120.0]])
+        logits, bias = built.output_layer(raw_logits)
+        expected_once = 30.0 * torch.tanh(raw_logits / 30.0)
+        expected_twice = 30.0 * torch.tanh(expected_once / 30.0)
+
+        assert isinstance(built.output_layer, Gemma4OutputLayer)
+        torch.testing.assert_close(logits, expected_once)
+        assert not torch.allclose(logits, expected_twice)
+        assert bias is None
+
+    def test_build_does_not_double_softcap_existing_output_layer(self, provider):
+        model = _ModelWithOutputLayer(provider)
+        extend_instance(model.output_layer, Gemma4OutputLayer)
+        built = _build_dense_model(provider, model)
+
+        raw_logits = torch.tensor([[-120.0, 120.0]])
+        logits, _ = built.output_layer(raw_logits)
+        torch.testing.assert_close(logits, 30.0 * torch.tanh(raw_logits / 30.0))
+
+    def test_build_leaves_output_uncapped_when_disabled(self, provider):
+        provider.final_logit_softcapping = None
+        built = _build_dense_model(provider, _ModelWithOutputLayer(provider))
+
+        raw_logits = torch.tensor([[-120.0, 120.0]])
+        logits, _ = built.output_layer(raw_logits)
+        assert not isinstance(built.output_layer, Gemma4OutputLayer)
+        torch.testing.assert_close(logits, raw_logits)
 
 
 class TestGemma4DenseLoadStateAliases:
@@ -342,6 +405,22 @@ class TestGemma4ModelProviderDefaults:
                 provider.provide(pre_process=True, post_process=True)
 
         assert provider.rotary_base == (10_000, 1_000_000)
+
+    def test_provide_does_not_double_softcap_existing_output_layer(self, provider):
+        model = _ModelWithOutputLayer(provider)
+        extend_instance(model.output_layer, Gemma4OutputLayer)
+        model.setup_embeddings_and_output_layer = Mock()
+
+        with (
+            patch.object(GPTModelProvider, "provide", return_value=model),
+            patch("megatron.bridge.models.gemma.gemma4_provider.Gemma4RotaryEmbedding"),
+            patch("megatron.bridge.models.gemma.gemma4_provider._install_tied_kv"),
+        ):
+            built = provider.provide(pre_process=True, post_process=True)
+
+        raw_logits = torch.tensor([[-120.0, 120.0]])
+        logits, _ = built.output_layer(raw_logits)
+        torch.testing.assert_close(logits, 30.0 * torch.tanh(raw_logits / 30.0))
 
 
 class TestInstallTiedKV:
