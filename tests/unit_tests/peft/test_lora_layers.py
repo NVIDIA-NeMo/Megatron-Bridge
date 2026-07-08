@@ -33,6 +33,7 @@ import transformer_engine.pytorch as te
 from megatron.bridge.peft.lora import LoRA, TELinearAdapter
 from megatron.bridge.peft.lora_layers import (
     LinearAdapter,
+    LinearModuleAdapter,
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
@@ -361,8 +362,9 @@ class TestPatchLinearModule:
 
         patched_linear = patch_linear_module(linear, dim=4, alpha=8)
 
-        # Should return the same object (in-place modification)
-        assert patched_linear is linear
+        assert isinstance(patched_linear, LinearModuleAdapter)
+        assert patched_linear.base_linear is linear
+        assert linear.__class__ is nn.Linear
 
         # Check if the state-dict keys are preserved
         for key, val in state_init.items():
@@ -389,23 +391,82 @@ class TestPatchLinearModule:
     def test_patch_linear_module_already_patched_error(self):
         """Test error when trying to patch already patched module."""
         linear = nn.Linear(10, 5)
-        linear.super_fwd = lambda x: x  # Simulate already patched
+        patched_linear = patch_linear_module(linear)
 
         with pytest.raises(AssertionError):
-            patch_linear_module(linear)
+            patch_linear_module(patched_linear)
+
+    def test_patch_linear_module_forward_and_disable_preserve_base_behavior(self):
+        """The wrapper should delegate the base forward and gate only the LoRA delta."""
+        linear = nn.Linear(3, 2)
+        patched_linear = patch_linear_module(linear, dim=2, alpha=2)
+        x = torch.randn(4, 3)
+
+        with torch.no_grad():
+            patched_linear.linear_in.weight.fill_(1.0)
+            patched_linear.linear_out.weight.fill_(0.5)
+            base_output = linear(x)
+            adapted_output = patched_linear(x)
+            patched_linear.disable_adapter_layers()
+            disabled_output = patched_linear(x)
+
+        assert not torch.equal(adapted_output, base_output)
+        torch.testing.assert_close(disabled_output, base_output)
+
+    def test_patch_linear_module_delegates_custom_base_forward(self):
+        """Quantized and specialized Linear subclasses should retain their forward implementation."""
+
+        class OffsetLinear(nn.Linear):
+            def forward(self, x):
+                return super().forward(x) + 3.0
+
+        linear = OffsetLinear(3, 2)
+        patched_linear = patch_linear_module(linear, dim=2)
+        patched_linear.disable_adapter_layers()
+        x = torch.randn(4, 3)
+
+        torch.testing.assert_close(patched_linear(x), linear(x))
+
+    def test_patch_linear_module_state_roundtrip_and_dtype_move(self):
+        """Flat checkpoint keys and parameter identity should survive load and module moves."""
+        source = patch_linear_module(nn.Linear(3, 2), dim=2, alpha=2).to(dtype=torch.float64)
+        target = patch_linear_module(nn.Linear(3, 2), dim=2, alpha=2).to(dtype=torch.float64)
+
+        target.load_state_dict(source.state_dict(), strict=True)
+
+        assert target.base_linear.weight is target.weight
+        assert target.base_linear.bias is target.bias
+        assert sorted(target.state_dict()) == ["bias", "linear_in.weight", "linear_out.weight", "weight"]
+        x = torch.randn(4, 3, dtype=torch.float64)
+        torch.testing.assert_close(target(x), source(x))
 
     def test_patch_te_linear_module(self):
         """Test patching TELinear module."""
         te_linear = te.Linear(10, 5, device="cuda")
+        x = torch.randn(3, 10, device="cuda")
+        base_output = te_linear(x)
 
         patched_linear = patch_linear_module(te_linear, dim=4)
 
-        # Should return the same object
-        assert patched_linear is te_linear
+        assert isinstance(patched_linear, LinearModuleAdapter)
+        assert patched_linear.base_linear is te_linear
+        assert te_linear.__class__ is te.Linear
 
         # Check LoRA attributes exist
         assert hasattr(patched_linear, "linear_in")
         assert hasattr(patched_linear, "linear_out")
+        torch.testing.assert_close(patched_linear(x), base_output)
+        with torch.no_grad():
+            patched_linear.linear_in.weight.fill_(0.25)
+            patched_linear.linear_out.weight.fill_(0.5)
+        assert not torch.equal(patched_linear(x), base_output)
+        target = patch_linear_module(te.Linear(10, 5, device="cuda"), dim=4)
+        target.load_state_dict(patched_linear.state_dict(), strict=True)
+        torch.testing.assert_close(target(x), patched_linear(x))
+        target.disable_adapter_layers()
+        patched_linear.disable_adapter_layers()
+        torch.testing.assert_close(patched_linear(x), base_output)
+        torch.testing.assert_close(target(x), base_output)
 
     def test_patch_linear_module_unsupported_type(self):
         """Test error with unsupported module type."""

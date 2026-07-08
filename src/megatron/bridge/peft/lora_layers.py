@@ -648,14 +648,7 @@ class LinearAdapter(nn.Linear):
             Combined output from original linear layer and LoRA adaptation.
         """
         # pylint: disable=C0115,C0116
-        # If LinearAdapter is used to monkey-patch a nn.Linear module, we want to use nn.Linear's
-        # forward in the case where it uses quantized weights. We store a reference to nn.Linear's
-        # forward in `super_fwd` attribute. If the attribute does not exist we do the usual linear.
-        if (fwd := getattr(self, "super_fwd", None)) is not None:
-            assert fwd != self.forward
-            res = fwd(x)
-        else:
-            res = torch.nn.functional.linear(x, self.weight, self.bias)
+        res = torch.nn.functional.linear(x, self.weight, self.bias)
 
         if not self._adapter_enabled:
             return res
@@ -669,6 +662,134 @@ class LinearAdapter(nn.Linear):
         return res + lora_res
 
 
+class LinearModuleAdapter(nn.Module):
+    """Add LoRA to an existing linear module without copying or changing its class.
+
+    The original module remains responsible for the base forward. Its direct
+    parameters and buffers are registered on this wrapper under their original
+    names so optimizer and checkpoint FQNs are preserved.
+    """
+
+    def __init__(
+        self,
+        orig_linear: Union[nn.Linear, "te.Linear"],
+        dim: int = 8,
+        alpha: int = 32,
+        dropout: float = 0.0,
+        dropout_position: Literal["pre", "post"] = "pre",
+        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
+        lora_dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Reuse an existing linear's state and initialize LoRA parameters."""
+        super().__init__()
+        self.in_features = orig_linear.in_features
+        self.out_features = orig_linear.out_features
+        self._base_parameter_names = tuple(orig_linear._parameters)
+        self._base_buffer_names = tuple(orig_linear._buffers)
+        for name, parameter in orig_linear._parameters.items():
+            self.register_parameter(name, parameter)
+        for name, buffer in orig_linear._buffers.items():
+            self.register_buffer(name, buffer, persistent=name not in orig_linear._non_persistent_buffers_set)
+        object.__setattr__(self, "_base_linear", orig_linear)
+        self._sync_base_state()
+        LinearAdapter._init_adapter(
+            self,
+            dim=dim,
+            alpha=alpha,
+            dropout=dropout,
+            dropout_position=dropout_position,
+            lora_A_init_method=lora_A_init_method,
+            lora_dtype=lora_dtype,
+        )
+        self._adapter_enabled = True
+
+    @property
+    def base_linear(self) -> nn.Module:
+        """Return the wrapped base linear module."""
+        return object.__getattribute__(self, "_base_linear")
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate non-module attributes to the wrapped linear."""
+        try:
+            return super().__getattr__(name)
+        except AttributeError as error:
+            base_linear = self.__dict__.get("_base_linear")
+            if base_linear is not None:
+                try:
+                    return getattr(base_linear, name)
+                except AttributeError:
+                    pass
+            raise error
+
+    def _sync_base_state(self) -> None:
+        """Keep the delegated module pointed at this wrapper's registered state."""
+        base_linear = object.__getattribute__(self, "_base_linear")
+        for name in self._base_parameter_names:
+            base_linear._parameters[name] = self._parameters[name]
+        for name in self._base_buffer_names:
+            base_linear._buffers[name] = self._buffers[name]
+
+    def _apply(self, fn: Any, recurse: bool = True) -> "LinearModuleAdapter":
+        super()._apply(fn, recurse=recurse)
+        self._sync_base_state()
+        return self
+
+    def _save_to_state_dict(self, destination: dict[str, Any], prefix: str, keep_vars: bool) -> None:
+        """Delegate base state serialization while keeping the wrapper's flat FQNs."""
+        self._sync_base_state()
+        self.base_linear._save_to_state_dict(destination, prefix, keep_vars)
+
+    def _load_from_state_dict(
+        self,
+        state_dict: dict[str, Any],
+        prefix: str,
+        local_metadata: dict[str, Any],
+        strict: bool,
+        missing_keys: list[str],
+        unexpected_keys: list[str],
+        error_msgs: list[str],
+    ) -> None:
+        """Delegate base state loading while adapter children load normally."""
+        base_keys = {f"{prefix}{name}" for name in self.base_linear.state_dict()}
+        base_state_dict = {name: value for name, value in state_dict.items() if name in base_keys}
+        self.base_linear._load_from_state_dict(
+            base_state_dict,
+            prefix,
+            local_metadata,
+            strict,
+            missing_keys,
+            unexpected_keys,
+            error_msgs,
+        )
+        self._sync_base_state()
+
+    def train(self, mode: bool = True) -> "LinearModuleAdapter":
+        """Set training mode on both the wrapper and delegated base module."""
+        super().train(mode)
+        self.base_linear.train(mode)
+        return self
+
+    def enable_adapter_layers(self) -> None:
+        """Enable the LoRA contribution."""
+        self._adapter_enabled = True
+
+    def disable_adapter_layers(self) -> None:
+        """Disable the LoRA contribution."""
+        self._adapter_enabled = False
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the original linear forward and add the LoRA update."""
+        self._sync_base_state()
+        result = self.base_linear(x)
+        if not self._adapter_enabled:
+            return result
+        lora_input = self.dropout(x) if self.dropout_position == "pre" else x
+        lora_result = self.linear_out(self.linear_in(lora_input)) * self.scale
+        if self.dropout_position == "post":
+            lora_result = self.dropout(lora_result)
+        return result + lora_result
+
+
 def patch_linear_module(
     orig_linear: Union[nn.Linear, "te.Linear"],
     dim: int = 8,
@@ -677,19 +798,18 @@ def patch_linear_module(
     dropout_position: Literal["pre", "post"] = "pre",
     lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
     lora_dtype: Optional[torch.dtype] = None,
-) -> Union[nn.Linear, "te.Linear"]:
-    """Monkey-patch a nn.Linear or te.Linear to be a LinearAdapter.
+) -> LinearModuleAdapter:
+    """Wrap an nn.Linear or te.Linear without copying its base state.
 
-    This function replaces a nn.Linear with a LinearAdapter without copying weights,
-    making it suitable for cases where the original module was initialized with meta device.
+    This function composes with the original module without copying weights,
+    making it suitable for modules initialized on the meta device.
 
     The orig_linear might not contain valid weights, for example, the given orig_linear was
     initialized within a context-manager that uses a "meta" device. Therefore, we cannot copy
     the weight/bias from the orig_linear to the LinearAdapter, since those have not been allocated.
 
-    To circumvent this scenario, LinearAdapter's additional functionality (_init_adapter, _forward)
-    is based on static functions, so that we can use them for patching or when allocating a
-    new LinearAdapter object.
+    The wrapper registers the existing parameters and buffers under their original
+    names and delegates the base forward to the original module.
 
     Args:
         orig_linear: The module we add adapter to.
@@ -704,35 +824,18 @@ def patch_linear_module(
             specify the dtype manually. Defaults to None.
 
     Returns:
-        The monkey-patched (nn.Linear + LoRA) nn.Module.
+        A composition module with the original linear state and LoRA layers.
 
     Raises:
-        NotImplementedError: If orig_linear is not nn.Linear or te.Linear.
-        AssertionError: If orig_linear already has super_fwd attribute.
+        AssertionError: If orig_linear is not an nn.Linear or te.Linear.
     """
     assert isinstance(orig_linear, nn.Linear) or (orig_linear.__class__ == te.Linear)
-    assert not hasattr(orig_linear, "super_fwd"), orig_linear.super_fwd
-
-    if isinstance(orig_linear, nn.Linear):
-        LinearAdapter._init_adapter(orig_linear, dim, alpha, dropout, dropout_position, lora_A_init_method, lora_dtype)
-        cls = orig_linear.__class__
-        new_cls = type("PatchedLinearAdapter", (LinearAdapter, cls), {})
-    elif orig_linear.__class__ == te.Linear:
-        TELinearAdapter._init_adapter(
-            orig_linear, dim, alpha, dropout, dropout_position, lora_A_init_method, lora_dtype
-        )
-        cls = orig_linear.__class__
-        new_cls = type("PatchedTELinearAdapter", (TELinearAdapter, cls), {})
-    else:
-        raise NotImplementedError("Expected isinstance(orig_linear, (nn.Linear, te.Linear))")
-
-    # If the model uses quantized weights, we want to use orig_linear's forward
-    if (
-        HAVE_BNB
-        and getattr(orig_linear, "quant_state", None) is not None
-        and orig_linear.quant_state.__class__ == bitsandbytes.functional.QuantState
-    ):
-        orig_linear.super_fwd = orig_linear.forward
-
-    orig_linear.__class__ = new_cls
-    return orig_linear
+    return LinearModuleAdapter(
+        orig_linear,
+        dim=dim,
+        alpha=alpha,
+        dropout=dropout,
+        dropout_position=dropout_position,
+        lora_A_init_method=lora_A_init_method,
+        lora_dtype=lora_dtype,
+    )
