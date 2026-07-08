@@ -32,6 +32,6 @@ export USE_MNNVL=0
 uv run python -m torch.distributed.run --nproc_per_node=8 --nnodes=1 -m coverage run \
   --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/recipes/test_qwen3_moe_perf_proxy.py::TestQwen3MoePerfProxy::test_h100_fp8cs
+  tests/functional_tests/test_groups/recipes/test_moe_perf_proxies.py::TestQwen3MoePerfProxy::test_h100_fp8cs
 
 coverage combine -q
