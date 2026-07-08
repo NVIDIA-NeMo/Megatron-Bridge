@@ -1,4 +1,4 @@
-# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.exaone.exaone4 import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone45 import Exaone45Bridge, Exaone45Model, Exaone45ModelProvider
-from megatron.bridge.models.exaone.exaone_moe import ExaoneMoeBridge, ExaoneMoeModelProvider
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
 
 
-__all__ = [
-    "Exaone4Bridge",
-    "Exaone45Bridge",
-    "Exaone45Model",
-    "Exaone45ModelProvider",
-    "ExaoneMoeBridge",
-    "ExaoneMoeModelProvider",
-]
+__all__ = ["Exaone4Bridge"]
