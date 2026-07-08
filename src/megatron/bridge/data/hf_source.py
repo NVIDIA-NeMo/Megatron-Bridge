@@ -14,10 +14,12 @@
 
 """Declarative Hugging Face sources, named presets, and shared normalization."""
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import torch
 from datasets import concatenate_datasets, load_dataset
 
 from megatron.bridge.data.base import validate_declarative_mapping
@@ -249,6 +251,42 @@ def load_hf_dataset_source(source: HFDatasetSourceConfig) -> Any:
     if resolved.subset is None:
         return load_dataset(resolved.path_or_dataset, split=resolved.split, **kwargs)
     return load_dataset(resolved.path_or_dataset, resolved.subset, split=resolved.split, **kwargs)
+
+
+def prepare_hf_dataset_sources(sources: Sequence[HFDatasetSourceConfig]) -> None:
+    """Materialize Hugging Face caches once before distributed readers start.
+
+    Hugging Face cache creation is not reliable when multiple distributed ranks
+    concurrently build the same source on a shared filesystem. Rank zero loads
+    each requested source first, then broadcasts completion so every rank reads
+    an already-stable cache. Single-process callers need no preparation because
+    their normal load has no competing writer.
+    """
+    if (
+        not sources
+        or not torch.distributed.is_available()
+        or not torch.distributed.is_initialized()
+        or torch.distributed.get_world_size() == 1
+    ):
+        return
+
+    rank = torch.distributed.get_rank()
+    materialization_error: Exception | None = None
+    if rank == 0:
+        try:
+            for source in sources:
+                load_hf_dataset_source(source)
+        except Exception as error:
+            materialization_error = error
+
+    status = [
+        None if materialization_error is None else f"{type(materialization_error).__name__}: {materialization_error}"
+    ]
+    torch.distributed.broadcast_object_list(status, src=0)
+    if status[0] is not None:
+        if materialization_error is not None:
+            raise materialization_error
+        raise RuntimeError(f"Rank zero failed to materialize a Hugging Face dataset source: {status[0]}")
 
 
 def load_and_adapt_hf_dataset(source: HFDatasetSourceConfig) -> list[dict[str, Any]]:

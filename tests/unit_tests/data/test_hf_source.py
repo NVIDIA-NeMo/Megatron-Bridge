@@ -8,6 +8,7 @@ from megatron.bridge.data.hf_source import (
     hf_dataset_supports_split,
     load_and_adapt_hf_dataset,
     load_hf_dataset_source,
+    prepare_hf_dataset_sources,
     resolve_hf_dataset_source,
 )
 
@@ -198,6 +199,36 @@ def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
 
     assert adapted[0]["prompt"] == "Context: ctx Question: q Answer:"
     assert adapted[0]["completion"] == "a"
+
+
+def test_distributed_source_preparation_materializes_on_rank_zero(monkeypatch):
+    source = HFDatasetSourceConfig(path_or_dataset="org/chat")
+    calls = []
+    monkeypatch.setattr(source_module.torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(source_module.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(source_module.torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(source_module.torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(source_module.torch.distributed, "broadcast_object_list", lambda status, src: None)
+    monkeypatch.setattr(source_module, "load_hf_dataset_source", lambda requested: calls.append(requested))
+
+    prepare_hf_dataset_sources([source])
+
+    assert calls == [source]
+
+
+def test_distributed_source_preparation_waits_without_loading_on_nonzero_rank(monkeypatch):
+    source = HFDatasetSourceConfig(path_or_dataset="org/chat")
+    calls = []
+    monkeypatch.setattr(source_module.torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(source_module.torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(source_module.torch.distributed, "get_world_size", lambda: 2)
+    monkeypatch.setattr(source_module.torch.distributed, "get_rank", lambda: 1)
+    monkeypatch.setattr(source_module.torch.distributed, "broadcast_object_list", lambda status, src: None)
+    monkeypatch.setattr(source_module, "load_hf_dataset_source", lambda requested: calls.append(requested))
+
+    prepare_hf_dataset_sources([source])
+
+    assert calls == []
 
 
 def test_source_loads_and_concatenates_multiple_subsets(monkeypatch):

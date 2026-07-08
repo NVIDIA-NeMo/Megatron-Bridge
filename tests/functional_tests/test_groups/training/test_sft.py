@@ -149,7 +149,7 @@ class TestSupervisedFinetuning:
         try:
             config = self._create_config(1, checkpoint_dir, tensorboard_dir, seq_length=16)
             config.model.vocab_size = 1024
-            config.train.global_batch_size = 2
+            config.train.global_batch_size = 4
             config.train.micro_batch_size = 2
             config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=1024)
             config.dataset = DirectHFSFTDatasetConfig(

@@ -28,7 +28,12 @@ from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn, text_prompt_completion_collate_fn
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig, hf_dataset_supports_split, load_and_adapt_hf_dataset
+from megatron.bridge.data.hf_source import (
+    HFDatasetSourceConfig,
+    hf_dataset_supports_split,
+    load_and_adapt_hf_dataset,
+    prepare_hf_dataset_sources,
+)
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
     SFTPreprocessingConfig,
@@ -234,6 +239,17 @@ class DirectHFSFTDatasetBuilder:
             and not hf_dataset_supports_split(self.config.source, "test")
         ):
             raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
+        validation_source = self.config.validation_source or self.config.source.with_split("validation")
+        test_source = self.config.test_source or self.config.source.with_split("test")
+        requested_sources = []
+        if context.train_samples > 0:
+            requested_sources.append(self.config.source)
+        if self.config.do_validation and context.valid_samples > 0:
+            requested_sources.append(validation_source)
+        if self.config.do_test and context.test_samples > 0:
+            requested_sources.append(test_source)
+        prepare_hf_dataset_sources(requested_sources)
+
         processor = load_direct_hf_sft_processor(self.config, context.tokenizer)
         train_dataset = build_direct_hf_sft_split(
             self.config,
@@ -242,7 +258,6 @@ class DirectHFSFTDatasetBuilder:
             processor,
             collate_impl=self._collate_impl,
         )
-        validation_source = self.config.validation_source or self.config.source.with_split("validation")
         valid_dataset = (
             build_direct_hf_sft_split(
                 self.config,
@@ -254,7 +269,6 @@ class DirectHFSFTDatasetBuilder:
             if self.config.do_validation
             else None
         )
-        test_source = self.config.test_source or self.config.source.with_split("test")
         test_dataset = (
             build_direct_hf_sft_split(
                 self.config,
