@@ -87,9 +87,20 @@ def set_cuda_graph_modules(config: Any, modules: Any) -> None:
 
 
 def clear_cuda_graph_modules(config: Any) -> None:
-    """Clear per-layer CUDA graph modules using the active MCore API."""
+    """Clear per-layer CUDA graph modules using the active MCore API.
+
+    Clearing must leave ``cuda_graph_scope`` as an empty list rather than
+    ``None`` so that an explicit user request to disable per-layer capture
+    (e.g. ``model.cuda_graph_scope=[]`` alongside ``cuda_graph_impl=none``)
+    survives the override pipeline instead of being silently wiped to
+    ``None``. Both values are treated identically as "no graphs" by the
+    readers in this module, so preserving ``[]`` changes no behavior while
+    keeping the field consistent with what the caller set.
+    """
 
     set_cuda_graph_modules(config, [])
+    if hasattr(config, "cuda_graph_scope"):
+        config.cuda_graph_scope = []
 
 
 def set_full_iteration_cuda_graph(config: Any) -> None:
