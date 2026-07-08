@@ -17,7 +17,7 @@ default, this is set to `/workspace`.
 See [conversion.sh](conversion.sh) for Hugging Face to Megatron import, Megatron to Hugging Face export, and
 round-trip validation.
 
-    ./examples/models/exaone4/conversion.sh
+    ./examples/models/exaone/exaone4/conversion.sh
 
 ## Inference
 
@@ -27,7 +27,7 @@ See [inference.sh](inference.sh) for text generation with:
 - the imported Megatron checkpoint
 - the exported Hugging Face checkpoint
 
-    PROMPT="Explain checkpoint conversion in one paragraph." ./examples/models/exaone4/inference.sh
+    PROMPT="Explain checkpoint conversion in one paragraph." ./examples/models/exaone/exaone4/inference.sh
 
 The default scripts use `--tp 1 --pp 1` and `--nproc_per_node=1`, which is suitable for the 1.2B dense model on a
 single GPU.

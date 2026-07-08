@@ -27,7 +27,7 @@ Converted checkpoints are written under `${WORKSPACE}/models/`.
 [inference.sh](inference.sh) loads the Hugging Face checkpoint, converts it to Megatron in memory, and runs vision-language generation on 4 local GPUs.
 
 ```bash
-examples/models/exaone45/inference.sh
+examples/models/exaone/exaone45/inference.sh
 ```
 
 The script uses the sample NVIDIA H100 table image and the prompt `Describe this image.`:
@@ -52,7 +52,7 @@ You can replace `--image_path` with a local image path or another image URL.
 [conversion.sh](conversion.sh) imports the Hugging Face checkpoint to Megatron format:
 
 ```bash
-examples/models/exaone45/conversion.sh
+examples/models/exaone/exaone45/conversion.sh
 ```
 
 By default, the converted checkpoint is written to:
