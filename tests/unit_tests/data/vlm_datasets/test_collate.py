@@ -253,6 +253,182 @@ def test_qwen2_audio_collate_fn_uses_audio_inputs_key(monkeypatch):
     assert "feature_attention_mask" not in batch
 
 
+def test_qwen2_audio_collate_fn_forwards_source_sampling_rate(monkeypatch):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):  # noqa: ARG002
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+            self.sampling_rate = None
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):  # noqa: ARG002
+            return "dummy"
+
+        def __call__(
+            self,
+            text=None,
+            audio=None,
+            *,
+            sampling_rate,
+            return_tensors="pt",
+            padding=True,
+        ):
+            self.sampling_rate = sampling_rate
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    processor = _AudioProcessor()
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": [{"type": "text", "text": "transcribe"}]}],
+            "audio": (torch.zeros(8_000), 8_000),
+        }
+    ]
+
+    collate.qwen2_audio_collate_fn(examples, processor)
+
+    assert processor.sampling_rate == 8_000
+
+
+@pytest.mark.parametrize(
+    ("audio_values", "error"),
+    [
+        ([(torch.zeros(1), 8_000), (torch.zeros(1), 16_000)], "single sampling rate"),
+        ([(torch.zeros(1), 8_000), torch.zeros(1)], "known and unknown sampling rates"),
+    ],
+)
+def test_qwen2_audio_collate_fn_rejects_ambiguous_sampling_rates(audio_values, error):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):  # noqa: ARG002
+            return "dummy"
+
+        def __call__(self, **kwargs):  # noqa: ARG002
+            raise AssertionError("ambiguous audio rates must be rejected before processor invocation")
+
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": [{"type": "text", "text": "transcribe"}]}],
+            "audio": audio,
+        }
+        for audio in audio_values
+    ]
+
+    with pytest.raises(ValueError, match=error):
+        collate.qwen2_audio_collate_fn(examples, _AudioProcessor())
+
+
+def test_qwen2_audio_collate_fn_preserves_raw_audio_compatibility(monkeypatch):
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+            def __call__(self, text, add_special_tokens=False):  # noqa: ARG002
+                return {"input_ids": [1, 2]}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+            self.sampling_rate = "unset"
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):  # noqa: ARG002
+            return "dummy"
+
+        def __call__(
+            self,
+            text=None,
+            audio=None,
+            *,
+            sampling_rate=None,
+            return_tensors="pt",
+            padding=True,
+        ):
+            self.sampling_rate = sampling_rate
+            n = len(text)
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]] * n),
+                "input_features": torch.randn(n, 80, 16),
+                "feature_attention_mask": torch.ones(n, 16),
+            }
+
+    monkeypatch.setattr(qwen_audio_collate, "gather_assistant_text_segments", lambda ex: ["dummy"])
+
+    processor = _AudioProcessor()
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": [{"type": "text", "text": "transcribe"}]}],
+            "audio": torch.zeros(8_000),
+        }
+    ]
+
+    collate.qwen2_audio_collate_fn(examples, processor)
+
+    assert processor.sampling_rate is None
+
+
+def test_qwen2_audio_collate_fn_rejects_non_native_whisper_sampling_rate():
+    from transformers import WhisperFeatureExtractor
+
+    class _AudioProcessor:
+        class _Tok:
+            pad_token_id = 0
+            padding_side = "right"
+            added_tokens_decoder = {}
+
+        def __init__(self):
+            self.tokenizer = self._Tok()
+            self.feature_extractor = WhisperFeatureExtractor()
+
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):  # noqa: ARG002
+            return "dummy"
+
+        def __call__(
+            self,
+            text=None,
+            audio=None,
+            *,
+            sampling_rate=None,
+            return_tensors="pt",
+            padding=True,
+        ):
+            return self.feature_extractor(
+                audio,
+                sampling_rate=sampling_rate,
+                return_attention_mask=True,
+                return_tensors=return_tensors,
+            )
+
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": [{"type": "text", "text": "transcribe"}]}],
+            "audio": (torch.zeros(8_000).numpy(), 8_000),
+        }
+    ]
+
+    with pytest.raises(ValueError, match="8000"):
+        collate.qwen2_audio_collate_fn(examples, _AudioProcessor())
+
+
 def test_qwen2_audio_collate_fn_defers_packing_to_audio_step(monkeypatch):
     class _AudioProcessor:
         class _Tok:
