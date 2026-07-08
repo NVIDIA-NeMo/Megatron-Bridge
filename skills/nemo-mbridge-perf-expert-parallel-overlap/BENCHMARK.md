@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemo-mbridge-perf-expert-parallel-overlap`
-- Evaluation date: 2026-07-04
+- Evaluation date: 2026-07-08
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 1 evaluation tasks
@@ -57,7 +57,7 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+75%) | 97% (+22%) |
 | Discoverability | 1 | 100% (+75%) | 97% (+72%) |
-| Effectiveness | 1 | 100% (+100%) | 74% (-17%) |
+| Effectiveness | 1 | 98% (+98%) | 80% (+13%) |
 | Efficiency | 1 | 94% (+69%) | 96% (+69%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.

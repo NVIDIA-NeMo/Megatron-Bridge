@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers tuning MoE expert-parallel communication overlap for throughput optimization in Megatron Bridge training runs. <br>
+Developers and engineers tuning MoE expert-parallel communication overlap for throughput optimization in Megatron Bridge training workloads. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [No] <br>
-**Credential Type(s):** [None] <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -33,7 +33,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Analysis] <br>
-**Output Format:** [Markdown with inline Python code blocks] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -44,7 +44,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (positive skill-activation case) in astra-sandbox environment with external NVSkills-Eval profile. <br>
+Evaluated against 1 internal skill-activation task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,13 +69,13 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+75%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+50%) |
-| Effectiveness | 1 | 89% (+89%) | 100% (+100%) |
+| Correctness | 1 | 100% (+100%) | 97% (+72%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+47%) |
+| Effectiveness | 1 | 84% (+79%) | 89% (+89%) |
 | Efficiency | 1 | 94% (+67%) | 96% (+38%) |
 
 ## Skill Version(s): <br>
-1.0.0+9edee0c (source: pyproject.toml) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

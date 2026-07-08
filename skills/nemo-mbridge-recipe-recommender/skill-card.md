@@ -1,5 +1,5 @@
 ## Description: <br>
-Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. <br>
+Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers who want a starting recipe or training configuration for pretraining, SFT, or PEFT with Megatron Bridge, matched to their model family, GPU count, and sequence length. <br>
+Developers and engineers selecting and customizing Megatron Bridge training recipes based on their model family, GPU count, hardware type, and training goal (pretrain, SFT, or PEFT). <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -30,19 +30,19 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands] <br>
+**Output Type(s):** [Shell commands, Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- `claude-code` <br>
-- `codex` <br>
+- Claude Code (`claude-code`) <br>
+- Codex (`codex`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 internal skill activation task using the NVSkills-Eval external profile. <br>
+Evaluated against 1 positive skill-activation task using the NVSkills-Eval external profile in astra-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -67,10 +67,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+62%) |
-| Discoverability | 1 | 100% (+100%) | 89% (+17%) |
-| Effectiveness | 1 | 98% (+93%) | 96% (+43%) |
-| Efficiency | 1 | 94% (+67%) | 81% (+4%) |
+| Correctness | 1 | 100% (+100%) | 97% (+75%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+70%) |
+| Effectiveness | 1 | 98% (+98%) | 98% (+87%) |
+| Efficiency | 1 | 94% (+67%) | 92% (+67%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>

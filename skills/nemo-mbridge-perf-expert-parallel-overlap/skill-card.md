@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling MoE expert-parallel communication overlap to hide dispatch/combine latency in Megatron-Bridge training runs, or diagnosing throughput regressions related to EP overlap configuration changes. <br>
+Developers and engineers enabling expert-parallel communication overlap to hide dispatch/combine latency in MoE training workloads, or diagnosing throughput regressions related to EP overlap configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,24 +25,25 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
+- [Communication Overlap Documentation](docs/training/communication-overlap.md) <br>
+- [Structured Metadata (card.yaml)](skills/nemo-mbridge-perf-expert-parallel-overlap/card.yaml) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- claude-code <br>
-- codex <br>
+- Claude Code (`claude-code`) <br>
+- Codex (`codex`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in the astra-sandbox environment using the external NVSkills-Eval profile with 1 attempt per task and a 50% pass threshold. <br>
+Evaluated against 1 evaluation task (positive skill-activation case) in the NVSkills-Eval external profile on the astra-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,11 +70,16 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+75%) | 97% (+22%) |
 | Discoverability | 1 | 100% (+75%) | 97% (+72%) |
-| Effectiveness | 1 | 100% (+100%) | 74% (-17%) |
+| Effectiveness | 1 | 98% (+98%) | 80% (+13%) |
 | Efficiency | 1 | 94% (+69%) | 96% (+69%) |
 
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
+
 ## Skill Version(s): <br>
-1.0.0+9edee0c (source: pyproject.toml) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

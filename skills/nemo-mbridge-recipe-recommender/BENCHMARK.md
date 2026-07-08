@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemo-mbridge-recipe-recommender`
-- Evaluation date: 2026-07-04
+- Evaluation date: 2026-07-08
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 1 evaluation tasks
@@ -55,10 +55,10 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+62%) |
-| Discoverability | 1 | 100% (+100%) | 89% (+17%) |
-| Effectiveness | 1 | 98% (+93%) | 96% (+43%) |
-| Efficiency | 1 | 94% (+67%) | 81% (+4%) |
+| Correctness | 1 | 100% (+100%) | 97% (+75%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+70%) |
+| Effectiveness | 1 | 98% (+98%) | 98% (+87%) |
+| Efficiency | 1 | 94% (+67%) | 92% (+67%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 
