@@ -81,7 +81,12 @@ def set_cuda_graph_modules(config: Any, modules: Any) -> None:
     if _supports_cuda_graph_modules(config):
         config.cuda_graph_modules = [_module_value(name) for name in module_names]
         if hasattr(config, "cuda_graph_scope"):
-            config.cuda_graph_scope = None
+            # Keep the legacy ``cuda_graph_scope`` field consistent with the
+            # non-``cuda_graph_modules`` branch below: represent "no scopes" as
+            # an empty list rather than ``None`` so that clearing modules (e.g.
+            # the ``cuda_graph_impl="none"`` disable path, or an explicit
+            # ``cuda_graph_scope=[]`` override) leaves ``[]`` in place.
+            config.cuda_graph_scope = [] if not module_names else None
     else:
         config.cuda_graph_scope = [CudaGraphScope[name] for name in module_names]
 
