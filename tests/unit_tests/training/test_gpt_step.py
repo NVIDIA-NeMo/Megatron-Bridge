@@ -17,11 +17,13 @@ from functools import partial
 from unittest.mock import MagicMock, Mock, patch
 
 import modelopt.torch.distill as mtd
+import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 from megatron.bridge.training.gpt_step import (
     _create_loss_function_modelopt,
+    _cu_seqlens_for_cp_partition,
     _forward_step_common,
     _partition_packed_batch_for_cp,
     get_batch,
@@ -164,6 +166,14 @@ class _VpStageWrapper:
 
 class TestGetBatch:
     """Tests for the get_batch helper."""
+
+    @pytest.mark.parametrize("metadata_key", ["cu_seqlens_q", "cu_seqlens"])
+    def test_packed_cp_partition_rejects_multiple_physical_thd_rows(self, metadata_key):
+        """Packed CP slicing requires one physical THD row after collation."""
+        batch = {metadata_key: torch.tensor([[0, 4, 8], [0, 3, 8]], dtype=torch.int32)}
+
+        with pytest.raises(ValueError, match="expect micro-batch size 1"):
+            _cu_seqlens_for_cp_partition(batch)
 
     def test_partition_current_packed_batch_uses_padded_cu_seqlens(self, monkeypatch):
         """Packed CP slicing should use current padded cu-seqlens when present."""

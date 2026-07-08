@@ -1,21 +1,21 @@
 title: packed_sequences_long_context
-validated_on: "2026-07-06"
+validated_on: "2026-07-08"
 summary: >
   Megatron-Bridge currently supports two distinct packing paths: offline packed
-  SFT for text-only finetuning and in-batch packing for some VLM finetuning
-  paths. Long-context training is primarily expressed through context
-  parallelism, long-context Llama recipes, and memory tradeoff knobs like
-  recompute and CPU offloading.
+  SFT for text-only finetuning and collate-time in-batch packing for direct
+  Hugging Face SFT and some VLM finetuning paths. Long-context training is
+  primarily expressed through context parallelism, long-context Llama recipes,
+  and memory tradeoff knobs like recompute and CPU offloading.
 validation_status:
   offline_packed_sft_runtime:
     - code_verified
-  vlm_in_batch_packing_runtime:
+  direct_hf_vlm_in_batch_packing_runtime:
     - code_verified
   cp_and_packing_validation_rules:
     - code_verified
   packed_seq_helper_behavior:
     - code_verified
-  vlm_packing_helper_behavior:
+  direct_hf_vlm_packing_helper_behavior:
     - code_verified
   mapped_padding_loss_mask_behavior:
     - code_verified
@@ -31,9 +31,11 @@ feature_meaning:
   offline_packed_sft: >
     Pre-tokenized packed finetuning datasets built through PackedSequenceSpecs
     and consumed through THD packed-sequence metadata.
-  vlm_in_batch_packing: >
-    Collate-time batch concatenation path for supported VLM training flows,
-    controlled by enable_in_batch_packing=True and emitted in MCore THD form.
+  direct_hf_vlm_in_batch_packing: >
+    Collate-time batch concatenation path shared by direct Hugging Face SFT and
+    supported VLM training flows, controlled by enable_in_batch_packing=True
+    and emitted in MCore THD form. Multiple configured input rows become one
+    physical THD batch row.
   long_context_training: >
     Training at longer sequence lengths, primarily enabled through context
     parallelism plus recipe-specific long-context presets and memory tuning
@@ -47,17 +49,22 @@ recommended_path:
   cp_finetuning:
     model.calculate_per_token_loss: true
     ddp.average_in_collective: false
-    dataset.offline_packing_specs.pad_seq_to_mult: 2 * context_parallel_size
-  vlm_in_batch_packing:
+    dataset.offline_packing_specs.pad_seq_to_mult: lcm_of_train_eval_cp_and_sp_constraints
+  direct_hf_vlm_in_batch_packing:
     dataset.enable_in_batch_packing: true
+    dataset.defer_in_batch_packing_to_step: false
     train.micro_batch_size: ">1"
 known_constraints:
   - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
+  - Direct-HF seq_length must also be divisible by the full train/eval CP and sequence-parallel LCM.
+  - Offline pad_seq_to_mult must include both train/eval CP degrees and CP * TP when sequence parallelism is enabled.
   - Offline packed SFT requires micro_batch_size == 1.
-  - VLM in-batch packing requires micro_batch_size > 1.
+  - Direct-HF/VLM in-batch packing requires configured micro_batch_size > 1; collation emits one physical THD row.
   - For finetuning with CP > 1, calculate_per_token_loss must be true.
   - For finetuning with CP > 1, ddp.average_in_collective must be false.
   - pad_cu_seqlens=true also requires pad_to_max_length=true.
+  - A distinct eval CP topology requires decentralized process groups plus caller-managed eval groups, P2P communication, eval-aware data sharding and batch math, and eval_cp_context.
+  - Packed Parquet requires runtime JSON metadata only for pad_cu_seqlens; legacy packed NPY loads builder-resolved metadata for offline packing.
   - Synthetic padding rows must retain an all-zero loss mask after samples_mapping remaps their indices.
   - Fine-tuning sequence packing is documented as unsupported with MTP.
 known_limitations:
@@ -75,11 +82,16 @@ evidence:
   - src/megatron/bridge/data/datasets/packed_sequence.py
   - src/megatron/bridge/data/datasets/packed_parquet.py
   - src/megatron/bridge/data/datasets/gpt_sft.py
+  - src/megatron/bridge/data/datasets/direct_sft.py
+  - src/megatron/bridge/data/builders/direct_hf_sft.py
+  - src/megatron/bridge/data/builders/gpt_sft.py
+  - src/megatron/bridge/data/collators/sft.py
   - src/megatron/bridge/training/utils/packed_seq_utils.py
   - src/megatron/bridge/training/gpt_step.py
   - src/megatron/bridge/data/sequence_batching.py
   - src/megatron/bridge/training/vlm_step.py
   - src/megatron/bridge/training/config.py
+  - src/megatron/bridge/training/eval_context_parallel_rebinding.py
   - src/megatron/bridge/recipes/utils/finetune_utils.py
   - src/megatron/bridge/recipes/common.py
   - src/megatron/bridge/recipes/llama/h100/llama3.py
@@ -87,10 +99,17 @@ evidence:
   - src/megatron/bridge/recipes/glm/h100/glm45.py
   - src/megatron/bridge/recipes/qwen_vl/h100/qwen35_vl.py
   - src/megatron/bridge/models/qwen_vl/modelling_qwen3_vl/model.py
+  - examples/training_features/decentralized_pg/pretrain_qwen3_eval_cp.py
   - tests/functional_tests/test_groups/training/test_seqpacking_cp_example.py
+  - tests/functional_tests/test_groups/training/test_sft.py
+  - tests/unit_tests/data/builders/test_direct_hf_sft.py
+  - tests/unit_tests/data/builders/test_gpt_sft_config.py
+  - tests/unit_tests/data/collators/test_sft.py
   - tests/unit_tests/data/datasets/test_packed_parquet.py
+  - tests/unit_tests/data/datasets/test_direct_sft.py
   - tests/unit_tests/data/datasets/test_gpt_sft.py
   - tests/unit_tests/data/vlm_datasets/test_batching.py
+  - tests/unit_tests/training/test_gpt_step.py
   - tests/unit_tests/training/utils/test_packed_seq_utils.py
   - tests/unit_tests/training/test_config.py
   - tests/unit_tests/training/test_vlm_step.py

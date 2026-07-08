@@ -17,6 +17,7 @@ from megatron.bridge.data.builders import gpt_sft as builder_mod
 from megatron.bridge.data.builders.gpt_sft import (
     FinetuningDatasetBuilder,
     GPTSFTDatasetBuilder,
+    build_gpt_sft_dataset,
     materialize_hf_dataset,
     normalize_gpt_sft_dataset_kwargs,
     resolve_gpt_sft_dataset_root,
@@ -129,6 +130,44 @@ def test_hf_rewrite_rejects_explicit_packed_paths(tmp_path):
 
     with pytest.raises(ValueError, match="cannot safely replace explicit packed data paths"):
         config.validate()
+
+
+@pytest.mark.parametrize(
+    ("filename", "pad_cu_seqlens", "expects_metadata"),
+    [
+        ("training.idx.parquet", False, False),
+        ("training.idx.parquet", True, True),
+        ("training.npy", False, True),
+    ],
+)
+def test_packed_metadata_forwarding_depends_on_format_and_padding(
+    monkeypatch, tmp_path, filename, pad_cu_seqlens, expects_metadata
+):
+    """Test Parquet and legacy packed formats receive metadata when required."""
+    packed_path = tmp_path / filename
+    packed_path.touch()
+    metadata_path = tmp_path / "metadata.jsonl"
+    captured = {}
+
+    def _create(path, **kwargs):
+        captured.update(kwargs)
+        return path
+
+    monkeypatch.setattr(builder_mod, "create_gpt_sft_dataset", _create)
+
+    build_gpt_sft_dataset(
+        packed_path,
+        tokenizer=object(),
+        seq_length=128,
+        memmap_workers=1,
+        seed=1234,
+        packed_sequence_size=128,
+        pack_metadata_path=metadata_path,
+        pad_cu_seqlens=pad_cu_seqlens,
+    )
+
+    expected = metadata_path if expects_metadata else None
+    assert captured["pack_metadata_file_path"] == expected
 
 
 def test_local_source_rejects_hf_only_settings(tmp_path):
