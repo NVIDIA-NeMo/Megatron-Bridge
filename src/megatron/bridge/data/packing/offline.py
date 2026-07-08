@@ -17,15 +17,16 @@
 import json
 import logging
 import resource
+from collections.abc import Callable
 from multiprocessing import Pool
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
-from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
 from megatron.bridge.data.packing.algorithms import create_hist, create_packing_strategy, fill_packing_strategy
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
@@ -123,6 +124,8 @@ def tokenize_dataset(
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
     num_tokenizer_workers: int = -1,
+    *,
+    dataset_builder: Callable[..., Any],
 ):
     """
     Tokenizes a dataset from the provided path using the specified tokenizer
@@ -133,12 +136,13 @@ def tokenize_dataset(
         tokenizer (MegatronTokenizer): The tokenizer to use for tokenization.
         max_seq_length (int): Maximum sequence length for the tokens.
         seed (int): Random seed for shuffling the dataset.
-        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_gpt_sft_dataset.
+        dataset_kwargs (dict | None): Additional GPT SFT dataset construction options.
             Can include 'chat', 'use_hf_tokenizer_chat_template', 'tool_schemas', etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
         num_tokenizer_workers: Number of worker processes used to materialize tokenized samples.
             Values less than or equal to 1 run serially.
+        dataset_builder: Builder-owned callable that constructs one unpacked GPT SFT split.
 
     Returns:
         np.ndarray: A NumPy array containing the tokenized data.
@@ -178,15 +182,18 @@ def tokenize_dataset(
             )
     stored_max_seq_length = runtime_max_seq_length + 1 if max_runtime_pad_cap is not None else runtime_max_seq_length
 
-    dataset = create_gpt_sft_dataset(
-        path=path,
+    dataset = dataset_builder(
+        path,
         tokenizer=tokenizer,
         seq_length=stored_max_seq_length,
+        memmap_workers=2,
         seed=seed,
+        packed_sequence_size=-1,
         is_test=True,
-        pad_seq_length_to_mult=pad_seq_length_to_mult,
-        **dataset_kwargs,
+        dataset_kwargs={"pad_seq_length_to_mult": pad_seq_length_to_mult, **dataset_kwargs},
     )
+    if dataset is None:
+        raise FileNotFoundError(f"GPT SFT input path does not exist: {path}")
 
     pad_id = dataset.tokenizer.eod
     pad_seq_length_to_mult = dataset.pad_seq_length_to_mult
@@ -220,6 +227,8 @@ def prepare_gpt_sft_packed_data(
     dataset_kwargs: dict | None = None,
     pad_seq_to_mult: int | None = 1,
     num_tokenizer_workers: int = -1,
+    *,
+    dataset_builder: Callable[..., Any],
 ):
     """
     Prepares a packed sequence dataset from a given input file and saves it to an output file.
@@ -234,12 +243,13 @@ def prepare_gpt_sft_packed_data(
         seed (int | None): Random seed for shuffling (optional).
         packing_algorithm (str): The algorithm used for packing sequences
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
-        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_gpt_sft_dataset.
+        dataset_kwargs (dict | None): Additional GPT SFT dataset construction options.
             Enables packing with chat templates, tool schemas, etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
         num_tokenizer_workers: Number of worker processes used to materialize tokenized samples.
             Values less than or equal to 1 run serially.
+        dataset_builder: Builder-owned callable that constructs one unpacked GPT SFT split.
 
     Returns:
         None: Saves the packed sequence data to the specified output path.
@@ -253,6 +263,7 @@ def prepare_gpt_sft_packed_data(
         dataset_kwargs,
         pad_seq_to_mult=pad_seq_to_mult,
         num_tokenizer_workers=num_tokenizer_workers,
+        dataset_builder=dataset_builder,
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 

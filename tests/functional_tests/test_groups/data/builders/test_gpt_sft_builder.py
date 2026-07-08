@@ -365,11 +365,11 @@ class TestPackedSequenceDatasetKwargs:
             "tool_schemas": [{"type": "function"}],
         }
 
-        # Mock create_gpt_sft_dataset to verify it receives kwargs
-        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
+        # Mock the builder-owned split helper to verify it receives kwargs
+        with patch("megatron.bridge.data.builders.gpt_sft.build_gpt_sft_split") as mock_build:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
-            mock_create.return_value = mock_dataset
+            mock_build.return_value = mock_dataset
 
             tokenize_dataset(
                 path=Path("test.jsonl"),
@@ -377,15 +377,16 @@ class TestPackedSequenceDatasetKwargs:
                 max_seq_length=512,
                 seed=1234,
                 dataset_kwargs=dataset_kwargs,
+                dataset_builder=mock_build,
             )
 
-            # Verify create_gpt_sft_dataset was called with kwargs
-            mock_create.assert_called_once()
-            call_kwargs = mock_create.call_args[1]
-            assert call_kwargs["chat"] is True
-            assert call_kwargs["use_hf_tokenizer_chat_template"] is True
+            # Verify build_gpt_sft_split was called with kwargs
+            mock_build.assert_called_once()
+            dataset_options = mock_build.call_args.kwargs["dataset_kwargs"]
+            assert dataset_options["chat"] is True
+            assert dataset_options["use_hf_tokenizer_chat_template"] is True
             # tool_schemas should be converted to JSON string
-            assert "tool_schemas" in call_kwargs
+            assert "tool_schemas" in dataset_options
 
     def test_tokenize_dataset_converts_tool_schemas_to_json(self):
         """Test that tool_schemas dict is converted to JSON string."""
@@ -401,10 +402,10 @@ class TestPackedSequenceDatasetKwargs:
         tool_schemas_dict = [{"type": "function", "function": {"name": "test"}}]
         dataset_kwargs = {"tool_schemas": tool_schemas_dict}
 
-        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.builders.gpt_sft.build_gpt_sft_split") as mock_build:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
-            mock_create.return_value = mock_dataset
+            mock_build.return_value = mock_dataset
 
             tokenize_dataset(
                 path=Path("test.jsonl"),
@@ -412,13 +413,14 @@ class TestPackedSequenceDatasetKwargs:
                 max_seq_length=512,
                 seed=1234,
                 dataset_kwargs=dataset_kwargs,
+                dataset_builder=mock_build,
             )
 
             # Verify tool_schemas was converted to JSON string
-            call_kwargs = mock_create.call_args[1]
-            assert isinstance(call_kwargs["tool_schemas"], str)
+            dataset_options = mock_build.call_args.kwargs["dataset_kwargs"]
+            assert isinstance(dataset_options["tool_schemas"], str)
             # Should be parseable back to original
-            parsed = json.loads(call_kwargs["tool_schemas"])
+            parsed = json.loads(dataset_options["tool_schemas"])
             assert parsed == tool_schemas_dict
 
     def test_tokenize_dataset_sets_chat_template_on_tokenizer(self):
@@ -437,10 +439,10 @@ class TestPackedSequenceDatasetKwargs:
         custom_template = "{% for msg in messages %}{{ msg.content }}{% endfor %}"
         dataset_kwargs = {"chat_template": custom_template}
 
-        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.builders.gpt_sft.build_gpt_sft_split") as mock_build:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
-            mock_create.return_value = mock_dataset
+            mock_build.return_value = mock_dataset
 
             tokenize_dataset(
                 path=Path("test.jsonl"),
@@ -448,11 +450,12 @@ class TestPackedSequenceDatasetKwargs:
                 max_seq_length=512,
                 seed=1234,
                 dataset_kwargs=dataset_kwargs,
+                dataset_builder=mock_build,
             )
 
             # Verify chat_template was set on tokenizer
             assert mock_hf_tokenizer.chat_template == custom_template
 
-            # Verify chat_template was popped from dataset_kwargs (not passed to create_gpt_sft_dataset)
-            call_kwargs = mock_create.call_args[1]
-            assert "chat_template" not in call_kwargs
+            # Verify chat_template was popped before runtime dataset construction.
+            dataset_options = mock_build.call_args.kwargs["dataset_kwargs"]
+            assert "chat_template" not in dataset_options

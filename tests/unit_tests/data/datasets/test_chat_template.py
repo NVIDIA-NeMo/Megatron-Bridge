@@ -20,7 +20,8 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, create_gpt_sft_dataset
+from megatron.bridge.data.builders.gpt_sft import build_gpt_sft_split
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
 
@@ -499,155 +500,6 @@ class TestGPTSFTChatDataset:
         # Verify batch size
         assert result["tokens"].shape[0] == 2
         assert result["labels"].shape[0] == 2
-
-
-class TestCreateSFTDataset:
-    """Test cases for create_gpt_sft_dataset factory function."""
-
-    @patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset")
-    def test_create_chat_dataset_with_template(self, mock_chat_class):
-        """Test creating chat dataset with HF template."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_chat_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.jsonl"),
-            tokenizer=mock_tokenizer,
-            chat=True,
-            use_hf_tokenizer_chat_template=True,
-            tool_schemas={"type": "function"},
-        )
-
-        # Verify GPTSFTChatDataset was called with correct args
-        mock_chat_class.assert_called_once()
-        call_kwargs = mock_chat_class.call_args[1]
-        assert call_kwargs["use_hf_tokenizer_chat_template"] is True
-        assert call_kwargs["tool_schemas"] == {"type": "function"}
-
-    @patch("megatron.bridge.data.packing.gpt_sft.GPTSFTPackedDataset")
-    def test_create_packed_dataset_priority(self, mock_packed_class):
-        """Test that .npy files create GPTSFTPackedDataset even with chat=True."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_packed_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.npy"),
-            tokenizer=mock_tokenizer,
-            chat=True,  # Should be ignored for .npy files
-            use_hf_tokenizer_chat_template=True,
-        )
-
-        # Verify GPTSFTPackedDataset was called (not GPTSFTChatDataset)
-        mock_packed_class.assert_called_once()
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_create_packed_parquet_dataset_idx_parquet(self, mock_parquet_class):
-        """Test that .idx.parquet files create GPTSFTPackedParquetDataset."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.idx.parquet"),
-            tokenizer=mock_tokenizer,
-        )
-
-        # Verify GPTSFTPackedParquetDataset was called
-        mock_parquet_class.assert_called_once()
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_create_packed_parquet_dataset_preserves_pad_seq_to_mult(self, mock_parquet_class):
-        """Test that packed Parquet datasets receive pad_seq_to_mult."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.idx.parquet"),
-            tokenizer=mock_tokenizer,
-            pad_seq_to_mult=4,
-        )
-
-        call_kwargs = mock_parquet_class.call_args[1]
-        assert call_kwargs["pad_seq_to_mult"] == 4
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_create_packed_parquet_dataset_idx_pq(self, mock_parquet_class):
-        """Test that .idx.pq files create GPTSFTPackedParquetDataset."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.idx.pq"),
-            tokenizer=mock_tokenizer,
-        )
-
-        # Verify GPTSFTPackedParquetDataset was called
-        mock_parquet_class.assert_called_once()
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_create_packed_parquet_dataset_priority_over_chat(self, mock_parquet_class):
-        """Test that packed Parquet files take precedence over chat=True."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.idx.parquet"),
-            tokenizer=mock_tokenizer,
-            chat=True,  # Should be ignored for packed Parquet files
-            use_hf_tokenizer_chat_template=True,
-        )
-
-        # Verify GPTSFTPackedParquetDataset was called (not GPTSFTChatDataset)
-        mock_parquet_class.assert_called_once()
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_regular_parquet_also_routed_to_packed(self, mock_parquet_class):
-        """Test that all .parquet files route to GPTSFTPackedParquetDataset.
-
-        is_packed_parquet_spec matches any .parquet/.pq file; schema validation
-        inside GPTSFTPackedParquetDataset fast-fails if columns don't match.
-        """
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("test.parquet"),  # No .idx. prefix — still routed to packed
-            tokenizer=mock_tokenizer,
-            chat=True,
-            use_hf_tokenizer_chat_template=True,
-        )
-
-        # All .parquet files go through GPTSFTPackedParquetDataset
-        mock_parquet_class.assert_called_once()
-
-    @patch("megatron.bridge.data.packing.parquet.GPTSFTPackedParquetDataset")
-    def test_create_packed_parquet_glob_pattern(self, mock_parquet_class):
-        """Test that glob patterns like data*.idx.parquet route to GPTSFTPackedParquetDataset."""
-        from pathlib import Path
-
-        mock_tokenizer = MagicMock()
-        mock_parquet_class.return_value = MagicMock()
-
-        create_gpt_sft_dataset(
-            path=Path("data/shard_*.idx.parquet"),  # Glob pattern
-            tokenizer=mock_tokenizer,
-        )
-
-        # Verify GPTSFTPackedParquetDataset was called
-        mock_parquet_class.assert_called_once()
 
 
 class TestIsPackedParquetFile:
@@ -1237,7 +1089,7 @@ class TestPackedSequenceWithChatEndToEnd:
     def test_tokenize_dataset_produces_loss_mask(self):
         """Test that tokenize_dataset with chat produces items with loss_mask."""
         from pathlib import Path
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
 
         from megatron.bridge.data.packing.offline import tokenize_dataset
 
@@ -1262,21 +1114,19 @@ class TestPackedSequenceWithChatEndToEnd:
             "use_hf_tokenizer_chat_template": True,
         }
 
-        with patch("megatron.bridge.data.packing.offline.create_gpt_sft_dataset") as mock_create:
-            mock_create.return_value = mock_dataset
+        result = tokenize_dataset(
+            path=Path("test.jsonl"),
+            tokenizer=mock_tokenizer,
+            max_seq_length=512,
+            seed=1234,
+            dataset_kwargs=dataset_kwargs,
+            dataset_builder=MagicMock(return_value=mock_dataset),
+        )
 
-            result = tokenize_dataset(
-                path=Path("test.jsonl"),
-                tokenizer=mock_tokenizer,
-                max_seq_length=512,
-                seed=1234,
-                dataset_kwargs=dataset_kwargs,
-            )
-
-            # Verify result is array of items with loss_mask
-            assert isinstance(result, np.ndarray)
-            assert len(result) == 1
-            assert "loss_mask" in result[0]
+        # Verify result is array of items with loss_mask
+        assert isinstance(result, np.ndarray)
+        assert len(result) == 1
+        assert "loss_mask" in result[0]
 
     def test_packed_dataset_preserves_chat_loss_mask(self):
         """Test that packed dataset preserves loss_mask from chat preprocessing."""
@@ -1375,25 +1225,29 @@ class TestBackwardCompatibilityLossMask:
 class TestPackedDatasetWithChatTemplateEdgeCases:
     """Edge case tests for packed datasets with chat templates."""
 
-    def test_create_packed_dataset_ignores_chat_flag(self):
+    def test_build_packed_dataset_ignores_chat_flag(self, tmp_path):
         """Test that .npy files ignore chat flag (packed has priority)."""
-        from pathlib import Path
-
-        from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
-
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
+        dataset_path = tmp_path / "test.npy"
+        dataset_path.touch()
 
         with patch("megatron.bridge.data.packing.gpt_sft._safe_load_packed_npy") as mock_load:
             mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy
-            dataset = create_gpt_sft_dataset(
-                path=Path("test.npy"),
+            dataset = build_gpt_sft_split(
+                dataset_path,
                 tokenizer=mock_tokenizer,
-                chat=True,
-                use_hf_tokenizer_chat_template=True,
-                prompt_template="{input} {output}",  # Avoid validation error
+                seq_length=2048,
+                memmap_workers=2,
+                seed=1234,
+                packed_sequence_size=2048,
+                dataset_kwargs={
+                    "chat": True,
+                    "use_hf_tokenizer_chat_template": True,
+                    "prompt_template": "{input} {output}",
+                },
             )
 
             # Verify it's a packed dataset
@@ -1401,24 +1255,29 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
 
             assert isinstance(dataset, GPTSFTPackedDataset)
 
-    def test_dataset_kwargs_flow_through_create_sft(self):
-        """Test that dataset_kwargs flow through create_gpt_sft_dataset to chat dataset."""
-        from pathlib import Path
+    def test_dataset_kwargs_flow_through_builder(self, tmp_path):
+        """Test that dataset_kwargs flow through the builder-owned split helper."""
+        dataset_path = tmp_path / "test.jsonl"
+        dataset_path.touch()
 
-        from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
-
-        with patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset") as mock_chat:
+        with patch("megatron.bridge.data.builders.gpt_sft.GPTSFTChatDataset") as mock_chat:
             mock_tokenizer = MagicMock()
 
             tool_schemas = [{"type": "function"}]
 
-            create_gpt_sft_dataset(
-                path=Path("test.jsonl"),
+            build_gpt_sft_split(
+                dataset_path,
                 tokenizer=mock_tokenizer,
-                chat=True,
-                use_hf_tokenizer_chat_template=True,
-                tool_schemas=tool_schemas,
-                custom_kwarg="custom_value",  # Extra kwargs
+                seq_length=2048,
+                memmap_workers=2,
+                seed=1234,
+                packed_sequence_size=-1,
+                dataset_kwargs={
+                    "chat": True,
+                    "use_hf_tokenizer_chat_template": True,
+                    "tool_schemas": tool_schemas,
+                    "custom_kwarg": "custom_value",
+                },
             )
 
             # Verify all kwargs passed through

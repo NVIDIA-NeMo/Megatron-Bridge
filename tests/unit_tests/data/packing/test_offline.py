@@ -105,7 +105,7 @@ def test_pre_pad_data_point_keeps_already_divisible_stored_length():
     assert (len(data["input_ids"]) - 1) % 8 == 0
 
 
-def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
+def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size():
     """CP padding should let runtime length reach the divisible pack-size cap."""
     factory_kwargs = {}
 
@@ -123,11 +123,9 @@ def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
         def __getitem__(self, index):
             return self.items[index]
 
-    def fake_create_sft_dataset(**kwargs):
+    def fake_build_sft_split(*args, **kwargs):
         factory_kwargs.update(kwargs)
         return TinyDataset()
-
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", fake_create_sft_dataset)
 
     dataset = tokenize_dataset(
         Path("unused.jsonl"),
@@ -136,6 +134,7 @@ def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
         seed=123,
         pad_seq_to_mult=8,
         num_tokenizer_workers=1,
+        dataset_builder=fake_build_sft_split,
     )
 
     assert [len(item["input_ids"]) for item in dataset] == [17, 17, 17, 17]
@@ -144,7 +143,7 @@ def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
     assert factory_kwargs["seq_length"] == 17
 
 
-def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length(monkeypatch):
+def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length():
     """Stored length runtime multiple + 1 should not be rounded up by stored length."""
 
     class TinyDataset:
@@ -161,8 +160,6 @@ def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length(monkeypatch
         def __getitem__(self, index):
             return self.items[index]
 
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", lambda **kwargs: TinyDataset())
-
     dataset = tokenize_dataset(
         Path("unused.jsonl"),
         tokenizer=object(),
@@ -170,13 +167,14 @@ def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length(monkeypatch
         seed=123,
         pad_seq_to_mult=8,
         num_tokenizer_workers=1,
+        dataset_builder=lambda *args, **kwargs: TinyDataset(),
     )
 
     assert [len(item["input_ids"]) for item in dataset] == [17, 25]
     assert all((len(item["input_ids"]) - 1) % 8 == 0 for item in dataset)
 
 
-def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monkeypatch):
+def test_tokenize_dataset_rejects_padding_multiple_without_positive_target():
     """Padding must not silently reduce every sample to a zero-token runtime segment."""
 
     class TinyDataset:
@@ -190,8 +188,6 @@ def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monke
         def __getitem__(self, index):
             raise AssertionError("invalid padding should fail before materializing samples")
 
-    monkeypatch.setattr("megatron.bridge.data.packing.offline.create_gpt_sft_dataset", lambda **kwargs: TinyDataset())
-
     with pytest.raises(ValueError, match="must be at least the effective padding multiple"):
         tokenize_dataset(
             Path("unused.jsonl"),
@@ -200,6 +196,7 @@ def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monke
             seed=123,
             pad_seq_to_mult=8,
             num_tokenizer_workers=1,
+            dataset_builder=lambda *args, **kwargs: TinyDataset(),
         )
 
 

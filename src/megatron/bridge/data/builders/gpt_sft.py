@@ -29,7 +29,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
-from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset, get_dataset_root
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTDataset, get_dataset_root
 from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
@@ -418,7 +418,7 @@ def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
         )
 
 
-def build_gpt_sft_dataset(
+def build_gpt_sft_split(
     path: str | Path,
     *,
     tokenizer: MegatronTokenizer,
@@ -457,18 +457,65 @@ def build_gpt_sft_dataset(
         elif not is_packed_parquet_spec(path_str):
             effective_metadata_path = pack_metadata_path
 
-    return create_gpt_sft_dataset(
-        path,
-        tokenizer=tokenizer,
-        seq_length=seq_length if is_not_packing else packed_sequence_size,
-        memmap_workers=memmap_workers,
-        seed=seed,
-        is_test=is_test,
-        pack_metadata_file_path=effective_metadata_path,
-        pad_cu_seqlens=False if is_not_packing else pad_cu_seqlens,
-        pad_seq_to_mult=1 if is_not_packing else pad_seq_to_mult,
-        **(dataset_kwargs or {}),
-    )
+    options = dict(dataset_kwargs or {})
+    chat = options.pop("chat", False)
+    use_hf_tokenizer_chat_template = options.pop("use_hf_tokenizer_chat_template", False)
+    chat_loss_mode = options.pop("chat_loss_mode", "assistant")
+    tool_schemas = options.pop("tool_schemas", None)
+    dataset_init_kwargs = {
+        "file_path": path_str,
+        "tokenizer": tokenizer,
+        "max_seq_length": seq_length if is_not_packing else packed_sequence_size,
+        "memmap_workers": memmap_workers,
+        "hf_dataset": options.pop("hf_dataset", False),
+        "global_sample_mapping": options.pop("global_sample_mapping", False),
+        "add_bos": options.pop("add_bos", False),
+        "add_eos": options.pop("add_eos", True),
+        "add_sep": options.pop("add_sep", False),
+        "seed": seed,
+        "label_key": options.pop("label_key", "output"),
+        "answer_only_loss": options.pop("answer_only_loss", True),
+        "truncation_field": options.pop("truncation_field", "input"),
+        "pad_to_max_length": options.pop("pad_to_max_length", False),
+        "index_mapping_dir": options.pop("index_mapping_dir", None),
+        "prompt_template": options.pop("prompt_template", "{input} {output}"),
+        "truncation_method": options.pop("truncation_method", "right"),
+        "get_attention_mask_from_fusion": options.pop("get_attention_mask_from_fusion", True),
+        "prompt_completion_config": options.pop("prompt_completion_config", None),
+        "is_test": is_test,
+    }
+
+    if path_str.lower().endswith(".npy"):
+        from megatron.bridge.data.packing.gpt_sft import GPTSFTPackedDataset
+
+        return GPTSFTPackedDataset(
+            pack_metadata_file_path=effective_metadata_path,
+            pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
+            **dataset_init_kwargs,
+            **options,
+        )
+
+    if is_packed_parquet_spec(path_str):
+        from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset
+
+        return GPTSFTPackedParquetDataset(
+            pack_metadata_file_path=effective_metadata_path,
+            pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
+            **dataset_init_kwargs,
+            **options,
+        )
+
+    if chat:
+        return GPTSFTChatDataset(
+            **dataset_init_kwargs,
+            use_hf_tokenizer_chat_template=use_hf_tokenizer_chat_template,
+            loss_mode=chat_loss_mode,
+            tool_schemas=tool_schemas,
+            **options,
+        )
+    return GPTSFTDataset(**dataset_init_kwargs, **options)
 
 
 class GPTSFTDatasetBuilder:
@@ -617,6 +664,7 @@ class GPTSFTDatasetBuilder:
             dataset_kwargs=self.dataset_kwargs,
             pad_seq_to_mult=self._pad_seq_to_mult,
             num_tokenizer_workers=self._num_tokenizer_workers,
+            dataset_builder=build_gpt_sft_split,
         )
 
     def _packed_path_exists(self, path: Union[str, Path]) -> bool:
@@ -688,7 +736,7 @@ class GPTSFTDatasetBuilder:
         Returns:
             list[Optional[Any]]: The train, validation, and test datasets.
         """
-        train_ds = build_gpt_sft_dataset(
+        train_ds = build_gpt_sft_split(
             self.train_path if self.packed_sequence_size <= 0 else self.train_path_packed,
             tokenizer=self.tokenizer,
             seq_length=self.seq_length,
@@ -702,7 +750,7 @@ class GPTSFTDatasetBuilder:
         )
 
         if self.do_validation:
-            valid_ds = build_gpt_sft_dataset(
+            valid_ds = build_gpt_sft_split(
                 self.validation_path if self.packed_sequence_size <= 0 else self.validation_path_packed,
                 tokenizer=self.tokenizer,
                 seq_length=self.seq_length,
@@ -719,7 +767,7 @@ class GPTSFTDatasetBuilder:
             valid_ds = None
 
         if self.do_test:
-            test_ds = build_gpt_sft_dataset(
+            test_ds = build_gpt_sft_split(
                 self.test_path,
                 tokenizer=self.tokenizer,
                 seq_length=self.seq_length,

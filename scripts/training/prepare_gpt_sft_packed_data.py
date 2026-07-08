@@ -71,6 +71,7 @@ def main() -> None:
 
     import megatron.bridge.recipes as all_recipes
     from megatron.bridge.data.builders import GPTSFTDatasetBuilder, GPTSFTDatasetConfig
+    from megatron.bridge.data.builders.gpt_sft import build_gpt_sft_split
     from megatron.bridge.data.packing.offline import prepare_gpt_sft_packed_data
     from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -143,6 +144,7 @@ def main() -> None:
             dataset_kwargs=builder.dataset_kwargs,
             pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
             num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
+            dataset_builder=build_gpt_sft_split,
         )
 
         if args.val_input_path and args.packed_val_data_path:
@@ -157,6 +159,7 @@ def main() -> None:
                 dataset_kwargs=builder.dataset_kwargs,
                 pad_seq_to_mult=offline_packing_specs.pad_seq_to_mult,
                 num_tokenizer_workers=offline_packing_specs.num_tokenizer_workers,
+                dataset_builder=build_gpt_sft_split,
             )
         elif args.val_input_path or args.packed_val_data_path:
             sys.exit("Error: --val-input-path and --packed-val-data-path must be provided together.")

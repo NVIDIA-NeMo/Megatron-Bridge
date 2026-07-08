@@ -17,7 +17,7 @@ from megatron.bridge.data.builders import gpt_sft as builder_mod
 from megatron.bridge.data.builders.gpt_sft import (
     FinetuningDatasetBuilder,
     GPTSFTDatasetBuilder,
-    build_gpt_sft_dataset,
+    build_gpt_sft_split,
     materialize_hf_dataset,
     normalize_gpt_sft_dataset_kwargs,
     resolve_gpt_sft_dataset_root,
@@ -149,13 +149,19 @@ def test_packed_metadata_forwarding_depends_on_format_and_padding(
     metadata_path = tmp_path / "metadata.jsonl"
     captured = {}
 
-    def _create(path, **kwargs):
+    def _build(**kwargs):
         captured.update(kwargs)
-        return path
+        return kwargs["file_path"]
 
-    monkeypatch.setattr(builder_mod, "create_gpt_sft_dataset", _create)
+    if filename.endswith(".npy"):
+        from megatron.bridge.data.packing import gpt_sft as packed_module
+    else:
+        from megatron.bridge.data.packing import parquet as packed_module
 
-    build_gpt_sft_dataset(
+    dataset_class_name = "GPTSFTPackedDataset" if filename.endswith(".npy") else "GPTSFTPackedParquetDataset"
+    monkeypatch.setattr(packed_module, dataset_class_name, _build)
+
+    build_gpt_sft_split(
         packed_path,
         tokenizer=object(),
         seq_length=128,
@@ -164,10 +170,43 @@ def test_packed_metadata_forwarding_depends_on_format_and_padding(
         packed_sequence_size=128,
         pack_metadata_path=metadata_path,
         pad_cu_seqlens=pad_cu_seqlens,
+        pad_seq_to_mult=4,
+        dataset_kwargs={"chat": True, "use_hf_tokenizer_chat_template": True},
     )
 
     expected = metadata_path if expects_metadata else None
     assert captured["pack_metadata_file_path"] == expected
+    assert captured["pad_seq_to_mult"] == 4
+
+
+def test_build_gpt_sft_split_routes_chat_options(monkeypatch, tmp_path):
+    dataset_path = tmp_path / "training.jsonl"
+    dataset_path.touch()
+    captured = {}
+
+    def _build_chat(**kwargs):
+        captured.update(kwargs)
+        return kwargs["file_path"]
+
+    monkeypatch.setattr(builder_mod, "GPTSFTChatDataset", _build_chat)
+
+    result = build_gpt_sft_split(
+        dataset_path,
+        tokenizer=object(),
+        seq_length=128,
+        memmap_workers=1,
+        seed=1234,
+        packed_sequence_size=-1,
+        dataset_kwargs={
+            "chat": True,
+            "use_hf_tokenizer_chat_template": True,
+            "tool_schemas": {"type": "function"},
+        },
+    )
+
+    assert result == str(dataset_path)
+    assert captured["use_hf_tokenizer_chat_template"] is True
+    assert captured["tool_schemas"] == {"type": "function"}
 
 
 def test_local_source_rejects_hf_only_settings(tmp_path):
@@ -502,7 +541,7 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
         dataset_calls.append((path, kwargs))
         return str(path)
 
-    monkeypatch.setattr(builder_mod, "build_gpt_sft_dataset", _build)
+    monkeypatch.setattr(builder_mod, "build_gpt_sft_split", _build)
 
     builder = GPTSFTDatasetBuilder(config=config, tokenizer=object())
     train, validation, test = builder.build()
