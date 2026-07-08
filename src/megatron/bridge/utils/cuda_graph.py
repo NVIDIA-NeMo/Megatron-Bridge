@@ -81,7 +81,15 @@ def set_cuda_graph_modules(config: Any, modules: Any) -> None:
     if _supports_cuda_graph_modules(config):
         config.cuda_graph_modules = [_module_value(name) for name in module_names]
         if hasattr(config, "cuda_graph_scope"):
-            config.cuda_graph_scope = None
+            # Preserve an explicit empty scope as [] rather than wiping it to
+            # None. The new ``cuda_graph_modules`` API supersedes the legacy
+            # ``cuda_graph_scope`` list, so we must clear the legacy field to
+            # avoid double-counting scopes. But callers that explicitly disable
+            # CUDA graphs set ``cuda_graph_scope=[]`` and expect it to stay an
+            # empty list; collapsing it to None silently changes the effective
+            # config (see perf-script override precedence). Only the non-empty
+            # case needs the field neutralized.
+            config.cuda_graph_scope = [] if not module_names else None
     else:
         config.cuda_graph_scope = [CudaGraphScope[name] for name in module_names]
 
