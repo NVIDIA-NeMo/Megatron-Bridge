@@ -64,6 +64,8 @@ def _pad_tokenized_rows(
         target_length = max_length
     elif pad_to_multiple_of > 1:
         target_length = ((target_length + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
+        if max_length is not None:
+            target_length = min(target_length, max_length)
 
     input_ids = torch.full((len(rows), target_length), pad_token_id, dtype=torch.long)
     attention_mask = torch.zeros((len(rows), target_length), dtype=torch.long)
@@ -185,11 +187,11 @@ def text_chat_collate_fn(
             ``apply_chat_template`` directly or through ``processor.tokenizer``.
         max_length: Optional tokenizer truncation length.
         sequence_length: Optional tokenizer truncation length used by
-            conversation-dataset providers.
+            Direct Hugging Face SFT builders.
         pad_to_max_length: If set with ``max_length``, pad every row to
             ``max_length`` instead of the longest row in the batch.
         pad_to_multiple_of: Optional non-packed padding multiple. The HF
-            conversation provider uses this to keep CP/SP slices shape-compatible.
+            SFT builder uses this to keep CP/SP slices shape-compatible.
         warn_on_all_masked: Forwarded to assistant-mask construction.
         loss_mode: Chat tokens that contribute to loss.
         ignore_index: Label ignore value for masked targets.

@@ -24,7 +24,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 from tqdm import tqdm
 
-from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
 from megatron.bridge.data.datasets.packed_parquet import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
@@ -136,7 +136,7 @@ def tokenize_dataset(
         tokenizer (MegatronTokenizer): The tokenizer to use for tokenization.
         max_seq_length (int): Maximum sequence length for the tokens.
         seed (int): Random seed for shuffling the dataset.
-        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
+        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_gpt_sft_dataset.
             Can include 'chat', 'use_hf_tokenizer_chat_template', 'tool_schemas', etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).
@@ -181,7 +181,7 @@ def tokenize_dataset(
             )
     stored_max_seq_length = runtime_max_seq_length + 1 if max_runtime_pad_cap is not None else runtime_max_seq_length
 
-    dataset = create_sft_dataset(
+    dataset = create_gpt_sft_dataset(
         path=path,
         tokenizer=tokenizer,
         seq_length=stored_max_seq_length,
@@ -237,7 +237,7 @@ def prepare_packed_sequence_data(
         seed (int | None): Random seed for shuffling (optional).
         packing_algorithm (str): The algorithm used for packing sequences
                 currently supports "first_fit_shuffle" and "first_fit_decreasing".
-        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_sft_dataset.
+        dataset_kwargs (dict | None): Additional keyword arguments to pass to create_gpt_sft_dataset.
             Enables packing with chat templates, tool schemas, etc.
         pad_seq_to_mult (int | None): Optional multiple to pad each sequence to during packing
             preparation (e.g., set to 2 * context_parallel_size for THD CP).

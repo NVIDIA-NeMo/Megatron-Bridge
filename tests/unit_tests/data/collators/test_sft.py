@@ -199,6 +199,23 @@ def test_text_chat_collate_fn_pads_non_packed_sequences_to_multiple():
     assert batch["position_ids"].tolist() == [[0, 1, 2, 3]]
 
 
+def test_text_chat_collate_fn_caps_non_packed_padding_multiple_at_max_length():
+    tokenizer = _TextChatTokenizer()
+    examples = [
+        {
+            "messages": [
+                {"role": "user", "content": "hi"},
+                {"role": "assistant", "content": "hello"},
+            ]
+        }
+    ]
+
+    batch = text_chat_collate_fn(examples, tokenizer, max_length=3, pad_to_multiple_of=128)
+
+    assert batch["tokens"].shape == (1, 3)
+    assert batch["tokens"].tolist() == [[11, 21, 22]]
+
+
 def test_text_chat_collate_fn_uses_chatml_boundary_mask_without_generation_template():
     tokenizer = _ChatMLBoundaryTokenizer()
     examples = [

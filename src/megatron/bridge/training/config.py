@@ -1117,6 +1117,11 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
+        # Validate declarative Direct-HF values before deriving runtime padding
+        # multiples so normalization cannot hide an invalid user value.
+        if isinstance(self.dataset, DirectHFSFTDatasetConfig):
+            self.dataset.validate()
+
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
@@ -1124,17 +1129,34 @@ class ConfigContainer(Container):
             )
             self.dataset.pad_to_max_length = requires_fixed_seq_len
 
+        cp_size = getattr(self.model, "context_parallel_size", 1)
+        eval_cp_size = self.dist.eval_context_parallel_size
+        cp_sizes = {cp_size, eval_cp_size} if eval_cp_size is not None else {cp_size}
+        tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+        has_sp = getattr(self.model, "sequence_parallel", False)
+        cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
+        sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
+        collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
+        if (
+            isinstance(self.dataset, DirectHFSFTDatasetConfig)
+            and self.dataset.seq_length % collate_padding_multiple != 0
+        ):
+            raise ValueError(
+                "DirectHFSFTDatasetConfig.seq_length must be divisible by the CP/SP collate padding multiple "
+                f"({collate_padding_multiple})."
+            )
+
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
-                cp_size = getattr(self.model, "context_parallel_size", 1)
-                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
-                has_sp = getattr(self.model, "sequence_parallel", False)
-                cp_multiple = 2 * cp_size if cp_size > 1 else 1
-                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
-                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
+                self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
+        elif isinstance(self.dataset, DirectHFSFTDatasetConfig):
+            self.dataset.pad_to_multiple_of = math.lcm(
+                self.dataset.pad_to_multiple_of,
+                collate_padding_multiple,
+            )
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()

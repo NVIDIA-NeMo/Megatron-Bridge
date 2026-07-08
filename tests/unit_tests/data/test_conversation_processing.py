@@ -35,6 +35,7 @@ from megatron.bridge.data.conversation_processing import (
     shared_chat_template_kwargs_from_examples,
     tokenize_chat_example,
 )
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX, _chat_preprocess
 from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
@@ -527,7 +528,7 @@ def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(co
     assert normalize_chat_conversation(row) == turns
 
 
-def test_gpt_sft_and_direct_hf_share_llama_preprocessing():
+def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():
     tokenizer = _LlamaPreprocessingTokenizer()
     row = {
         "messages": [
@@ -540,8 +541,24 @@ def test_gpt_sft_and_direct_hf_share_llama_preprocessing():
 
     class _MegatronTokenizerWrapper:
         _tokenizer = tokenizer
+        eos_id = tokenizer.eos_token_id
 
-    gpt_sft = _chat_preprocess(row, _MegatronTokenizerWrapper())
+    megatron_tokenizer = _MegatronTokenizerWrapper()
+    gpt_dataset = GPTSFTChatDataset.__new__(GPTSFTChatDataset)
+    gpt_dataset.use_hf_tokenizer_chat_template = True
+    gpt_dataset.loss_mode = "assistant"
+    gpt_dataset.tool_schemas = None
+    gpt_dataset.tokenizer = megatron_tokenizer
+    gpt_dataset.output_original_text = False
+    gpt_dataset.max_seq_length = 16
+    gpt_dataset.tokens_to_generate = 0
+    gpt_dataset.pad_to_max_length = False
+    gpt_dataset.pad_seq_length_to_mult = 1
+    gpt_dataset.ceil_to_power_2 = False
+    gpt_dataset.get_attention_mask_from_fusion = True
+
+    gpt_sft = gpt_dataset._process_example(row)
+    gpt_batch = gpt_dataset.collate_fn([gpt_sft])
     direct_hf = text_chat_collate_fn([row], tokenizer)
 
     assert shared.input_ids.tolist() == [300, 42, 303, 302, 42, 303]
@@ -550,6 +567,16 @@ def test_gpt_sft_and_direct_hf_share_llama_preprocessing():
     assert gpt_sft["loss_mask"].tolist() == shared.assistant_mask.tolist()
     assert direct_hf["input_ids"].tolist() == [shared.input_ids.tolist()]
     assert direct_hf["loss_mask"].tolist() == [[False, False, False, True, True, False]]
+
+    pair_count = shared.input_ids.numel() - 1
+    assert gpt_batch["tokens"][0, :pair_count].tolist() == direct_hf["tokens"][0, :pair_count].tolist()
+    gpt_trainable = gpt_batch["loss_mask"][0, :pair_count].bool()
+    direct_trainable = direct_hf["loss_mask"][0, :pair_count].bool()
+    assert gpt_trainable.tolist() == direct_trainable.tolist()
+    assert (
+        gpt_batch["labels"][0, :pair_count][gpt_trainable].tolist()
+        == direct_hf["labels"][0, :pair_count][direct_trainable].tolist()
+    )
 
 
 def test_chat_full_loss_does_not_require_assistant_markers():

@@ -106,7 +106,7 @@ def get_dataset_root(name: str) -> Path:
     return output
 
 
-def create_sft_dataset(
+def create_gpt_sft_dataset(
     path: str | Path,
     tokenizer: "MegatronTokenizer",
     seq_length: int = 2048,

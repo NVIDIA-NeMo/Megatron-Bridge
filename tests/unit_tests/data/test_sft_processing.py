@@ -11,6 +11,7 @@ from megatron.bridge.data.sft_processing import (
     normalize_sft_example,
     tokenize_prompt_completion_example,
 )
+from megatron.bridge.data.sources.hf_adapters import adapt_hf_dataset
 
 
 pytestmark = pytest.mark.unit
@@ -154,21 +155,29 @@ def test_prompt_completion_preserves_gpt_generation_reserve_truncation(
     assert tokenized.input_ids.tolist()[-1] == tokenizer.eos_token_id
 
 
-def test_prompt_completion_training_pairs_match_across_backends():
+def test_squad_row_has_matching_gpt_sft_and_direct_hf_collation():
     tokenizer = _Tokenizer()
     tokenizer.added_tokens_decoder = {ord("A"): "<image>"}
     preprocessing = PromptCompletionSFTPreprocessingConfig(separator=" ")
-    example = {"prompt": "Q", "completion": "A"}
+    example = adapt_hf_dataset(
+        [{"context": "C", "question": "Q", "answers": {"text": ["A"]}}],
+        adapter_name="squad",
+    )[0]
     gpt_dataset = GPTSFTDataset.__new__(GPTSFTDataset)
     gpt_dataset.prompt_completion_config = preprocessing
     gpt_dataset.tokenizer = tokenizer
-    gpt_dataset.max_seq_length = 16
+    gpt_dataset.max_seq_length = 64
     gpt_dataset.virtual_tokens = 0
     gpt_dataset.tokens_to_generate = 0
     gpt_dataset.is_test = False
     gpt_dataset.output_original_text = False
+    gpt_dataset.pad_to_max_length = False
+    gpt_dataset.pad_seq_length_to_mult = 1
+    gpt_dataset.ceil_to_power_2 = False
+    gpt_dataset.get_attention_mask_from_fusion = True
 
     processed = gpt_dataset._process_example(example)
+    gpt_batch = gpt_dataset.collate_fn([processed])
     direct_batch = text_prompt_completion_collate_fn(
         [example],
         tokenizer,
@@ -183,7 +192,17 @@ def test_prompt_completion_training_pairs_match_across_backends():
     ]
     assert direct_batch["labels"][0, :-1].tolist() == expected_labels
     assert direct_batch["loss_mask"][0, :-1].tolist() == shifted_loss_mask
-    assert direct_batch["loss_mask"][0, :-1].tolist() == [1.0, 0.0, 1.0]
+    assert direct_batch["loss_mask"][0, -4:-1].tolist() == [1.0, 0.0, 1.0]
+
+    pair_count = len(processed["input_ids"]) - 1
+    assert gpt_batch["tokens"][0, :pair_count].tolist() == direct_batch["tokens"][0, :pair_count].tolist()
+    gpt_trainable = gpt_batch["loss_mask"][0, :pair_count].bool()
+    direct_trainable = direct_batch["loss_mask"][0, :pair_count].bool()
+    assert gpt_trainable.tolist() == direct_trainable.tolist()
+    assert (
+        gpt_batch["labels"][0, :pair_count][gpt_trainable].tolist()
+        == direct_batch["labels"][0, :pair_count][direct_trainable].tolist()
+    )
 
 
 def test_gpt_prompt_completion_preserves_test_and_runtime_options():

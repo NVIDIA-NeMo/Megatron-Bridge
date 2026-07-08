@@ -365,8 +365,8 @@ class TestPackedSequenceDatasetKwargs:
             "tool_schemas": [{"type": "function"}],
         }
 
-        # Mock create_sft_dataset to verify it receives kwargs
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+        # Mock create_gpt_sft_dataset to verify it receives kwargs
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset
@@ -379,7 +379,7 @@ class TestPackedSequenceDatasetKwargs:
                 dataset_kwargs=dataset_kwargs,
             )
 
-            # Verify create_sft_dataset was called with kwargs
+            # Verify create_gpt_sft_dataset was called with kwargs
             mock_create.assert_called_once()
             call_kwargs = mock_create.call_args[1]
             assert call_kwargs["chat"] is True
@@ -401,7 +401,7 @@ class TestPackedSequenceDatasetKwargs:
         tool_schemas_dict = [{"type": "function", "function": {"name": "test"}}]
         dataset_kwargs = {"tool_schemas": tool_schemas_dict}
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset
@@ -437,7 +437,7 @@ class TestPackedSequenceDatasetKwargs:
         custom_template = "{% for msg in messages %}{{ msg.content }}{% endfor %}"
         dataset_kwargs = {"chat_template": custom_template}
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
             mock_dataset = MagicMock()
             mock_dataset.__len__.return_value = 0
             mock_create.return_value = mock_dataset
@@ -453,6 +453,6 @@ class TestPackedSequenceDatasetKwargs:
             # Verify chat_template was set on tokenizer
             assert mock_hf_tokenizer.chat_template == custom_template
 
-            # Verify chat_template was popped from dataset_kwargs (not passed to create_sft_dataset)
+            # Verify chat_template was popped from dataset_kwargs (not passed to create_gpt_sft_dataset)
             call_kwargs = mock_create.call_args[1]
             assert "chat_template" not in call_kwargs

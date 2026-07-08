@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, GPTSFTPackedDataset, create_gpt_sft_dataset
 from megatron.bridge.data.datasets.utils import _chat_preprocess, _convert_to_openai_messages
 
 
@@ -501,7 +501,7 @@ class TestGPTSFTChatDataset:
 
 
 class TestCreateSFTDataset:
-    """Test cases for create_sft_dataset factory function."""
+    """Test cases for create_gpt_sft_dataset factory function."""
 
     @patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset")
     def test_create_chat_dataset_with_template(self, mock_chat_class):
@@ -511,7 +511,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_chat_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.jsonl"),
             tokenizer=mock_tokenizer,
             chat=True,
@@ -533,7 +533,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_packed_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.npy"),
             tokenizer=mock_tokenizer,
             chat=True,  # Should be ignored for .npy files
@@ -551,7 +551,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.idx.parquet"),
             tokenizer=mock_tokenizer,
         )
@@ -567,7 +567,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.idx.parquet"),
             tokenizer=mock_tokenizer,
             pad_seq_to_mult=4,
@@ -584,7 +584,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.idx.pq"),
             tokenizer=mock_tokenizer,
         )
@@ -600,7 +600,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.idx.parquet"),
             tokenizer=mock_tokenizer,
             chat=True,  # Should be ignored for packed Parquet files
@@ -622,7 +622,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("test.parquet"),  # No .idx. prefix — still routed to packed
             tokenizer=mock_tokenizer,
             chat=True,
@@ -640,7 +640,7 @@ class TestCreateSFTDataset:
         mock_tokenizer = MagicMock()
         mock_parquet_class.return_value = MagicMock()
 
-        create_sft_dataset(
+        create_gpt_sft_dataset(
             path=Path("data/shard_*.idx.parquet"),  # Glob pattern
             tokenizer=mock_tokenizer,
         )
@@ -1261,7 +1261,7 @@ class TestPackedSequenceWithChatEndToEnd:
             "use_hf_tokenizer_chat_template": True,
         }
 
-        with patch("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset") as mock_create:
+        with patch("megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset") as mock_create:
             mock_create.return_value = mock_dataset
 
             result = tokenize_dataset(
@@ -1378,7 +1378,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
         """Test that .npy files ignore chat flag (packed has priority)."""
         from pathlib import Path
 
-        from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
+        from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.eos_id = 2
@@ -1387,7 +1387,7 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
             mock_load.return_value = np.array([{"input_ids": [1, 2], "seq_start_id": [0], "loss_mask": [1, 1]}])
 
             # Even with chat=True, should create GPTSFTPackedDataset for .npy
-            dataset = create_sft_dataset(
+            dataset = create_gpt_sft_dataset(
                 path=Path("test.npy"),
                 tokenizer=mock_tokenizer,
                 chat=True,
@@ -1401,17 +1401,17 @@ class TestPackedDatasetWithChatTemplateEdgeCases:
             assert isinstance(dataset, GPTSFTPackedDataset)
 
     def test_dataset_kwargs_flow_through_create_sft(self):
-        """Test that dataset_kwargs flow through create_sft_dataset to chat dataset."""
+        """Test that dataset_kwargs flow through create_gpt_sft_dataset to chat dataset."""
         from pathlib import Path
 
-        from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset
+        from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset
 
         with patch("megatron.bridge.data.datasets.gpt_sft.GPTSFTChatDataset") as mock_chat:
             mock_tokenizer = MagicMock()
 
             tool_schemas = [{"type": "function"}]
 
-            create_sft_dataset(
+            create_gpt_sft_dataset(
                 path=Path("test.jsonl"),
                 tokenizer=mock_tokenizer,
                 chat=True,

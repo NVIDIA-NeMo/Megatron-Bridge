@@ -29,7 +29,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tokenizers.text.libraries import HuggingFaceTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, validate_declarative_mapping
-from megatron.bridge.data.datasets.gpt_sft import create_sft_dataset, get_dataset_root
+from megatron.bridge.data.datasets.gpt_sft import create_gpt_sft_dataset, get_dataset_root
 from megatron.bridge.data.datasets.packed_parquet import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
@@ -457,7 +457,7 @@ def build_gpt_sft_dataset(
         elif not is_packed_parquet_spec(path_str):
             effective_metadata_path = pack_metadata_path
 
-    return create_sft_dataset(
+    return create_gpt_sft_dataset(
         path,
         tokenizer=tokenizer,
         seq_length=seq_length if is_not_packing else packed_sequence_size,

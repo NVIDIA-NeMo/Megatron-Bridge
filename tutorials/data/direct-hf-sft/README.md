@@ -1,31 +1,10 @@
 # Direct Hugging Face SFT Dataset Tutorial
 
-Use `DirectHFSFTDatasetConfig` for direct Hugging Face SFT processing. The training framework resolves `DirectHFSFTDatasetBuilder`, which loads a declarative source, applies an optional schema adapter, binds the processor/tokenizer and collator, and constructs schedule-sized `DirectSFTDataset` splits.
+Choose this path when you want to train directly from hosted or local Hugging Face rows without first materializing text-only SFT JSONL. It supports text, vision, video, audio, and omni examples, as well as collate-time in-batch packing. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) for a comparison with materialized text-only SFT and Energon.
 
-This tutorial starts with text chat, but the same Config + Builder path supports paired text, vision, video, audio, and omni rows. Text rows use the same preprocessing configs and tokenization helpers as the materialized text-only SFT path. Multimodal rows use chat preprocessing plus the configured Hugging Face processor and its registered model collator.
+## Start with a hosted chat dataset
 
-Compared with materialized text-only SFT, this path processes adapted rows directly and supports collate-time in-batch packing. It does not materialize reusable text-only SFT JSONL or provide offline packing and finite `num_epochs` semantics.
-
-## Prepare text conversations
-
-Generate local `messages` JSONL files from the repository root:
-
-```bash
-uv run python tutorials/data/direct-hf-sft/prepare_example_data.py \
-    --output-dir /tmp/bridge-direct-hf-sft
-```
-
-Native chat sources may use rows like:
-
-```json
-{"messages": [{"role": "user", "content": "What belongs in config?"}, {"role": "assistant", "content": "Validated declarative data."}]}
-```
-
-The legacy `conversations` key is also recognized for text. Multimodal schema adapters normally produce a singular `conversation` value with typed content items and media fields.
-
-## Connect text chat to training
-
-Use the Hugging Face `json` loader directly. Set an instruction-tuned processor with a chat template:
+If a hosted dataset already exposes native `messages`, select it and its split directly; no schema adapter is required. Set an instruction-tuned processor with the intended chat template:
 
 ```python
 from megatron.bridge.recipes.llama.llama3 import llama32_1b_sft_config
@@ -36,6 +15,44 @@ from megatron.bridge.training.gpt_step import forward_step
 cfg = llama32_1b_sft_config()
 cfg.checkpoint.pretrained_checkpoint = "/checkpoints/llama32-1b-instruct"
 cfg.checkpoint.load = None
+cfg.dataset = DirectHFSFTDatasetConfig(
+    seq_length=cfg.model.seq_length,
+    preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
+    hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
+    source=HFDatasetSourceConfig(
+        path_or_dataset="HuggingFaceH4/ultrachat_200k",
+        split="train_sft",
+    ),
+    dataloader_type="single",
+    do_validation=False,
+    do_test=False,
+)
+
+finetune(config=cfg, forward_step_func=forward_step)
+```
+
+The base checkpoint must be a native Megatron checkpoint or a local Hugging Face full-model directory accepted by Bridge, and its vocabulary must match the selected processor. Set `hf_processor_path=None` only when the recipe's training tokenizer already defines the intended chat template. Keep `cfg.model.seq_length` equal to `cfg.dataset.seq_length`. The builder repeats normalized examples to the sample counts requested by the training schedule, so iteration-based training remains the supported duration model.
+
+Use a registered `schema_adapter` when hosted columns are not already one of `messages`, `conversation`, or `conversations`. Built-in examples are listed in [Available knobs](#available-knobs). `load_kwargs` belongs to dataset loading; `adapter_kwargs` belongs only to row conversion.
+
+## Use local chat JSONL
+
+Generate small `messages` JSONL files from the repository root:
+
+```bash
+uv run python tutorials/data/direct-hf-sft/prepare_example_data.py \
+    --output-dir /tmp/bridge-direct-hf-sft
+```
+
+Native chat rows look like this:
+
+```json
+{"messages": [{"role": "user", "content": "What belongs in config?"}, {"role": "assistant", "content": "Validated declarative data."}]}
+```
+
+Point the Hugging Face `json` loader at the generated splits:
+
+```python
 cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=cfg.model.seq_length,
     preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
@@ -54,15 +71,12 @@ cfg.dataset = DirectHFSFTDatasetConfig(
         split="test",
         load_kwargs={"data_files": {"test": "/tmp/bridge-direct-hf-sft/test.jsonl"}},
     ),
-    dataloader_type="single",
     do_validation=True,
     do_test=True,
 )
-
-finetune(config=cfg, forward_step_func=forward_step)
 ```
 
-The base checkpoint must be a native Megatron checkpoint or a local Hugging Face full-model directory accepted by Bridge, and its vocabulary must match the selected processor. Set `hf_processor_path=None` only when the recipe's training tokenizer already defines the intended chat template. Keep `cfg.model.seq_length` equal to `cfg.dataset.seq_length`. The builder repeats normalized examples to the sample counts requested by the training schedule, so iteration-based training remains the supported duration model.
+The legacy `conversations` key is also recognized for text. Multimodal schema adapters normally produce a singular `conversation` value with typed content items and media fields.
 
 ## Train paired text without a chat template
 
@@ -88,27 +102,7 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 )
 ```
 
-This mode tokenizes the prompt and completion separately and never calls `apply_chat_template`. It supports completion-only or full-sequence loss. Structured conversations are not flattened into paired text.
-
-## Use an existing hosted dataset
-
-For a hosted dataset that already exposes native `messages`, select the dataset and split directly; no adapter is required:
-
-```python
-cfg.dataset = DirectHFSFTDatasetConfig(
-    seq_length=cfg.model.seq_length,
-    preprocessing=ChatSFTPreprocessingConfig(),
-    hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
-    source=HFDatasetSourceConfig(
-        path_or_dataset="HuggingFaceH4/ultrachat_200k",
-        split="train_sft",
-    ),
-    do_validation=False,
-    do_test=False,
-)
-```
-
-Use `schema_adapter` only when the hosted columns are not already one of `messages`, `conversation`, or `conversations`. `load_kwargs` belongs to dataset loading; `adapter_kwargs` belongs only to row conversion.
+This mode tokenizes the prompt and completion separately and never calls `apply_chat_template`. It supports completion-only or full-sequence loss. Structured conversations are not flattened into paired text. The schema is intentionally two-column; normalize three-field Alpaca-style `instruction` + `input` + `output` rows first so the `input` field is not dropped.
 
 ## Connect multimodal data
 
@@ -151,11 +145,12 @@ In-batch packing requires micro batch size greater than 1. `in_batch_packing_pad
 | Padding | `pad_to_max_length`, `pad_to_multiple_of` | Fixed or efficient batch padding |
 | Loader | `dataloader_type`, `num_workers`, `data_sharding`, `pin_memory`, `drop_last`, `persistent_workers` | DataLoader behavior |
 
-Built-in adapters include `squad`, `gsm8k`, `cord_v2`, and `cv17`; native rows matching the selected preprocessing schema need no adapter. All config mappings must contain serializable declarative values; processors, tokenizers, and collator callables belong to the builder.
+Built-in registered adapters include `squad`, `gsm8k`, `cord_v2`, and `cv17`; native rows matching the selected preprocessing schema need no adapter. All config mappings must contain serializable declarative values; processors, tokenizers, and collator callables belong to the builder.
 
 ## Troubleshooting
 
 - If `hf_processor_path` is unset, the build context must contain a training tokenizer.
 - An unknown processor type means its multimodal collator is not registered; text rows select a shared collator from the preprocessing config automatically.
 - A source must return non-empty normalized rows for every enabled split with a positive requested sample count.
+- Chat rows should follow the role ordering accepted by the selected model template. Rows with no trainable assistant tokens emit a warning and contribute zero loss.
 - Unsupported in-batch packing fails early when a custom/model collator cannot accept packing metadata.

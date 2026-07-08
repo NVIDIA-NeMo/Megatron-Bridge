@@ -24,7 +24,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, create_sft_dataset
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset, create_gpt_sft_dataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -214,7 +214,7 @@ class TestChatTemplateWithRealTokenizer:
         ]
 
         # Create dataset
-        dataset = create_sft_dataset(
+        dataset = create_gpt_sft_dataset(
             path=dataset_path,
             tokenizer=chat_tokenizer,
             seq_length=512,
@@ -287,7 +287,7 @@ class TestChatTemplateWithRealTokenizer:
             }
         ]
 
-        dataset = create_sft_dataset(
+        dataset = create_gpt_sft_dataset(
             path=dataset_path,
             tokenizer=chat_tokenizer,
             seq_length=512,
@@ -447,7 +447,7 @@ class TestChatTemplateWithRealTokenizer:
                 f,
             )
 
-        dataset = create_sft_dataset(
+        dataset = create_gpt_sft_dataset(
             path=dataset_path,
             tokenizer=chat_tokenizer,
             seq_length=512,

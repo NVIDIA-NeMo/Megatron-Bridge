@@ -127,7 +127,9 @@ def test_tokenize_dataset_caps_runtime_padding_target_to_pack_size(monkeypatch):
         factory_kwargs.update(kwargs)
         return TinyDataset()
 
-    monkeypatch.setattr("megatron.bridge.data.datasets.packed_sequence.create_sft_dataset", fake_create_sft_dataset)
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", fake_create_sft_dataset
+    )
 
     dataset = tokenize_dataset(
         Path("unused.jsonl"),
@@ -162,7 +164,7 @@ def test_tokenize_dataset_ceil_uses_runtime_length_not_stored_length(monkeypatch
             return self.items[index]
 
     monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.create_sft_dataset", lambda **kwargs: TinyDataset()
+        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", lambda **kwargs: TinyDataset()
     )
 
     dataset = tokenize_dataset(
@@ -193,7 +195,7 @@ def test_tokenize_dataset_rejects_padding_multiple_without_positive_target(monke
             raise AssertionError("invalid padding should fail before materializing samples")
 
     monkeypatch.setattr(
-        "megatron.bridge.data.datasets.packed_sequence.create_sft_dataset", lambda **kwargs: TinyDataset()
+        "megatron.bridge.data.datasets.packed_sequence.create_gpt_sft_dataset", lambda **kwargs: TinyDataset()
     )
 
     with pytest.raises(ValueError, match="must be at least the effective padding multiple"):

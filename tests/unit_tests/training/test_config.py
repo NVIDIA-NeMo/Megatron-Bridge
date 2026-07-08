@@ -1052,6 +1052,103 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_direct_hf_non_packed_padding_multiple_includes_cp_and_sp_requirements(self, monkeypatch):
+        """Test non-packed direct-HF batches are divisible for CP/SP slicing."""
+        gpt_model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.pad_to_multiple_of = 3
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_direct_hf_seq_length_must_support_cp_and_sp_collate_slicing(self, monkeypatch):
+        """Test the sequence cap cannot undo CP/SP-safe collate padding."""
+        gpt_model_cfg = create_test_gpt_config(
+            seq_length=20,
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=20)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match="seq_length must be divisible by the CP/SP collate padding"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_direct_hf_padding_multiple_is_validated_before_runtime_derivation(self, monkeypatch):
+        """Test runtime LCM derivation cannot normalize an invalid declarative value."""
+        gpt_model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            calculate_per_token_loss=True,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=2)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.pad_to_multiple_of = -3
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.ddp.average_in_collective = False
+
+        try:
+            with pytest.raises(ValueError, match="pad_to_multiple_of must be greater than 0"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_direct_hf_padding_multiple_includes_eval_context_parallel_size(self, monkeypatch):
+        """Test validation batches remain sliceable with a different eval CP degree."""
+        gpt_model_cfg = create_test_gpt_config(seq_length=24)
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=2)
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=24)
+        dataset_cfg.pad_to_multiple_of = 3
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=2,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        container.dist.eval_context_parallel_size = 2
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_multiple_of == 12
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_enable_offline_packing_requires_specs(self, monkeypatch):
         """Test validation error when offline packing is enabled without specs."""
         gpt_model_cfg = create_test_gpt_config()

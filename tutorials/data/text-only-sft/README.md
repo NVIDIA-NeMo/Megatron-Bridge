@@ -1,11 +1,13 @@
 # Text-only SFT Dataset Tutorial
 
-Use this path for text SFT or PEFT when data already exists as local JSONL, or when a Hugging Face source should first be normalized into reusable JSONL. `GPTSFTDatasetConfig` stores declarative settings; `GPTSFTDatasetBuilder` owns tokenizer binding, source materialization, offline packing, and `GPTSFTDataset` construction.
+Choose this path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It also supports offline sequence packing and finite `num_epochs` training. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct Hugging Face SFT.
+
+You configure the data with `GPTSFTDatasetConfig`; the training framework uses `GPTSFTDatasetBuilder` to bind the tokenizer, materialize sources when needed, prepare offline packing, and construct `GPTSFTDataset` splits.
 
 Choose exactly one source:
 
 - `dataset_root` for local `training.jsonl`, optional `validation.jsonl`, and optional `test.jsonl` files.
-- `hf_dataset` for a declarative Hugging Face source plus an optional schema adapter.
+- `hf_dataset` for a declarative Hugging Face source plus an optional registered schema adapter.
 
 ## Prepare local JSONL
 
@@ -21,6 +23,8 @@ Each line is a JSON object:
 ```json
 {"input": "What is SFT?", "output": "Supervised fine-tuning."}
 ```
+
+This is two-column paired text. For standard three-field Alpaca-style rows, combine `instruction` and `input` into the configured prompt column before training so neither field is dropped.
 
 For conversation data, select chat preprocessing explicitly:
 
@@ -75,7 +79,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 `model.seq_length` and `dataset.seq_length` must match. SFT and PEFT also need pretrained weights unless resuming a complete native checkpoint.
 
-## Materialize a Hugging Face source
+## Start from a Hugging Face source
 
 Use `HFDatasetSourceConfig` instead of `dataset_root`:
 
@@ -97,7 +101,7 @@ cfg.dataset = GPTSFTDatasetConfig(
 )
 ```
 
-The builder loads the source, applies the optional row adapter, normalizes rows for the selected preprocessing mode, writes the standard split files, and then uses the same text-only SFT construction as local mode. Omit `hf_output_root` to use the NeMo dataset cache. Set `hf_rewrite=True` only when existing normalized files should be replaced; builder-managed packed artifacts are regenerated at the same time. Native rows matching the selected preprocessing schema need no `schema_adapter`.
+The builder loads the source, applies the optional registered row adapter, normalizes rows for the selected preprocessing mode, writes the standard split files, and then uses the same text-only SFT construction as local mode. Omit `hf_output_root` to use the NeMo dataset cache. Set `hf_rewrite=True` only when existing normalized files should be replaced; builder-managed packed artifacts are regenerated at the same time. Native rows matching the selected preprocessing schema need no `schema_adapter`.
 
 ## Enable offline packing
 
@@ -155,6 +159,8 @@ This writes default `.idx.parquet` packed splits and metadata under the dataset 
 
 Packed SFT requires micro batch size 1. With context parallelism, sequence lengths must be divisible by twice the CP size, `calculate_per_token_loss=True`, and `ddp.average_in_collective=False`. CUDA graphs require padded packed metadata.
 
+For the complete constraints and runtime behavior, see [Packed Sequences](../../../docs/training/packed-sequences.md). Contributors can also use the [sequence-packing validation guide](../../../skills/nemo-mbridge-perf-sequence-packing/SKILL.md) when changing or validating this path.
+
 `train.num_epochs` is supported for this finite dataset only with `dataloader_type="batch"`; Bridge derives the iteration count from the true training split size and keeps the final incomplete global batch.
 
 ## Available knobs
@@ -168,7 +174,7 @@ Packed SFT requires micro batch size 1. With context parallelism, sequence lengt
 | Dataset behavior | `dataset_kwargs` | Backend-only options such as padding, tool schemas, and advanced `GPTSFTDataset` controls |
 | Offline packing | `enable_offline_packing`, `offline_packing_specs` | Prepared packed sequences and metadata |
 | Loader | `dataloader_type`, `num_workers`, `data_sharding`, `pin_memory`, `drop_last`, `persistent_workers` | DataLoader behavior |
-| HF source | `path_or_dataset`, `split`, `subset`, `load_kwargs`, optional `schema_adapter` and `adapter_kwargs` | Dataset loading and row normalization |
+| HF source | `path_or_dataset`, `split`, `subset`, `load_kwargs`, optional registered `schema_adapter` and `adapter_kwargs` | Dataset loading and row normalization |
 | HF materialization | `hf_validation_dataset`, `hf_test_dataset`, `hf_output_root`, `hf_validation_proportion`, `hf_rewrite` | Split overrides, cache location, and rematerialization |
 | Packing spec | `packed_sequence_size`, `tokenizer_model_name`, `num_tokenizer_workers`, packed paths, metadata path, `pad_cu_seqlens`, `pad_seq_to_mult` | Packed artifact layout and alignment |
 
