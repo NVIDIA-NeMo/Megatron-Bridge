@@ -34,7 +34,6 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 logger = logging.getLogger(__name__)
 
-DatasetMaker = Callable[..., list[dict[str, Any]]]
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
 
@@ -131,22 +130,9 @@ def load_hf_sft_processor(config: HFSFTDatasetConfig, tokenizer: Any | None) -> 
         )
 
 
-def load_hf_sft_examples(
-    source: HFDatasetSourceConfig,
-    *,
-    maker: DatasetMaker | None = None,
-    maker_kwargs: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Load and normalize one source, with an optional legacy maker override."""
-    if maker is None:
-        return load_and_adapt_hf_dataset(source)
-    kwargs = dict(maker_kwargs or {})
-    examples = maker(**kwargs)
-    if not isinstance(examples, list) or not examples:
-        raise ValueError("Legacy Hugging Face maker returned no examples.")
-    if not all(isinstance(example, dict) for example in examples):
-        raise TypeError("Legacy Hugging Face makers must return a list of dictionaries.")
-    return examples
+def load_hf_sft_examples(source: HFDatasetSourceConfig) -> list[dict[str, Any]]:
+    """Load and normalize one declarative Hugging Face source."""
+    return load_and_adapt_hf_dataset(source)
 
 
 def select_hf_sft_collate(
@@ -167,14 +153,12 @@ def build_hf_sft_split(
     target_length: int,
     processor: Any,
     *,
-    maker: DatasetMaker | None = None,
-    maker_kwargs: dict[str, Any] | None = None,
     collate_impl: CollateFunction | None = None,
 ) -> ConversationDataset | None:
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
-    examples = load_hf_sft_examples(source, maker=maker, maker_kwargs=maker_kwargs)
+    examples = load_hf_sft_examples(source)
     return ConversationDataset(
         base_examples=examples,
         target_length=target_length,
@@ -196,19 +180,11 @@ class HFSFTDatasetBuilder:
         self,
         config: HFSFTDatasetConfig,
         *,
-        maker: DatasetMaker | None = None,
         collate_impl: CollateFunction | None = None,
-        maker_kwargs: dict[str, Any] | None = None,
-        val_maker_kwargs: dict[str, Any] | None = None,
-        test_maker_kwargs: dict[str, Any] | None = None,
     ) -> None:
         config.validate()
         self.config = config
-        self._maker = maker
         self._collate_impl = collate_impl
-        self._maker_kwargs = maker_kwargs
-        self._val_maker_kwargs = val_maker_kwargs
-        self._test_maker_kwargs = test_maker_kwargs
 
     def build(
         self,
@@ -221,8 +197,6 @@ class HFSFTDatasetBuilder:
             self.config.source,
             context.train_samples,
             processor,
-            maker=self._maker,
-            maker_kwargs=self._maker_kwargs,
             collate_impl=self._collate_impl,
         )
         validation_source = self.config.validation_source or self.config.source.with_split("validation")
@@ -232,8 +206,6 @@ class HFSFTDatasetBuilder:
                 validation_source,
                 context.valid_samples,
                 processor,
-                maker=self._maker,
-                maker_kwargs=self._val_maker_kwargs,
                 collate_impl=self._collate_impl,
             )
             if self.config.do_validation
@@ -246,8 +218,6 @@ class HFSFTDatasetBuilder:
                 test_source,
                 context.test_samples,
                 processor,
-                maker=self._maker,
-                maker_kwargs=self._test_maker_kwargs,
                 collate_impl=self._collate_impl,
             )
             if self.config.do_test

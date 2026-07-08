@@ -239,6 +239,57 @@ def _llava_video_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) 
     return {"conversation": conversation} if conversation else None
 
 
+def _valor32k_avqa_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> dict[str, Any] | None:
+    data_root = kwargs.get("data_root")
+    if data_root is None:
+        raise ValueError("valor32k_avqa requires adapter_kwargs.data_root.")
+
+    modality = str(example.get("modality", "audio-visual"))
+    modality_filter = str(kwargs.get("modality_filter", "all"))
+    if modality_filter != "all" and modality != modality_filter:
+        return None
+
+    root = Path(str(data_root))
+    video_id = str(example["video_id"])
+    video_path = root / "videos" / f"{video_id}.mp4"
+    audio_path = root / "audio" / f"{video_id}.wav"
+    has_video = video_path.exists()
+    has_audio = audio_path.exists()
+    if modality in {"visual", "audio-visual"} and not has_video:
+        return None
+    if modality in {"audio", "audio-visual"} and not has_audio:
+        return None
+
+    question = str(example["question"])
+    options = list(example.get("options", []))
+    if options:
+        option_labels = "ABCD"
+        option_text = "\n".join(f"{option_labels[index]}. {option}" for index, option in enumerate(options))
+        question = f"{question}\n{option_text}"
+
+    correct_index = int(example.get("correct_answer_idx", 0))
+    if options and correct_index < len(options):
+        answer = str(options[correct_index])
+    else:
+        rephrased_answers = list(example.get("rephrased_answers", []))
+        answer = str(rephrased_answers[0]) if rephrased_answers else ""
+
+    user_content: list[dict[str, Any]] = []
+    if has_video:
+        user_content.append({"type": "video", "path": str(video_path)})
+    user_content.append({"type": "text", "text": question})
+    adapted = {
+        "conversation": [
+            {"role": "user", "content": user_content},
+            {"role": "assistant", "content": [{"type": "text", "text": answer}]},
+        ]
+    }
+    if has_audio:
+        adapted["audio_path"] = str(audio_path)
+        adapted["max_audio_duration"] = float(kwargs.get("max_audio_duration", 10.0))
+    return adapted
+
+
 def _decode_audio(audio: Any) -> tuple[Any, int]:
     if isinstance(audio, Mapping) and audio.get("array") is not None:
         return audio["array"], int(audio["sampling_rate"])
@@ -306,8 +357,6 @@ def prepare_hf_dataset_for_adapter(
 
 
 _ADAPTERS: dict[str, HFDatasetAdapter] = {
-    "text_chat": _native_conversation_adapter,
-    "chat": _native_conversation_adapter,
     "squad": _squad_adapter,
     "gsm8k": _gsm8k_adapter,
     "openmathinstruct2": _openmathinstruct2_adapter,
@@ -319,7 +368,14 @@ _ADAPTERS: dict[str, HFDatasetAdapter] = {
     "default_audio": _audio_adapter,
     "cv17": _cv17_adapter,
     "llava_video_178k": _llava_video_adapter,
+    "valor32k_avqa": _valor32k_avqa_adapter,
 }
+
+
+def validate_hf_dataset_adapter(adapter_name: str | None) -> None:
+    """Validate an optional registered Hugging Face schema adapter name."""
+    if adapter_name is not None and adapter_name not in _ADAPTERS:
+        raise ValueError(f"Unknown Hugging Face schema adapter: {adapter_name}")
 
 
 def adapt_hf_dataset(
@@ -339,13 +395,11 @@ def adapt_hf_dataset(
     Returns:
         Canonical text or multimodal conversation examples.
     """
+    validate_hf_dataset_adapter(adapter_name)
     if adapter_name is None:
         adapter = _native_conversation_adapter
     else:
-        try:
-            adapter = _ADAPTERS[adapter_name]
-        except KeyError as error:
-            raise ValueError(f"Unknown Hugging Face schema adapter: {adapter_name}") from error
+        adapter = _ADAPTERS[adapter_name]
     kwargs = adapter_kwargs or {}
     examples = [adapted for row in dataset if (adapted := adapter(row, kwargs)) is not None]
     if not examples:

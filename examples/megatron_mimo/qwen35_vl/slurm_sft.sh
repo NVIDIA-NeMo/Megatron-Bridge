@@ -89,12 +89,10 @@ PRETRAINED_CHECKPOINT="${PRETRAINED_CHECKPOINT:-${EXPERIMENT_ROOT}/models/mimo/Q
 RUN_NAME="${RUN_NAME:-qwen35-27b-mimo-cord_v2-sft}"
 
 # --- Training hyperparameters -------------------------------------------------
-DATASET_ADAPTER="${DATASET_ADAPTER:-${DATASET_NAME:-cord_v2}}"
+DATASET_ADAPTER="${DATASET_ADAPTER:-cord_v2}"
 DATASET_PATH="${DATASET_PATH:-}"
 if [[ -z "${DATASET_PATH}" ]]; then
-    NORMALIZED_DATASET_ADAPTER="${DATASET_ADAPTER#make_}"
-    NORMALIZED_DATASET_ADAPTER="${NORMALIZED_DATASET_ADAPTER%_dataset}"
-    case "${NORMALIZED_DATASET_ADAPTER}" in
+    case "${DATASET_ADAPTER}" in
         cord_v2) DATASET_PATH="naver-clova-ix/cord-v2" ;;
         medpix) DATASET_PATH="mmoukouba/MedPix-VQA" ;;
         rdr) DATASET_PATH="quintend/rdr-items" ;;

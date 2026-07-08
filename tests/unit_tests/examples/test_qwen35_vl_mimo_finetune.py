@@ -63,11 +63,11 @@ def test_qwen35_vl_mimo_finetune_example_imports():
     ("adapter", "expected_path"),
     [
         ("cord_v2", "naver-clova-ix/cord-v2"),
-        ("make_rdr_dataset", "quintend/rdr-items"),
+        ("rdr", "quintend/rdr-items"),
         ("medpix", "mmoukouba/MedPix-VQA"),
     ],
 )
-def test_deprecated_dataset_maker_names_keep_matching_default_sources(adapter, expected_path):
+def test_dataset_adapters_resolve_matching_default_sources(adapter, expected_path):
     name = f"qwen35_vl_mimo_dataset_defaults_{adapter}"
     try:
         module = _load_example_module(name)

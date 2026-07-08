@@ -1,11 +1,13 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import pytest
+from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetBuilder, HFSFTDatasetConfig
 from megatron.bridge.data.builders import hf_sft_dataset as builder_module
-from megatron.bridge.data.builders.hf_sft_dataset import select_hf_sft_collate
+from megatron.bridge.data.builders.hf_sft_dataset import load_hf_sft_processor, select_hf_sft_collate
+from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = pytest.mark.unit
@@ -113,3 +115,171 @@ def test_builder_does_not_classify_mixed_rows_from_first_text_example():
     }
 
     assert select_hf_sft_collate([text_row, image_row]) is None
+
+
+def test_builder_loads_all_requested_sources(monkeypatch):
+    calls = []
+    row = {"messages": [{"role": "assistant", "content": "answer"}]}
+
+    def _load(source):
+        calls.append((source.path_or_dataset, source.split))
+        return [row]
+
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", _load)
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/train"),
+        validation_source=HFDatasetSourceConfig(path_or_dataset="org/validation", split="dev"),
+        test_source=HFDatasetSourceConfig(path_or_dataset="org/test", split="evaluation"),
+        pad_to_multiple_of=1,
+    )
+
+    train, validation, test = HFSFTDatasetBuilder(config).build(DatasetBuildContext(3, 2, 1, tokenizer=_Tokenizer()))
+
+    assert [len(dataset) for dataset in (train, validation, test)] == [3, 2, 1]
+    assert calls == [
+        ("org/train", "train"),
+        ("org/validation", "dev"),
+        ("org/test", "evaluation"),
+    ]
+
+
+def test_builder_forwards_runtime_packing_to_collate(monkeypatch):
+    row = {"messages": [{"role": "assistant", "content": "answer"}]}
+    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
+
+    def _collate(
+        examples,
+        processor,
+        *,
+        sequence_length,
+        pad_to_max_length,
+        pad_to_multiple_of,
+        enable_in_batch_packing,
+        in_batch_packing_pad_to_multiple_of,
+    ):
+        del examples, processor
+        return {
+            "sequence_length": sequence_length,
+            "pad_to_max_length": pad_to_max_length,
+            "pad_to_multiple_of": pad_to_multiple_of,
+            "enable_in_batch_packing": enable_in_batch_packing,
+            "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
+        }
+
+    config = HFSFTDatasetConfig(
+        seq_length=64,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+        pad_to_max_length=True,
+        pad_to_multiple_of=16,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=8,
+    )
+
+    train, _, _ = HFSFTDatasetBuilder(config, collate_impl=_collate).build(
+        DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
+    )
+
+    assert train is not None
+    assert train.collate_fn([train[0]]) == {
+        "sequence_length": 64,
+        "pad_to_max_length": True,
+        "pad_to_multiple_of": 16,
+        "enable_in_batch_packing": True,
+        "in_batch_packing_pad_to_multiple_of": 8,
+    }
+
+
+def test_processor_loading_disables_untrusted_remote_code(monkeypatch):
+    seen = {}
+
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(path, *, trust_remote_code):
+            seen["call"] = (path, trust_remote_code)
+            return _Tokenizer()
+
+    monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/processor",
+    )
+
+    processor = load_hf_sft_processor(config, tokenizer=None)
+
+    assert isinstance(processor, _Tokenizer)
+    assert seen["call"] == ("org/processor", False)
+
+
+def test_processor_loading_falls_back_to_tokenizer(monkeypatch):
+    class _AutoProcessor:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            raise ValueError("processor unavailable")
+
+    class _AutoTokenizer:
+        @staticmethod
+        def from_pretrained(*args, **kwargs):
+            return _Tokenizer()
+
+    monkeypatch.setattr(builder_module, "AutoProcessor", _AutoProcessor)
+    monkeypatch.setattr(builder_module, "AutoTokenizer", _AutoTokenizer)
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        hf_processor_path="org/tokenizer",
+    )
+
+    assert isinstance(load_hf_sft_processor(config, tokenizer=None), _Tokenizer)
+
+
+def test_hf_sft_config_round_trip_is_declarative():
+    config = HFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            load_kwargs={"data_files": {"train": "training.jsonl"}},
+        ),
+        do_test=False,
+        enable_in_batch_packing=True,
+    )
+
+    serialized = ConfigContainer._convert_value_to_dict(config)
+    restored = instantiate(serialized)
+
+    assert isinstance(restored, HFSFTDatasetConfig)
+    assert restored.source.load_kwargs == config.source.load_kwargs
+    assert "collate_impl" not in serialized
+    assert "processor" not in serialized
+    assert "tokenizer" not in serialized
+
+
+def test_hf_sft_config_resolves_canonical_builder(monkeypatch):
+    from megatron.bridge.data import utils as data_utils
+
+    seen = {}
+
+    class _FakeBuilder:
+        def __init__(self, config):
+            seen["config"] = config
+
+        def build(self, context):
+            seen["context"] = context
+            return "train", "validation", "test"
+
+    monkeypatch.setattr(builder_module, "HFSFTDatasetBuilder", _FakeBuilder)
+    config = HFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(path_or_dataset="json"),
+    )
+    tokenizer = object()
+
+    result = data_utils.get_dataset_provider(config)([12, 3, 1], config, tokenizer=tokenizer)
+
+    assert result == ("train", "validation", "test")
+    assert seen["config"] is config
+    assert seen["context"].train_samples == 12
+    assert seen["context"].tokenizer is tokenizer

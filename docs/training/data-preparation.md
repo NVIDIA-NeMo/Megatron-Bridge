@@ -121,7 +121,7 @@ dataset = GPTSFTDatasetConfig(
 
 If `hf_output_root` is omitted, the generated JSONL is cached under the NeMo datasets cache for the source. Keep `hf_rewrite=False` when later runs should reuse those files.
 
-> **Deprecated compatibility APIs:** `FinetuningDatasetConfig`, `FinetuningDatasetBuilder`, and `HFTextSFTDatasetProvider` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
+> **Deprecated compatibility APIs:** `FinetuningDatasetConfig` and `FinetuningDatasetBuilder` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
 
 The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
 
@@ -158,8 +158,6 @@ dataset = HFSFTDatasetConfig(
 ```
 
 Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields.
-
-> **Deprecated compatibility API:** `HFConversationDatasetProvider` remains only for existing callers. New code must use `HFSFTDatasetConfig` with `HFSFTDatasetBuilder`.
 
 For text chat, `hf_processor_path=None` reuses the training tokenizer only when that tokenizer already defines the intended chat template. Otherwise select a vocabulary-compatible instruction processor explicitly, as above.
 

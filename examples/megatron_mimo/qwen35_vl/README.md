@@ -34,9 +34,8 @@ check loss behavior if you adapt the scripts to a different model size, dataset,
 or parallelism layout.
 
 Select source loading and schema adaptation independently with `DATASET_PATH`
-and `DATASET_ADAPTER`. The deprecated `DATASET_NAME`/`--dataset-maker` aliases
-retain the historical CORD-v2, RDR, and MedPix default source paths; new uses
-should pass the canonical source and adapter names explicitly.
+and `DATASET_ADAPTER`. CORD-v2, RDR, and MedPix adapter names retain their
+default source paths; custom adapters require an explicit source path.
 
 
 ## Files

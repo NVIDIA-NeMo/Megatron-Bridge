@@ -360,28 +360,22 @@ def _build_mimo_provider(
     return provider
 
 
-def _canonical_dataset_adapter(dataset_adapter: str) -> str:
-    return dataset_adapter.removeprefix("make_").removesuffix("_dataset")
-
-
 def _resolve_dataset_path(dataset_adapter: str, dataset_path: str | None) -> str:
     if dataset_path is not None:
         return dataset_path
-    schema_adapter = _canonical_dataset_adapter(dataset_adapter)
-    if schema_adapter not in G_DEFAULT_DATASET_PATHS:
-        raise ValueError(f"--dataset-path is required for schema adapter {schema_adapter!r}.")
-    return G_DEFAULT_DATASET_PATHS[schema_adapter]
+    if dataset_adapter not in G_DEFAULT_DATASET_PATHS:
+        raise ValueError(f"--dataset-path is required for schema adapter {dataset_adapter!r}.")
+    return G_DEFAULT_DATASET_PATHS[dataset_adapter]
 
 
 def _build_dataset_config(args: argparse.Namespace) -> HFSFTDatasetConfig:
-    schema_adapter = _canonical_dataset_adapter(args.dataset_adapter)
     dataset_config = HFSFTDatasetConfig(
         seq_length=args.seq_length,
         hf_processor_path=args.processor_path or args.hf_model,
         source=HFDatasetSourceConfig(
             path_or_dataset=_resolve_dataset_path(args.dataset_adapter, args.dataset_path),
             subset=args.dataset_subset,
-            schema_adapter=schema_adapter,
+            schema_adapter=args.dataset_adapter,
         ),
         num_workers=args.num_workers,
         dataloader_type=args.dataloader_type,
@@ -1074,7 +1068,7 @@ def _resolve_default_paths(args: argparse.Namespace) -> None:
     if args.pretrained_checkpoint is None and args.load_checkpoint is None and not args.allow_random_init:
         args.pretrained_checkpoint = str(Path(args.experiment_root) / "models" / "mimo" / f"{model_tag}-mimo")
     if args.checkpoint_dir is None:
-        run_name = args.run_name or f"{model_tag}_{_canonical_dataset_adapter(args.dataset_adapter)}_mimo_hf"
+        run_name = args.run_name or f"{model_tag}_{args.dataset_adapter}_mimo_hf"
         args.checkpoint_dir = str(Path(args.experiment_root) / "results" / "mimo" / run_name)
     if args.log_dir is None:
         args.log_dir = str(Path(args.experiment_root) / "logs" / "mimo_hf")
@@ -1099,17 +1093,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument(
         "--dataset-adapter",
-        "--dataset-maker",
         dest="dataset_adapter",
         type=str,
         default="cord_v2",
-        help="Optional schema adapter; --dataset-maker is a deprecated alias.",
+        help="Optional schema adapter.",
     )
     parser.add_argument(
         "--dataset-path",
         type=str,
         default=None,
-        help="HF dataset path. Known deprecated maker names retain their historical default paths.",
+        help="HF dataset path. Known adapters retain their default paths.",
     )
     parser.add_argument("--dataset-subset", type=str, default=None)
     parser.add_argument("--seq-length", type=int, default=4096)

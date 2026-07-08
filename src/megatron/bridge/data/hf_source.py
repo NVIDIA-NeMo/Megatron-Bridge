@@ -20,7 +20,11 @@ from typing import Any
 from datasets import concatenate_datasets, load_dataset
 
 from megatron.bridge.data.base import validate_declarative_mapping
-from megatron.bridge.data.hf_datasets.adapters import adapt_hf_dataset, prepare_hf_dataset_for_adapter
+from megatron.bridge.data.hf_datasets.adapters import (
+    adapt_hf_dataset,
+    prepare_hf_dataset_for_adapter,
+    validate_hf_dataset_adapter,
+)
 
 
 @dataclass(kw_only=True)
@@ -55,6 +59,7 @@ class HFDatasetSourceConfig:
             raise TypeError("subset must be a string, list of strings, or None.")
         if self.schema_adapter is not None and not self.schema_adapter.strip():
             raise ValueError("schema_adapter must be non-empty when set.")
+        validate_hf_dataset_adapter(self.schema_adapter)
         validate_declarative_mapping(self.load_kwargs, field_name="load_kwargs")
         validate_declarative_mapping(self.adapter_kwargs, field_name="adapter_kwargs")
 
