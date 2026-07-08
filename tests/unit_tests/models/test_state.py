@@ -103,14 +103,15 @@ class TestStateDict:
         keys = list(state.keys())
         assert sorted(keys) == ["a", "b", "c"]
 
-    def test_items_method(self):
-        """Test items() method."""
+    def test_inherited_mapping_items(self):
+        """Test items() inherited from Mapping."""
         d = {
             "param1": torch.tensor([1.0]),
             "param2": torch.tensor([2.0]),
         }
         state = StateDict(d)
 
+        assert "items" not in StateDict.__dict__
         items = list(state.items())
         assert len(items) == 2
 
