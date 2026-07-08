@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseRotaryEmbedding,
@@ -147,6 +148,7 @@ class TestGemma4LayerSpec:
 
         assert layer_spec.module is Gemma4DenseTransformerLayer
         assert layer_spec.submodules.self_attention.module is Gemma4DenseSelfAttention
+        assert layer_spec.submodules.self_attention.submodules.core_attention is DotProductAttention
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
 

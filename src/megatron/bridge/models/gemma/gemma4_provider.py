@@ -146,6 +146,8 @@ class Gemma4DenseProvider(GPTModelProvider):
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
 
+    final_logit_softcapping: float | None = 30.0
+
     num_moe_experts: Optional[int] = None
     moe_router_topk: Optional[int] = None
     moe_ffn_hidden_size: Optional[int] = None
@@ -215,6 +217,13 @@ class Gemma4DenseProvider(GPTModelProvider):
 
         model.rotary_pos_emb = Gemma4DenseRotaryEmbedding(config)
 
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
+            extend_instance(model.output_layer, Gemma4OutputLayer)
+
         if pre_process:
             _attach_ple_modules(model, config, self)
         wire_gemma4_kv_sharing(model)
@@ -277,7 +286,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     moe_permute_fusion: bool = True
     moe_layer_freq: int = 1
 
-    final_logit_softcapping: float = 30.0
+    final_logit_softcapping: float | None = 30.0
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
@@ -321,7 +330,11 @@ class Gemma4ModelProvider(GPTModelProvider):
             global_rotary_percent=self.global_rotary_percent,
         )
 
-        if hasattr(model, "output_layer") and self.final_logit_softcapping:
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
             extend_instance(model.output_layer, Gemma4OutputLayer)
 
         if hasattr(model, "embedding") or hasattr(model, "output_layer"):
