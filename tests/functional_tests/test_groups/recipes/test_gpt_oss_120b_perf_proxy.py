@@ -32,7 +32,7 @@ def _gpt_oss_120b_gb200_proxy() -> ConfigContainer:
     config.model.pipeline_model_parallel_size = 1
     config.model.virtual_pipeline_model_parallel_size = None
     config.model.context_parallel_size = 1
-    config.model.expert_model_parallel_size = 8
+    config.model.expert_model_parallel_size = 4
     config.tokenizer.tokenizer_type = "NullTokenizer"
     config.tokenizer.tokenizer_model = None
     config.tokenizer.vocab_size = config.model.vocab_size
@@ -61,7 +61,7 @@ def _gpt_oss_120b_gb200_proxy() -> ConfigContainer:
 
 
 class TestGPTOSS120BPerfProxy:
-    """Train the reduced GPT-OSS 120B production config on eight GB200 GPUs."""
+    """Train the reduced GPT-OSS 120B production config on four GB200 GPUs."""
 
     @pytest.mark.run_only_on("GPU")
     def test_gb200_fp8mx(self):

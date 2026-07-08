@@ -76,7 +76,7 @@ class TestQwen3MoePerfProxy:
             assert os.environ.get("NVTE_CUTEDSL_FUSED_GROUPED_MLP") == "1"
             config = _qwen3_moe_proxy(
                 qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
-                expert_model_parallel_size=8,
+                expert_model_parallel_size=4,
             )
             assert config.mixed_precision.fp8_recipe == "mxfp8"
             assert config.mixed_precision.fp8_dot_product_attention is True
