@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-sequence-packing
-description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT from Direct-HF/VLM in-batch packing and applying the right CP constraints.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT from Direct-HF/VLM in-batch packing and applying the right CP constraints. Use when enabling or debugging PackedSequenceSpecs, enable_in_batch_packing, long-context SFT, or CP with packing.
 license: Apache-2.0
-when_to_use: Enabling sequence packing or long-context SFT, or debugging PackedSequenceSpecs, enable_in_batch_packing, CP with packing, or packed-sequence regressions.
 ---
 
 # Sequence Packing Skill
