@@ -24,7 +24,7 @@
 #
 # Usage:
 #   uv sync
-#   examples/models/exaone_moe/conversion.sh
+#   examples/models/exaone/exaone_moe/conversion.sh
 # ==============================================================================
 
 set -euo pipefail

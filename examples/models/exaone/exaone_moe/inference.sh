@@ -25,11 +25,11 @@
 #
 # Usage:
 #   uv sync
-#   examples/models/exaone_moe/inference.sh
+#   examples/models/exaone/exaone_moe/inference.sh
 #
 # Override generation settings:
 #   PROMPT="대한민국의 수도는 어디인가요?" MAX_NEW_TOKENS=64 \
-#       examples/models/exaone_moe/inference.sh
+#       examples/models/exaone/exaone_moe/inference.sh
 # ==============================================================================
 
 set -euo pipefail

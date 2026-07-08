@@ -14,31 +14,27 @@
 # limitations under the License.
 
 # ==============================================================================
-# K-EXAONE-236B-A23B Inference (Slurm)
+# K-EXAONE-236B-A23B Conversion Round-Trip Verification (Slurm)
 #
-# Loads the Hugging Face checkpoint, converts it to Megatron in memory, and
-# generates text with the legacy generation path. The default TP=1, PP=1,
-# EP=16 configuration uses 16 GPUs across 2 nodes.
+# K-EXAONE is a BF16 MoE model with 128 routed experts and 8 active experts.
+# The default TP=1, PP=1, EP=16 configuration uses 16 GPUs across 2 nodes.
 #
 # Usage:
 #   1. Set CONTAINER_IMAGE and, if needed, CONTAINER_MOUNTS.
 #   2. Export HF_TOKEN, HF_HOME, and UV_CACHE_DIR on shared storage.
 #   3. Create the log directory and submit:
 #        mkdir -p logs
-#        sbatch examples/models/exaone_moe/slurm_inference.sh
-#
-# Override the prompt at submission time:
-#   PROMPT="대한민국의 수도는 어디인가요?" sbatch .../slurm_inference.sh
+#        sbatch examples/models/exaone/exaone_moe/slurm_conversion.sh
 # ==============================================================================
 
-#SBATCH --job-name=k-exaone-inference
+#SBATCH --job-name=k-exaone-roundtrip
 #SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=4:00:00
 #SBATCH --account=<your-account>
 #SBATCH --partition=batch
-#SBATCH --output=logs/k_exaone_inference_%j.log
+#SBATCH --output=logs/k_exaone_roundtrip_%j.log
 #SBATCH --exclusive
 
 set -euo pipefail
@@ -54,10 +50,6 @@ TP="${TP:-1}"
 PP="${PP:-1}"
 EP="${EP:-16}"
 ETP="${ETP:-1}"
-
-# -- Generation --------------------------------------------------------------
-PROMPT="${PROMPT:-What is artificial intelligence?}"
-MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
 
 # -- Environment -------------------------------------------------------------
 # Keep HF_HOME and UV_CACHE_DIR on storage shared by all nodes.
@@ -91,7 +83,7 @@ if [[ -n "$CONTAINER_MOUNTS" ]]; then
 fi
 
 echo "======================================"
-echo "K-EXAONE Inference"
+echo "K-EXAONE Round-Trip Conversion"
 echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES | Tasks: $WORLD_SIZE"
 echo "Model: $HF_MODEL_ID"
 echo "TP=$TP PP=$PP EP=$EP ETP=$ETP"
@@ -104,19 +96,15 @@ srun --nodes=1 --ntasks=1 "${SRUN_ARGS[@]}" \
 srun "${SRUN_ARGS[@]}" \
     bash -c '
         cd "$1"
-        uv run --no-sync python scripts/inference/text_generation.py \
-            --hf-model-path "$2" \
-            --prompt "$3" \
-            --max_new_tokens "$4" \
-            --tp "$5" \
-            --pp "$6" \
-            --ep "$7" \
-            --etp "$8" \
-            --use-legacy-generation \
-            --trust-remote-code \
-            --distributed-timeout-minutes 60
-    ' bash "$WORKDIR" "$HF_MODEL_ID" "$PROMPT" "$MAX_NEW_TOKENS" "$TP" "$PP" "$EP" "$ETP"
+        uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+            --hf-model-id "$2" \
+            --tp "$3" \
+            --pp "$4" \
+            --ep "$5" \
+            --etp "$6" \
+            --trust-remote-code
+    ' bash "$WORKDIR" "$HF_MODEL_ID" "$TP" "$PP" "$EP" "$ETP"
 
 echo "======================================"
-echo "Inference completed"
+echo "Round-trip conversion completed"
 echo "======================================"

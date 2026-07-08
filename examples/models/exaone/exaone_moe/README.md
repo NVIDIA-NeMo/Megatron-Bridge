@@ -30,7 +30,7 @@ Key constraints:
 [inference.sh](inference.sh) loads the Hugging Face checkpoint, converts it to Megatron in memory, and runs greedy text generation across 8 local GPUs.
 
 ```bash
-examples/models/exaone_moe/inference.sh
+examples/models/exaone/exaone_moe/inference.sh
 ```
 
 Override generation or parallelism settings with environment variables:
@@ -40,7 +40,7 @@ PROMPT="대한민국의 수도는 어디인가요?" \
 MAX_NEW_TOKENS=64 \
 NPROC_PER_NODE=8 \
 TP=1 PP=1 EP=8 ETP=1 \
-examples/models/exaone_moe/inference.sh
+examples/models/exaone/exaone_moe/inference.sh
 ```
 
 ## Checkpoint Conversion (Single Node)
@@ -48,14 +48,14 @@ examples/models/exaone_moe/inference.sh
 [conversion.sh](conversion.sh) runs HF -> Megatron -> HF round-trip conversion across 8 local GPUs. The default `EP=8` assigns 16 of the model's 128 routed experts to each GPU.
 
 ```bash
-examples/models/exaone_moe/conversion.sh
+examples/models/exaone/exaone_moe/conversion.sh
 ```
 
 Set `OUTPUT_DIR` to save the exported Hugging Face checkpoint:
 
 ```bash
 OUTPUT_DIR=/workspace/models/K-EXAONE-236B-A23B-hf-export \
-examples/models/exaone_moe/conversion.sh
+examples/models/exaone/exaone_moe/conversion.sh
 ```
 
 ## Slurm Inference
@@ -64,7 +64,7 @@ examples/models/exaone_moe/conversion.sh
 
 ```bash
 mkdir -p logs
-sbatch examples/models/exaone_moe/slurm_inference.sh
+sbatch examples/models/exaone/exaone_moe/slurm_inference.sh
 ```
 
 Required environment variables:
@@ -86,7 +86,7 @@ The Slurm scripts warm the shared `uv` cache once before all distributed ranks e
 
 ```bash
 mkdir -p logs
-sbatch examples/models/exaone_moe/slurm_conversion.sh
+sbatch examples/models/exaone/exaone_moe/slurm_conversion.sh
 ```
 
 Before submitting, edit the `#SBATCH --account` and `#SBATCH --partition` lines for your cluster, or override them according to your scheduler policy.
