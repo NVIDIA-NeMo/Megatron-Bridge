@@ -161,6 +161,41 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
+def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 128× GB300, MXFP8, Megatron Hybrid FSDP (HSDP)."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    cfg.model.fp8_output_proj = True
+    _apply_deepseek_v3_64gpu_gb300_fsdp_configs(cfg)
+
+    cfg.model.expert_model_parallel_size = 32
+    cfg.train.micro_batch_size = 1
+
+    cfg.ddp.outer_dp_sharding_strategy = "optim"
+    cfg.ddp.num_distributed_optimizer_instances = 2
+
+    cfg.model.fp8_param_gather = True
+    cfg.model.fp8_param = True
+    cfg.model.moe_router_dtype = "bf16"
+
+    # Full-iteration CUDA graph with dropless MoE padding + paged stashing.
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.rng.te_rng_tracker = cfg.model.use_te_rng_tracker = True
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    # CuTeDSL fused grouped MLP (moe_a2a_overlap disabled).
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    cfg.mixed_precision.fp8_dot_product_attention = False
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, large-scale proxy (BF16_V1 layout, GBS=256)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()
