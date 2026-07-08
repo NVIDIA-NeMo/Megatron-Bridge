@@ -74,7 +74,7 @@ class TestInitializeTPCommunicators:
             ):
                 _initialize_tp_communicators(mock_gpt_config, micro_batch_size=4)
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_string_file(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a string file path."""
         # Create a temporary YAML file
@@ -96,7 +96,7 @@ class TestInitializeTPCommunicators:
         finally:
             Path(config_file_path).unlink()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_from_dict(self, mock_init_ub, mock_gpt_config):
         """Test loading tp_comm_overlap_cfg from a dictionary."""
         config_data = {"buffer_size": 2048, "overlap_enabled": False}
@@ -110,7 +110,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == config_data
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_config_loading_none(self, mock_init_ub, mock_gpt_config):
         """Test when tp_comm_overlap_cfg is None."""
         mock_gpt_config.tp_comm_overlap_cfg = None
@@ -123,7 +123,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["ub_cfgs"] == {}
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_input_shape_calculation_gpt(self, mock_init_ub, mock_gpt_config):
         """Test input_shape calculation for GPT model."""
         mock_gpt_config.seq_length = 1024
@@ -142,8 +142,8 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["shape"] == expected_shape
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
     def test_te_version_2_7_0_fp8_disabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
         """Test TE version 2.7.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
@@ -160,8 +160,8 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
     def test_te_version_2_7_0_fp8_enabled(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
         """Test TE version 2.7.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
@@ -176,8 +176,8 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
     def test_te_version_2_7_0_fp8_with_bf16_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
         """Test TE version 2.7.0+ path with FP8 and BF16 first/last layers."""
         mock_gpt_config.fp8 = "e4m3"
@@ -195,8 +195,8 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8", "NONE"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
-    @patch("transformer_engine.pytorch.module.base.UserBufferQuantizationMode")
+    @patch("transformer_engine.pytorch.initialize_ub")
+    @patch("transformer_engine.pytorch.UserBufferQuantizationMode")
     def test_te_version_2_7_0_fp8_with_bf16_layers_no_layers(self, mock_quant_mode, mock_init_ub, mock_gpt_config):
         """Test TE version 2.7.0+ path with FP8 and BF16 flag but no BF16 layers."""
         mock_gpt_config.fp8 = "e4m3"
@@ -214,7 +214,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["quantization_modes"] == ["FP8"]
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_disabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 disabled."""
         mock_gpt_config.fp8 = None
@@ -228,7 +228,7 @@ class TestInitializeTPCommunicators:
             assert call_args[1]["tp_size"] == mock_gpt_config.tensor_model_parallel_size
             assert call_args[1]["bootstrap_backend"] == mock_gpt_config.tp_comm_bootstrap_backend
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     def test_te_version_1_9_0_fp8_enabled(self, mock_init_ub, mock_gpt_config):
         """Test TE version 1.9.0+ path with FP8 enabled."""
         mock_gpt_config.fp8 = "e4m3"
@@ -240,7 +240,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_mpi_backend(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with MPI backend."""
@@ -258,7 +258,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is False
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_non_mpi_backend_warning(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with non-MPI backend shows warning."""
@@ -280,7 +280,7 @@ class TestInitializeTPCommunicators:
             mock_new_group.assert_called_once_with(backend="mpi")
             mock_init_ub.assert_called_once()
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_te_version_legacy_fp8_enabled(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test legacy TE version path with FP8 enabled."""
@@ -297,7 +297,7 @@ class TestInitializeTPCommunicators:
             call_args = mock_init_ub.call_args
             assert call_args[1]["use_fp8"] is True
 
-    @patch("transformer_engine.pytorch.module.base.initialize_ub")
+    @patch("transformer_engine.pytorch.initialize_ub")
     @patch("torch.distributed.new_group")
     def test_version_checking_logic(self, mock_new_group, mock_init_ub, mock_gpt_config):
         """Test that version checking logic works correctly."""
