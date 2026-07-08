@@ -34,7 +34,6 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
 
 
 # ===========================================================================
@@ -242,7 +241,7 @@ def mock_hf_config_dense(mock_text_config_dense, mock_vision_config):
 
 @pytest.fixture
 def mock_hf_pretrained_moe(mock_hf_config_moe):
-    p = Mock(spec=PreTrainedVLM)
+    p = Mock(spec=PreTrainedCausalLM)
     p.config = mock_hf_config_moe
     p.generation_config = GenerationConfig()
     return p
@@ -250,7 +249,7 @@ def mock_hf_pretrained_moe(mock_hf_config_moe):
 
 @pytest.fixture
 def mock_hf_pretrained_dense(mock_hf_config_dense):
-    p = Mock(spec=PreTrainedVLM)
+    p = Mock(spec=PreTrainedCausalLM)
     p.config = mock_hf_config_dense
     p.generation_config = GenerationConfig()
     return p
