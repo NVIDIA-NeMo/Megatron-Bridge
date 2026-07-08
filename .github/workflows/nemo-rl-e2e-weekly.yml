@@ -1,0 +1,108 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: NeMo-RL Megatron e2e (weekly)
+
+on:
+  schedule:
+    - cron: "0 7 * * 1" # Mondays 07:00 UTC, after the weekly verl workflow.
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  grpo-qwen3-8b-base-megatron-lora:
+    name: GRPO Qwen3 8B LoRA (Megatron)
+    runs-on: nemo-ci-gcp-gpu-x8
+    timeout-minutes: 60
+    env:
+      CONTAINER: nemo_rl_${{ github.run_id }}
+      HF_DATASETS_CACHE: /home/TestData/nemo-rl/hf_datasets_cache
+      HF_HOME: /home/TestData/nemo-rl/hf_home
+      NEMO_RL_IMAGE: us-east4-docker.pkg.dev/nv-projdgxchipp-20260113193621/rl/rl:28921487402
+      NEMO_RL_REF: 3b04247b78c69ed4c447204aad0d1e3215b0a083 # pragma: allowlist secret
+      TEST_DATA_PATH: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+    steps:
+      - name: Checkout Megatron-Bridge
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Checkout pinned NeMo-RL
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          rm -rf "${RUNNER_TEMP}/nemo-rl"
+          git init "${RUNNER_TEMP}/nemo-rl"
+          git -C "${RUNNER_TEMP}/nemo-rl" remote add origin https://github.com/NVIDIA-NeMo/RL.git
+          git -C "${RUNNER_TEMP}/nemo-rl" fetch --depth=1 origin "$NEMO_RL_REF"
+          git -C "${RUNNER_TEMP}/nemo-rl" checkout --detach FETCH_HEAD
+          test "$(git -C "${RUNNER_TEMP}/nemo-rl" rev-parse HEAD)" = "$NEMO_RL_REF"
+
+      - name: Start pinned NeMo-RL container
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker rm -f "$CONTAINER" || true
+          docker pull "$NEMO_RL_IMAGE"
+          docker run \
+            --rm -d \
+            --name "$CONTAINER" \
+            --runtime=nvidia --gpus all \
+            --shm-size=64g \
+            --env HF_DATASETS_CACHE \
+            --env HF_HOME \
+            --env WANDB_MODE=disabled \
+            --volume "${TEST_DATA_PATH}:/home/TestData" \
+            --volume "${GITHUB_WORKSPACE}:/opt/Megatron-Bridge" \
+            --volume "${RUNNER_TEMP}/nemo-rl:/opt/nemo-rl" \
+            --workdir /opt/nemo-rl \
+            "$NEMO_RL_IMAGE" \
+            sleep 3900
+
+      - name: Run NeMo-RL GRPO smoke
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker exec \
+            --env BRIDGE_ROOT=/opt/Megatron-Bridge \
+            --env EXPECTED_BRIDGE_SHA="$GITHUB_SHA" \
+            --env EXPECTED_NEMO_RL_SHA="$NEMO_RL_REF" \
+            --env NEMO_RL_ROOT=/opt/nemo-rl \
+            "$CONTAINER" \
+            bash /opt/Megatron-Bridge/.github/workflows/nemo_rl_ci/run_grpo_qwen3_8b_lora.sh
+
+      - name: Cleanup container
+        if: always()
+        shell: bash
+        run: docker rm -f "$CONTAINER" || true
+
+  notify:
+    needs: [grpo-qwen3-8b-base-megatron-lora]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on failure
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CI_CHANNEL_WEBHOOK }}
+          SLACK_WEBHOOK_ADMIN: <!subteam^${{ secrets.SLACK_TEAM_GROUP_ID }}>
+        run: |
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\":rotating_light: <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|NeMo-RL Megatron e2e (weekly)> failed. Please review.\n\ncc ${SLACK_WEBHOOK_ADMIN}\"}" \
+            "$SLACK_WEBHOOK"
