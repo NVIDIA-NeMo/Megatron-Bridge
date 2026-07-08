@@ -354,12 +354,13 @@ def num_floating_point_operations(
         return cfg.model._get_num_floating_point_operations(batch_size)
 
     def calculate_layer_counts():
-        """Calculate the number of attention, Mamba, MLP, MoE, and GDN layers."""
+        """Calculate the number of attention, DSA, Mamba, MLP, MoE, and GDN layers."""
         hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
         if hybrid_pattern:
             layer_counts = get_hybrid_layer_counts(hybrid_pattern)
             return (
                 layer_counts[Symbols.ATTENTION],
+                layer_counts[Symbols.DS_ATTENTION],
                 layer_counts[Symbols.MAMBA],
                 layer_counts[Symbols.MLP],
                 layer_counts[Symbols.MOE],
@@ -369,9 +370,10 @@ def num_floating_point_operations(
         num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
         num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
         num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
+        num_dsa_layers = 0
         num_moe_layers = 0
         num_gdn_layers = 0
-        return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
+        return num_attn_layers, num_dsa_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
 
     def mlp_layer_flops(batch_size, seq_len, hidden_size, expansion=4.0, swiglu=False):
         """Calculate FLOPs for an MLP layer."""
@@ -420,6 +422,38 @@ def num_floating_point_operations(
         return (
             4 * batch_size * seq_len * hidden_size * p * (hidden_size + (hidden_size * (g / num_heads)))
             + 2 * batch_size * seq_len * hidden_size * p * core_seq
+        )
+
+    def mla_attn_layer_flops(
+        batch_size,
+        seq_len,
+        hidden_size,
+        num_heads,
+        q_lora_rank=None,
+        kv_lora_rank=0,
+        qk_head_dim=64,
+        qk_pos_emb_head_dim=0,
+        v_head_dim=64,
+        core_attn_seq_factor=None,
+    ):
+        """Calculate FLOPs for one MLA attention layer."""
+        core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
+        if q_lora_rank is None:
+            q_term = hidden_size * num_heads * (qk_head_dim + qk_pos_emb_head_dim)
+        else:
+            q_term = q_lora_rank * (hidden_size + num_heads * (qk_head_dim + qk_pos_emb_head_dim) + 1)
+        return (
+            2
+            * batch_size
+            * seq_len
+            * (
+                q_term
+                + kv_lora_rank * (hidden_size + num_heads * (qk_head_dim + v_head_dim) + 1)
+                + hidden_size * qk_pos_emb_head_dim
+                + num_heads * v_head_dim * hidden_size
+                + core_seq * num_heads * (qk_head_dim + qk_pos_emb_head_dim) / 2
+                + core_seq * num_heads * v_head_dim / 2
+            )
         )
 
     def calculate_swa_context():
@@ -524,6 +558,7 @@ def num_floating_point_operations(
         seq_len,
         hidden_size,
         num_attn_layers,
+        num_dsa_layers,
         num_mamba_layers,
         num_mlp_layers,
         num_moe_layers,
@@ -535,6 +570,11 @@ def num_floating_point_operations(
         num_attn_heads=32,
         gqa_groups=8,
         kv_channels=None,
+        q_lora_rank=None,
+        kv_lora_rank=0,
+        qk_head_dim=64,
+        qk_pos_emb_head_dim=0,
+        v_head_dim=64,
         mlp_expansion=4.0,
         swiglu=False,
         moe_latent_size=None,
@@ -577,9 +617,23 @@ def num_floating_point_operations(
                 core_attn_seq_factor=2 * swa_context,
             )
 
+        dsa_attn_flops = num_dsa_layers * mla_attn_layer_flops(
+            batch_size,
+            seq_len,
+            hidden_size,
+            num_attn_heads,
+            q_lora_rank,
+            kv_lora_rank,
+            qk_head_dim,
+            qk_pos_emb_head_dim,
+            v_head_dim,
+            core_attn_seq_factor,
+        )
+
         flops_fwd = (
             full_attn_flops
             + swa_attn_flops
+            + dsa_attn_flops
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
             * mamba_layer_flops(
@@ -828,49 +882,20 @@ def num_floating_point_operations(
                 self_attn_term += 3 * 2 * (sparse_attn_term + main_compressor_term + indexer_term)
             else:
                 ## MLA
-                if not hasattr(cfg.model, "q_lora_rank") or cfg.model.q_lora_rank is None:
-                    q_term = (
-                        cfg.model.hidden_size
-                        * cfg.model.num_attention_heads
-                        * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
-                    )
-                else:
-                    q_term = cfg.model.q_lora_rank * (
-                        cfg.model.hidden_size
-                        + cfg.model.num_attention_heads
-                        * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
-                        + 1
-                    )
                 self_attn_term = (
                     3
-                    * 2  # fwd(1) + bwd(2) *FMA
                     * num_layers
-                    * (
-                        ## q lora + rope + q norm
-                        q_term
-                        ## kv lora + rope + kv norm
-                        + getattr(cfg.model, "kv_lora_rank", 0)
-                        * (
-                            cfg.model.hidden_size
-                            + cfg.model.num_attention_heads
-                            * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "v_head_dim", 64))
-                            + 1
-                        )
-                        + cfg.model.hidden_size * getattr(cfg.model, "qk_pos_emb_head_dim", 0)
-                        ## o proj
-                        + (cfg.model.num_attention_heads * getattr(cfg.model, "v_head_dim", 64))
-                        * cfg.model.hidden_size
-                        ## core attn
-                        + core_attn_seq_factor
-                        * (
-                            cfg.model.num_attention_heads
-                            * (getattr(cfg.model, "qk_head_dim", 64) + getattr(cfg.model, "qk_pos_emb_head_dim", 0))
-                        )
-                        / 2
-                        + core_attn_seq_factor
-                        * cfg.model.num_attention_heads
-                        * getattr(cfg.model, "v_head_dim", 64)
-                        / 2
+                    * mla_attn_layer_flops(
+                        batch_size=1,
+                        seq_len=1,
+                        hidden_size=cfg.model.hidden_size,
+                        num_heads=cfg.model.num_attention_heads,
+                        q_lora_rank=getattr(cfg.model, "q_lora_rank", None),
+                        kv_lora_rank=getattr(cfg.model, "kv_lora_rank", 0),
+                        qk_head_dim=getattr(cfg.model, "qk_head_dim", 64),
+                        qk_pos_emb_head_dim=getattr(cfg.model, "qk_pos_emb_head_dim", 0),
+                        v_head_dim=getattr(cfg.model, "v_head_dim", 64),
+                        core_attn_seq_factor=core_attn_seq_factor,
                     )
                 )
 
@@ -1057,7 +1082,14 @@ def num_floating_point_operations(
     # a physical hybrid pattern is sufficient to select hybrid accounting.
     if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):
         # Calculate the number of each type of layer.
-        num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers = calculate_layer_counts()
+        (
+            num_attn_layers,
+            num_dsa_layers,
+            num_mamba_layers,
+            num_mlp_layers,
+            num_moe_layers,
+            num_gdn_layers,
+        ) = calculate_layer_counts()
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
         if mtp_num_layers is None:
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
@@ -1085,6 +1117,7 @@ def num_floating_point_operations(
             seq_len=effective_seq_length,
             hidden_size=cfg.model.hidden_size,
             num_attn_layers=num_attn_layers,
+            num_dsa_layers=num_dsa_layers,
             num_mamba_layers=num_mamba_layers,
             num_mlp_layers=num_mlp_layers,
             num_moe_layers=num_moe_layers,
@@ -1096,6 +1129,11 @@ def num_floating_point_operations(
             num_attn_heads=cfg.model.num_attention_heads,
             gqa_groups=num_query_groups,
             kv_channels=getattr(cfg.model, "kv_channels", None),
+            q_lora_rank=getattr(cfg.model, "q_lora_rank", None),
+            kv_lora_rank=getattr(cfg.model, "kv_lora_rank", 0),
+            qk_head_dim=getattr(cfg.model, "qk_head_dim", 64),
+            qk_pos_emb_head_dim=getattr(cfg.model, "qk_pos_emb_head_dim", 0),
+            v_head_dim=getattr(cfg.model, "v_head_dim", 64),
             mlp_expansion=cfg.model.ffn_hidden_size / cfg.model.hidden_size,
             swiglu=getattr(cfg.model, "gated_linear_unit", False),
             moe_latent_size=getattr(cfg.model, "moe_latent_size", None),

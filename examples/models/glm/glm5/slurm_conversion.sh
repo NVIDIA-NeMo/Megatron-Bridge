@@ -14,11 +14,11 @@
 # limitations under the License.
 
 # ==============================================================================
-# GLM-5 / GLM-5.1 Conversion Round-Trip Verification (Multi-Node via Slurm)
+# GLM-5 / GLM-5.1 / GLM-5.2 Conversion Round-Trip Verification (Multi-Node via Slurm)
 #
-# GLM-5 and GLM-5.1 share the same GlmMoeDsaForCausalLM architecture
-# (MoE + MLA + DSA: 256 routed experts, top-8, ~800B+ params, BF16),
-# so this script handles both. Set MODEL_NAME=GLM-5.1 to run the 5.1 checkpoint.
+# The GLM-5 family shares the same GlmMoeDsaForCausalLM architecture
+# (MoE + MLA + DSA: 256 routed experts, top-8, ~750-800B params, BF16),
+# so this script handles GLM-5, GLM-5.1, and GLM-5.2.
 #
 # The full model requires multi-node — minimum 8 nodes (64 GPUs) with
 # EP >= 32.  TP does NOT reduce expert memory — increase EP instead.
@@ -31,6 +31,7 @@
 #   3. Submit:
 #        sbatch examples/models/glm/glm5/slurm_conversion.sh                  # GLM-5
 #        MODEL_NAME=GLM-5.1 sbatch examples/models/glm/glm5/slurm_conversion.sh
+#        MODEL_NAME=GLM-5.2 sbatch examples/models/glm/glm5/slurm_conversion.sh
 # ==============================================================================
 
 #SBATCH --job-name=glm5-roundtrip
@@ -61,7 +62,7 @@ WORKDIR="/opt/Megatron-Bridge"
 PARALLELISM_CONFIGS=("2,1,32")
 
 # ── Model ─────────────────────────────────────────────────────────────────
-# MODEL_NAME selects between GLM-5 and GLM-5.1 (same architecture).
+# MODEL_NAME selects a GLM-5-family checkpoint.
 MODEL_NAME="${MODEL_NAME:-GLM-5}"
 HF_MODEL_ID=zai-org/$MODEL_NAME
 

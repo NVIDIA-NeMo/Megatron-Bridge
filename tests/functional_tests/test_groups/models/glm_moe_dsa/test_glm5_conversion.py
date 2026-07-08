@@ -31,11 +31,10 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "hidden_size": 1024,
     "intermediate_size": 2048,
     "moe_intermediate_size": 256,
-    "num_hidden_layers": 2,
+    "num_hidden_layers": 4,
     # ---- Attention ----
     "num_attention_heads": 16,
-    "num_key_value_heads": 4,
-    "head_dim": 64,
+    "num_key_value_heads": 16,
     "qk_head_dim": 128,
     "qk_nope_head_dim": 96,
     "qk_rope_head_dim": 32,
@@ -45,6 +44,7 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "index_n_heads": 8,
     "index_topk": 256,
     "indexer_rope_interleave": True,
+    "indexer_types": ["full", "full", "full", "shared"],
     # ---- LoRA ranks ----
     "q_lora_rank": 256,
     "kv_lora_rank": 128,
@@ -60,7 +60,7 @@ HF_GLM5_TOY_MODEL_CONFIG = {
     "routed_scaling_factor": 2.5,
     "scoring_func": "sigmoid",
     "topk_method": "noaux_tc",
-    "mlp_layer_types": ["dense", "sparse"],
+    "mlp_layer_types": ["dense", "sparse", "sparse", "sparse"],
     # ---- Position encoding ----
     "max_position_embeddings": 8192,
     "rope_interleave": True,
@@ -106,6 +106,11 @@ def _create_glm5_toy_model(model_dir: Path) -> None:
     from transformers import GlmMoeDsaForCausalLM
 
     model = GlmMoeDsaForCausalLM(config)
+
+    # Shared indexer modules are serialized by HF but unused at runtime. MCore
+    # stores only the source indexer, so make the dead HF copies deterministic.
+    source_indexer = model.model.layers[2].self_attn.indexer
+    model.model.layers[3].self_attn.indexer.load_state_dict(source_indexer.state_dict())
 
     model = model.bfloat16()
     for k, v in model.named_buffers():
@@ -189,10 +194,11 @@ class TestGLM5Conversion:
 
         assert hasattr(model, "model")
         assert hasattr(model.model, "layers")
-        assert len(model.model.layers) == 2
+        assert len(model.model.layers) == 4
 
-        second_layer = model.model.layers[1]
-        assert hasattr(second_layer, "mlp")
+        fourth_layer = model.model.layers[3]
+        assert hasattr(fourth_layer, "mlp")
+        assert fourth_layer.self_attn.skip_topk is True
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(

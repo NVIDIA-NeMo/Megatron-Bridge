@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GLM5 uses MLAModelProvider directly. This module is kept for import compatibility."""
+"""GLM5 uses HybridMLAModelProvider through this compatibility alias."""
 
-from megatron.bridge.models.mla_provider import MLAModelProvider as GLM5ModelProvider  # noqa: F401
+from megatron.bridge.models.hybrid_mla_provider import HybridMLAModelProvider as GLM5ModelProvider  # noqa: F401
 
 
 __all__ = ["GLM5ModelProvider"]

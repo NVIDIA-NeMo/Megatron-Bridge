@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MLA (Multi-Latent Attention) Model Provider.
-
-This module provides a minimal provider for models using Multi-Latent Attention,
-such as DeepSeek V2/V3 and Kimi K2.
-"""
+"""GPT model provider for Multi-Latent Attention."""
 
 from dataclasses import dataclass
 

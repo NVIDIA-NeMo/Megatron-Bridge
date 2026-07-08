@@ -599,6 +599,72 @@ class TestHybridTransformerParity:
 
         assert hybrid_flops == pytest.approx(transformer_flops)
 
+    def test_mla_dsa_physical_pattern_matches_transformer(self):
+        """A DSA+MLP physical stack should match the equivalent MLA transformer."""
+        batch_size = 2
+        mla_config = self._base_config(
+            multi_latent_attention=True,
+            q_lora_rank=128,
+            kv_lora_rank=64,
+            qk_head_dim=48,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=64,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**mla_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    mla_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "D-" * 4,
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_mla_mixed_dsa_and_moe_physical_pattern_matches_transformer(self):
+        """GLM-style D-/DE physical layers should preserve the prior MLA+MoE estimate."""
+        batch_size = 2
+        mla_moe_config = self._base_config(
+            multi_latent_attention=True,
+            q_lora_rank=128,
+            kv_lora_rank=64,
+            qk_head_dim=48,
+            qk_pos_emb_head_dim=16,
+            v_head_dim=64,
+            num_moe_experts=8,
+            moe_layer_freq=[0, 1, 1, 1],
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**mla_moe_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    mla_moe_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "D-DEDEDE",
+                        "moe_layer_freq": [0, 0, 0, 1, 0, 1, 0, 1],
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
     def test_sliding_window_physical_pattern_matches_transformer(self):
         """Hybrid SWA counting should use physical layer positions in window_attn_skip_freq."""
         batch_size = 2

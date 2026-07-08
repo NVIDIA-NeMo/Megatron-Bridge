@@ -68,7 +68,7 @@ navigation:
       path: ./nightly/pages/models/glm/glm-45v.mdx
     - page: GLM-4.7 and GLM-4.7-Flash
       path: ./nightly/pages/models/glm/glm47.mdx
-    - page: GLM-5 and GLM-5.1
+    - page: GLM-5, GLM-5.1, and GLM-5.2
       path: ./nightly/pages/models/glm/glm5.mdx
     section: GLM
   - contents:
