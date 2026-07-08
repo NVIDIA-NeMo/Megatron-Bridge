@@ -28,18 +28,16 @@ def _deepseek_v3_gb200_proxy() -> ConfigContainer:
     """Reduce model scale while preserving PP, MTP, and the production MoE path."""
     config = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
 
-    config.model.num_layers = 4
-    config.model.moe_layer_freq = [0, 1, 1, 1]
+    config.model.num_layers = 2
+    config.model.moe_layer_freq = [0, 1]
     config.model.num_moe_experts = 16
     config.model.tensor_model_parallel_size = 1
-    config.model.pipeline_model_parallel_size = 4
+    config.model.pipeline_model_parallel_size = 2
     config.model.virtual_pipeline_model_parallel_size = None
     config.model.context_parallel_size = 1
     config.model.expert_model_parallel_size = 2
     config.model.pipeline_model_parallel_layout = [
         ["embedding", "decoder"],
-        ["decoder"],
-        ["decoder"],
         ["decoder", "mtp", "loss"],
     ]
     config.tokenizer.tokenizer_type = "NullTokenizer"
@@ -70,7 +68,7 @@ def _deepseek_v3_gb200_proxy() -> ConfigContainer:
 
 
 class TestDeepSeekV3PerfProxy:
-    """Train the reduced DeepSeek V3 production config on eight GB200 GPUs."""
+    """Train the reduced DeepSeek V3 production config on four GB200 GPUs."""
 
     @pytest.mark.run_only_on("GPU")
     def test_gb200_fp8mx(self):

@@ -1,5 +1,5 @@
 #!/bin/bash
-# GPU_COUNT=x8
+# GPU_COUNT=x4
 # CI_TIMEOUT=30
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
@@ -17,7 +17,7 @@
 
 set -xeuo pipefail
 
-export CUDA_VISIBLE_DEVICES="0,1,2,3,4,5,6,7"
+export CUDA_VISIBLE_DEVICES="0,1,2,3"
 export CUDA_DEVICE_MAX_CONNECTIONS=32
 export CUDNNFE_CLUSTER_OVERLAP_MARGIN=8
 export NCCL_GRAPH_REGISTER=0
@@ -36,7 +36,7 @@ export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export TORCH_NCCL_HIGH_PRIORITY=1
 export USE_MNNVL=1
 
-uv run python -m torch.distributed.run --nproc_per_node=8 --nnodes=1 -m coverage run \
+uv run python -m torch.distributed.run --nproc_per_node=4 --nnodes=1 -m coverage run \
   --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode \
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/recipes/test_qwen3_moe_perf_proxy.py::TestQwen3MoePerfProxy::test_gb200_fp8mx
