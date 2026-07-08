@@ -289,7 +289,7 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
     """
     import os
 
-    family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
+    family_pkg_path = f"megatron.bridge.perf_recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
     if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
