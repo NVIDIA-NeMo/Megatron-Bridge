@@ -1883,10 +1883,11 @@ class GroupedExpertLinearAdapter(nn.Module):
             return False
         if self.linear_in.weight.dtype != torch.bfloat16 or self.linear_out.weight.dtype != torch.bfloat16:
             return False
-        # grouped_mm on this stack requires the shared K dimension to have a
-        # 16-byte stride. For the adapter's second projection that means the
-        # LoRA rank must be divisible by 8 in bf16/fp16.
-        if self.linear_out.weight.shape[-1] % 8 != 0:
+        # grouped_mm forward and weight-gradient kernels require matrix strides
+        # to be multiples of 16 bytes, so every local matrix dimension in both
+        # projections must be divisible by eight for BF16 tensors.
+        grouped_mm_dimensions = self.linear_in.weight.shape[-2:] + self.linear_out.weight.shape[-2:]
+        if any(dimension % 8 != 0 for dimension in grouped_mm_dimensions):
             return False
         return torch.cuda.get_device_capability(x.device) >= (8, 0)
 

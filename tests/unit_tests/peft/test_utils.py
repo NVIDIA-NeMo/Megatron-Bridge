@@ -1576,12 +1576,22 @@ class TestGroupedExpertLinearAdapter:
         assert mock_grouped_mm.call_args_list[0].args[1].shape[0] == 2
         assert mock_grouped_mm.call_args_list[0].kwargs["offs"].tolist() == [1, 3]
 
-    def test_grouped_expert_linear_adapter_grouped_mm_requires_rank_alignment(self):
-        """Grouped GEMM should be disabled when the LoRA rank violates kernel stride requirements."""
+    @pytest.mark.parametrize(
+        ("in_features", "out_features", "dim"),
+        [
+            (16, 32, 12),
+            (12, 32, 8),
+            (16, 30, 8),
+        ],
+    )
+    def test_grouped_expert_linear_adapter_grouped_mm_requires_dimension_alignment(
+        self, in_features, out_features, dim
+    ):
+        """Grouped GEMM should be disabled when any matrix stride is not 16-byte aligned."""
         adapter = GroupedExpertLinearAdapter(
-            in_features=16,
-            out_features=32,
-            dim=12,
+            in_features=in_features,
+            out_features=out_features,
+            dim=dim,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",

@@ -357,7 +357,7 @@ def _initialize_tp_communicators(
         model_config.hidden_size,
     ]
 
-    if is_te_min_version("2.7.0"):
+    if is_te_min_version("2.8.0"):
         from transformer_engine.pytorch import UserBufferQuantizationMode
 
         quantization_modes = [UserBufferQuantizationMode.FP8 if model_config.fp8 else UserBufferQuantizationMode.NONE]

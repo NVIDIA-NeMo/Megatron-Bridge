@@ -427,6 +427,42 @@ class TestPatchLinearModule:
 
         torch.testing.assert_close(patched_linear(x), linear(x))
 
+    def test_patch_linear_module_preserves_base_children(self):
+        """Specialized Linear child modules should remain traversable, movable, and checkpointed."""
+
+        class ProjectedLinear(nn.Linear):
+            def __init__(self):
+                super().__init__(3, 2)
+                self.output_projection = nn.Linear(2, 2, bias=False)
+
+            def forward(self, x):
+                return self.output_projection(super().forward(x))
+
+        linear = ProjectedLinear()
+        patched_linear = patch_linear_module(linear, dim=2).double()
+        patched_linear.disable_adapter_layers()
+
+        assert patched_linear.base_linear.output_projection is patched_linear.output_projection
+        assert patched_linear.output_projection.weight.dtype == torch.float64
+        assert "output_projection.weight" in patched_linear.state_dict()
+        x = torch.randn(4, 3, dtype=torch.float64)
+        torch.testing.assert_close(patched_linear(x), linear(x))
+
+        target = patch_linear_module(ProjectedLinear(), dim=2).double()
+        target.load_state_dict(patched_linear.state_dict(), strict=True)
+        target.disable_adapter_layers()
+        torch.testing.assert_close(target(x), patched_linear(x))
+
+    def test_patch_linear_module_preserves_eval_mode(self):
+        """Wrapping an eval-mode base should not enable adapter dropout."""
+        linear = nn.Linear(3, 2).eval()
+
+        patched_linear = patch_linear_module(linear, dim=2, dropout=0.5)
+
+        assert not patched_linear.training
+        assert not patched_linear.base_linear.training
+        assert not patched_linear.dropout.training
+
     def test_patch_linear_module_state_roundtrip_and_dtype_move(self):
         """Flat checkpoint keys and parameter identity should survive load and module moves."""
         source = patch_linear_module(nn.Linear(3, 2), dim=2, alpha=2).to(dtype=torch.float64)
@@ -439,6 +475,11 @@ class TestPatchLinearModule:
         assert sorted(target.state_dict()) == ["bias", "linear_in.weight", "linear_out.weight", "weight"]
         x = torch.randn(4, 3, dtype=torch.float64)
         torch.testing.assert_close(target(x), source(x))
+
+        state_with_unknown_key = dict(source.state_dict())
+        state_with_unknown_key["unexpected"] = torch.tensor(1.0)
+        with pytest.raises(RuntimeError, match="Unexpected key"):
+            target.load_state_dict(state_with_unknown_key, strict=True)
 
     def test_patch_te_linear_module(self):
         """Test patching TELinear module."""

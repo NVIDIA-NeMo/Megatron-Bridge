@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
@@ -42,7 +43,16 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
     padded = torch.tensor([0, 8, 16], dtype=torch.int32)
     seen = {}
 
-    cp_group = object()
+    class FakeProcessGroup:
+        @staticmethod
+        def size():
+            return 4
+
+        @staticmethod
+        def rank():
+            return 0
+
+    cp_group = FakeProcessGroup()
 
     def fake_get_batch_on_this_cp_rank(batch, *, is_hybrid_cp, cp_group):
         seen["batch"] = batch
@@ -77,6 +87,32 @@ def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch)
     assert seen["is_hybrid_cp"] is False
     assert seen["cp_group"] is cp_group
     assert torch.equal(index, torch.tensor([0, 1, 14, 15], dtype=torch.long))
+
+
+def test_get_packed_seq_cp_partition_indices_rejects_group_rank_mismatch():
+    class FakeProcessGroup:
+        @staticmethod
+        def size():
+            return 2
+
+        @staticmethod
+        def rank():
+            return 1
+
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=torch.tensor([0, 8], dtype=torch.int32),
+    )
+
+    with pytest.raises(ValueError, match="rank 1 and size 2"):
+        get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=8,
+            cp_size=2,
+            cp_rank=0,
+            device=torch.device("cpu"),
+            cp_group=FakeProcessGroup(),
+        )
 
 
 def test_unpack_and_repack_mcore_thd_position_rows():

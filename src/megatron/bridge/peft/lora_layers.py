@@ -686,10 +686,13 @@ class LinearModuleAdapter(nn.Module):
         self.out_features = orig_linear.out_features
         self._base_parameter_names = tuple(orig_linear._parameters)
         self._base_buffer_names = tuple(orig_linear._buffers)
+        self._base_module_names = tuple(orig_linear._modules)
         for name, parameter in orig_linear._parameters.items():
             self.register_parameter(name, parameter)
         for name, buffer in orig_linear._buffers.items():
             self.register_buffer(name, buffer, persistent=name not in orig_linear._non_persistent_buffers_set)
+        for name, module in orig_linear._modules.items():
+            self.add_module(name, module)
         object.__setattr__(self, "_base_linear", orig_linear)
         self._sync_base_state()
         LinearAdapter._init_adapter(
@@ -702,6 +705,7 @@ class LinearModuleAdapter(nn.Module):
             lora_dtype=lora_dtype,
         )
         self._adapter_enabled = True
+        self.train(orig_linear.training)
 
     @property
     def base_linear(self) -> nn.Module:
@@ -728,6 +732,8 @@ class LinearModuleAdapter(nn.Module):
             base_linear._parameters[name] = self._parameters[name]
         for name in self._base_buffer_names:
             base_linear._buffers[name] = self._buffers[name]
+        for name in self._base_module_names:
+            base_linear._modules[name] = self._modules[name]
 
     def _apply(self, fn: Any, recurse: bool = True) -> "LinearModuleAdapter":
         super()._apply(fn, recurse=recurse)
@@ -761,6 +767,16 @@ class LinearModuleAdapter(nn.Module):
             unexpected_keys,
             error_msgs,
         )
+        local_state = set(self._parameters) | set(self._buffers)
+        for key in state_dict:
+            if not key.startswith(prefix) or key in base_keys:
+                continue
+            local_key = key[len(prefix) :]
+            key_parts = local_key.split(".", 1)
+            if (len(key_parts) > 1 and key_parts[0] not in self._modules) or (
+                len(key_parts) == 1 and key_parts[0] not in local_state
+            ):
+                unexpected_keys.append(key)
         self._sync_base_state()
 
     def train(self, mode: bool = True) -> "LinearModuleAdapter":

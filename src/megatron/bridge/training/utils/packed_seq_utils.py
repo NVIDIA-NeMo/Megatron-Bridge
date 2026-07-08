@@ -93,7 +93,8 @@ def get_packed_seq_cp_partition_indices(
         Long tensor containing this CP rank's indices into the full stream.
 
     Raises:
-        ValueError: If packed query sequence boundaries are unavailable.
+        ValueError: If packed query boundaries are unavailable or the requested
+            rank and size do not match the context-parallel group.
     """
     _, cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
     if cu_seqlens is None:
@@ -101,10 +102,20 @@ def get_packed_seq_cp_partition_indices(
 
     if cp_size < 1 or not 0 <= cp_rank < cp_size:
         raise ValueError(f"Invalid context-parallel rank {cp_rank} for size {cp_size}.")
+    if cp_group is not None and (cp_group.size() != cp_size or cp_group.rank() != cp_rank):
+        raise ValueError(
+            f"Context-parallel group has rank {cp_group.rank()} and size {cp_group.size()}, "
+            f"but rank {cp_rank} and size {cp_size} were requested."
+        )
     if cp_size == 1:
         return torch.arange(total_tokens, device=device, dtype=torch.long)
     if cp_group is None:
         cp_group = parallel_state.get_context_parallel_group()
+        if cp_group.size() != cp_size or cp_group.rank() != cp_rank:
+            raise ValueError(
+                f"Context-parallel group has rank {cp_group.rank()} and size {cp_group.size()}, "
+                f"but rank {cp_rank} and size {cp_size} were requested."
+            )
     return get_thd_cp_partition_indices(
         cu_seqlens,
         total_tokens=total_tokens,
