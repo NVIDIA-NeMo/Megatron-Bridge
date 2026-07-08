@@ -246,12 +246,21 @@ def _dsv4_compress_ratios(hf_config) -> list[int]:
 # translation used by the upstream ``hybrid_dsv4`` recipe.
 # ---------------------------------------------------------------------------
 
+# DSv4-specific hybrid layer symbols. An older megatron-core whose ``Symbols`` enum predates
+# the DSv4 additions has ATTENTION/MOE/MTP_SEPARATOR/PIPE but not WINDOW/CSA/HCA; fall back to
+# their canonical single-char values so this module stays importable (building a real DSv4
+# model still requires a core that understands these symbols).
+_SYM_WINDOW = getattr(Symbols, "WINDOW", "W")
+_SYM_CSA = getattr(Symbols, "CSA", "C")
+_SYM_HCA = getattr(Symbols, "HCA", "H")
+_SYM_MOE = getattr(Symbols, "MOE", "E")
+
 # Attention compression ratio -> hybrid layer symbol.
-_DSV4_RATIO_TO_HYBRID_SYMBOL = {0: Symbols.WINDOW, 4: Symbols.CSA, 128: Symbols.HCA}
+_DSV4_RATIO_TO_HYBRID_SYMBOL = {0: _SYM_WINDOW, 4: _SYM_CSA, 128: _SYM_HCA}
 # Hybrid layer symbol -> attention compression ratio (inverse; W/E/others -> 0).
-_DSV4_HYBRID_SYMBOL_TO_RATIO = {Symbols.CSA: 4, Symbols.HCA: 128}
+_DSV4_HYBRID_SYMBOL_TO_RATIO = {_SYM_CSA: 4, _SYM_HCA: 128}
 # MTP depth pattern: DSv4 MTP layers use sliding-window attention (ratio 0) + MoE.
-_DSV4_MTP_HYBRID_PATTERN = Symbols.WINDOW + Symbols.MOE
+_DSV4_MTP_HYBRID_PATTERN = _SYM_WINDOW + _SYM_MOE
 
 
 def _dsv4_hybrid_layer_pattern(compress_ratios: list[int], num_hidden_layers: int) -> str:
@@ -277,7 +286,7 @@ def _dsv4_hybrid_layer_pattern(compress_ratios: list[int], num_hidden_layers: in
                 f"Unsupported DeepSeek-V4 compression ratio {ratio!r}; expected one of "
                 f"{sorted(_DSV4_RATIO_TO_HYBRID_SYMBOL)}."
             ) from exc
-        parts.append(attn_symbol + Symbols.MOE)
+        parts.append(attn_symbol + _SYM_MOE)
     return "".join(parts)
 
 
@@ -643,7 +652,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         main_pattern = hybrid_pattern.split(Symbols.MTP_SEPARATOR)[0].replace(Symbols.PIPE, "")
         attn_symbols = main_pattern[::2]
         num_hidden_layers = len(attn_symbols)
-        symbol_to_ratio = {Symbols.WINDOW: 0, Symbols.CSA: 4, Symbols.HCA: 128}
+        symbol_to_ratio = {_SYM_WINDOW: 0, _SYM_CSA: 4, _SYM_HCA: 128}
         flat_ratios = [symbol_to_ratio[symbol] for symbol in attn_symbols]
 
         hf_cfg["num_hidden_layers"] = num_hidden_layers
