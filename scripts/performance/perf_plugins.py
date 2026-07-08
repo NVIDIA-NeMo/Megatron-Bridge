@@ -325,7 +325,7 @@ class PerfEnvPlugin(Plugin):
                     # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
                     executor.env_vars["NCCL_CTA_POLICY"] = "1"
                     del_cudnn_ln = False
-        if gpu in ["gb200", "gb300"]:
+        if gpu in ["gb200", "gb300", "vr200"]:
             if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
                 if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
                     del_cudnn_ln = False
@@ -376,7 +376,7 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars["USE_MNNVL"] = "0"
                 executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8" if ep_size > 8 else str(ep_size)
             else:
-                # GB200/GB300 use NVL72 topology
+                # GB200/GB300/VR200 use NVL72 topology
                 assert ep_size <= 72, "ep_size must be less than or equal to 72"
                 executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
                 executor.env_vars["USE_MNNVL"] = "1"
@@ -521,7 +521,7 @@ class PerfEnvPlugin(Plugin):
             cp_size,
             moe_a2a_overlap=moe_a2a_overlap,
             moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
-            gpu_sm100_or_newer=self.gpu in ["b300", "b200", "gb200", "gb300"],
+            gpu_sm100_or_newer=self.gpu in ["b300", "b200", "gb200", "gb300", "vr200"],
         )
 
         # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
