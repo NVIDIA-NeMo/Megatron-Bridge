@@ -55,7 +55,7 @@ For encoder-only masked language models (BERT, RoBERTa, etc.)
 ```python
 from megatron.bridge.models.hf_pretrained import PreTrainedMaskedLM
 
-bert = PreTrainedMaskedLM.from_hf_pretrained("bert-base-uncased")
+bert = PreTrainedMaskedLM.from_pretrained("bert-base-uncased")
 
 # Components load on demand, same as PreTrainedCausalLM
 tokenizer = bert.tokenizer

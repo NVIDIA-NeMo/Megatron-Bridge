@@ -313,7 +313,7 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
             layers = getattr(config, "num_hidden_layers", "N/A")
             hidden_size = getattr(config, "hidden_size", "N/A")
             model_repr_content = f"{model_class_name} [layers={layers}, hidden_size={hidden_size}, loaded]"
-        elif "config" in self.__dict__:
+        elif hasattr(self, "_config") and self._config is not None:
             config = self.config
             model_class_name_from_hf_config = "MaskedLM"
             if hasattr(config, "architectures") and config.architectures:
