@@ -305,12 +305,12 @@ class TestNemotronLabsDiffusionAttentionInit:
         attn = _make_attention(head_dim=head_dim)
         assert abs(attn.softmax_scale - 1.0 / math.sqrt(head_dim)) < 1e-6
 
-    def test_layer_scaling_divides_softmax_scale(self):
-        head_dim = 8
-        layer_number = 3
-        attn = _make_attention(head_dim=head_dim, layer_number=layer_number, apply_qk_scaling=True)
-        expected = (1.0 / math.sqrt(head_dim)) / layer_number
-        assert abs(attn.softmax_scale - expected) < 1e-6
+    def test_apply_qk_scaling_is_rejected(self):
+        # The model uses Llama-4 style query scaling and passes softmax_scale to the TE
+        # core directly, so apply_query_key_layer_scaling must be False. Enabling it must
+        # raise rather than silently divide softmax_scale by the layer number.
+        with pytest.raises(AssertionError, match="apply_query_key_layer_scaling"):
+            _make_attention(head_dim=8, layer_number=3, apply_qk_scaling=True)
 
     def test_inference_mode_defaults(self):
         attn = _make_attention()

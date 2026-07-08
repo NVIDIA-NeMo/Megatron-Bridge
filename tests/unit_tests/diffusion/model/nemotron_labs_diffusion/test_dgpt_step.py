@@ -254,9 +254,15 @@ class TestCreateLossFunctionSbd:
         # Calling with dummy tensors (mocked rerun state machine)
         dlm = torch.tensor([1.0])
         ar = torch.tensor([1.0])
-        with patch(
-            "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
-            return_value=_make_rerun_state_machine_mock(),
+        with (
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.get_rerun_state_machine",
+                return_value=_make_rerun_state_machine_mock(),
+            ),
+            patch(
+                "megatron.bridge.diffusion.models.common.dgpt_step.parallel_state.get_context_parallel_world_size",
+                return_value=1,
+            ),
         ):
             loss, num_tokens, report = fn((dlm, ar, 4))
         # 0.3*1.0 + 1.0*1.0 = 1.3
