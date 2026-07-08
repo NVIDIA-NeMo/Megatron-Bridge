@@ -167,10 +167,9 @@ class TestQwen2AudioFinetuneConfig:
         cfg = _qwen2_audio_module.qwen2_audio_7b_finetune_config()
 
         assert isinstance(cfg.dataset, HFSFTDatasetConfig)
-        assert cfg.dataset.source.schema_adapter == "cv17"
+        assert cfg.dataset.source.dataset_name == "cv17"
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
-        assert cfg.dataset.source.path_or_dataset == "ysdede/commonvoice_17_tr_fixed"
-        assert cfg.dataset.source.split == "train"
+        assert cfg.dataset.source.split is None
         assert cfg.dataset.validation_source.split == "validation"
 
     def test_finetune_config_full_sft_uses_low_lr(self):

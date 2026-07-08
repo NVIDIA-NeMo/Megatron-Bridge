@@ -62,8 +62,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_seq_pack_${pack_config}_tp${TP}_cp${CP} \
-            dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-            dataset.source.schema_adapter=${DATASET_NAME} \
+            dataset.source.dataset_name=${DATASET_NAME} \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.enable_in_batch_packing=$pack_config \
             model.expert_model_parallel_size=$EP \

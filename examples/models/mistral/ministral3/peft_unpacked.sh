@@ -63,8 +63,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP} \
-        dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-        dataset.source.schema_adapter=${DATASET_NAME} \
+        dataset.source.dataset_name=${DATASET_NAME} \
         dataset.seq_length=$SEQ_LENGTH \
         dataset.enable_in_batch_packing=False \
         model.tensor_model_parallel_size=$TP \

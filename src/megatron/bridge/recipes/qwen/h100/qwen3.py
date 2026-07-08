@@ -658,6 +658,7 @@ def qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config() -> ConfigContainer:
         hf_dataset=HFDatasetSourceConfig(
             path_or_dataset="nvidia/Nemotron-Cascade-2-SFT-Data",
             subset="math",
+            split="train[1%:]",
             load_kwargs={"data_files": {"train": "math/math_notool.jsonl"}},
         ),
         hf_validation_dataset=HFDatasetSourceConfig(

@@ -19,6 +19,7 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -60,29 +61,95 @@ def test_qwen35_vl_mimo_finetune_example_imports():
 
 
 @pytest.mark.parametrize(
-    ("adapter", "expected_path"),
-    [
-        ("cord_v2", "naver-clova-ix/cord-v2"),
-        ("rdr", "quintend/rdr-items"),
-        ("medpix", "mmoukouba/MedPix-VQA"),
-    ],
+    "dataset_name",
+    ["cord_v2", "rdr", "medpix"],
 )
-def test_dataset_adapters_resolve_matching_default_sources(adapter, expected_path):
-    name = f"qwen35_vl_mimo_dataset_defaults_{adapter}"
+def test_dataset_names_select_matching_source_presets(dataset_name):
+    name = f"qwen35_vl_mimo_dataset_defaults_{dataset_name}"
     try:
         module = _load_example_module(name)
-        assert module._resolve_dataset_path(adapter, None) == expected_path
-        assert module._resolve_dataset_path(adapter, "org/custom") == "org/custom"
+        source = module._build_dataset_source(
+            SimpleNamespace(
+                dataset_name=dataset_name,
+                dataset_path=None,
+                dataset_subset=None,
+                schema_adapter=None,
+            )
+        )
+        assert source.dataset_name == dataset_name
+        assert source.path_or_dataset is None
     finally:
         sys.modules.pop(name, None)
 
 
-def test_custom_dataset_adapter_requires_explicit_source():
+def test_custom_dataset_keeps_explicit_source_and_adapter():
     name = "qwen35_vl_mimo_custom_dataset_source"
     try:
         module = _load_example_module(name)
-        with pytest.raises(ValueError, match="--dataset-path is required"):
-            module._resolve_dataset_path("custom", None)
+        source = module._build_dataset_source(
+            SimpleNamespace(
+                dataset_name=None,
+                dataset_path="org/custom",
+                dataset_subset="subset",
+                schema_adapter="rdr",
+            )
+        )
+        assert source.path_or_dataset == "org/custom"
+        assert source.subset == "subset"
+        assert source.schema_adapter == "rdr"
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_named_dataset_rejects_custom_source_flags():
+    name = "qwen35_vl_mimo_named_dataset_conflict"
+    try:
+        module = _load_example_module(name)
+        with pytest.raises(ValueError, match="owns its path, subset, and schema adapter"):
+            module._build_dataset_source(
+                SimpleNamespace(
+                    dataset_name="cord_v2",
+                    dataset_path=None,
+                    dataset_subset="other",
+                    schema_adapter=None,
+                )
+            )
+    finally:
+        sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize(
+    ("dataset_name", "dataset_path", "do_validation", "expected_validation"),
+    [
+        ("cord_v2", None, None, True),
+        ("rdr", None, None, False),
+        (None, "org/custom", None, False),
+        (None, "org/custom", True, True),
+    ],
+)
+def test_dataset_config_enables_only_requested_or_known_validation_splits(
+    dataset_name, dataset_path, do_validation, expected_validation
+):
+    name = f"qwen35_vl_mimo_validation_{dataset_name or 'custom'}"
+    try:
+        module = _load_example_module(name)
+        config = module._build_dataset_config(
+            SimpleNamespace(
+                dataset_name=dataset_name,
+                dataset_path=dataset_path,
+                dataset_subset=None,
+                schema_adapter=None,
+                seq_length=128,
+                processor_path=None,
+                hf_model="org/model",
+                num_workers=0,
+                dataloader_type="single",
+                trust_remote_code=False,
+                do_validation=do_validation,
+            )
+        )
+        config.validate()
+        assert config.do_validation is expected_validation
     finally:
         sys.modules.pop(name, None)
 

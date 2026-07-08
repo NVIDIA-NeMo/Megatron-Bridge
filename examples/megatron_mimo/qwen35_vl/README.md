@@ -33,9 +33,11 @@ validated 27B non-colocated workflow in the tutorial. Re-measure performance and
 check loss behavior if you adapt the scripts to a different model size, dataset,
 or parallelism layout.
 
-Select source loading and schema adaptation independently with `DATASET_PATH`
-and `DATASET_ADAPTER`. CORD-v2, RDR, and MedPix adapter names retain their
-default source paths; custom adapters require an explicit source path.
+Select a built-in source with `DATASET_NAME`; `cord_v2`, `rdr`, and `medpix`
+each bind their validated Hub path to the matching schema adapter. The Python
+entry point also accepts a custom `--dataset-path` with an optional explicit
+`--schema-adapter`. Custom sources default to training-only; pass
+`--do-validation` when the custom source exposes a `validation` split.
 
 
 ## Files

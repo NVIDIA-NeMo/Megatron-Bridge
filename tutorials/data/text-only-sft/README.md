@@ -79,11 +79,7 @@ from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceCo
 
 cfg.dataset = GPTSFTDatasetConfig(
     seq_length=2048,
-    hf_dataset=HFDatasetSourceConfig(
-        path_or_dataset="rajpurkar/squad",
-        split="train",
-        schema_adapter="squad",
-    ),
+    hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
     hf_validation_proportion=0.1,
     hf_output_root="/data/materialized-squad",
     hf_rewrite=False,
@@ -91,7 +87,7 @@ cfg.dataset = GPTSFTDatasetConfig(
 )
 ```
 
-The builder loads the source, applies the optional row adapter, writes the standard split files, and then uses the same text-only SFT construction as local mode. Omit `hf_output_root` to use the NeMo dataset cache. Set `hf_rewrite=True` only when existing normalized files should be replaced. Native `messages`, `conversation`, or `conversations` rows need no `schema_adapter`.
+The builder loads the source, applies the optional row adapter, writes the standard split files, and then uses the same text-only SFT construction as local mode. Omit `hf_output_root` to use the NeMo dataset cache. Set `hf_rewrite=True` only when existing normalized files should be replaced; builder-managed packed artifacts are regenerated at the same time. Native `messages`, `conversation`, or `conversations` rows need no `schema_adapter`.
 
 ## Enable offline packing
 

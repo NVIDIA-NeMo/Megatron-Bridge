@@ -406,10 +406,7 @@ def _sft_common_vlm() -> ConfigContainer:
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=seq_length,
         hf_processor_path=None,  # Must be set by model-specific config
-        source=HFDatasetSourceConfig(
-            path_or_dataset="naver-clova-ix/cord-v2",
-            schema_adapter="cord_v2",
-        ),
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -512,10 +509,7 @@ def _peft_common_vlm() -> ConfigContainer:
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=seq_length,
         hf_processor_path=None,  # Must be set by model-specific config
-        source=HFDatasetSourceConfig(
-            path_or_dataset="naver-clova-ix/cord-v2",
-            schema_adapter="cord_v2",
-        ),
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,

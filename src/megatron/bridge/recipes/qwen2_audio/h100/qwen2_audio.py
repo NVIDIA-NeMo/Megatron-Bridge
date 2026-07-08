@@ -135,12 +135,9 @@ def _qwen2_audio_common(
     # PEFT config
     peft_config = default_peft_config(peft)
 
-    # Dataset: explicit Hugging Face source plus CommonVoice schema adapter.
+    # Dataset: named CommonVoice source preset owns its Hub path and schema adapter.
     if source is None:
-        source = HFDatasetSourceConfig(
-            path_or_dataset="ysdede/commonvoice_17_tr_fixed",
-            schema_adapter="cv17",
-        )
+        source = HFDatasetSourceConfig(dataset_name="cv17")
     if validation_source is None:
         validation_source = source.with_split("validation")
     dataset_cfg = HFSFTDatasetConfig(

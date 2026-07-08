@@ -189,7 +189,7 @@ def normalize_hf_vlm_example(example: Mapping[str, Any]) -> NormalizedVLMSample:
 
     Expected input format:
         ``example`` must contain ``"conversation"`` as a structured list of chat
-        turns already produced by an HF dataset maker, for example::
+        turns already produced by an HF schema adapter, for example::
 
             {
                 "conversation": [
@@ -200,7 +200,7 @@ def normalize_hf_vlm_example(example: Mapping[str, Any]) -> NormalizedVLMSample:
             }
 
         Optional top-level ``images``/``image`` and ``videos``/``video`` fields
-        are accepted for maker variants that do not embed media inline in the
+        are accepted for adapter variants that do not embed media inline in the
         conversation. Optional top-level ``tools`` are copied for chat-template
         rendering.
 
@@ -208,7 +208,7 @@ def normalize_hf_vlm_example(example: Mapping[str, Any]) -> NormalizedVLMSample:
         Returns ``NormalizedVLMSample`` with a deep-copied structured
         ``conversation`` list, optional list-valued ``images`` and ``videos``
         payloads, and optional ``audio``.  The adapter does not call
-        ``cook_chatml_sample`` because HF makers have already normalized the chat
+        ``cook_chatml_sample`` because HF adapters have already normalized the chat
         schema.
 
     Raises:

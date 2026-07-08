@@ -161,8 +161,7 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_lora \
-    dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-    dataset.source.schema_adapter=${DATASET_NAME} \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH"
 
 # To use local processor assets, set dataset.hf_processor_path in CLI_OVERRIDES.

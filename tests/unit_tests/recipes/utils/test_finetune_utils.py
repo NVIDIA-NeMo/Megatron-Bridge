@@ -35,11 +35,11 @@ class TestDefaultOpenmathinstruct2Config:
 
     def test_default_dataset_name(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.path_or_dataset == "nvidia/OpenMathInstruct-2"
+        assert cfg.hf_dataset.dataset_name == "openmathinstruct2"
 
     def test_default_split(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.split == "train_1M"
+        assert cfg.hf_dataset.split is None
 
     def test_default_seq_length(self):
         cfg = default_openmathinstruct2_config()
@@ -49,9 +49,9 @@ class TestDefaultOpenmathinstruct2Config:
         cfg = default_openmathinstruct2_config(seq_length=8192)
         assert cfg.seq_length == 8192
 
-    def test_maker_is_openmathinstruct2(self):
+    def test_preset_is_openmathinstruct2(self):
         cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.schema_adapter == "openmathinstruct2"
+        assert cfg.hf_dataset.dataset_name == "openmathinstruct2"
 
     def test_dataloader_type_batch(self):
         cfg = default_openmathinstruct2_config()
@@ -100,15 +100,15 @@ class TestDefaultGsm8kConfig:
 
     def test_default_dataset_name(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.path_or_dataset == "openai/gsm8k"
+        assert cfg.hf_dataset.dataset_name == "gsm8k"
 
     def test_default_dataset_subset(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.subset == "main"
+        assert cfg.hf_dataset.subset is None
 
     def test_no_split_restriction(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.split == "train"
+        assert cfg.hf_dataset.split is None
 
     def test_default_seq_length(self):
         cfg = default_gsm8k_config()
@@ -118,9 +118,9 @@ class TestDefaultGsm8kConfig:
         cfg = default_gsm8k_config(seq_length=4096)
         assert cfg.seq_length == 4096
 
-    def test_maker_is_gsm8k(self):
+    def test_preset_is_gsm8k(self):
         cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.schema_adapter == "gsm8k"
+        assert cfg.hf_dataset.dataset_name == "gsm8k"
 
     def test_dataloader_type_batch(self):
         cfg = default_gsm8k_config()
@@ -167,11 +167,10 @@ class TestDefaultSquadConfig:
         cfg = default_squad_config(seq_length=512)
         assert isinstance(cfg, GPTSFTDatasetConfig)
 
-    def test_default_maker_config(self):
+    def test_default_preset_config(self):
         cfg = default_squad_config(seq_length=512)
-        assert cfg.hf_dataset.schema_adapter == "squad"
-        assert cfg.hf_dataset.path_or_dataset == "rajpurkar/squad"
-        assert cfg.hf_dataset.split == "train"
+        assert cfg.hf_dataset.dataset_name == "squad"
+        assert cfg.hf_dataset.split is None
         assert cfg.hf_validation_dataset is None
         assert cfg.hf_validation_proportion == 0.1
         assert cfg.do_validation is True
@@ -210,30 +209,30 @@ class TestConfigDifferences:
     def test_different_dataset_names(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.path_or_dataset == "nvidia/OpenMathInstruct-2"
-        assert gsm8k.hf_dataset.path_or_dataset == "openai/gsm8k"
+        assert omi2.hf_dataset.dataset_name == "openmathinstruct2"
+        assert gsm8k.hf_dataset.dataset_name == "gsm8k"
 
-    def test_different_makers(self):
+    def test_different_presets(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.schema_adapter != gsm8k.hf_dataset.schema_adapter
+        assert omi2.hf_dataset.dataset_name != gsm8k.hf_dataset.dataset_name
 
     def test_gsm8k_has_subset_omi2_has_split(self):
         omi2 = default_openmathinstruct2_config()
         gsm8k = default_gsm8k_config()
-        assert gsm8k.hf_dataset.subset == "main"
-        assert omi2.hf_dataset.split == "train_1M"
+        assert gsm8k.hf_dataset.subset is None
+        assert omi2.hf_dataset.split is None
 
 
 @pytest.mark.unit
 class TestDefaultOpenmathinstruct2ThinkingConfig:
     """Test cases for default_openmathinstruct2_thinking_packed_config."""
 
-    def test_uses_thinking_maker(self):
+    def test_uses_thinking_preset(self):
         cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, packed_sequence=True)
         assert isinstance(cfg, GPTSFTDatasetConfig)
-        assert cfg.hf_dataset.schema_adapter == "openmathinstruct2_thinking"
-        assert cfg.hf_dataset.split == "train_1M"
+        assert cfg.hf_dataset.dataset_name == "openmathinstruct2_thinking"
+        assert cfg.hf_dataset.split is None
         assert cfg.hf_validation_proportion == 0.05
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None

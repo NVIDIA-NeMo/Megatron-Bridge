@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import json
+from types import SimpleNamespace
 
 import pytest
 from megatron.training.config.instantiate_utils import instantiate
@@ -19,6 +20,7 @@ from megatron.bridge.data.builders.gpt_sft_dataset import (
     resolve_gpt_sft_dataset_root,
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.hf_source import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -44,15 +46,13 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
     specs = PackedSequenceSpecs(packed_sequence_size=128, pad_seq_to_mult=8)
     config = GPTSFTDatasetConfig(
         seq_length=128,
-        hf_dataset=HFDatasetSourceConfig(
-            path_or_dataset="mock/squad",
-            schema_adapter="squad",
-        ),
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
         hf_output_root=str(tmp_path),
         hf_validation_proportion=0.1,
         seed=5678,
         enable_offline_packing=True,
         offline_packing_specs=specs,
+        do_test=False,
     )
 
     serialized = ConfigContainer._convert_value_to_dict(config)
@@ -60,7 +60,7 @@ def test_config_round_trip_is_declarative_and_serializable(tmp_path):
 
     assert isinstance(restored, GPTSFTDatasetConfig)
     assert isinstance(restored.hf_dataset, HFDatasetSourceConfig)
-    assert restored.hf_dataset.schema_adapter == "squad"
+    assert restored.hf_dataset.dataset_name == "squad"
     assert restored.offline_packing_specs.packed_sequence_size == 128
     assert "tokenizer" not in serialized
 
@@ -88,6 +88,41 @@ def test_config_rejects_max_num_samples_in_dataset_kwargs(tmp_path):
     )
 
     with pytest.raises(ValueError, match="Set max_train_samples directly"):
+        config.validate()
+
+
+def test_config_rejects_non_mapping_dataset_kwargs(tmp_path):
+    config = GPTSFTDatasetConfig(seq_length=128, dataset_root=tmp_path, dataset_kwargs=["invalid"])
+
+    with pytest.raises(TypeError, match="dataset_kwargs must be a mapping"):
+        config.validate()
+
+
+def test_config_rejects_implicit_unsupported_preset_split():
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="raven"),
+        do_validation=True,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="has no validation split"):
+        config.validate()
+
+
+def test_hf_rewrite_rejects_explicit_packed_paths(tmp_path):
+    specs = PackedSequenceSpecs(packed_sequence_size=128, packed_metadata_path=tmp_path / "metadata.jsonl")
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        hf_output_root=tmp_path,
+        hf_rewrite=True,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="cannot safely replace explicit packed data paths"):
         config.validate()
 
 
@@ -181,10 +216,29 @@ def test_default_hf_materialization_root_fingerprints_full_source(monkeypatch):
     assert all(root.startswith("cache/hf-sft-native-") for root in roots)
 
 
+def test_named_and_equivalent_custom_sources_share_materialization_identity(monkeypatch):
+    monkeypatch.setattr(builder_mod, "get_dataset_root", lambda name: f"cache/{name}")
+    named = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        do_validation=False,
+        do_test=False,
+    )
+    custom = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(path_or_dataset="rajpurkar/squad", schema_adapter="squad"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    assert resolve_gpt_sft_dataset_root(named) == resolve_gpt_sft_dataset_root(custom)
+
+
 def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
     calls = []
 
     def _fake_load(source):
+        source = resolve_hf_dataset_source(source)
         calls.append(source)
         return [
             {
@@ -215,6 +269,7 @@ def test_hf_source_materializes_requested_jsonl_splits(monkeypatch, tmp_path):
 
 def test_hf_source_can_split_validation_from_training(monkeypatch, tmp_path):
     def _fake_load(source):
+        source = resolve_hf_dataset_source(source)
         assert source.split == "train"
         return [
             {
@@ -266,6 +321,25 @@ def test_hf_source_reads_local_json(tmp_path):
     assert json.loads((output_root / "training.jsonl").read_text()) == json.loads(source_path.read_text())
 
 
+def test_hf_rewrite_removes_disabled_split_jsonl(monkeypatch, tmp_path):
+    (tmp_path / "validation.jsonl").write_text("stale validation")
+    (tmp_path / "test.jsonl").write_text("stale test")
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        hf_output_root=tmp_path,
+        hf_rewrite=True,
+        do_validation=False,
+        do_test=False,
+    )
+    monkeypatch.setattr(builder_mod, "_materialize_hf_split", lambda *_args, **_kwargs: None)
+
+    materialize_hf_dataset(config, tmp_path)
+
+    assert not (tmp_path / "validation.jsonl").exists()
+    assert not (tmp_path / "test.jsonl").exists()
+
+
 def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatch, tmp_path):
     config = _hf_config(tmp_path)
     materialize_mock = []
@@ -292,6 +366,67 @@ def test_builder_owns_runtime_materialization_and_shared_construction(monkeypatc
     assert test is None
     assert len(dataset_calls) == 2
     assert dataset_calls[0][1]["dataset_kwargs"]["chat"] is True
+
+
+def test_hf_rewrite_regenerates_existing_builder_managed_packed_data(monkeypatch, tmp_path):
+    specs = PackedSequenceSpecs(packed_sequence_size=128, tokenizer_model_name="test-tokenizer")
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        hf_output_root=tmp_path,
+        hf_validation_proportion=0.1,
+        hf_rewrite=True,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_test=False,
+    )
+    builder = GPTSFTDatasetBuilder(config=config, tokenizer=SimpleNamespace(_tokenizer=object()))
+    builder.train_path_packed.touch()
+    builder.validation_path_packed.touch()
+    builder.pack_metadata.write_text('[{"stale": true}]')
+    pack_calls = []
+
+    monkeypatch.setattr(builder_mod, "materialize_hf_dataset", lambda *_: None)
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data",
+        lambda **kwargs: pack_calls.append(kwargs),
+    )
+
+    builder.prepare_data()
+
+    assert [call["input_path"].name for call in pack_calls] == ["training.jsonl", "validation.jsonl"]
+    assert json.loads(builder.pack_metadata.read_text()) == []
+
+
+def test_hf_rewrite_removes_disabled_validation_pack(monkeypatch, tmp_path):
+    specs = PackedSequenceSpecs(packed_sequence_size=128, tokenizer_model_name="test-tokenizer")
+    config = GPTSFTDatasetConfig(
+        seq_length=128,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        hf_output_root=tmp_path,
+        hf_rewrite=True,
+        enable_offline_packing=True,
+        offline_packing_specs=specs,
+        do_validation=False,
+        do_test=False,
+    )
+    builder = GPTSFTDatasetBuilder(config=config, tokenizer=SimpleNamespace(_tokenizer=object()))
+    builder.train_path_packed.touch()
+    builder.validation_path_packed.touch()
+    builder.pack_metadata.write_text('[{"stale": true}]')
+    pack_calls = []
+
+    monkeypatch.setattr(builder_mod, "materialize_hf_dataset", lambda *_: None)
+    monkeypatch.setattr(
+        "megatron.bridge.data.datasets.packed_sequence.prepare_packed_sequence_data",
+        lambda **kwargs: pack_calls.append(kwargs),
+    )
+
+    builder.prepare_data()
+
+    assert len(pack_calls) == 1
+    assert not builder.validation_path_packed.exists()
+    assert json.loads(builder.pack_metadata.read_text()) == []
 
 
 def test_builder_requires_tokenizer(tmp_path):

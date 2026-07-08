@@ -136,7 +136,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, HFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
-    assert cfg.dataset.source.schema_adapter == "cord_v2"
+    assert cfg.dataset.source.dataset_name == "cord_v2"
     assert COLLATE_FNS["NemotronH_Nano_Omni_Reasoning_V3Processor"] is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1

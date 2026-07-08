@@ -61,8 +61,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_tp${TP}_pp${PP} \
-        dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-        dataset.source.schema_adapter=${DATASET_NAME} \
+        dataset.source.dataset_name=${DATASET_NAME} \
         dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP
@@ -110,8 +109,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_ep${EP}_tp${TP}_pp${PP} \
-        dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-        dataset.source.schema_adapter=${DATASET_NAME} \
+        dataset.source.dataset_name=${DATASET_NAME} \
         dataset.seq_length=$SEQ_LENGTH \
         model.expert_model_parallel_size=$EP \
         model.tensor_model_parallel_size=$TP \

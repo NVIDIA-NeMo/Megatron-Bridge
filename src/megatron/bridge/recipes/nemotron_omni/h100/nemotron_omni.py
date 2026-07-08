@@ -41,10 +41,7 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=_DEFAULT_HF_PATH,
-        source=HFDatasetSourceConfig(
-            path_or_dataset="naver-clova-ix/cord-v2",
-            schema_adapter="cord_v2",
-        ),
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -92,10 +89,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dataset = HFSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=_DEFAULT_HF_PATH,
-        source=HFDatasetSourceConfig(
-            path_or_dataset="naver-clova-ix/cord-v2",
-            schema_adapter="cord_v2",
-        ),
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,

@@ -163,7 +163,7 @@ def apply_dataset_override(
         packed_sequence: Whether to enable packed sequences.
         seq_length: Explicit sequence length (None = use model's or default 4096).
         cli_overrides: Mutable list of Hydra-style CLI overrides. For ``llm-finetune``,
-            ``dataset.dataset_name`` is extracted and consumed here to select the preset.
+            ``dataset.hf_dataset.dataset_name`` is extracted and consumed here to select the preset.
 
     Returns:
         The modified ConfigContainer.
@@ -203,7 +203,7 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "llm-finetune":
-        preset_name = extract_and_remove_override(cli_overrides, "dataset.dataset_name", default="squad")
+        preset_name = extract_and_remove_override(cli_overrides, "dataset.hf_dataset.dataset_name", default="squad")
         if preset_name not in LLM_FINETUNE_PRESETS:
             raise ValueError(
                 f"Unknown finetune dataset preset: '{preset_name}'. "
@@ -247,10 +247,7 @@ def apply_dataset_override(
         config.dataset = HFSFTDatasetConfig(
             seq_length=resolved_seq_length,
             hf_processor_path=None,
-            source=HFDatasetSourceConfig(
-                path_or_dataset="naver-clova-ix/cord-v2",
-                schema_adapter="cord_v2",
-            ),
+            source=HFDatasetSourceConfig(dataset_name="cord_v2"),
             num_workers=2,
             dataloader_type="single",
             data_sharding=True,

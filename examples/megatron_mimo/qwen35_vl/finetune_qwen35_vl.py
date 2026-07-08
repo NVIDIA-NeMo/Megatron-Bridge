@@ -53,6 +53,7 @@ from megatron.bridge.data.conversation_processing import (
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
+from megatron.bridge.data.hf_source import hf_dataset_supports_split
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
@@ -92,11 +93,6 @@ G_DEFAULT_COMPONENTS = [
     "language=tp=1,dp=1,rank_offset=0",
     "images=tp=1,dp=1,rank_offset=1",
 ]
-G_DEFAULT_DATASET_PATHS = {
-    "cord_v2": "naver-clova-ix/cord-v2",
-    "medpix": "mmoukouba/MedPix-VQA",
-    "rdr": "quintend/rdr-items",
-}
 G_EXAMPLE_ROOT = "/workspace/qwen35_vl_mimo"
 
 G_RANK_LOG_FILE = None
@@ -360,30 +356,35 @@ def _build_mimo_provider(
     return provider
 
 
-def _resolve_dataset_path(dataset_adapter: str, dataset_path: str | None) -> str:
-    if dataset_path is not None:
-        return dataset_path
-    if dataset_adapter not in G_DEFAULT_DATASET_PATHS:
-        raise ValueError(f"--dataset-path is required for schema adapter {dataset_adapter!r}.")
-    return G_DEFAULT_DATASET_PATHS[dataset_adapter]
+def _build_dataset_source(args: argparse.Namespace) -> HFDatasetSourceConfig:
+    if args.dataset_name is not None:
+        if args.dataset_path is not None or args.dataset_subset is not None or args.schema_adapter is not None:
+            raise ValueError(
+                "--dataset-name owns its path, subset, and schema adapter; do not combine it with custom source flags."
+            )
+        return HFDatasetSourceConfig(dataset_name=args.dataset_name)
+    return HFDatasetSourceConfig(
+        path_or_dataset=args.dataset_path,
+        subset=args.dataset_subset,
+        schema_adapter=args.schema_adapter,
+    )
 
 
 def _build_dataset_config(args: argparse.Namespace) -> HFSFTDatasetConfig:
+    source = _build_dataset_source(args)
+    auto_validation = source.dataset_name is not None and hf_dataset_supports_split(source, "validation")
+    do_validation = auto_validation if args.do_validation is None else args.do_validation
     dataset_config = HFSFTDatasetConfig(
         seq_length=args.seq_length,
         hf_processor_path=args.processor_path or args.hf_model,
-        source=HFDatasetSourceConfig(
-            path_or_dataset=_resolve_dataset_path(args.dataset_adapter, args.dataset_path),
-            subset=args.dataset_subset,
-            schema_adapter=args.dataset_adapter,
-        ),
+        source=source,
         num_workers=args.num_workers,
         dataloader_type=args.dataloader_type,
         data_sharding=True,
         pin_memory=True,
         persistent_workers=args.num_workers > 0,
         enable_in_batch_packing=False,
-        do_validation=True,
+        do_validation=do_validation,
         do_test=False,
         trust_remote_code=args.trust_remote_code,
     )
@@ -1064,11 +1065,17 @@ def _default_model_tag(hf_model: str) -> str:
 
 def _resolve_default_paths(args: argparse.Namespace) -> None:
     model_tag = _default_model_tag(args.hf_model)
-    args.dataset_path = _resolve_dataset_path(args.dataset_adapter, args.dataset_path)
+    if args.dataset_name is None and args.dataset_path is None:
+        if args.dataset_subset is not None or args.schema_adapter is not None:
+            raise ValueError("--dataset-subset and --schema-adapter require --dataset-path.")
+        args.dataset_name = "cord_v2"
+    if args.dataset_name is not None and args.dataset_path is not None:
+        raise ValueError("Set either --dataset-name or --dataset-path, not both.")
     if args.pretrained_checkpoint is None and args.load_checkpoint is None and not args.allow_random_init:
         args.pretrained_checkpoint = str(Path(args.experiment_root) / "models" / "mimo" / f"{model_tag}-mimo")
     if args.checkpoint_dir is None:
-        run_name = args.run_name or f"{model_tag}_{args.dataset_adapter}_mimo_hf"
+        dataset_tag = args.dataset_name or args.schema_adapter or "native"
+        run_name = args.run_name or f"{model_tag}_{dataset_tag}_mimo_hf"
         args.checkpoint_dir = str(Path(args.experiment_root) / "results" / "mimo" / run_name)
     if args.log_dir is None:
         args.log_dir = str(Path(args.experiment_root) / "logs" / "mimo_hf")
@@ -1092,19 +1099,25 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--experiment-root", type=str, default=G_EXAMPLE_ROOT)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument(
-        "--dataset-adapter",
-        dest="dataset_adapter",
+        "--dataset-name",
         type=str,
-        default="cord_v2",
-        help="Optional schema adapter.",
+        default=None,
+        help="Built-in dataset preset. Defaults to cord_v2 when no custom path is set.",
     )
     parser.add_argument(
         "--dataset-path",
         type=str,
         default=None,
-        help="HF dataset path. Known adapters retain their default paths.",
+        help="Custom HF dataset path, mutually exclusive with --dataset-name.",
     )
     parser.add_argument("--dataset-subset", type=str, default=None)
+    parser.add_argument("--schema-adapter", type=str, default=None, help="Adapter for a custom non-native source.")
+    parser.add_argument(
+        "--do-validation",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable a derived validation split; presets auto-enable it only when supported.",
+    )
     parser.add_argument("--seq-length", type=int, default=4096)
     parser.add_argument("--micro-batch-size", type=int, default=1)
     parser.add_argument("--global-batch-size", type=int, default=8)
@@ -1229,7 +1242,10 @@ def main() -> None:
         model_provider = _build_mimo_provider(hf_config, parallelism_config, args)
         _register_converted_checkpoint_pre_wrap_hook(model_provider, args.pretrained_checkpoint)
 
-        _log(f"building direct HF SFT data: source={args.dataset_path} adapter={args.dataset_adapter}")
+        if args.dataset_name is not None:
+            _log(f"building direct HF SFT data: preset={args.dataset_name}")
+        else:
+            _log(f"building direct HF SFT data: source={args.dataset_path} adapter={args.schema_adapter}")
         dataset_config = _build_dataset_config(args)
 
         _log(f"pretrained checkpoint: {args.pretrained_checkpoint}")

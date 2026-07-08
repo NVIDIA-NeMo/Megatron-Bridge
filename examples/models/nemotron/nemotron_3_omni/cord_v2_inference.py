@@ -309,13 +309,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     print_rank_0(f"Loading CORD-V2 split={args.split} ...")
-    examples = load_and_adapt_hf_dataset(
-        HFDatasetSourceConfig(
-            path_or_dataset="naver-clova-ix/cord-v2",
-            split=args.split,
-            schema_adapter="cord_v2",
-        )
-    )
+    examples = load_and_adapt_hf_dataset(HFDatasetSourceConfig(dataset_name="cord_v2", split=args.split))
     n = min(args.max_samples, len(examples))
     print_rank_0(f"Running inference on {n}/{len(examples)} samples")
 

@@ -35,7 +35,12 @@ from megatron.bridge.data.datasets.packed_parquet import (
 )
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.data.datasets.sft import create_sft_dataset, get_dataset_root
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig, load_and_adapt_hf_dataset
+from megatron.bridge.data.hf_source import (
+    HFDatasetSourceConfig,
+    hf_dataset_supports_split,
+    load_and_adapt_hf_dataset,
+    resolve_hf_dataset_source,
+)
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import get_rank_safe, print_rank_0
 
@@ -104,6 +109,23 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("hf_validation_proportion must be between 0 and 1.")
         if self.hf_validation_dataset is not None and self.hf_validation_proportion is not None:
             raise ValueError("Set either hf_validation_dataset or hf_validation_proportion, not both.")
+        if (
+            self.hf_dataset is not None
+            and self.do_validation
+            and self.hf_validation_dataset is None
+            and self.hf_validation_proportion is None
+            and not hf_dataset_supports_split(self.hf_dataset, "validation")
+        ):
+            raise ValueError(
+                "The selected Hugging Face source has no validation split; disable validation or set one."
+            )
+        if (
+            self.hf_dataset is not None
+            and self.do_test
+            and self.hf_test_dataset is None
+            and not hf_dataset_supports_split(self.hf_dataset, "test")
+        ):
+            raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
         if not self.do_validation and (
             self.hf_validation_dataset is not None or self.hf_validation_proportion is not None
         ):
@@ -118,6 +140,16 @@ class GPTSFTDatasetConfig(DataloaderConfig):
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
         if self.offline_packing_specs is not None and self.offline_packing_specs.packed_sequence_size <= 0:
             raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+        if self.hf_rewrite and self.offline_packing_specs is not None:
+            explicit_packed_paths = (
+                self.offline_packing_specs.packed_train_data_path,
+                self.offline_packing_specs.packed_val_data_path,
+                self.offline_packing_specs.packed_metadata_path,
+            )
+            if any(path is not None for path in explicit_packed_paths):
+                raise ValueError(
+                    "hf_rewrite cannot safely replace explicit packed data paths; use builder-managed packed paths."
+                )
         validate_declarative_mapping(self.dataset_kwargs, field_name="dataset_kwargs")
         if self.dataset_kwargs is not None and "max_num_samples" in self.dataset_kwargs:
             raise ValueError("Set max_train_samples directly; dataset_kwargs must not contain max_num_samples.")
@@ -156,9 +188,11 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
     if config.hf_output_root is not None:
         return Path(config.hf_output_root)
     materialization_identity = {
-        "source": asdict(source),
-        "validation_source": asdict(config.hf_validation_dataset) if config.hf_validation_dataset else None,
-        "test_source": asdict(config.hf_test_dataset) if config.hf_test_dataset else None,
+        "source": asdict(resolve_hf_dataset_source(source)),
+        "validation_source": (
+            asdict(resolve_hf_dataset_source(config.hf_validation_dataset)) if config.hf_validation_dataset else None
+        ),
+        "test_source": (asdict(resolve_hf_dataset_source(config.hf_test_dataset)) if config.hf_test_dataset else None),
         "validation_proportion": config.hf_validation_proportion,
         "validation_seed": config.seed if config.hf_validation_proportion is not None else None,
         "do_validation": config.do_validation,
@@ -171,7 +205,8 @@ def resolve_gpt_sft_dataset_root(config: GPTSFTDatasetConfig) -> str | Path:
         default=str,
     ).encode("utf-8")
     fingerprint = hashlib.sha256(encoded_identity).hexdigest()[:16]
-    adapter_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", source.schema_adapter or "native").strip("-")
+    resolved_source = resolve_hf_dataset_source(source)
+    adapter_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", resolved_source.schema_adapter or "native").strip("-")
     return get_dataset_root(f"hf-sft-{adapter_name}-{fingerprint}")
 
 
@@ -226,10 +261,15 @@ def _materialize_hf_split(
 
 
 def materialize_hf_dataset(config: GPTSFTDatasetConfig, root: Path) -> None:
-    """Materialize and normalize a Hugging Face maker source as JSONL splits."""
+    """Materialize and normalize a Hugging Face source as JSONL splits."""
     source = config.hf_dataset
     if source is None:
         raise ValueError("materialize_hf_dataset requires an hf_dataset source.")
+    if config.hf_rewrite:
+        if not config.do_validation:
+            (root / "validation.jsonl").unlink(missing_ok=True)
+        if not config.do_test:
+            (root / "test.jsonl").unlink(missing_ok=True)
 
     derive_validation = (
         config.do_validation and config.hf_validation_proportion is not None and config.hf_validation_dataset is None
@@ -372,6 +412,7 @@ class GPTSFTDatasetBuilder:
         self._num_tokenizer_workers = (
             -1 if config.offline_packing_specs is None else config.offline_packing_specs.num_tokenizer_workers
         )
+        self._rewrite_packed_data = config.hf_dataset is not None and config.hf_rewrite
 
         self.do_validation = config.do_validation
         self.do_test = config.do_test
@@ -397,10 +438,19 @@ class GPTSFTDatasetBuilder:
 
         Skips preparation if:
         - packed_sequence_size <= 0 (packing disabled)
-        - packed data files already exist (parquet or legacy .npy)
+        - packed data files already exist (parquet or legacy .npy), unless
+          ``hf_rewrite`` requested regeneration
         """
         if self.packed_sequence_size <= 0:
             return
+
+        if self._rewrite_packed_data:
+            metadata_path = self.pack_metadata
+            if metadata_path.exists():
+                with metadata_path.open("w") as metadata_file:
+                    json.dump([], metadata_file)
+            if not self.do_validation:
+                self._remove_packed_path(self.validation_path_packed)
 
         self._prepare_packed_split(
             split_name="training",
@@ -432,7 +482,7 @@ class GPTSFTDatasetBuilder:
         """
         from megatron.bridge.data.datasets.packed_sequence import prepare_packed_sequence_data
 
-        if self._packed_path_exists(packed_path):
+        if self._packed_path_exists(packed_path) and not self._rewrite_packed_data:
             print_rank_0(f"Skipping packed {split_name} data preparation - already exists: {packed_path}")
             return
 
@@ -488,6 +538,17 @@ class GPTSFTDatasetBuilder:
             return msc.Path(path_str).is_file()
         else:
             return Path(path_str).is_file()
+
+    def _remove_packed_path(self, path: Union[str, Path]) -> None:
+        """Remove one builder-managed packed artifact if it exists."""
+        path_str = str(path)
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            path_obj = msc.Path(path_str)
+            if path_obj.exists():
+                path_obj.unlink()
+        else:
+            Path(path_str).unlink(missing_ok=True)
 
     def build(self) -> list[Optional[Any]]:
         """Build train, validation, and test datasets.

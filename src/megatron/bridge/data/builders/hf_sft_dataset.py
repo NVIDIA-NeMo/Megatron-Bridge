@@ -27,7 +27,7 @@ from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.hf_datasets.conversation_dataset import ConversationDataset
 from megatron.bridge.data.hf_datasets.text_collate import text_chat_collate_fn
-from megatron.bridge.data.hf_source import HFDatasetSourceConfig, load_and_adapt_hf_dataset
+from megatron.bridge.data.hf_source import HFDatasetSourceConfig, hf_dataset_supports_split, load_and_adapt_hf_dataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
@@ -191,6 +191,22 @@ class HFSFTDatasetBuilder:
         context: DatasetBuildContext,
     ) -> tuple[ConversationDataset | None, ConversationDataset | None, ConversationDataset | None]:
         """Build train, validation, and test datasets for requested sample counts."""
+        if (
+            self.config.do_validation
+            and context.valid_samples > 0
+            and self.config.validation_source is None
+            and not hf_dataset_supports_split(self.config.source, "validation")
+        ):
+            raise ValueError(
+                "The selected Hugging Face source has no validation split; disable validation or set one."
+            )
+        if (
+            self.config.do_test
+            and context.test_samples > 0
+            and self.config.test_source is None
+            and not hf_dataset_supports_split(self.config.source, "test")
+        ):
+            raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
         processor = load_hf_sft_processor(self.config, context.tokenizer)
         train_dataset = build_hf_sft_split(
             self.config,

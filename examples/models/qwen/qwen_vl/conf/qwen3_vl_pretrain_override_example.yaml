@@ -76,8 +76,7 @@ logger:
 dataset:
   seq_length: 4096
   # source:
-  #   path_or_dataset: ysdede/commonvoice_17_tr_fixed
-  #   schema_adapter: cv17
+  #   dataset_name: cord_v2
   enable_in_batch_packing: true
 
 rng:

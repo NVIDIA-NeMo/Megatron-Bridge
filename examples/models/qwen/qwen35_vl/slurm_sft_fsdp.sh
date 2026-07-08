@@ -109,8 +109,7 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_sft \
-    dataset.source.path_or_dataset=naver-clova-ix/cord-v2 \
-    dataset.source.schema_adapter=${DATASET_NAME} \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH"
 
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \

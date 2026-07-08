@@ -105,4 +105,6 @@ def validate_declarative_mapping(value: dict[str, Any] | None, *, field_name: st
         )
 
     if value is not None:
+        if not isinstance(value, dict):
+            raise TypeError(f"{field_name} must be a mapping, got {type(value).__name__}.")
         _validate(value, field_name)

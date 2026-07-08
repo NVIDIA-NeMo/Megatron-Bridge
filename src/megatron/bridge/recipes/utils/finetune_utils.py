@@ -54,7 +54,6 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
 def _text_hf_dataset_config(
     *,
     seq_length: int,
-    schema_adapter: str,
     source: HFDatasetSourceConfig,
     validation_source: HFDatasetSourceConfig | None = None,
     test_source: HFDatasetSourceConfig | None = None,
@@ -69,14 +68,7 @@ def _text_hf_dataset_config(
     """Create an HF-backed text SFT config with optional offline packing."""
     return GPTSFTDatasetConfig(
         seq_length=seq_length,
-        hf_dataset=HFDatasetSourceConfig(
-            path_or_dataset=source.path_or_dataset,
-            split=source.split,
-            subset=source.subset,
-            load_kwargs=source.load_kwargs,
-            schema_adapter=schema_adapter,
-            adapter_kwargs=source.adapter_kwargs,
-        ),
+        hf_dataset=source,
         hf_validation_dataset=validation_source,
         hf_test_dataset=test_source,
         hf_validation_proportion=val_proportion,
@@ -92,11 +84,6 @@ def _text_hf_dataset_config(
         pin_memory=True,
         persistent_workers=False,
     )
-
-
-# Deprecated private compatibility for the signed sequence-packing skill shipped with the
-# current release. Primary recipe paths use ``_text_hf_dataset_config``.
-_text_hf_dataset_provider = _text_hf_dataset_config
 
 
 def default_squad_config(
@@ -126,8 +113,7 @@ def default_squad_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        schema_adapter="squad",
-        source=HFDatasetSourceConfig(path_or_dataset="rajpurkar/squad"),
+        source=HFDatasetSourceConfig(dataset_name="squad"),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -148,8 +134,7 @@ def default_openmathinstruct2_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        schema_adapter="openmathinstruct2",
-        source=HFDatasetSourceConfig(path_or_dataset="nvidia/OpenMathInstruct-2", split="train_1M"),
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -185,14 +170,8 @@ def default_gsm8k_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        schema_adapter="gsm8k",
-        source=HFDatasetSourceConfig(path_or_dataset="openai/gsm8k", subset="main"),
-        test_source=HFDatasetSourceConfig(
-            path_or_dataset="openai/gsm8k",
-            subset="main",
-            split="test",
-            schema_adapter="gsm8k",
-        ),
+        source=HFDatasetSourceConfig(dataset_name="gsm8k"),
+        test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
         do_validation=False,
         do_test=True,
         seq_length=seq_length,
@@ -224,5 +203,5 @@ def default_openmathinstruct2_thinking_packed_config(
         pad_seq_to_mult=pad_seq_to_mult,
     )
     assert cfg.hf_dataset is not None
-    cfg.hf_dataset.schema_adapter = "openmathinstruct2_thinking"
+    cfg.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
     return cfg

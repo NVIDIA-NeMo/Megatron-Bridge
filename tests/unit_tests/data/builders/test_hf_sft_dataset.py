@@ -7,6 +7,7 @@ from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.builders import HFDatasetSourceConfig, HFSFTDatasetBuilder, HFSFTDatasetConfig
 from megatron.bridge.data.builders import hf_sft_dataset as builder_module
 from megatron.bridge.data.builders.hf_sft_dataset import load_hf_sft_processor, select_hf_sft_collate
+from megatron.bridge.data.hf_source import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -122,6 +123,7 @@ def test_builder_loads_all_requested_sources(monkeypatch):
     row = {"messages": [{"role": "assistant", "content": "answer"}]}
 
     def _load(source):
+        source = resolve_hf_dataset_source(source)
         calls.append((source.path_or_dataset, source.split))
         return [row]
 
@@ -142,6 +144,19 @@ def test_builder_loads_all_requested_sources(monkeypatch):
         ("org/validation", "dev"),
         ("org/test", "evaluation"),
     ]
+
+
+def test_builder_rejects_requested_implicit_unsupported_split_before_loading():
+    config = HFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(dataset_name="rdr"),
+        do_validation=True,
+        do_test=False,
+        pad_to_multiple_of=1,
+    )
+
+    with pytest.raises(ValueError, match="has no validation split"):
+        HFSFTDatasetBuilder(config).build(DatasetBuildContext(3, 1, 0, tokenizer=_Tokenizer()))
 
 
 def test_builder_forwards_runtime_packing_to_collate(monkeypatch):

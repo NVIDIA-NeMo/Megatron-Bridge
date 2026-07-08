@@ -27,7 +27,7 @@ EXAMPLES = {
         ("What is in-batch packing?", "Packing examples during collation."),
     ],
     "validation": [("What is JSONL?", "One JSON object per line.")],
-    "test": [("What is a maker?", "A registered dataset normalization function.")],
+    "test": [("What is an adapter?", "A registered dataset normalization function.")],
 }
 
 

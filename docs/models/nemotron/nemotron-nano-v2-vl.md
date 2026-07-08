@@ -88,9 +88,7 @@ Example usage for full parameter finetuning using the
 uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
-dataset.source.path_or_dataset=HuggingFaceM4/the_cauldron \
-dataset.source.subset=raven \
-dataset.source.schema_adapter=raven \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name>
@@ -99,7 +97,7 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 Note:
 - The config file `examples/models/nemotron/nemotron_vl/conf/nemotron_nano_v2_vl_override_example.yaml` contains a list of arguments
   that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command.
-- To change the dataset, set the declarative source path/subset and optional schema adapter. See the dataset section below.
+- To change to another built-in dataset, set its `dataset.source.dataset_name` preset. To replace the recipe preset with a custom native source from the CLI, set `dataset.source.dataset_name=null` plus `dataset.source.path_or_dataset=<id>`; custom schemas also require an explicit adapter. See the dataset section below.
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint.
   You can also export the trained checkpoint to Hugging Face format.
 - This full finetuning recipe requires at least 4xH100 (80G) GPUs.
@@ -116,9 +114,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotr
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
-dataset.source.path_or_dataset=HuggingFaceM4/the_cauldron \
-dataset.source.subset=raven \
-dataset.source.schema_adapter=raven \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \
@@ -135,9 +131,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotr
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
 --lora-on-vision-model \
-dataset.source.path_or_dataset=HuggingFaceM4/the_cauldron \
-dataset.source.subset=raven \
-dataset.source.schema_adapter=raven \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \
@@ -163,7 +157,7 @@ The output is a merged Hugging Face checkpoint for downstream evaluation.
 ## Example Datasets
 
 Megatron Bridge supports various vision-language dataset examples which can be used to finetune Nemotron Nano V2 VL:
-| Dataset | Schema adapter | Description |
+| Dataset | Dataset preset | Description |
 |---------|------------|-------------|
 | [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `cord_v2` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
 | [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |

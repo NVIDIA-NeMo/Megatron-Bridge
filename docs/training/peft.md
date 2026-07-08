@@ -309,11 +309,7 @@ config = ConfigContainer(
     ),
     dataset=GPTSFTDatasetConfig(
         seq_length=512,
-        hf_dataset=HFDatasetSourceConfig(
-            path_or_dataset="rajpurkar/squad",
-            split="train",
-            schema_adapter="squad",
-        ),
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
         hf_validation_proportion=0.1,
         seed=5678,
         do_validation=True,

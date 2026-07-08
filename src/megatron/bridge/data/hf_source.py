@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Declarative Hugging Face sources and shared loading/normalization."""
+"""Declarative Hugging Face sources, named presets, and shared normalization."""
 
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Any
 
 from datasets import concatenate_datasets, load_dataset
@@ -31,13 +32,16 @@ from megatron.bridge.data.hf_datasets.adapters import (
 class HFDatasetSourceConfig:
     """Serializable source selection for one Hugging Face dataset split.
 
-    ``schema_adapter`` is optional when rows already contain ``messages``,
-    ``conversation``, or legacy ``conversations``. Dataset-specific schemas such
-    as SQuAD, CORD, or CommonVoice select a registered adapter explicitly.
+    Exactly one source mode is required. ``dataset_name`` selects a built-in
+    dataset preset that owns its Hub path, subset, and schema adapter.
+    ``path_or_dataset`` selects a custom source; ``schema_adapter`` is optional
+    when its rows already contain ``messages``, ``conversation``, or legacy
+    ``conversations``.
     """
 
-    path_or_dataset: str
-    split: str = "train"
+    dataset_name: str | None = None
+    path_or_dataset: str | None = None
+    split: str | None = None
     subset: str | list[str] | None = None
     load_kwargs: dict[str, Any] | None = None
     schema_adapter: str | None = None
@@ -45,10 +49,37 @@ class HFDatasetSourceConfig:
 
     def validate(self) -> None:
         """Validate declarative source and adapter settings."""
-        if not self.path_or_dataset.strip():
-            raise ValueError("path_or_dataset must be a non-empty string.")
-        if not self.split.strip():
-            raise ValueError("split must be a non-empty string.")
+        validate_declarative_mapping(self.load_kwargs, field_name="load_kwargs")
+        validate_declarative_mapping(self.adapter_kwargs, field_name="adapter_kwargs")
+        if self.split is not None and (not isinstance(self.split, str) or not self.split.strip()):
+            raise ValueError("split must be non-empty when set.")
+        has_named_source = self.dataset_name is not None
+        has_custom_source = self.path_or_dataset is not None
+        if has_named_source == has_custom_source:
+            raise ValueError("Exactly one Hugging Face source must be set: dataset_name or path_or_dataset.")
+        if has_named_source:
+            if not isinstance(self.dataset_name, str) or not self.dataset_name.strip():
+                raise ValueError("dataset_name must be a non-empty string.")
+            if self.dataset_name not in _HF_DATASET_PRESETS:
+                choices = ", ".join(sorted(_HF_DATASET_PRESETS))
+                raise ValueError(f"Unknown Hugging Face dataset preset: {self.dataset_name}. Available: {choices}")
+            if self.subset is not None or self.schema_adapter is not None:
+                raise ValueError("Named dataset presets own subset and schema_adapter; do not override them.")
+            preset = _HF_DATASET_PRESETS[self.dataset_name]
+            adapter_kwargs = self.adapter_kwargs or {}
+            missing_kwargs = [
+                key
+                for key in preset.required_adapter_kwargs
+                if not isinstance(adapter_kwargs.get(key), (str, Path)) or not str(adapter_kwargs[key]).strip()
+            ]
+            if missing_kwargs:
+                missing = ", ".join(missing_kwargs)
+                raise ValueError(f"Dataset preset {self.dataset_name} requires adapter_kwargs: {missing}.")
+            if self.split is not None:
+                _resolve_preset_split(self.dataset_name, preset, self.split)
+        else:
+            if not isinstance(self.path_or_dataset, str) or not self.path_or_dataset.strip():
+                raise ValueError("path_or_dataset must be a non-empty string.")
         if isinstance(self.subset, str) and not self.subset.strip():
             raise ValueError("subset must be non-empty when set.")
         if isinstance(self.subset, list) and (
@@ -57,41 +88,180 @@ class HFDatasetSourceConfig:
             raise ValueError("subset lists must contain non-empty strings.")
         if self.subset is not None and not isinstance(self.subset, (str, list)):
             raise TypeError("subset must be a string, list of strings, or None.")
-        if self.schema_adapter is not None and not self.schema_adapter.strip():
+        if self.schema_adapter is not None and (
+            not isinstance(self.schema_adapter, str) or not self.schema_adapter.strip()
+        ):
             raise ValueError("schema_adapter must be non-empty when set.")
-        validate_hf_dataset_adapter(self.schema_adapter)
-        validate_declarative_mapping(self.load_kwargs, field_name="load_kwargs")
-        validate_declarative_mapping(self.adapter_kwargs, field_name="adapter_kwargs")
+        adapter_name = (
+            _HF_DATASET_PRESETS[self.dataset_name].schema_adapter
+            if self.dataset_name is not None
+            else self.schema_adapter
+        )
+        validate_hf_dataset_adapter(adapter_name)
+        duplicate_load_keys = {"path", "name", "split"}.intersection(self.load_kwargs or {})
+        if duplicate_load_keys:
+            keys = ", ".join(sorted(duplicate_load_keys))
+            raise ValueError(f"load_kwargs must not override source fields: {keys}.")
 
     def with_split(self, split: str) -> "HFDatasetSourceConfig":
         """Return a copy selecting another split expression."""
         return replace(self, split=split)
 
 
+@dataclass(frozen=True, kw_only=True)
+class _HFDatasetPreset:
+    """Resolved physical source metadata for a built-in dataset."""
+
+    path_or_dataset: str
+    schema_adapter: str
+    split: str = "train"
+    subset: str | list[str] | None = None
+    load_kwargs: dict[str, Any] | None = None
+    adapter_kwargs: dict[str, Any] | None = None
+    required_adapter_kwargs: tuple[str, ...] = ()
+    split_aliases: dict[str, str] | None = None
+    supported_splits: tuple[str, ...] | None = None
+
+
+_HF_DATASET_PRESETS: dict[str, _HFDatasetPreset] = {
+    "cord_v2": _HFDatasetPreset(
+        path_or_dataset="naver-clova-ix/cord-v2",
+        schema_adapter="cord_v2",
+        supported_splits=("train", "validation", "test"),
+    ),
+    "cv17": _HFDatasetPreset(
+        path_or_dataset="ysdede/commonvoice_17_tr_fixed",
+        schema_adapter="cv17",
+        supported_splits=("train", "validation", "test", "validated"),
+    ),
+    "gsm8k": _HFDatasetPreset(
+        path_or_dataset="openai/gsm8k",
+        subset="main",
+        schema_adapter="gsm8k",
+        supported_splits=("train", "test"),
+    ),
+    "llava_video_178k": _HFDatasetPreset(
+        path_or_dataset="lmms-lab/LLaVA-Video-178K",
+        subset="0_30_s_nextqa",
+        split="open_ended",
+        schema_adapter="llava_video_178k",
+        required_adapter_kwargs=("video_root_path",),
+        split_aliases={"train": "open_ended"},
+        supported_splits=("open_ended",),
+    ),
+    "medpix": _HFDatasetPreset(
+        path_or_dataset="mmoukouba/MedPix-VQA",
+        schema_adapter="medpix",
+        supported_splits=("train", "validation"),
+    ),
+    "openmathinstruct2": _HFDatasetPreset(
+        path_or_dataset="nvidia/OpenMathInstruct-2",
+        split="train_1M",
+        schema_adapter="openmathinstruct2",
+        supported_splits=("train", "train_1M", "train_2M", "train_5M"),
+    ),
+    "openmathinstruct2_thinking": _HFDatasetPreset(
+        path_or_dataset="nvidia/OpenMathInstruct-2",
+        split="train_1M",
+        schema_adapter="openmathinstruct2_thinking",
+        supported_splits=("train", "train_1M", "train_2M", "train_5M"),
+    ),
+    "raven": _HFDatasetPreset(
+        path_or_dataset="HuggingFaceM4/the_cauldron",
+        subset="raven",
+        schema_adapter="raven",
+        supported_splits=("train",),
+    ),
+    "rdr": _HFDatasetPreset(
+        path_or_dataset="quintend/rdr-items",
+        schema_adapter="rdr",
+        supported_splits=("train",),
+    ),
+    "squad": _HFDatasetPreset(
+        path_or_dataset="rajpurkar/squad",
+        schema_adapter="squad",
+        supported_splits=("train", "validation"),
+    ),
+}
+
+
+def _resolve_preset_split(dataset_name: str, preset: _HFDatasetPreset, split: str) -> str:
+    resolved_components: list[str] = []
+    for component in split.split("+"):
+        base_split, slice_separator, slice_expression = component.partition("[")
+        resolved_base_split = (preset.split_aliases or {}).get(base_split, base_split)
+        if preset.supported_splits is not None and resolved_base_split not in preset.supported_splits:
+            supported = ", ".join(preset.supported_splits)
+            raise ValueError(f"Dataset preset {dataset_name} only supports split(s): {supported}.")
+        resolved_components.append(f"{resolved_base_split}{slice_separator}{slice_expression}")
+    return "+".join(resolved_components)
+
+
+def hf_dataset_supports_split(source: HFDatasetSourceConfig, split: str) -> bool:
+    """Return whether a source declares support for a logical split."""
+    if not isinstance(split, str) or not split.strip():
+        raise ValueError("split must be a non-empty string.")
+    source.validate()
+    if source.dataset_name is None:
+        return True
+    preset = _HF_DATASET_PRESETS[source.dataset_name]
+    try:
+        _resolve_preset_split(source.dataset_name, preset, split)
+    except ValueError:
+        return False
+    return True
+
+
+def resolve_hf_dataset_source(source: HFDatasetSourceConfig) -> HFDatasetSourceConfig:
+    """Resolve a named preset or custom source to complete physical metadata."""
+    source.validate()
+    if source.dataset_name is None:
+        return replace(source, split=source.split or "train")
+
+    preset = _HF_DATASET_PRESETS[source.dataset_name]
+    load_kwargs = {**(preset.load_kwargs or {}), **(source.load_kwargs or {})} or None
+    adapter_kwargs = {**(preset.adapter_kwargs or {}), **(source.adapter_kwargs or {})} or None
+    split = _resolve_preset_split(source.dataset_name, preset, source.split or preset.split)
+    resolved = HFDatasetSourceConfig(
+        path_or_dataset=preset.path_or_dataset,
+        split=split,
+        subset=preset.subset,
+        load_kwargs=load_kwargs,
+        schema_adapter=preset.schema_adapter,
+        adapter_kwargs=adapter_kwargs,
+    )
+    resolved.validate()
+    return resolved
+
+
 def load_hf_dataset_source(source: HFDatasetSourceConfig) -> Any:
     """Load one declarative Hugging Face source without adapting its rows."""
-    source.validate()
-    kwargs = dict(source.load_kwargs or {})
-    if isinstance(source.subset, list):
+    resolved = resolve_hf_dataset_source(source)
+    assert resolved.path_or_dataset is not None
+    assert resolved.split is not None
+    kwargs = dict(resolved.load_kwargs or {})
+    if isinstance(resolved.subset, list):
         datasets = [
-            load_dataset(source.path_or_dataset, subset, split=source.split, **kwargs) for subset in source.subset
+            load_dataset(resolved.path_or_dataset, subset, split=resolved.split, **kwargs)
+            for subset in resolved.subset
         ]
         return concatenate_datasets(datasets)
-    if source.subset is None:
-        return load_dataset(source.path_or_dataset, split=source.split, **kwargs)
-    return load_dataset(source.path_or_dataset, source.subset, split=source.split, **kwargs)
+    if resolved.subset is None:
+        return load_dataset(resolved.path_or_dataset, split=resolved.split, **kwargs)
+    return load_dataset(resolved.path_or_dataset, resolved.subset, split=resolved.split, **kwargs)
 
 
 def load_and_adapt_hf_dataset(source: HFDatasetSourceConfig) -> list[dict[str, Any]]:
     """Load a Hugging Face split and normalize it to canonical SFT rows."""
+    resolved = resolve_hf_dataset_source(source)
     dataset = load_hf_dataset_source(source)
     dataset = prepare_hf_dataset_for_adapter(
         dataset,
-        adapter_name=source.schema_adapter,
-        adapter_kwargs=source.adapter_kwargs,
+        adapter_name=resolved.schema_adapter,
+        adapter_kwargs=resolved.adapter_kwargs,
     )
     return adapt_hf_dataset(
         dataset,
-        adapter_name=source.schema_adapter,
-        adapter_kwargs=source.adapter_kwargs,
+        adapter_name=resolved.schema_adapter,
+        adapter_kwargs=resolved.adapter_kwargs,
     )

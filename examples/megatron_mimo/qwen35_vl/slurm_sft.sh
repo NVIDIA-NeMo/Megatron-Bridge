@@ -89,19 +89,7 @@ PRETRAINED_CHECKPOINT="${PRETRAINED_CHECKPOINT:-${EXPERIMENT_ROOT}/models/mimo/Q
 RUN_NAME="${RUN_NAME:-qwen35-27b-mimo-cord_v2-sft}"
 
 # --- Training hyperparameters -------------------------------------------------
-DATASET_ADAPTER="${DATASET_ADAPTER:-cord_v2}"
-DATASET_PATH="${DATASET_PATH:-}"
-if [[ -z "${DATASET_PATH}" ]]; then
-    case "${DATASET_ADAPTER}" in
-        cord_v2) DATASET_PATH="naver-clova-ix/cord-v2" ;;
-        medpix) DATASET_PATH="mmoukouba/MedPix-VQA" ;;
-        rdr) DATASET_PATH="quintend/rdr-items" ;;
-        *)
-            echo "ERROR: DATASET_PATH is required for adapter ${DATASET_ADAPTER}."
-            exit 1
-            ;;
-    esac
-fi
+DATASET_NAME="${DATASET_NAME:-cord_v2}"
 SEQ_LENGTH="${SEQ_LENGTH:-4096}"
 TRAIN_ITERS="${TRAIN_ITERS:-500}"
 GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-32}"
@@ -109,7 +97,7 @@ GLOBAL_BATCH_SIZE="${GLOBAL_BATCH_SIZE:-32}"
 # With language DP=2, MBS=2 gives language-local MBS=1 (matches standard 27B SFT).
 MICRO_BATCH_SIZE="${MICRO_BATCH_SIZE:-2}"
 LOG_INTERVAL="${LOG_INTERVAL:-1}"
-WANDB_PROJECT="${WANDB_PROJECT:-megatron-bridge-${DATASET_ADAPTER}-mimo}"
+WANDB_PROJECT="${WANDB_PROJECT:-megatron-bridge-${DATASET_NAME}-mimo}"
 
 # --- Advanced: MIMO non-colocated parallelism layout (27B validated) ----------
 # Changing these requires verifying convergence. Active ranks must fit in
@@ -182,7 +170,7 @@ export NCCL_NVLS_ENABLE=1
 export HTTPX_LOG_LEVEL=WARNING
 export PYTHONWARNINGS="ignore::FutureWarning:torch.cuda,ignore::UserWarning:modelopt.torch"
 
-export HF_MODEL DATASET_ADAPTER DATASET_PATH SEQ_LENGTH TRAIN_ITERS GLOBAL_BATCH_SIZE MICRO_BATCH_SIZE
+export HF_MODEL DATASET_NAME SEQ_LENGTH TRAIN_ITERS GLOBAL_BATCH_SIZE MICRO_BATCH_SIZE
 export LOG_INTERVAL WANDB_PROJECT RUN_NAME RUN_DIR PRETRAINED_CHECKPOINT
 export MIMO_LANGUAGE_TP MIMO_LANGUAGE_PP MIMO_LANGUAGE_CP MIMO_LANGUAGE_DP MIMO_LANGUAGE_OFFSET
 export MIMO_IMAGES_TP MIMO_IMAGES_PP MIMO_IMAGES_CP MIMO_IMAGES_DP MIMO_IMAGES_OFFSET
@@ -205,8 +193,7 @@ echo "Allocated GPUs:  ${ALLOCATED_GPUS}"
 echo "Language:        TP=${MIMO_LANGUAGE_TP} PP=${MIMO_LANGUAGE_PP} CP=${MIMO_LANGUAGE_CP} DP=${MIMO_LANGUAGE_DP} offset=${MIMO_LANGUAGE_OFFSET}"
 echo "Images:          TP=${MIMO_IMAGES_TP} PP=${MIMO_IMAGES_PP} CP=${MIMO_IMAGES_CP} DP=${MIMO_IMAGES_DP} offset=${MIMO_IMAGES_OFFSET}"
 echo "Batch:           MBS=${MICRO_BATCH_SIZE}, GBS=${GLOBAL_BATCH_SIZE}, language-local MBS=${LANGUAGE_LOCAL_MBS}, num_microbatches=${MIMO_NUM_MICROBATCHES}"
-echo "Dataset source:  ${DATASET_PATH}"
-echo "Schema adapter:  ${DATASET_ADAPTER}"
+echo "Dataset preset:  ${DATASET_NAME}"
 echo "Sequence length: ${SEQ_LENGTH}"
 echo "Train iters:     ${TRAIN_ITERS}"
 echo "Checkpoint:      ${PRETRAINED_CHECKPOINT}"
@@ -230,8 +217,7 @@ cmd=(
     uv run --no-sync python
     examples/megatron_mimo/qwen35_vl/finetune_qwen35_vl.py
     --hf-model "${HF_MODEL}"
-    --dataset-adapter "${DATASET_ADAPTER}"
-    --dataset-path "${DATASET_PATH}"
+    --dataset-name "${DATASET_NAME}"
     --seq-length "${SEQ_LENGTH}"
     --train-iters "${TRAIN_ITERS}"
     --global-batch-size "${GLOBAL_BATCH_SIZE}"

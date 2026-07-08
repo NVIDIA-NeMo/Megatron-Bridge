@@ -131,10 +131,7 @@ def create_squad_dataset_config(
 
     return GPTSFTDatasetConfig(
         seq_length=seq_length,
-        hf_dataset=HFDatasetSourceConfig(
-            path_or_dataset="rajpurkar/squad",
-            schema_adapter="squad",
-        ),
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
         hf_output_root=dataset_root,
         hf_validation_proportion=0.1,
         seed=5678,

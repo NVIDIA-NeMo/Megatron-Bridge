@@ -47,10 +47,7 @@ logger:
 dataset:
   seq_length: 8192
   source:
-    path_or_dataset: lmms-lab/LLaVA-Video-178K
-    subset: 0_30_s_nextqa
-    split: open_ended
-    schema_adapter: llava_video_178k
+    dataset_name: llava_video_178k
     adapter_kwargs:
       video_root_path: ???
 

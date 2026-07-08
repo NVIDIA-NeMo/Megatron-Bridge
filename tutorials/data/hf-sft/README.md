@@ -65,7 +65,7 @@ The base checkpoint must be a native Megatron checkpoint or a local Hugging Face
 
 ## Use an existing hosted dataset
 
-For a hosted dataset that already exposes native `messages`, select the dataset and split directly; no adapter or maker is required:
+For a hosted dataset that already exposes native `messages`, select the dataset and split directly; no adapter is required:
 
 ```python
 cfg.dataset = HFSFTDatasetConfig(
@@ -84,17 +84,13 @@ Use `schema_adapter` only when the hosted columns are not already one of `messag
 
 ## Connect multimodal data
 
-For VLM or audio data, set the model processor path and choose its source adapter:
+For a built-in VLM or audio dataset, set the model processor path and select its named source preset:
 
 ```python
 cfg.dataset = HFSFTDatasetConfig(
     seq_length=4096,
     hf_processor_path="Qwen/Qwen2.5-VL-3B-Instruct",
-    source=HFDatasetSourceConfig(
-        path_or_dataset="naver-clova-ix/cord-v2",
-        split="train",
-        schema_adapter="cord_v2",
-    ),
+    source=HFDatasetSourceConfig(dataset_name="cord_v2"),
     enable_in_batch_packing=False,
 )
 ```
@@ -116,8 +112,8 @@ In-batch packing requires micro batch size greater than 1. `in_batch_packing_pad
 
 | Area | Knobs | Purpose |
 | --- | --- | --- |
-| Source | `source.path_or_dataset`, `split`, `subset`, `load_kwargs` | Hugging Face dataset and training split |
-| Adaptation | `source.schema_adapter`, `source.adapter_kwargs` | Optional conversion for non-native row schemas |
+| Source | `source.dataset_name` or `source.path_or_dataset`, plus `split` and `load_kwargs` | Built-in preset or custom Hugging Face source |
+| Adaptation | `source.schema_adapter`, `source.adapter_kwargs` | Optional conversion for custom non-native schemas; presets own their adapter |
 | Split overrides | `validation_source`, `test_source`, `do_validation`, `do_test` | Per-split loading and optional split construction |
 | Processor | `hf_processor_path`, inherited `trust_remote_code` | Model processor/tokenizer source and safe remote-code policy |
 | Sequence | `seq_length`, `skip_getting_attention_mask_from_dataset` | Training shape and attention-mask handoff |

@@ -48,9 +48,7 @@ logger:
 dataset:
   seq_length: 4096
   source:
-    path_or_dataset: HuggingFaceM4/the_cauldron
-    subset: raven
-    schema_adapter: raven
+    dataset_name: raven
 
 rng:
   seed: 42
