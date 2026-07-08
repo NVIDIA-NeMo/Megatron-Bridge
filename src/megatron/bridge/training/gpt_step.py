@@ -29,7 +29,6 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
-    get_attr_wrapped_model,
     get_batch_on_this_cp_rank,
     get_model_config,
     get_pg_rank,
@@ -42,7 +41,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -171,15 +170,6 @@ def _current_stage_needs_mtp_inputs_from_layout(
         return is_last
 
     return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
-
-
-def _model_chunk_vp_stage(model: GPTModel) -> int | None:
-    """Return the virtual pipeline stage owned by the current model chunk."""
-    try:
-        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
-    except RuntimeError:
-        return None
-    return vp_stage if isinstance(vp_stage, int) else None
 
 
 def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
@@ -383,6 +373,7 @@ def _forward_step_common(
     config = get_model_config(model)
     pg_collection = get_pg_collection(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+    vp_stage = get_model_chunk_vp_stage(model)
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
@@ -398,7 +389,7 @@ def _forward_step_common(
             state.cfg,
             use_mtp,
             pg_collection=pg_collection,
-            vp_stage=_model_chunk_vp_stage(model),
+            vp_stage=vp_stage,
         )
     timers("batch-generator").stop()
 
@@ -431,6 +422,7 @@ def _forward_step_common(
     accumulate_flops_metadata(
         state,
         tokens,
+        vp_stage=vp_stage,
         config_seq_len=getattr(config, "seq_length", None),
         cu_seqlens=cu_seqlens if cp_use_thd else None,
         cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,
