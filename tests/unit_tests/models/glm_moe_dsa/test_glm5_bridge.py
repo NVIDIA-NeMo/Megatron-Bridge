@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
 
@@ -35,6 +36,58 @@ def glm5_bridge() -> GLM5Bridge:
 
 def _mapping_by_megatron_param(bridge: GLM5Bridge) -> dict[str, object]:
     return {mapping.megatron_param: mapping for mapping in bridge.mapping_registry()}
+
+
+def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides: int) -> SimpleNamespace:
+    config = {
+        "first_k_dense_replace": 3,
+        "num_hidden_layers": 78,
+        "moe_intermediate_size": 2048,
+        "n_shared_experts": 1,
+        "rope_parameters": {"rope_theta": 1_000_000},
+        "index_head_dim": 128,
+        "index_n_heads": 32,
+        "index_topk": 2048,
+        "indexer_rope_interleave": True,
+    }
+    config.update(config_overrides)
+
+    monkeypatch.setattr(
+        MegatronModelBridge,
+        "provider_bridge",
+        lambda _self, _hf_pretrained: SimpleNamespace(),
+    )
+    return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
+
+
+@pytest.mark.parametrize(
+    ("config_overrides", "expected_topk_freq", "expected_skip_topk_offset"),
+    [
+        ({}, 1, 0),
+        ({"index_topk_freq": 4, "index_skip_topk_offset": 3}, 4, 3),
+    ],
+)
+def test_provider_bridge_maps_dsa_architecture_from_hf_config(
+    monkeypatch: pytest.MonkeyPatch,
+    config_overrides: dict[str, int],
+    expected_topk_freq: int,
+    expected_skip_topk_offset: int,
+) -> None:
+    """GLM-5 version-specific DSA architecture stays owned by the bridge."""
+    provider = _provider_from_hf_config(monkeypatch, **config_overrides)
+
+    assert provider.experimental_attention_variant == "dsa"
+    assert provider.cp_comm_type == "allgather"
+    assert provider.dsa_indexer_head_dim == 128
+    assert provider.dsa_indexer_n_heads == 32
+    assert provider.dsa_indexer_topk == 2048
+    assert provider.dsa_indexer_rope_interleaved is True
+    assert provider.dsa_indexer_topk_freq == expected_topk_freq
+    assert provider.dsa_indexer_skip_topk_offset == expected_skip_topk_offset
+    assert provider.dsa_indexer_rotate_activation is False
+    assert provider.dsa_indexer_k_norm_epsilon == 1e-6
+    assert provider.dsa_indexer_loss_coeff == 0.001
+    assert provider.dsa_indexer_use_sparse_loss is True
 
 
 def test_mapping_registry_includes_grouped_and_local_expert_fc2_paths(glm5_bridge: GLM5Bridge) -> None:

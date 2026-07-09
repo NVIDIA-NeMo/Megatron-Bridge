@@ -20,6 +20,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     get_hybrid_layer_counts,
     parse_hybrid_pattern,
 )
+from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
@@ -28,6 +29,23 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+def get_model_chunk_vp_stage(model: torch.nn.Module) -> int | None:
+    """Return the virtual-pipeline stage assigned to a model chunk, if any.
+
+    Args:
+        model: Model chunk, possibly wrapped by mixed precision or DDP.
+
+    Returns:
+        The integer virtual-pipeline stage, or ``None`` for an unchunked model
+        or a model that does not expose the stage.
+    """
+    try:
+        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
+    except RuntimeError:
+        return None
+    return vp_stage if isinstance(vp_stage, int) else None
 
 
 def _accumulator_to_int(value) -> int:
@@ -173,6 +191,7 @@ def accumulate_flops_metadata(
     state,
     tokens: torch.Tensor | None,
     *,
+    vp_stage: int | None = None,
     config_seq_len: int | None = None,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
@@ -181,6 +200,11 @@ def accumulate_flops_metadata(
     num_vision_patches: int | torch.Tensor | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
+
+    Under interleaved pipeline parallelism, the forward step runs once per
+    virtual model chunk for the same logical data microbatch. Only virtual stage
+    0 contributes metadata so model chunking does not multiply the full-model
+    FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
 
     Writes three accumulators consumed by ``train.py`` at end of step:
 
@@ -211,7 +235,7 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
     """
-    if tokens is None:
+    if vp_stage not in (None, 0) or tokens is None:
         return
 
     mbs = tokens.shape[0]

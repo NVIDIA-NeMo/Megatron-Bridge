@@ -11,23 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-# ruff: noqa: F401
-"""Compatibility aliases for legacy recipe names."""
-
-from __future__ import annotations
-
-from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
-    _qwen2_audio_common,
-)
-from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
-    qwen2_audio_7b_peft_1gpu_h100_bf16_config as qwen2_audio_7b_peft_config,
-)
-from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
-    qwen2_audio_7b_sft_1gpu_h100_bf16_config as qwen2_audio_7b_sft_config,
-)
-
-
-__all__ = [
-    "qwen2_audio_7b_sft_config",
-    "qwen2_audio_7b_peft_config",
-]
