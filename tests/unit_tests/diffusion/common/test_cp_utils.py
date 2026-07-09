@@ -16,6 +16,7 @@ import pytest
 import torch
 
 from megatron.bridge.diffusion.common.cp_utils import (
+    _reorder_zigzag_chunks,
     local_zigzag_mask,
     zigzag_slice,
 )
@@ -87,6 +88,29 @@ class TestLocalZigzagMask:
     def test_requires_divisible_by_2cp(self):
         with pytest.raises(AssertionError):
             local_zigzag_mask(6, cp_rank=0, cp_size=4, device="cpu")
+
+
+# ---------------------------------------------------------------------------
+# _reorder_zigzag_chunks (the gather/scatter reassembly used in autograd
+# backward; exercised here on CPU without a process group)
+# ---------------------------------------------------------------------------
+class TestReorderZigzagChunks:
+    @pytest.mark.parametrize("cp_size", [2, 4])
+    def test_reassembles_original_sequence(self, cp_size):
+        # `gathered` mirrors an all_gather of per-rank zigzag shards: rank r holds
+        # chunks [r] and [2*cp-1-r] concatenated -- exactly what zigzag_slice yields.
+        seq = 8 * cp_size
+        x = torch.arange(seq * 2).view(1, seq, 2)
+        gathered = [zigzag_slice(x, r, cp_size, seq_dim=1) for r in range(cp_size)]
+        recon = _reorder_zigzag_chunks(gathered, cp_size, seq_dim=1)
+        assert torch.equal(recon, x)
+
+    def test_result_is_contiguous(self):
+        cp_size, seq = 2, 16
+        x = torch.arange(seq).view(1, seq)
+        gathered = [zigzag_slice(x, r, cp_size, seq_dim=1) for r in range(cp_size)]
+        recon = _reorder_zigzag_chunks(gathered, cp_size, seq_dim=1)
+        assert recon.is_contiguous()
 
 
 if __name__ == "__main__":
