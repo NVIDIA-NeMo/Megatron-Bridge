@@ -19,7 +19,7 @@ from unittest.mock import Mock
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge, WeightConversionTask
 
 
 class DummyBridge(MegatronModelBridge):
@@ -28,6 +28,27 @@ class DummyBridge(MegatronModelBridge):
 
     def mapping_registry(self):  # pragma: no cover - not used in tests
         return MegatronMappingRegistry()
+
+
+def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():
+    tensor = torch.ones(2)
+    weight = HFWeightTuple("hf.weight", tensor)
+
+    name, unpacked_tensor = weight
+
+    assert len(weight) == 2
+    assert name == "hf.weight"
+    assert unpacked_tensor is tensor
+    finalized = list(weight.iter_finalized(cpu=False))
+    assert finalized[0].param_name == "hf.weight"
+    assert finalized[0].weight.data_ptr() == tensor.data_ptr()
+    assert finalized[0].weight.requires_grad is False
+
+
+def test_hf_weight_tuple_iter_finalized_allows_empty_export_hook():
+    weight = HFWeightTuple("hf.weight", torch.ones(2))
+
+    assert list(weight.iter_finalized(cpu=False, export_hook=lambda *_args: iter(()))) == []
 
 
 def _with_export_hook(task, exporter, finalizer=None):

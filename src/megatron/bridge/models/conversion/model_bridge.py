@@ -97,6 +97,40 @@ class HFWeightTuple(NamedTuple):
     param_name: str
     weight: torch.Tensor
 
+    def iter_finalized(
+        self,
+        *,
+        cpu: bool,
+        export_hook: Callable[[str, torch.Tensor], Iterable["HFWeightTuple"]] | None = None,
+        clone_identity_output: bool = False,
+    ) -> Iterable["HFWeightTuple"]:
+        """Apply an optional export hook and yield finalized weights.
+
+        Export hooks run on a detached tensor before final device placement and may
+        emit zero, one, or multiple weights. Identity outputs can optionally be
+        cloned so independently named tied weights do not share storage.
+
+        Args:
+            cpu: Whether to move exported tensors to CPU.
+            export_hook: Optional transformation applied before device placement.
+            clone_identity_output: Clone an output when it is the detached input.
+
+        Yields:
+            Finalized HuggingFace weights in export-hook order.
+        """
+        source_tensor = self.weight.detach()
+        exported_weights = (
+            export_hook(self.param_name, source_tensor)
+            if export_hook is not None
+            else ((self.param_name, source_tensor),)
+        )
+        for exported_name, exported_tensor in exported_weights:
+            is_identity_output = exported_tensor is source_tensor
+            exported_tensor = exported_tensor.detach()
+            if clone_identity_output and is_identity_output:
+                exported_tensor = exported_tensor.clone().detach()
+            yield HFWeightTuple(exported_name, exported_tensor.cpu() if cpu else exported_tensor)
+
 
 @dataclass(frozen=True)
 class WeightConversionTask(Generic[MappingT]):
@@ -1279,23 +1313,6 @@ class MegatronModelBridge(
 
         _grouped_buffers: Dict[str, Dict[int, torch.Tensor]] = {}
 
-        def export_and_place(
-            task: WeightConversionTask,
-            hf_name: str,
-            tensor: torch.Tensor,
-            clone_identity_output: bool = False,
-        ) -> Iterable[HFWeightTuple]:
-            source_tensor = tensor.detach()
-            exported_weights = (
-                task.export_hook(hf_name, source_tensor) if task.export_hook else ((hf_name, source_tensor),)
-            )
-            for exported_name, exported_tensor in exported_weights:
-                is_identity_output = exported_tensor is source_tensor
-                exported_tensor = exported_tensor.detach()
-                if clone_identity_output and is_identity_output:
-                    exported_tensor = exported_tensor.clone().detach()
-                yield HFWeightTuple(exported_name, exported_tensor.cpu() if cpu else exported_tensor)
-
         for task in self._with_progress_tracking(megatron_to_hf_tasks, "Converting to HuggingFace", show_progress):
             if isinstance(task.param_weight, DTensor):
                 from megatron.core.distributed.fsdp.src.megatron_fsdp.uneven_dtensor import (
@@ -1336,7 +1353,10 @@ class MegatronModelBridge(
                 if merged_result is not None:
                     merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
-                        yield from export_and_place(task, hf_name, tensor)
+                        yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                            export_hook=task.export_hook,
+                            cpu=cpu,
+                        )
                 continue
 
             # --- Standard export path ---
@@ -1377,12 +1397,14 @@ class MegatronModelBridge(
                         expected_keys = hf_pretrained.state.source.get_all_keys()
                         emit_lm_head = "lm_head.weight" in expected_keys
 
-                    yield from export_and_place(task, hf_name, tensor)
+                    yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                        export_hook=task.export_hook,
+                        cpu=cpu,
+                    )
                     if emit_lm_head:
-                        yield from export_and_place(
-                            task,
-                            "lm_head.weight",
-                            tensor,
+                        yield from HFWeightTuple("lm_head.weight", tensor).iter_finalized(
+                            export_hook=task.export_hook,
+                            cpu=cpu,
                             clone_identity_output=True,
                         )
                 elif embeddings_are_tied and hf_name == "lm_head.weight":
@@ -1392,7 +1414,10 @@ class MegatronModelBridge(
                     )
                 else:
                     # Regular case - yield the tensor normally
-                    yield from export_and_place(task, hf_name, tensor)
+                    yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                        export_hook=task.export_hook,
+                        cpu=cpu,
+                    )
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
