@@ -36,7 +36,12 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     from utils import executors as executors_module
-    from utils.executors import PERF_ENV_VARS, kubeflow_executor, slurm_executor
+    from utils.executors import (
+        PERF_ENV_VARS,
+        RECIPE_OWNED_PERF_ENV_NAMES,
+        kubeflow_executor,
+        slurm_executor,
+    )
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -68,6 +73,23 @@ def test_custom_env_vars_in_container_env(tmp_path):
         custom_env_vars={"MY_CUSTOM_VAR": "1"},
     )
     assert "MY_CUSTOM_VAR" in executor.container_env
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_flat_recipe_launch_removes_legacy_process_defaults(tmp_path):
+    """Flat recipes should supply managed process settings without executor shadowing."""
+    executor = slurm_executor(
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
+        recipe_owned_environment=True,
+    )
+
+    assert RECIPE_OWNED_PERF_ENV_NAMES.isdisjoint(executor.env_vars)
+    assert "TORCH_NCCL_HIGH_PRIORITY" in executor.env_vars
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
