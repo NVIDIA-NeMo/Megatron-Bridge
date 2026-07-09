@@ -8,7 +8,7 @@ Structured, type-safe classes for working with Hugging Face checkpoints. Each ch
 from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 # Load any Hugging Face model with proper structure
-model = PreTrainedCausalLM.from_hf_pretrained("gpt2")
+model = PreTrainedCausalLM.from_pretrained("gpt2")
 
 # See exactly what the checkpoint contains
 print(model)
@@ -37,7 +37,7 @@ For text generation models (GPT, LLaMA, etc.)
 from megatron.bridge.models.hf_pretrained import PreTrainedCausalLM
 
 # Type-safe loading with lazy evaluation
-llama = PreTrainedCausalLM.from_hf_pretrained(
+llama = PreTrainedCausalLM.from_pretrained(
     "meta-llama/Llama-2-7b-hf",
     torch_dtype=torch.float16,
     device="cuda"
@@ -49,30 +49,13 @@ tokenizer = llama.tokenizer  # Loads just tokenizer
 model = llama.model          # Loads model weights
 ```
 
-### PreTrainedVLM
-For vision-language models (CLIP, LLaVA, etc.)
-
-```python
-from megatron.bridge.models.hf_pretrained import PreTrainedVLM
-
-vlm = PreTrainedVLM.from_hf_pretrained("llava-hf/llava-1.5-7b-hf")
-
-# Unified processing for images and text
-inputs = vlm.process_images_and_text(
-    images=my_image,
-    text="What's in this image?"
-)
-
-output = vlm.generate(**inputs)
-```
-
 ## Key Features
 
 ### 🔍 Transparent Inspection
 See exactly what's in a checkpoint without loading everything:
 
 ```python
-model = PreTrainedCausalLM.from_hf_pretrained("microsoft/phi-2")
+model = PreTrainedCausalLM.from_pretrained("microsoft/phi-2")
 print(model)  # Shows architecture, parameters, device, dtype
 ```
 
@@ -81,7 +64,7 @@ Components load only when accessed, saving memory:
 
 ```python
 # Nothing loaded yet
-model = PreTrainedCausalLM.from_hf_pretrained("gpt2")
+model = PreTrainedCausalLM.from_pretrained("gpt2")
 
 # Still nothing loaded - just returns the config
 config = model.config  
@@ -96,7 +79,7 @@ Full type hints for better IDE support:
 ```python
 from transformers import GPT2LMHeadModel
 
-gpt2: PreTrainedCausalLM[GPT2LMHeadModel] = PreTrainedCausalLM.from_hf_pretrained("gpt2")
+gpt2: PreTrainedCausalLM[GPT2LMHeadModel] = PreTrainedCausalLM.from_pretrained("gpt2")
 # IDE knows exact model type for autocomplete
 ```
 
@@ -104,8 +87,10 @@ gpt2: PreTrainedCausalLM[GPT2LMHeadModel] = PreTrainedCausalLM.from_hf_pretraine
 Access model weights consistently:
 
 ```python
+import re
+
 # Works for any model type
 model.state["*.attention.*.weight"]  # Get attention weights
-model.state.regex(r".*\.bias$")      # Find all biases
-model.state.glob("*.layer.*.weight") # Pattern matching
+model.state[re.compile(r".*\.bias$")] # Find all biases
+model.state["*.layer.*.weight"]        # Pattern matching
 ```

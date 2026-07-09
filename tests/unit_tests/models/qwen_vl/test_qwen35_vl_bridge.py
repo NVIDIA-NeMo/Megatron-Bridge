@@ -20,7 +20,7 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
@@ -110,7 +110,7 @@ def _make_vision_config():
 
 def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False):
     """Create a minimal VLM pretrained wrapper for provider tests."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     config = Mock()
     config.text_config = text_config
     config.vision_config = vision_config

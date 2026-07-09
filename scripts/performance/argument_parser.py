@@ -268,7 +268,7 @@ def parse_cli_args():
     training_args = parser.add_argument_group("Training arguments")
     training_args.add_argument(
         "--task",
-        choices=["pretrain", "sft", "lora"],
+        choices=["pretrain", "sft", "peft"],
         help="Task to run. Defaults to 'pretrain'",
         default="pretrain",
     )
@@ -905,8 +905,10 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant for workload base configs (used by setup_experiment.py only). Use --list_config_variants to see available options.",
-        default="v2",
+        help=(
+            "Flat perf recipe variant for setup_experiment.py. Omit to use the suffix-less canonical recipe. "
+            "Named variants such as large_scale are supported when a matching recipe exists."
+        ),
     )
     config_variant_args.add_argument(
         "--list_config_variants",

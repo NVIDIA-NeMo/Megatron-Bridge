@@ -152,8 +152,8 @@ TRAIN_FUNCTIONS = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode. "
-    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
-    "(or 'sft'/'peft') in the recipe name."
+    "Pass --dataset to specify the dataset type, or include 'pretrain', 'sft', or 'peft' "
+    "in the recipe name."
 )
 
 
@@ -282,8 +282,8 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
-    if has_pretrain ^ has_finetune:
+    has_sft_or_peft = "sft" in lowered or "peft" in lowered
+    if has_pretrain ^ has_sft_or_peft:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
 
