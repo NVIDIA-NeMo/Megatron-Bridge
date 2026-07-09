@@ -21,7 +21,10 @@ import torch
 
 from megatron.bridge.perf_recipes.gpt_oss import gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config
 from megatron.bridge.training.config import ConfigContainer
-from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_perf_test
+from tests.functional_tests.test_groups.recipes.utils import (
+    configure_ci_pretraining_dataset,
+    run_pretrain_recipe_perf_test,
+)
 
 
 def _gpt_oss_120b_gb200_proxy() -> ConfigContainer:
@@ -64,6 +67,12 @@ class TestGPTOSS120BPerfProxy:
     """Train the reduced GPT-OSS 120B production config on four GB200 GPUs."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_gb200_fp8mx(self):
+    def test_gb200_fp8mx(self, ensure_test_data):
         assert torch.cuda.get_device_capability()[0] >= 10, "The GB200 MXFP8 proxy requires Blackwell GPUs."
-        run_pretrain_recipe_perf_test(_gpt_oss_120b_gb200_proxy, "gpt_oss_120b_gb200_fp8mx_proxy")
+
+        def proxy_config() -> ConfigContainer:
+            config = _gpt_oss_120b_gb200_proxy()
+            configure_ci_pretraining_dataset(config, ensure_test_data)
+            return config
+
+        run_pretrain_recipe_perf_test(proxy_config, "gpt_oss_120b_gb200_fp8mx_proxy")

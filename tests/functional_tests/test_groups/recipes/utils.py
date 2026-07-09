@@ -28,6 +28,26 @@ from tests.functional_tests.utils import (
 )
 
 
+def configure_ci_pretraining_dataset(config: ConfigContainer, test_data_root: Path) -> None:
+    """Use the small indexed CI corpus instead of generated mock samples.
+
+    The functional-test asset is already downloaded by the session-scoped
+    ``ensure_test_data`` fixture. Its token ids fit every model covered by the
+    MoE performance proxies, so the production ``GPTDatasetConfig`` path can be
+    exercised without adding a model-specific tokenizer or online dependency.
+    """
+    data_prefix = Path(test_data_root) / "datasets" / "fim" / "fim_text_document"
+    for suffix in (".bin", ".idx"):
+        data_file = data_prefix.with_suffix(suffix)
+        if not data_file.is_file():
+            raise FileNotFoundError(f"CI pretraining dataset file is missing: {data_file}")
+
+    config.dataset.blend = None
+    config.dataset.blend_per_split = None
+    config.dataset.data_path = str(data_prefix)
+    config.dataset.num_workers = 0
+
+
 def run_pretrain_recipe_test(
     config_func: Callable,
     recipe_name: str,
@@ -174,6 +194,7 @@ def run_pretrain_recipe_perf_test(
     config.train.train_iters = 10
     config.validation.eval_interval = 5
     config.validation.eval_iters = 0  # Skip evaluation. TODO: Fix this.
+    config.logger.log_interval = 1
 
     # Standardize batch sizes for functional tests
     config.train.micro_batch_size = 1

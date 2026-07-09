@@ -25,7 +25,10 @@ from megatron.bridge.perf_recipes.qwen import (
     qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_perf_test
+from tests.functional_tests.test_groups.recipes.utils import (
+    configure_ci_pretraining_dataset,
+    run_pretrain_recipe_perf_test,
+)
 
 
 def _qwen3_moe_proxy(
@@ -54,7 +57,7 @@ class TestQwen3MoePerfProxy:
     """Train reduced production configs on model-specific L0 runners."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_h100_fp8cs(self):
+    def test_h100_fp8cs(self, ensure_test_data):
         assert torch.cuda.get_device_capability()[0] == 9, "The H100 proxy requires Hopper GPUs."
 
         def proxy_config() -> ConfigContainer:
@@ -62,6 +65,7 @@ class TestQwen3MoePerfProxy:
                 qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
                 expert_model_parallel_size=8,
             )
+            configure_ci_pretraining_dataset(config, ensure_test_data)
             assert config.mixed_precision.fp8 is not None
             assert config.mixed_precision.fp8_recipe == "tensorwise"
             return config
@@ -69,7 +73,7 @@ class TestQwen3MoePerfProxy:
         run_pretrain_recipe_perf_test(proxy_config, "qwen3_30b_a3b_h100_fp8cs_proxy")
 
     @pytest.mark.run_only_on("GPU")
-    def test_gb200_fp8mx(self):
+    def test_gb200_fp8mx(self, ensure_test_data):
         assert torch.cuda.get_device_capability()[0] >= 10, "The GB200 MXFP8 proxy requires Blackwell GPUs."
 
         def proxy_config() -> ConfigContainer:
@@ -78,6 +82,7 @@ class TestQwen3MoePerfProxy:
                 qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
                 expert_model_parallel_size=4,
             )
+            configure_ci_pretraining_dataset(config, ensure_test_data)
             assert config.mixed_precision.fp8_recipe == "mxfp8"
             assert config.mixed_precision.fp8_dot_product_attention is True
             assert config.model.use_transformer_engine_op_fuser is True
