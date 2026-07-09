@@ -134,6 +134,50 @@ def first_fit_shuffle(seqlens: List[int], pack_size: int) -> List[List[int]]:
     return first_fit(shuffled_seqlens, pack_size)
 
 
+def balanced_index_order(costs: List[float], n_groups: int) -> List[int]:
+    """Permute indices so contiguous equal-size groups have balanced total cost.
+
+    For intra-microbatch reordering when the downstream distributor slices the global
+    batch into ``n_groups`` **contiguous, equal-size** shards (e.g.
+    :func:`megatron.bridge.data.megatron_mimo.dp_utils.slice_batch_for_megatron_mimo`).
+    Returns a permutation of ``range(len(costs))`` laid out group-by-group, so that
+    taking contiguous block ``r`` (size ``len(costs)//n_groups``) yields a
+    cost-balanced shard for DP rank ``r``.
+
+    Equal-cardinality LPT: items in decreasing cost are each placed into the
+    lowest-cost group that still has capacity (``len(costs)//n_groups``). Deterministic
+    (stable tie-break by group index) so paired modules reorder identically.
+
+    Args:
+        costs: Per-item cost.
+        n_groups: Number of contiguous shards (e.g. DP size). Must divide ``len(costs)``.
+
+    Returns:
+        A permutation of ``range(len(costs))``; the concatenation of the ``n_groups``
+        balanced groups in order.
+
+    Raises:
+        ValueError: If ``n_groups <= 0`` or does not divide ``len(costs)``.
+    """
+    n = len(costs)
+    if n_groups <= 0:
+        raise ValueError(f"n_groups must be positive, got {n_groups}.")
+    if n % n_groups != 0:
+        raise ValueError(f"len(costs) ({n}) must be divisible by n_groups ({n_groups}).")
+    cap = n // n_groups
+    groups: List[List[int]] = [[] for _ in range(n_groups)]
+    group_cost = [0.0] * n_groups
+    for i in sorted(range(n), key=lambda j: (-costs[j], j)):
+        # lowest-cost group that still has capacity (tie-break by group index)
+        best = min(
+            (g for g in range(n_groups) if len(groups[g]) < cap),
+            key=lambda g: (group_cost[g], g),
+        )
+        groups[best].append(i)
+        group_cost[best] += costs[i]
+    return [i for g in groups for i in g]
+
+
 def create_hist(dataset: np.array, truncate_seq_len: int) -> Tuple[Dict[int, List[Dict]], List[int]]:
     """
     Creates a histogram of sequence lengths from a tokenized dataset.
