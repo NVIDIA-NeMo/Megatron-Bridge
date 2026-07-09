@@ -46,6 +46,9 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
+from megatron.bridge.recipes.run_plugins import PreemptionPlugin
+
+
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
@@ -452,6 +455,7 @@ def main(
     save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    preempt_time: int,
     additional_slurm_params: Optional[Dict[str, Any]],
     enable_pct_binding: bool,
     golden_values_path: str,
@@ -660,6 +664,15 @@ def main(
         )
 
     plugins = []
+
+    # Long-convergence runs are split across walltime slices and resume from the last
+    # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
+    # the time limit before a checkpoint is written, so no progress persists and the
+    # resume loop stalls. The PreemptionPlugin sends SIGTERM `preempt_time` seconds
+    # before the limit and enables the training exit handler, so each slice saves and
+    # exits gracefully and the next slice resumes from it (inert off Slurm).
+    if is_long_convergence_run:
+        plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
@@ -1006,6 +1019,7 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        preempt_time=args.preempt_time,
         additional_slurm_params=args.additional_slurm_params,
         enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
