@@ -23,10 +23,9 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
-from megatron.bridge.perf_recipes.environment import perf_recipe_environment
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
-@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, BF16."""
     cfg = deepseek_v3_pretrain_config()
@@ -54,10 +53,34 @@ def deepseek_v3_pretrain_256gpu_gb200_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Recipe-specific compiler and quantization defaults.
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -85,10 +108,34 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Recipe-specific compiler and quantization defaults.
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -116,10 +163,39 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_deepseek_full_iteration_mxfp8(cfg, fp8_output_proj=True)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Recipe-specific compiler and quantization defaults.
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, NVFP4 (same layout as BF16, mlp recompute)."""
     cfg = deepseek_v3_pretrain_256gpu_gb200_bf16_config()
@@ -127,10 +203,36 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.model.recompute_modules = ["mlp"]
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
     cfg.comm_overlap.overlap_param_gather_with_optimizer_step = None
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+        # Recipe-specific compiler and quantization defaults.
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256)."""
     cfg = deepseek_v3_pretrain_config()
@@ -158,4 +260,32 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
 
     _benchmark_common(cfg)
     cfg.model.fp8_output_proj = True
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        # Recipe-specific compiler and quantization defaults.
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+    }
     return cfg

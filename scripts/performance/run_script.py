@@ -27,7 +27,6 @@ from typing import TYPE_CHECKING, cast
 from argument_parser import parse_cli_args
 from perf_plugins import PerfEnvPlugin
 from utils.utils import _workload_base_config_from_recipe
-from utils.utils import explicit_environment_override_names
 from utils.utils import get_perf_recipe_by_name as get_perf_recipe_for_environment
 
 
@@ -141,8 +140,6 @@ def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
     """Install recipe env and re-exec this script in a clean interpreter."""
     from utils.overrides import set_cli_overrides, set_user_overrides
 
-    from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
-
     recipe = get_perf_recipe_for_environment(
         model_recipe_name=args.model_recipe_name,
         task=args.task,
@@ -150,21 +147,9 @@ def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
         gpu=args.gpu,
         precision=args.compute_dtype,
         config_variant=args.config_variant,
-        apply_environment=False,
     )
-    base_env_vars = dict(recipe.env_vars)
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
-    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-    apply_perf_recipe_environment(
-        recipe,
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        train_task=args.task,
-        protected_env_names=protected_env_names,
-    )
     workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
     plugin = PerfEnvPlugin(
         deterministic=args.deterministic,
@@ -185,7 +170,6 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
     from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
     from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-    from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
     from megatron.bridge.training.config import apply_environment_variables, runtime_config_update
     from megatron.bridge.training.gpt_step import forward_step
     from megatron.bridge.training.pretrain import pretrain
@@ -200,19 +184,8 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         config_variant=getattr(args, "config_variant", None),
     )
 
-    base_env_vars = dict(recipe.env_vars)
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
-    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-    apply_perf_recipe_environment(
-        recipe,
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        train_task=args.task,
-        protected_env_names=protected_env_names,
-    )
     apply_environment_variables(recipe)
 
     if args.dump_env:

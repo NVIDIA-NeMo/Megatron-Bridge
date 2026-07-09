@@ -12,363 +12,174 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for feature-derived flat performance recipe environment settings."""
+"""Tests for explicit flat performance recipe environment settings."""
 
 import ast
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment, perf_recipe_environment
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
     r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
 )
+_RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
+_INLINE_CORE_ENV_NAMES = {
+    "CUDA_DEVICE_MAX_CONNECTIONS",
+    "NCCL_NVLS_ENABLE",
+    "NVTE_BWD_LAYERNORM_SM_MARGIN",
+    "NVTE_FWD_LAYERNORM_SM_MARGIN",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+}
+_HYBRID_EP_ENV_NAMES = {
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
+    "NVLINK_DOMAIN_SIZE",
+    "USE_MNNVL",
+}
 
 
-def _config(
-    *,
-    backend=None,
-    tp=1,
-    pp=1,
-    cp=1,
-    ep=1,
-    cuda_graph_impl=None,
-    cuda_graph_scope=None,
-    cutedsl=False,
-    moe_a2a_overlap=False,
-    nccl_ub=False,
-    use_megatron_fsdp=False,
-    fine_grained_activation_offloading=False,
-    env_vars=None,
-):
-    return SimpleNamespace(
-        env_vars=dict(env_vars or {}),
-        model=SimpleNamespace(
-            moe_flex_dispatcher_backend=backend,
-            tensor_model_parallel_size=tp,
-            pipeline_model_parallel_size=pp,
-            context_parallel_size=cp,
-            expert_model_parallel_size=ep,
-            cuda_graph_impl=cuda_graph_impl,
-            cuda_graph_scope=cuda_graph_scope or [],
-            use_transformer_engine_op_fuser=cutedsl,
-            fine_grained_activation_offloading=fine_grained_activation_offloading,
-        ),
-        ddp=SimpleNamespace(nccl_ub=nccl_ub, use_megatron_fsdp=use_megatron_fsdp),
-        comm_overlap=SimpleNamespace(overlap_moe_expert_parallel_comm=moe_a2a_overlap),
-    )
+def _function(path: Path, function_name: str) -> ast.FunctionDef:
+    tree = ast.parse(path.read_text())
+    return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
 
 
-def _apply(
-    config,
-    *,
-    family="qwen",
-    recipe="qwen3_30b_a3b",
-    gpu="h100",
-    dtype="bf16",
-    task="pretrain",
-    protected=None,
-):
-    apply_perf_recipe_environment(
-        config,
-        model_family_name=family,
-        model_recipe_name=recipe,
-        gpu=gpu,
-        compute_dtype=dtype,
-        train_task=task,
-        protected_env_names=protected,
-    )
-    return config.env_vars
+def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
+    """Read the literal env mapping written in a flat recipe builder."""
+    function = _function(path, function_name)
+    assignments = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Attribute)
+        and isinstance(node.targets[0].value, ast.Name)
+        and node.targets[0].value.id == "cfg"
+        and node.targets[0].attr == "env_vars"
+    ]
+    assert len(assignments) == 1
+    mapping = assignments[0].value
+    assert isinstance(mapping, ast.Dict)
+
+    result = COMMON_PERF_ENV_VARS.copy()
+    common_expansions = 0
+    for key, value in zip(mapping.keys, mapping.values):
+        if key is None:
+            assert isinstance(value, ast.Name) and value.id == "COMMON_PERF_ENV_VARS"
+            common_expansions += 1
+            continue
+        result[ast.literal_eval(key)] = ast.literal_eval(value)
+    assert common_expansions == 1
+    return result
 
 
-@pytest.mark.parametrize(
-    ("gpu", "ep", "expected"),
-    [
-        (
-            "h100",
-            32,
-            {
-                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-                "NVLINK_DOMAIN_SIZE": 8,
-                "USE_MNNVL": 0,
-            },
-        ),
-        (
-            "gb200",
-            32,
-            {
-                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-                "NVLINK_DOMAIN_SIZE": 72,
-                "USE_MNNVL": 1,
-            },
-        ),
-    ],
-)
-def test_hybridep_environment_is_topology_derived(gpu, ep, expected):
-    env = _apply(_config(backend="hybridep", ep=ep), gpu=gpu)
-
-    assert env.items() >= expected.items()
-    assert env["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
-    assert env["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
-    assert env["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
-    assert env["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+def _explicit_environments():
+    for path in _RECIPE_ROOT.glob("*/*/*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and _CANONICAL_RECIPE_NAME.fullmatch(node.name) is not None:
+                yield path, node.name, _explicit_environment(path, node.name)
 
 
-def test_non_flex_hopper_environment_uses_parallelism_ordering_defaults():
-    env = _apply(_config(tp=2))
-
-    assert env["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-    assert env["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 16
-    assert env["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 16
-    assert env["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
-    assert env["NCCL_NVLS_ENABLE"] == 0
-    assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-    assert env["NCCL_GRAPH_REGISTER"] == 0
-    assert env["TORCH_NCCL_HIGH_PRIORITY"] == 1
+def test_common_environment_defaults_are_small_and_universal():
+    assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_hopper_program_ordering_wins_over_flex_backend_default():
-    env = _apply(_config(backend="hybridep", tp=2, ep=8))
+def test_every_flat_recipe_builder_declares_its_environment_inline():
+    builders = []
+    invalid = []
 
-    assert env["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
-
-
-def test_full_iteration_cutedsl_environment_is_feature_derived():
-    env = _apply(
-        _config(
-            backend="hybridep",
-            ep=32,
-            cuda_graph_impl="full_iteration",
-            cutedsl=True,
-            moe_a2a_overlap=True,
-        ),
-        gpu="gb200",
-        dtype="fp8_mx",
-    )
-
-    assert env["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 0
-    assert env["PYTORCH_CUDA_ALLOC_CONF"] == ("expandable_segments:True,graph_capture_record_stream_reuse:True")
-    assert env["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-    assert env["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] == 8
-
-
-def test_explicit_recipe_environment_override_beats_derived_values():
-    config = _config(
-        backend="hybridep",
-        ep=32,
-        env_vars={"NVLINK_DOMAIN_SIZE": 8, "NVTE_FWD_LAYERNORM_SM_MARGIN": 48},
-    )
-
-    env = _apply(
-        config,
-        gpu="gb200",
-        protected={"NVLINK_DOMAIN_SIZE", "NVTE_FWD_LAYERNORM_SM_MARGIN"},
-    )
-
-    assert env["NVLINK_DOMAIN_SIZE"] == 8
-    assert env["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 48
-    assert env["USE_MNNVL"] == 1
-
-
-def test_allocator_defaults_are_removed_for_llama_megatron_fsdp():
-    env = _apply(
-        _config(
-            use_megatron_fsdp=True,
-            env_vars={"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True", "NCCL_GRAPH_REGISTER": 0},
-        ),
-        family="llama",
-        recipe="llama3_70b",
-        gpu="gb200",
-    )
-
-    assert "PYTORCH_CUDA_ALLOC_CONF" not in env
-    assert "NCCL_GRAPH_REGISTER" not in env
-
-
-def test_nccl_ub_environment_replaces_allocator_and_nvls_defaults():
-    env = _apply(_config(nccl_ub=True))
-
-    assert "PYTORCH_CUDA_ALLOC_CONF" not in env
-    assert "NCCL_GRAPH_REGISTER" not in env
-    assert env["NCCL_NVLS_ENABLE"] == 1
-    assert env["NCCL_CTA_POLICY"] == 1
-
-
-def test_recipe_decorator_finalizes_a_direct_builder():
-    config = _config(backend="hybridep", ep=32)
-
-    @perf_recipe_environment(model_family_name="qwen")
-    def qwen3_30b_a3b_pretrain_32gpu_gb200_fp8mx_config():
-        return config
-
-    resolved = qwen3_30b_a3b_pretrain_32gpu_gb200_fp8mx_config()
-
-    assert resolved is config
-    assert resolved.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert resolved.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
-
-
-def test_reapplying_environment_removes_stale_derived_values():
-    config = _config(
-        backend="hybridep",
-        ep=32,
-        cuda_graph_impl="full_iteration",
-        cutedsl=True,
-        moe_a2a_overlap=True,
-        nccl_ub=True,
-    )
-    _apply(config, gpu="gb200", dtype="nvfp4")
-
-    config.model.moe_flex_dispatcher_backend = None
-    config.model.cuda_graph_impl = None
-    config.model.use_transformer_engine_op_fuser = False
-    config.ddp.nccl_ub = False
-    env = _apply(config, gpu="h100", dtype="bf16")
-
-    assert "NVLINK_DOMAIN_SIZE" not in env
-    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in env
-    assert "CUDNNFE_CLUSTER_OVERLAP_MARGIN" not in env
-    assert "NCCL_CTA_POLICY" not in env
-    assert "NVTE_USE_FAST_MATH" not in env
-    assert env["NCCL_NVLS_ENABLE"] == 0
-    assert env["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
-
-
-def test_every_flat_recipe_builder_is_explicitly_decorated():
-    recipe_root = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
-    undecorated = []
-    families = set()
-
-    for path in recipe_root.glob("*/*/*.py"):
+    for path in _RECIPE_ROOT.glob("*/*/*.py"):
         tree = ast.parse(path.read_text())
         for node in tree.body:
             if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
                 continue
-            families.add(path.relative_to(recipe_root).parts[0])
-            is_decorated = any(
+            builders.append(f"{path.relative_to(_RECIPE_ROOT)}:{node.name}")
+            try:
+                _explicit_environment(path, node.name)
+            except AssertionError:
+                invalid.append(builders[-1])
+            assert not any(
                 isinstance(decorator, ast.Call)
                 and isinstance(decorator.func, ast.Name)
                 and decorator.func.id == "perf_recipe_environment"
                 for decorator in node.decorator_list
             )
-            if not is_decorated:
-                undecorated.append(f"{path.relative_to(recipe_root)}:{node.name}")
 
-    assert not undecorated
-    assert families >= {"deepseek", "gpt_oss", "kimi", "llama", "nemotronh", "qwen", "qwen_vl", "wan"}
+    assert len(builders) == 396
+    assert not invalid
+
+
+def test_explicit_environment_invariants_across_all_flat_recipes():
+    """Keep duplicated inline settings complete without deriving them at runtime."""
+    recipes = list(_explicit_environments())
+
+    for path, function_name, environment in recipes:
+        assert environment.keys() >= _INLINE_CORE_ENV_NAMES
+
+        cudnn_names = {"NVTE_NORM_BWD_USE_CUDNN", "NVTE_NORM_FWD_USE_CUDNN"}
+        assert environment.keys().isdisjoint(cudnn_names) or environment.keys() >= cudnn_names
+
+        hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
+        assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+        if hybrid_ep_names:
+            gpu = path.parent.name
+            nvlink_domain_size = 72 if gpu in {"gb200", "gb300", "vr200"} else 8
+            assert environment["NVLINK_DOMAIN_SIZE"] == nvlink_domain_size
+            assert environment["USE_MNNVL"] == int(nvlink_domain_size == 72)
+            assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] <= nvlink_domain_size
+
+        if "_nvfp4" in function_name:
+            assert environment["NVTE_USE_FAST_MATH"] == 1
+        if path.parts[-3] == "deepseek":
+            assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+
+    assert len(recipes) == 396
 
 
 @pytest.mark.parametrize(
-    ("family", "recipe", "gpu", "dtype", "task", "config", "expected"),
+    ("relative_path", "function_name", "expected"),
     [
         (
-            "deepseek",
-            "deepseek_v3",
-            "gb200",
-            "fp8_mx",
-            "pretrain",
-            _config(backend="hybridep", ep=64),
+            "qwen/h100/qwen3_moe.py",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
             {
-                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-                "NVTE_NORM_FWD_USE_CUDNN": 1,
-                "NVTE_NORM_BWD_USE_CUDNN": 1,
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+                "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "USE_MNNVL": 0,
             },
         ),
         (
-            "kimi",
-            "kimi_k2",
-            "gb300",
-            "fp8_mx",
-            "pretrain",
-            _config(backend="hybridep", ep=64),
-            {"NVTE_NORM_FWD_USE_CUDNN": 1, "NVTE_NORM_BWD_USE_CUDNN": 1},
-        ),
-        (
-            "gpt_oss",
-            "gpt_oss_120b",
-            "gb200",
-            "fp8_mx",
-            "pretrain",
-            _config(backend="hybridep", ep=64),
+            "deepseek/gb200/deepseek_v3.py",
+            "deepseek_v3_pretrain_256gpu_gb200_bf16_config",
             {
-                "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
                 "NVLINK_DOMAIN_SIZE": 72,
-                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                "USE_MNNVL": 1,
             },
         ),
         (
-            "llama",
-            "llama3_8b",
-            "h100",
-            "fp8_cs",
-            "pretrain",
-            _config(),
+            "llama/h100/llama3.py",
+            "llama3_8b_pretrain_8gpu_h100_fp8cs_config",
             {
                 "NCCL_CTA_POLICY": 1,
-                "NVTE_NORM_FWD_USE_CUDNN": 1,
                 "NVTE_NORM_BWD_USE_CUDNN": 1,
-            },
-        ),
-        (
-            "llama",
-            "llama3_70b",
-            "gb200",
-            "bf16",
-            "pretrain",
-            _config(pp=4),
-            {
-                "NCCL_P2P_NET_CHUNKSIZE": 2097152,
                 "NVTE_NORM_FWD_USE_CUDNN": 1,
-                "NVTE_NORM_BWD_USE_CUDNN": 1,
             },
         ),
         (
-            "nemotronh",
-            "nemotron_3_nano",
-            "b200",
-            "bf16",
-            "pretrain",
-            _config(backend="hybridep", ep=8),
-            {"NVTE_NORM_FWD_USE_CUDNN": 1, "NVTE_NORM_BWD_USE_CUDNN": 1},
-        ),
-        (
-            "qwen",
-            "qwen3_30b_a3b",
-            "gb200",
-            "fp8_mx",
-            "pretrain",
-            _config(backend="hybridep", ep=32, cuda_graph_impl="full_iteration", cutedsl=True),
-            {
-                "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-                "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
-                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-            },
-        ),
-        (
-            "qwen_vl",
-            "qwen3_vl_30b_a3b",
-            "gb200",
-            "bf16",
-            "pretrain",
-            _config(backend="hybridep", ep=8),
-            {"NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
-        ),
-        (
-            "wan",
-            "wan_14b",
-            "h100",
-            "bf16",
-            "pretrain",
-            _config(tp=2),
-            {"CUDA_DEVICE_MAX_CONNECTIONS": 1, "NVTE_FWD_LAYERNORM_SM_MARGIN": 16},
+            "wan/h100/wan.py",
+            "wan_14b_pretrain_32gpu_h100_bf16_config",
+            {"CUDA_DEVICE_MAX_CONNECTIONS": 1},
         ),
     ],
 )
-def test_family_baseline_exceptions(family, recipe, gpu, dtype, task, config, expected):
-    env = _apply(config, family=family, recipe=recipe, gpu=gpu, dtype=dtype, task=task)
+def test_representative_recipe_specific_environment_is_visible(relative_path, function_name, expected):
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
 
-    assert env.items() >= expected.items()
+    assert environment.items() >= expected.items()

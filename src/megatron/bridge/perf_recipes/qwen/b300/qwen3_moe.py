@@ -13,7 +13,7 @@
 # limitations under the License.
 """B300 performance recipes for Qwen3 MoE."""
 
-from megatron.bridge.perf_recipes.environment import perf_recipe_environment
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -26,7 +26,6 @@ from megatron.bridge.perf_recipes.qwen.common import (
 )
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× B300, BF16, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -56,10 +55,31 @@ def qwen3_235b_a22b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× B300, FP8 current-scaling, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -89,10 +109,31 @@ def qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× B300, MXFP8, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -122,10 +163,31 @@ def qwen3_235b_a22b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× B300, BF16, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -157,10 +219,31 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× B300, FP8 current-scaling, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -192,10 +275,31 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× B300, MXFP8, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -223,10 +327,33 @@ def qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     _enable_hybridep_full_iteration_mxfp8(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× B300, BF16, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -256,10 +383,31 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× B300, FP8 current-scaling, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -289,10 +437,31 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× B300, MXFP8, PP=8 EP=8."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -322,34 +491,122 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× B300, FP8-MX, large-scale proxy (GBS=512)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config()
     cfg.train.global_batch_size = 512
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 64× B300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× B300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_b300_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+        # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× B300, BF16, EP=64, deepep, MBS=1."""
     cfg = qwen3_next_80b_a3b_pretrain_config()
@@ -375,13 +632,46 @@ def qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× B300, MXFP8, EP=64, deepep, MBS=2."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_b300_bf16_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.train.micro_batch_size = 2
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg

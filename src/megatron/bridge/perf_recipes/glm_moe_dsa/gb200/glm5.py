@@ -15,13 +15,12 @@
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
-from megatron.bridge.perf_recipes.environment import perf_recipe_environment
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
-@perf_recipe_environment(model_family_name="glm_moe_dsa")
 def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.1 SFT: 192× GB200, BF16, 128K packed THD, CP=32, cuDNN DSA."""
     cfg = _sft_common()
@@ -91,10 +90,29 @@ def glm51_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.apply_rope_fusion = False
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.mixed_precision.grad_reduce_in_fp32 = True
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
 
 
-@perf_recipe_environment(model_family_name="glm_moe_dsa")
 def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     """GLM-5.2 SFT: 192× GB200, BF16, 128K packed THD, CP=32, cuDNN DSA."""
     cfg = _sft_common()
@@ -164,4 +182,24 @@ def glm52_sft_192gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.apply_rope_fusion = False
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.mixed_precision.grad_reduce_in_fp32 = True
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg
