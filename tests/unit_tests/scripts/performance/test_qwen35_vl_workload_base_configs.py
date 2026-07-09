@@ -15,6 +15,7 @@
 """Tests for Qwen3.5-VL performance workload presets."""
 
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -31,26 +32,27 @@ _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performan
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
-from configs.qwen_vl.qwen35_vl_workload_base_configs import (  # noqa: E402
-    QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_BF16,
-    QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_FP8_CS,
-)
-
 
 @pytest.mark.parametrize(
-    ("legacy_config", "recipe_fn"),
+    ("recipe_fn", "expected_pp_size", "expected_vp_size"),
     [
         (
-            QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_BF16,
             qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config,
+            8,
+            2,
         ),
         (
-            QWEN35_VL_122B_A10B_PRETRAIN_CONFIG_H100_FP8_CS,
             qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config,
+            8,
+            2,
         ),
     ],
 )
-def test_qwen35_vl_122b_h100_pipeline_layout(legacy_config, recipe_fn):
+def test_qwen35_vl_122b_h100_pipeline_layout(
+    recipe_fn: Callable,
+    expected_pp_size: int,
+    expected_vp_size: int,
+) -> None:
     num_layers = 48
     config = recipe_fn()
     pp_size = config.model.pipeline_model_parallel_size
@@ -59,5 +61,5 @@ def test_qwen35_vl_122b_h100_pipeline_layout(legacy_config, recipe_fn):
     assert num_layers % pp_size == 0
     assert vp_size is not None
     assert (num_layers // pp_size) % vp_size == 0
-    assert pp_size == legacy_config.pipeline_model_parallel_size
-    assert vp_size == legacy_config.virtual_pipeline_model_parallel_size
+    assert pp_size == expected_pp_size
+    assert vp_size == expected_vp_size

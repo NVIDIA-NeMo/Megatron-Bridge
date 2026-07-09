@@ -403,7 +403,7 @@ class FluxInferencePipeline(nn.Module):
             clip_version: HuggingFace model ID or path for CLIP.
         """
         try:
-            from transformers import CLIPTextModel, CLIPTokenizer, T5EncoderModel, T5Tokenizer
+            from transformers import CLIPTextModel, PreTrainedTokenizerFast, T5EncoderModel, T5Tokenizer
 
             # Load T5
             t5_version = t5_version or "google/t5-v1_1-xxl"
@@ -414,7 +414,8 @@ class FluxInferencePipeline(nn.Module):
             # Load CLIP
             clip_version = clip_version or "openai/clip-vit-large-patch14"
             print(f"Loading CLIP encoder from {clip_version}...")
-            self.clip_tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+            # Avoid rebuilding CLIP's post-processor through a version-sensitive model wrapper.
+            self.clip_tokenizer = PreTrainedTokenizerFast.from_pretrained("openai/clip-vit-large-patch14")
             self.clip_encoder = CLIPTextModel.from_pretrained(clip_version).to(self.device).eval()
 
             print("Text encoders loaded successfully")

@@ -69,8 +69,12 @@ class EnergonProvider(DatasetProvider):
             num_workers=self.num_workers,
             pg_collection=context.pg_collection,
         )
+        # EnergonMultiModalDataModule.test_dataloader() returns None (no distinct test split);
+        # honor that instead of aliasing the validation loader as a fake test set, which would
+        # otherwise report validation metrics as test metrics whenever eval_iters > 0.
+        test_dataloader = dataset.test_dataloader()
         return (
             iter(dataset.train_dataloader()),
             iter(dataset.val_dataloader()),
-            iter(dataset.val_dataloader()),
+            iter(test_dataloader) if test_dataloader is not None else None,
         )

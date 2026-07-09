@@ -18,7 +18,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from transformers.configuration_utils import PretrainedConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import (
     MiMoV2FlashBridge,
@@ -182,6 +184,16 @@ class TestMiMoV2FlashMTPDetection:
     def test_mtp_zero_when_no_state(self, bridge):
         pretrained = _make_mock_pretrained()  # with_state=False by default
         provider = bridge.provider_bridge(pretrained)
+        assert provider.mtp_num_layers == 0
+
+    def test_config_only_autobridge_does_not_resolve_checkpoint_state(self):
+        config = PretrainedConfig(name_or_path="XiaomiMiMo/MiMo-V2-Flash", **_MIMO_V2_FLASH_CONFIG)
+
+        with patch("megatron.bridge.models.hf_pretrained.base.SafeTensorsStateSource") as state_source:
+            provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+
+        state_source.assert_not_called()
+        assert isinstance(provider, MiMoV2FlashModelProvider)
         assert provider.mtp_num_layers == 0
 
     def test_mtp_zero_when_no_mtp_keys(self, bridge):
