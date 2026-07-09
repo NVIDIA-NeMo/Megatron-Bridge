@@ -17,6 +17,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_openmathinstruct2_config, default_peft_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -27,6 +28,7 @@ NEMOTRON_3_ULTRA_PRETRAIN_SEQ_LENGTH = 8192
 NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH = 4096
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Ultra.
 
@@ -106,6 +108,7 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
     """Return a packed OpenMathInstruct-2 full SFT config for Nemotron 3 Ultra.
 
@@ -192,6 +195,7 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     return cfg
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     peft_scheme: str | PEFT | None = "lora",
 ) -> ConfigContainer:

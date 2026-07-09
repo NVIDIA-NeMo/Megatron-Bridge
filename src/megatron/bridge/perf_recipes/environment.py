@@ -20,10 +20,10 @@ credentials, cache locations, and scheduler settings remain executor-owned.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Callable, Mapping, MutableMapping, Set
 from functools import wraps
 
+from megatron.bridge.recipes.utils.environment_utils import recipe_environment_metadata
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -51,18 +51,7 @@ _MANAGED_PERF_ENV_NAMES = _HYBRIDEP_ENV_NAMES | {
     "NVTE_USE_FAST_MATH",
     "PYTORCH_CUDA_ALLOC_CONF",
     "TORCH_NCCL_AVOID_RECORD_STREAMS",
-}
-
-_PERF_RECIPE_NAME_PATTERN = re.compile(
-    r"^(?P<model_recipe_name>.+)_(?P<train_task>pretrain|sft|peft)_\d+gpu_"
-    r"(?P<gpu>[a-z0-9]+)_(?P<precision>bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config$"
-)
-_PRECISION_NAMES = {
-    "bf16": "bf16",
-    "fp8cs": "fp8_cs",
-    "fp8mx": "fp8_mx",
-    "fp8sc": "fp8_sc",
-    "nvfp4": "nvfp4",
+    "TORCH_NCCL_HIGH_PRIORITY",
 }
 
 
@@ -88,9 +77,7 @@ def perf_recipe_environment(
     """
 
     def decorate(recipe_fn: Callable[[], ConfigContainer]) -> Callable[[], ConfigContainer]:
-        match = _PERF_RECIPE_NAME_PATTERN.fullmatch(recipe_fn.__name__)
-        if match is None:
-            raise ValueError(f"Invalid flat performance recipe name: {recipe_fn.__name__!r}.")
+        metadata = recipe_environment_metadata(recipe_fn.__name__)
 
         @wraps(recipe_fn)
         def wrapped() -> ConfigContainer:
@@ -98,10 +85,10 @@ def perf_recipe_environment(
             apply_perf_recipe_environment(
                 config,
                 model_family_name=model_family_name,
-                model_recipe_name=match["model_recipe_name"],
-                gpu=match["gpu"],
-                compute_dtype=_PRECISION_NAMES[match["precision"]],
-                train_task=match["train_task"],
+                model_recipe_name=metadata["model_recipe_name"],
+                gpu=metadata["gpu"],
+                compute_dtype=metadata["compute_dtype"],
+                train_task=metadata["train_task"],
             )
             return config
 
@@ -198,6 +185,7 @@ def apply_perf_recipe_environment(
     # overrides. Clear prior derived values so a topology, precision, graph,
     # or feature override cannot leave stale environment settings behind.
     _remove_derived(env_vars, _MANAGED_PERF_ENV_NAMES, protected)
+    _set_derived(env_vars, "TORCH_NCCL_HIGH_PRIORITY", 1, protected)
 
     backend = getattr(model, "moe_flex_dispatcher_backend", None)
     tp_size = getattr(model, "tensor_model_parallel_size", 1) or 1

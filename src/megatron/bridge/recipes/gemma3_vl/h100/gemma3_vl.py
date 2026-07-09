@@ -22,6 +22,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -30,6 +31,7 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 # Gemma3-VL 4B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma3-VL 4B Instruct.
 
@@ -136,6 +138,7 @@ def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Gemma3-VL 12B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma3-VL 12B Instruct.
 
@@ -242,6 +245,7 @@ def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Gemma3-VL 27B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma3-VL 27B Instruct.
 
@@ -348,6 +352,7 @@ def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Gemma3-VL 4B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Gemma3-VL 4B Instruct.
 
@@ -463,6 +468,7 @@ def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
 # =============================================================================
 # Gemma3-VL 12B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Gemma3-VL 12B Instruct.
 
@@ -578,6 +584,7 @@ def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 # =============================================================================
 # Gemma3-VL 27B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma3_vl")
 def gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Gemma3-VL 27B Instruct.
 

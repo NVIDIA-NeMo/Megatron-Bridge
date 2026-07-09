@@ -14,7 +14,10 @@
 
 """Tests for launcher-side library recipe environment resolution."""
 
+import ast
+import importlib.util
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +28,44 @@ _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performan
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
+
+def _install_lightweight_environment_utils() -> None:
+    """Load environment_utils without importing the full Bridge dependency tree."""
+    module_name = "megatron.bridge.recipes.utils.environment_utils"
+    try:
+        __import__(module_name)
+        return
+    except ModuleNotFoundError:
+        pass
+
+    for package_name in ("megatron", "megatron.bridge", "megatron.bridge.recipes", "megatron.bridge.recipes.utils"):
+        package = types.ModuleType(package_name)
+        package.__path__ = []
+        sys.modules[package_name] = package
+    training_package = types.ModuleType("megatron.bridge.training")
+    training_package.__path__ = []
+    sys.modules[training_package.__name__] = training_package
+    config_module = types.ModuleType("megatron.bridge.training.config")
+    config_module.ConfigContainer = object
+    sys.modules[config_module.__name__] = config_module
+
+    source = (
+        Path(__file__).resolve().parents[4]
+        / "src"
+        / "megatron"
+        / "bridge"
+        / "recipes"
+        / "utils"
+        / "environment_utils.py"
+    )
+    spec = importlib.util.spec_from_file_location(module_name, source)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+
+
+_install_lightweight_environment_utils()
+
 import run_script_with_env
 from utils import utils
 
@@ -34,7 +75,6 @@ def _add_environment(config, custom_env_vars, **overrides):
         "custom_env_vars": custom_env_vars,
         "config": config,
         "gpu": "h100",
-        "expert_model_parallel_size": None,
     }
     args.update(overrides)
     utils.add_library_recipe_environment_variables(**args)
@@ -47,6 +87,7 @@ def test_library_recipe_environment_mutates_existing_mapping_and_preserves_expli
             "TORCHINDUCTOR_WORKER_START": "fork",
         },
         model=SimpleNamespace(moe_flex_dispatcher_backend=None),
+        ddp=SimpleNamespace(nccl_ub=False),
     )
     custom_env_vars = {"NVTE_FWD_LAYERNORM_SM_MARGIN": "48"}
     original_mapping = custom_env_vars
@@ -54,17 +95,16 @@ def test_library_recipe_environment_mutates_existing_mapping_and_preserves_expli
     _add_environment(config, custom_env_vars)
 
     assert custom_env_vars is original_mapping
-    assert custom_env_vars == {
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": "48",
-        "TORCHINDUCTOR_WORKER_START": "fork",
-    }
+    assert custom_env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "48"
+    assert custom_env_vars["TORCHINDUCTOR_WORKER_START"] == "fork"
+    assert custom_env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == "1"
 
 
 @pytest.mark.parametrize(
     ("gpu", "ep_size", "expected_ranks", "expected_domain", "expected_mnnvl"),
     [("h100", 4, "4", "8", "0"), ("gb200", 32, "32", "72", "1")],
 )
-def test_library_hybridep_topology_environment_tracks_ep_override(
+def test_library_hybridep_topology_environment_tracks_final_ep_size(
     gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl
 ):
     config = SimpleNamespace(
@@ -72,11 +112,12 @@ def test_library_hybridep_topology_environment_tracks_ep_override(
             "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
             "USE_MNNVL": 1,
         },
-        model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=64),
+        model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=ep_size),
+        ddp=SimpleNamespace(nccl_ub=False),
     )
     custom_env_vars = {}
 
-    _add_environment(config, custom_env_vars, gpu=gpu, expert_model_parallel_size=ep_size)
+    _add_environment(config, custom_env_vars, gpu=gpu)
 
     assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
     assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
@@ -94,16 +135,16 @@ def test_library_hybridep_topology_uses_recipe_ep_without_override(
     config = SimpleNamespace(
         env_vars={},
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=32),
+        ddp=SimpleNamespace(nccl_ub=False),
     )
     custom_env_vars = {}
 
     _add_environment(config, custom_env_vars, gpu=gpu)
 
-    assert custom_env_vars == {
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expected_ranks,
-        "NVLINK_DOMAIN_SIZE": expected_domain,
-        "USE_MNNVL": expected_mnnvl,
-    }
+    assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
+    assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
+    assert custom_env_vars["USE_MNNVL"] == expected_mnnvl
+    assert custom_env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
 
 def test_library_hybridep_topology_preserves_explicit_values():
@@ -111,6 +152,7 @@ def test_library_hybridep_topology_preserves_explicit_values():
     config = SimpleNamespace(
         env_vars={},
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=32),
+        ddp=SimpleNamespace(nccl_ub=False),
     )
     custom_env_vars = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": "custom-ranks",
@@ -120,11 +162,27 @@ def test_library_hybridep_topology_preserves_explicit_values():
 
     _add_environment(config, custom_env_vars, gpu="gb200")
 
-    assert custom_env_vars == {
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": "custom-ranks",
-        "NVLINK_DOMAIN_SIZE": "custom-domain",
-        "USE_MNNVL": "custom-mnnvl",
-    }
+    assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "custom-ranks"
+    assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == "custom-domain"
+    assert custom_env_vars["USE_MNNVL"] == "custom-mnnvl"
+
+
+def test_library_recipe_owns_legacy_process_defaults_and_nccl_ub_overrides():
+    config = SimpleNamespace(
+        env_vars={},
+        model=SimpleNamespace(moe_flex_dispatcher_backend=None),
+        ddp=SimpleNamespace(nccl_ub=True),
+    )
+    custom_env_vars = {}
+
+    _add_environment(config, custom_env_vars, gpu="h100")
+
+    assert config.env_vars["NCCL_NVLS_ENABLE"] == 1
+    assert config.env_vars["NCCL_CTA_POLICY"] == 1
+    assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
+    assert config.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
+    assert config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert custom_env_vars["NCCL_NVLS_ENABLE"] == "1"
 
 
 def test_workload_base_config_copies_recipe_environment():
@@ -227,7 +285,10 @@ def test_perf_wrapper_applies_cli_overrides_before_deriving_environment(monkeypa
 
 def test_library_wrapper_applies_known_ep_override_to_effective_recipe():
     """The library pre-exec config should mirror run_recipe's argparse EP update."""
-    recipe = SimpleNamespace(model=SimpleNamespace(expert_model_parallel_size=8))
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(expert_model_parallel_size=8),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
     args = SimpleNamespace(expert_model_parallel_size=32)
 
     effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
@@ -235,9 +296,123 @@ def test_library_wrapper_applies_known_ep_override_to_effective_recipe():
     assert effective_recipe.model.expert_model_parallel_size == 32
 
 
+def test_library_wrapper_applies_env_relevant_argparse_overrides():
+    """NCCL-UB and dispatcher settings must be visible before the runner execs."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="alltoall",
+            moe_flex_dispatcher_backend="deepep",
+            moe_shared_expert_overlap=True,
+        ),
+        ddp=SimpleNamespace(
+            nccl_ub=False,
+            average_in_collective=True,
+            use_megatron_fsdp=True,
+            fsdp_manual_registration=False,
+        ),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=True,
+        moe_flex_dispatcher_backend="hybridep",
+    )
+
+    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+
+    assert effective_recipe.ddp.nccl_ub is True
+    assert effective_recipe.ddp.average_in_collective is False
+    assert effective_recipe.ddp.fsdp_manual_registration is True
+    assert effective_recipe.model.moe_token_dispatcher_type == "flex"
+    assert effective_recipe.model.moe_flex_dispatcher_backend == "hybridep"
+    assert effective_recipe.model.moe_shared_expert_overlap is False
+
+
+def test_library_wrapper_disables_flex_dispatcher_consistently():
+    """The explicit None backend must clear both flex dispatcher fields."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=False,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend=None,
+    )
+
+    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+
+    assert effective_recipe.model.moe_token_dispatcher_type == "alltoall"
+    assert effective_recipe.model.moe_flex_dispatcher_backend is None
+
+
+@pytest.mark.parametrize("dispatcher_override", [-1, "hybridep"])
+def test_library_wrapper_preserves_dense_dispatcher_fields(dispatcher_override):
+    """Finalization must not rewrite dense-model dispatcher defaults."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=1,
+            num_moe_experts=None,
+            moe_token_dispatcher_type=None,
+            moe_flex_dispatcher_backend=None,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend=dispatcher_override,
+    )
+
+    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+
+    assert effective_recipe.model.moe_token_dispatcher_type is None
+    assert effective_recipe.model.moe_flex_dispatcher_backend is None
+
+
+def test_library_wrapper_and_final_runner_share_environment_override_helper():
+    """Pre-exec and final-runner config must use the same argparse logic."""
+    repo_root = Path(__file__).resolve().parents[4]
+    expected_calls = {
+        repo_root / "scripts" / "performance" / "run_script_with_env.py": {
+            "_apply_library_recipe_overrides": {
+                "apply_library_environment_overrides",
+                "finalize_library_environment_overrides",
+            }
+        },
+        repo_root / "scripts" / "performance" / "run_recipe.py": {
+            "set_user_overrides": {"apply_library_environment_overrides"},
+            "main": {"finalize_library_environment_overrides"},
+        },
+    }
+
+    for path, functions in expected_calls.items():
+        tree = ast.parse(path.read_text())
+        for function_name, expected_helpers in functions.items():
+            function = next(
+                node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name
+            )
+            called_helpers = {
+                node.func.id
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            }
+            assert called_helpers >= expected_helpers
+
+
 def test_library_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
     """Hydra EP must win after argparse EP, matching the final library runner."""
-    recipe = SimpleNamespace(model=SimpleNamespace(expert_model_parallel_size=8))
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(expert_model_parallel_size=8),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
     args = SimpleNamespace(expert_model_parallel_size=32)
 
     def apply_hydra(config, overrides):
@@ -255,6 +430,48 @@ def test_library_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
     )
 
     assert effective_recipe.model.expert_model_parallel_size == 64
+
+
+def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
+    """Hydra primary-field precedence must not leave stale coupled settings."""
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            expert_model_parallel_size=8,
+            num_moe_experts=128,
+            moe_token_dispatcher_type="flex",
+            moe_flex_dispatcher_backend="hybridep",
+            moe_shared_expert_overlap=False,
+        ),
+        ddp=SimpleNamespace(
+            nccl_ub=False,
+            average_in_collective=True,
+            use_megatron_fsdp=True,
+            fsdp_manual_registration=False,
+        ),
+    )
+    args = SimpleNamespace(
+        expert_model_parallel_size=None,
+        nccl_ub=True,
+        moe_flex_dispatcher_backend="hybridep",
+    )
+
+    def apply_hydra(config, _overrides):
+        config.ddp.nccl_ub = False
+        config.model.moe_flex_dispatcher_backend = None
+        return config
+
+    monkeypatch.setattr(run_script_with_env, "_process_library_hydra_overrides", apply_hydra)
+
+    effective_recipe = run_script_with_env._apply_library_recipe_overrides(
+        recipe,
+        ["ddp.nccl_ub=false", "model.moe_flex_dispatcher_backend=null"],
+        args,
+    )
+
+    assert effective_recipe.ddp.nccl_ub is False
+    assert effective_recipe.ddp.fsdp_manual_registration is False
+    assert effective_recipe.model.moe_token_dispatcher_type == "alltoall"
+    assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
 def test_library_wrapper_resolves_environment_inside_worker_before_exec(monkeypatch):
@@ -312,6 +529,7 @@ def test_library_recipe_environment_rejects_non_scalar_values():
     config = SimpleNamespace(
         env_vars={"INVALID": ["value"]},
         model=SimpleNamespace(moe_flex_dispatcher_backend=None),
+        ddp=SimpleNamespace(nccl_ub=False),
     )
 
     with pytest.raises(TypeError, match="must have a scalar value"):

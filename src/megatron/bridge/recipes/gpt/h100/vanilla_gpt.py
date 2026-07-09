@@ -33,6 +33,7 @@ import os
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -48,6 +49,7 @@ from megatron.bridge.training.config import (
 )
 
 
+@library_recipe_environment(model_family_name="gpt")
 def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Minimal GPT pretrain config aligned with Megatron-LM pretrain_gpt.py defaults.
 

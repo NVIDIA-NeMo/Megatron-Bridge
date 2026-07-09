@@ -19,10 +19,12 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.config import ConfigContainer
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 0.6B.
 
@@ -104,6 +106,7 @@ def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_1p7b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 1.7B.
 
@@ -185,6 +188,7 @@ def qwen3_1p7b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 4B.
 
@@ -266,6 +270,7 @@ def qwen3_4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_8b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 8B.
 
@@ -347,6 +352,7 @@ def qwen3_8b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 14B.
 
@@ -428,6 +434,7 @@ def qwen3_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 32B.
 
@@ -501,6 +508,7 @@ def qwen3_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_600m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 600M.
 
@@ -589,6 +597,7 @@ def qwen3_600m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_600m_sft_8gpu_h100_bf16_128k_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 600M with 128K context length.
 
@@ -632,6 +641,7 @@ def qwen3_600m_sft_8gpu_h100_bf16_128k_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config() -> ConfigContainer:
     """Return a 128K full SFT config for Qwen3 600M with YaRN scaling.
 
@@ -709,6 +719,7 @@ def qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_1p7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 1.7B.
 
@@ -797,6 +808,7 @@ def qwen3_1p7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 4B.
 
@@ -885,6 +897,7 @@ def qwen3_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 8B.
 
@@ -973,6 +986,7 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 14B.
 
@@ -1061,6 +1075,7 @@ def qwen3_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 32B.
 
@@ -1157,6 +1172,7 @@ def qwen3_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_600m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 600M.
 
@@ -1251,6 +1267,7 @@ def qwen3_600m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_1p7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 1.7B.
 
@@ -1345,6 +1362,7 @@ def qwen3_1p7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 4B.
 
@@ -1439,6 +1457,7 @@ def qwen3_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 8B.
 
@@ -1533,6 +1552,7 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 14B.
 
@@ -1627,6 +1647,7 @@ def qwen3_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen")
 def qwen3_32b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3 32B.
 

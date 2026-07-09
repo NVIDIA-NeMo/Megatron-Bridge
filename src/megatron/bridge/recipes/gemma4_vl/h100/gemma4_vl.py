@@ -22,6 +22,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -105,6 +106,7 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
 # =============================================================================
 # Gemma 4 VL 26B-A4B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma4_vl")
 def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
@@ -159,6 +161,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Gemma 4 VL 26B-A4B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="gemma4_vl")
 def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:

@@ -128,6 +128,7 @@ def test_non_flex_hopper_environment_uses_parallelism_ordering_defaults():
     assert env["NCCL_NVLS_ENABLE"] == 0
     assert env["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
     assert env["NCCL_GRAPH_REGISTER"] == 0
+    assert env["TORCH_NCCL_HIGH_PRIORITY"] == 1
 
 
 def test_hopper_program_ordering_wins_over_flex_backend_default():
