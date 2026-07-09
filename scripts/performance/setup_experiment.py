@@ -604,7 +604,7 @@ def main(
         ]
     )
 
-    if nccl_ub:
+    if nccl_ub and use_recipes:
         custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
 
     if kubeflow_namespace:
@@ -661,6 +661,7 @@ def main(
             wandb_key=wandb_key,
             packager=packager,
             enable_pct_binding=enable_pct_binding,
+            recipe_owned_environment=not use_recipes,
         )
 
     plugins = []
@@ -685,17 +686,6 @@ def main(
             PerfEnvPlugin(
                 enable_vboost=enable_vboost,
                 lock_gpu_freq=lock_gpu_freq,
-                moe_a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-                ep_size=ep_size,
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                gpu=gpu,
-                compute_dtype=compute_dtype,
-                train_task=task,
-                config_variant=config_variant,
                 deterministic=deterministic,
             )
         )
