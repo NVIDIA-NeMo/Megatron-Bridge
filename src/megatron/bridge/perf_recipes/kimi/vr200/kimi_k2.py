@@ -13,6 +13,7 @@
 # limitations under the License.
 """VR200 performance recipes for Kimi K2."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
 )
@@ -22,11 +23,13 @@ from megatron.bridge.perf_recipes.kimi.gb300.kimi_k2 import (
 )
 
 
+@perf_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× VR200, BF16 (alias of GB300)."""
     return kimi_k2_pretrain_256gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Kimi K2 pretrain: 256× VR200, MXFP8 (alias of GB300)."""
     return kimi_k2_pretrain_256gpu_gb300_fp8mx_config()

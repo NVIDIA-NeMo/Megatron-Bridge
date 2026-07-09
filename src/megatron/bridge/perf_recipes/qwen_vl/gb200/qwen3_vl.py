@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for Qwen3-VL."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -24,6 +25,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, BF16, PP=8 EP=8."""
     cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
@@ -64,6 +66,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, FP8 current-scaling, PP=8 EP=8."""
     cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
@@ -104,6 +107,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 235B-A22B pretrain: 64× GB200, MXFP8, PP=8 EP=8."""
     cfg = qwen3_vl_235b_a22b_pretrain_mock_config()
@@ -144,6 +148,7 @@ def qwen3_vl_235b_a22b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, BF16, EP=8."""
     cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
@@ -182,6 +187,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, FP8 current-scaling, EP=8."""
     cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
@@ -220,6 +226,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Qwen3-VL 30B-A3B pretrain: 8× GB200, MXFP8, EP=8."""
     cfg = qwen3_vl_30b_a3b_pretrain_mock_config()

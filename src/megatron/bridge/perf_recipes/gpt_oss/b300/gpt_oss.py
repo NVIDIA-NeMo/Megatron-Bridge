@@ -13,6 +13,7 @@
 # limitations under the License.
 """B300 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
     _apply_gpt_oss_20b_common_configs,
@@ -27,6 +28,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× B300, NVFP4."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -52,6 +54,7 @@ def gpt_oss_20b_pretrain_8gpu_b300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× B300, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -78,6 +81,7 @@ def gpt_oss_20b_pretrain_8gpu_b300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 64× B300, NVFP4."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -103,6 +107,7 @@ def gpt_oss_20b_pretrain_64gpu_b300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 64× B300, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -129,6 +134,7 @@ def gpt_oss_20b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B300, BF16, GBS=1280."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -154,6 +160,7 @@ def gpt_oss_120b_pretrain_64gpu_b300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_b300_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B300, FP8-MX."""
     cfg = gpt_oss_120b_pretrain_config()

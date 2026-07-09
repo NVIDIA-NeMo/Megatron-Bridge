@@ -13,6 +13,7 @@
 # limitations under the License.
 """VR200 performance recipes for Llama 3.1."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
 )
@@ -23,16 +24,19 @@ from megatron.bridge.perf_recipes.llama.gb300.llama31 import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 256x VR200, BF16 (alias of GB300)."""
     return llama31_405b_pretrain_256gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 256x VR200, FP8-MX (alias of GB300)."""
     return llama31_405b_pretrain_256gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 256x VR200, NVFP4 (alias of GB300)."""
     return llama31_405b_pretrain_256gpu_gb300_nvfp4_config()

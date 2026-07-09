@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Kimi K2."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
     _benchmark_common,
@@ -21,6 +22,7 @@ from megatron.bridge.perf_recipes.kimi.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """Kimi K2 pretrain: 1024× H100, BF16."""
     cfg = kimi_k2_pretrain_config()
@@ -52,6 +54,7 @@ def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """Kimi K2 pretrain: 1024× H100, FP8 current-scaling."""
     cfg = kimi_k2_pretrain_config()
@@ -83,6 +86,7 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
     """Kimi K2 pretrain: 1024× H100, FP8-SC."""
     cfg = kimi_k2_pretrain_1024gpu_h100_fp8cs_config()

@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for Llama 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -29,6 +30,7 @@ from megatron.bridge.perf_recipes.llama.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB300, BF16, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -56,6 +58,7 @@ def llama3_8b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB300, FP8 current-scaling, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -83,6 +86,7 @@ def llama3_8b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB300, MXFP8, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -110,6 +114,7 @@ def llama3_8b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× GB300, NVFP4, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -137,6 +142,7 @@ def llama3_8b_pretrain_8gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× GB300, BF16, FSDP + NCCL UB, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -176,6 +182,7 @@ def llama3_70b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× GB300, FP8 current-scaling, FSDP, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -213,6 +220,7 @@ def llama3_70b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× GB300, MXFP8, PP=4, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -234,6 +242,7 @@ def llama3_70b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× GB300, NVFP4, PP=4, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -260,6 +269,7 @@ def llama3_70b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_sft_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 70B SFT: 32× GB300, BF16, PP=2 VP=20."""
     cfg = llama3_70b_sft_config()
@@ -296,6 +306,7 @@ def llama3_70b_sft_32gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_sft_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 70B SFT: 32× GB300, FP8 current-scaling, PP=2 VP=20."""
     cfg = llama3_70b_sft_config()
@@ -332,6 +343,7 @@ def llama3_70b_sft_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB300, BF16."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -365,6 +377,7 @@ def llama3_70b_peft_8gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB300, FP8 current-scaling."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -400,6 +413,7 @@ def llama3_70b_peft_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB300, MXFP8, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -434,6 +448,7 @@ def llama3_70b_peft_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 70B SFT: 32× GB300, FP8-MX (same layout as FP8-CS)."""
     cfg = llama3_70b_sft_32gpu_gb300_fp8cs_config()
@@ -443,31 +458,37 @@ def llama3_70b_sft_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_bf16_config(), 512)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_fp8cs_config(), 512)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_32gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Llama3 8B pretrain: 32× GB300, MXFP8, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_fp8mx_config(), 512)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_32gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 32× GB300, NVFP4, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_gb300_nvfp4_config(), 512)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Llama3 70B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb300_bf16_config(), 128)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Llama3 70B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_70b_pretrain_64gpu_gb300_fp8cs_config(), 128)

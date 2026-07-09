@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Wan."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.wan.common import (
     ConfigContainer,
     _benchmark_common,
@@ -21,6 +22,7 @@ from megatron.bridge.perf_recipes.wan.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="wan")
 def wan_14b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Wan 14B pretrain: 32× H100, BF16, TP=2 CP=4, recompute block/8."""
     cfg = wan_14b_pretrain_config()
