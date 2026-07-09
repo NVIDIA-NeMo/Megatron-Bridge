@@ -21,7 +21,10 @@ import torch
 
 from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_256gpu_gb200_fp8mx_config
 from megatron.bridge.training.config import ConfigContainer
-from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_perf_test
+from tests.functional_tests.test_groups.recipes.utils import (
+    configure_ci_pretraining_dataset,
+    run_pretrain_recipe_perf_test,
+)
 
 
 def _deepseek_v3_gb200_proxy() -> ConfigContainer:
@@ -73,6 +76,12 @@ class TestDeepSeekV3PerfProxy:
     """Train the reduced DeepSeek V3 production config on four GB200 GPUs."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_gb200_fp8mx(self):
+    def test_gb200_fp8mx(self, ensure_test_data):
         assert torch.cuda.get_device_capability()[0] >= 10, "The GB200 MXFP8 proxy requires Blackwell GPUs."
-        run_pretrain_recipe_perf_test(_deepseek_v3_gb200_proxy, "deepseek_v3_gb200_fp8mx_proxy")
+
+        def proxy_config() -> ConfigContainer:
+            config = _deepseek_v3_gb200_proxy()
+            configure_ci_pretraining_dataset(config, ensure_test_data)
+            return config
+
+        run_pretrain_recipe_perf_test(proxy_config, "deepseek_v3_gb200_fp8mx_proxy")
