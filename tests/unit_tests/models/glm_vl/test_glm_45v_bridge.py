@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     pretrained.state = Mock()
     pretrained.state.source = Mock()
@@ -483,7 +483,7 @@ class TestGLM45VBridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, glm_45v_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config

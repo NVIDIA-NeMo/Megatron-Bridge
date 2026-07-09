@@ -19,7 +19,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_audio.qwen2_audio_bridge import Qwen2AudioBridge
 from megatron.bridge.models.qwen_audio.qwen2_audio_provider import Qwen2AudioModelProvider
 
@@ -76,7 +76,7 @@ def mock_hf_config(mock_text_config, mock_audio_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 
@@ -274,7 +274,7 @@ class TestQwen2AudioBridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, qwen2_audio_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         text_config = SimpleNamespace(

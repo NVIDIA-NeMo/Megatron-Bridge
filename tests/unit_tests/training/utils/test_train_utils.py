@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import math
 import random
 import time
@@ -418,6 +419,73 @@ class TestTrainingLog:
         # Verify tensorboard logging was called
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_max_attention_logit_logged(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """max-attention-logit must reach the writers when a value is provided (qk_clip path)."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        mock_global_state.train_state.step = 100
+        mock_config.logger.tensorboard_log_interval = 10
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            log_max_attention_logit=12.5,
+        )
+
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("max-attention-logit", 12.5, 100)
+        wandb_metric_calls = [
+            call for call in mock_global_state.wandb_logger.log.call_args_list if "max-attention-logit" in call.args[0]
+        ]
+        assert wandb_metric_calls, "max-attention-logit was not logged to wandb"
+
+    def test_optional_params_are_keyword_only(self):
+        """Optional params must stay keyword-only so a positional call cannot bind to the wrong slot.
+
+        Regression guard: log_max_attention_logit used to be passed as the 15th positional
+        argument in train.py, silently binding to pg_collection instead.
+        """
+        sig = inspect.signature(training_log)
+        for name in ("pg_collection", "log_max_attention_logit", "loaded_iteration", "seq_length"):
+            assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
