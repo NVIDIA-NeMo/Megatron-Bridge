@@ -16,7 +16,7 @@ import re
 
 import torch
 
-from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping, ReplicatedMapping
+from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping, QKVMapping, ReplicatedMapping
 
 
 class AmaxMapping(ReplicatedMapping):
@@ -229,6 +229,83 @@ def _convert_hf_weight_names(hf_param: str | dict[str, str], mapped_name: str) -
     if isinstance(hf_param, str) and hf_param.endswith(".weight"):
         return [hf_param.removesuffix(".weight") + mapped_name]
     return []
+
+
+_QKV_PROJECTION_NAMES = {"q": "q_proj", "k": "k_proj", "v": "v_proj"}
+# Speculative-decoding draft models and MTP layers are not supported by the
+# KV-cache amax refit path yet, so do not derive mappings for their QKV blocks.
+_SKIPPED_QKV_PATH_SEGMENTS = frozenset(
+    {
+        "draft",
+        "draft_layers",
+        "draft_model_layer",
+        "mtp",
+        "mtp_layers",
+        "mtp_model_layer",
+    }
+)
+
+
+def _has_skipped_qkv_path_segment(path: str) -> bool:
+    return any(segment in _SKIPPED_QKV_PATH_SEGMENTS for segment in path.split("."))
+
+
+def _derive_qkv_megatron_parent(megatron_param: str) -> str | None:
+    suffix = ".self_attention.linear_qkv.weight"
+    if not megatron_param.endswith(suffix):
+        return None
+    return megatron_param.removesuffix(".linear_qkv.weight") + ".core_attention"
+
+
+def _derive_qkv_hf_parent(hf_params: dict[str, str]) -> str | None:
+    parents = []
+    for key, expected_proj_name in _QKV_PROJECTION_NAMES.items():
+        hf_name = hf_params.get(key)
+        if not isinstance(hf_name, str):
+            return None
+        parts = hf_name.split(".")
+        if len(parts) < 3 or parts[-1] != "weight" or parts[-2] != expected_proj_name:
+            return None
+        parents.append(".".join(parts[:-2]))
+    if len(set(parents)) != 1:
+        return None
+    return parents[0]
+
+
+def derive_kv_bmm_amax_map(mappings: list[MegatronParamMapping]) -> list[MegatronParamMapping]:
+    """Derive K/V BMM quantizer amax mappings from eligible fused-QKV mappings."""
+    derived_mappings = []
+
+    for mapping in mappings:
+        if not isinstance(mapping, QKVMapping):
+            continue
+        if mapping.allow_hf_name_mismatch:
+            # Shared/tied-KV bridges may intentionally omit an HF projection.
+            continue
+        if _has_skipped_qkv_path_segment(mapping.megatron_param):
+            continue
+        if any(_has_skipped_qkv_path_segment(path) for path in mapping.hf_param.values()):
+            continue
+
+        megatron_parent = _derive_qkv_megatron_parent(mapping.megatron_param)
+        hf_parent = _derive_qkv_hf_parent(mapping.hf_param)
+        if megatron_parent is None or hf_parent is None:
+            continue
+
+        derived_mappings.extend(
+            [
+                AmaxMapping(
+                    megatron_param=f"{megatron_parent}.k_bmm_quantizer._amax",
+                    hf_param=f"{hf_parent}.k_bmm_quantizer._amax",
+                ),
+                AmaxMapping(
+                    megatron_param=f"{megatron_parent}.v_bmm_quantizer._amax",
+                    hf_param=f"{hf_parent}.v_bmm_quantizer._amax",
+                ),
+            ]
+        )
+
+    return derived_mappings
 
 
 def convert_to_amax_map(

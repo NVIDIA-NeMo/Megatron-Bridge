@@ -1,0 +1,22 @@
+# Qwen2.5-Omni
+
+[Qwen2.5-Omni](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) is a multimodal Qwen model for image, video, audio, and text understanding. Megatron Bridge supports it through the Qwen Omni bridge.
+
+## Supported Variants
+
+- Qwen2.5-Omni-7B: https://huggingface.co/Qwen/Qwen2.5-Omni-7B
+
+## Architecture Notes
+
+- Dense Qwen2 language backbone with multimodal RoPE.
+- Vision and audio inputs are routed through Qwen2.5-Omni multimodal components.
+- Video-with-audio inference depends on `qwen-omni-utils[decord]` and an available `ffmpeg` binary.
+
+## Examples
+
+For checkpoint import/export, round-trip validation, multimodal inference, and dependency notes, see the [Qwen2.5-Omni examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/qwen/qwen25_omni/README.md).
+
+## Related Implementation
+
+- Bridge implementation: [`src/megatron/bridge/models/qwen_omni/qwen25_omni_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen_omni/qwen25_omni_bridge.py)
+- Examples: [`examples/models/qwen/qwen25_omni`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/qwen/qwen25_omni)

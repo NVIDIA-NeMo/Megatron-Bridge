@@ -47,17 +47,23 @@ def get_dataset(
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer_model_name = None
     tokenizer = build_tokenizer(tokenizer_config)
-    packed_sequence_specs = PackedSequenceSpecs(
-        packed_sequence_size=packed_sequence_size,
-        tokenizer_model_name=tokenizer_model_name,
-        packed_train_data_path=packed_train_data_path,
-        packed_val_data_path=packed_val_data_path,
+    enable_offline_packing = packed_sequence_size > 0
+    offline_packing_specs = (
+        PackedSequenceSpecs(
+            packed_sequence_size=packed_sequence_size,
+            tokenizer_model_name=tokenizer_model_name,
+            packed_train_data_path=packed_train_data_path,
+            packed_val_data_path=packed_val_data_path,
+        )
+        if enable_offline_packing
+        else None
     )
 
     dataset = FinetuningDatasetBuilder(
         dataset_root=path,
         tokenizer=tokenizer,
-        packed_sequence_specs=packed_sequence_specs,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
     )
 
     return dataset, path
@@ -227,7 +233,7 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
         tokenizer_config = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=131072)
         tokenizer = build_tokenizer(tokenizer_config)
 
-        packed_sequence_specs = PackedSequenceSpecs(
+        offline_packing_specs = PackedSequenceSpecs(
             packed_sequence_size=2048,
             tokenizer_model_name="test_tokenizer",
         )
@@ -235,7 +241,8 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
         builder = FinetuningDatasetBuilder(
             dataset_root=tmp_path,
             tokenizer=tokenizer,
-            packed_sequence_specs=packed_sequence_specs,
+            enable_offline_packing=True,
+            offline_packing_specs=offline_packing_specs,
             dataset_kwargs=dataset_kwargs,
         )
 
@@ -280,7 +287,7 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
             "use_hf_tokenizer_chat_template": True,
         }
 
-        packed_sequence_specs = PackedSequenceSpecs(
+        offline_packing_specs = PackedSequenceSpecs(
             packed_sequence_size=2048,
             tokenizer_model_name="test_model",
         )
@@ -288,7 +295,8 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
         builder = FinetuningDatasetBuilder(
             dataset_root=tmp_path,
             tokenizer=mock_tokenizer,
-            packed_sequence_specs=packed_sequence_specs,
+            enable_offline_packing=True,
+            offline_packing_specs=offline_packing_specs,
             dataset_kwargs=dataset_kwargs,
         )
 
@@ -317,7 +325,7 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
             "tool_schemas": tool_schemas,
         }
 
-        packed_sequence_specs = PackedSequenceSpecs(
+        offline_packing_specs = PackedSequenceSpecs(
             packed_sequence_size=2048,
             tokenizer_model_name="test_model",
         )
@@ -325,7 +333,8 @@ class TestFinetuningDatasetBuilderWithChatTemplates:
         builder = FinetuningDatasetBuilder(
             dataset_root=tmp_path,
             tokenizer=mock_tokenizer,
-            packed_sequence_specs=packed_sequence_specs,
+            enable_offline_packing=True,
+            offline_packing_specs=offline_packing_specs,
             dataset_kwargs=dataset_kwargs,
         )
 

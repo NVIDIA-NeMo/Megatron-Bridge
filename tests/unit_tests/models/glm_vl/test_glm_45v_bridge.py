@@ -17,9 +17,15 @@ from unittest.mock import Mock
 import pytest
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+)
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @pytest.fixture
@@ -81,7 +87,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     pretrained.state = Mock()
     pretrained.state.source = Mock()
@@ -226,11 +232,67 @@ class TestGLM45VBridgeTokenizerKwargs:
 class TestGLM45VBridgeMappingRegistry:
     """Test mapping_registry method functionality."""
 
+    @staticmethod
+    def _expert_mappings(registry):
+        return [
+            mapping for mapping in registry.mappings if "mlp.experts" in str(getattr(mapping, "megatron_param", ""))
+        ]
+
     def test_mapping_registry_returns_correct_type(self, glm_45v_bridge):
         """Test mapping_registry returns MegatronMappingRegistry."""
         registry = glm_45v_bridge.mapping_registry()
 
         assert isinstance(registry, MegatronMappingRegistry)
+
+    def test_mapping_registry_config_only_uses_unfused_expert_mappings(self, mock_hf_config):
+        """Test config-only bridge builds mappings without HF state and defaults to unfused experts."""
+        config_only = Mock(spec=["text_config", "vision_config"])
+        config_only.text_config = mock_hf_config.text_config
+        config_only.vision_config = mock_hf_config.vision_config
+
+        bridge = GLM45VBridge()
+        bridge.hf_pretrained = config_only
+        bridge.hf_config = config_only
+        registry = bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert not any(
+            isinstance(mapping, (FusedGatedExpertMapping, FusedExpertMapping)) for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, GatedMLPMapping)
+            and mapping.hf_param["gate"] == "model.language_model.layers.*.mlp.experts.*.gate_proj.weight"
+            and mapping.hf_param["up"] == "model.language_model.layers.*.mlp.experts.*.up_proj.weight"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, AutoMapping)
+            and mapping.hf_param == "model.language_model.layers.*.mlp.experts.*.down_proj.weight"
+            for mapping in expert_mappings
+        )
+
+    def test_mapping_registry_uses_fused_expert_mappings_from_state_source(self, glm_45v_bridge, mock_hf_pretrained):
+        """Test fused expert layout is detected from HF state source without enumerating all keys."""
+        source = mock_hf_pretrained.state.source
+        source.get_all_keys.side_effect = AssertionError("mapping registry should not enumerate all HF keys")
+        source.has_glob.side_effect = lambda pattern: pattern in {
+            "*mlp.experts.gate_up_proj*",
+            "*mlp.experts.down_proj*",
+        }
+
+        registry = glm_45v_bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert any(
+            isinstance(mapping, FusedGatedExpertMapping)
+            and mapping.hf_param == "model.language_model.layers.*.mlp.experts.gate_up_proj"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, FusedExpertMapping)
+            and mapping.hf_param == "model.language_model.layers.*.mlp.experts.down_proj"
+            for mapping in expert_mappings
+        )
 
     def test_mapping_registry_contains_required_mappings(self, glm_45v_bridge):
         """Test mapping_registry contains all required parameter mappings."""
@@ -421,7 +483,7 @@ class TestGLM45VBridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, glm_45v_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config

@@ -32,12 +32,10 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.evaluate import calc_convergence_and_performance
     from utils.executors import kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
@@ -53,14 +51,8 @@ try:
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
-try:
-    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-except (ImportError, ModuleNotFoundError):
-    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-
-
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script.py"
+ENTRYPOINT_PEFORMANCE = "run_script_with_env.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -103,6 +95,30 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _build_csp_plugin(csp: str) -> Any:
+    """Build a CSP plugin lazily so Slurm/login-node launch does not import Kubeflow helpers."""
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
+
+
+def _calc_convergence_and_performance(**kwargs: Any) -> Any:
+    """Load the evaluator only after training finishes and validation is requested."""
+    try:
+        from utils.evaluate import calc_convergence_and_performance
+    except (ImportError, ModuleNotFoundError):
+        from .utils.evaluate import calc_convergence_and_performance
+
+    return calc_convergence_and_performance(**kwargs)
 
 
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
@@ -275,7 +291,9 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "illegal memory access" in log
         or "illegal instruction" in log
         or "torch.distributed.DistNetworkError" in log
+        or "torch.distributed.DistBackendError" in log
         or "ncclRemoteError" in log
+        or "Watchdog caught collective operation timeout" in log
         or "Segmentation fault" in log
         or "found NaN in" in log
         or "For debugging consider passing CUDA_LAUNCH_BLOCKING=1" in log
@@ -373,7 +391,7 @@ def maybe_increase_n_attempts_on_flaky_failure(
         return n_attempts
     if is_long_convergence_run and made_progress:
         return n_attempts
-    if is_flaky_failure(log_file_paths[-1]):
+    if any(is_flaky_failure(p) for p in log_file_paths):
         n_attempts += 1  # flaky: retry, bounded by max_retries
     else:
         # non-flaky: give up now. max_retries + 1 (not max_retries) so the outer
@@ -460,7 +478,7 @@ def main(
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
-    config_variant: str = "v1",
+    config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
 ):
@@ -495,6 +513,7 @@ def main(
             and config_variant != "large_scale"
         )
         or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
+        or (model_family_name == "kimi" and task == "pretrain" and gpu == "b300")
     ):
         enable_pct_binding = False
 
@@ -516,26 +535,27 @@ def main(
 
     else:
         script_name = ENTRYPOINT_PEFORMANCE
-        # Create a simple namespace with the args needed by get_exp_name_config
-        args_for_config = SimpleNamespace(
-            num_gpus=num_gpus,
-            tensor_model_parallel_size=tp_size,
-            pipeline_model_parallel_size=pp_size,
-            context_parallel_size=cp_size,
-            virtual_pipeline_model_parallel_size=vp_size,
-            expert_model_parallel_size=ep_size,
-            expert_tensor_parallel_size=etp_size,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-        )
-        exp_config = get_exp_name_config(
-            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
-        )
+        if wandb_experiment_name is not None:
+            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
+            # login node in this path: recipe imports belong in the training container.
+            exp_name = wandb_experiment_name
+        else:
+            # Create a simple namespace with the args needed by get_exp_name_config
+            args_for_config = SimpleNamespace(
+                num_gpus=num_gpus,
+                tensor_model_parallel_size=tp_size,
+                pipeline_model_parallel_size=pp_size,
+                context_parallel_size=cp_size,
+                virtual_pipeline_model_parallel_size=vp_size,
+                expert_model_parallel_size=ep_size,
+                expert_tensor_parallel_size=etp_size,
+                micro_batch_size=micro_batch_size,
+                global_batch_size=global_batch_size,
+            )
+            exp_config = get_exp_name_config(
+                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            )
+            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -644,10 +664,8 @@ def main(
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
-    if csp == "aws":
-        plugins.append(EKSEnvPlugin())
-    elif csp == "gcp":
-        plugins.append(GKEEnvPlugin())
+    if csp is not None:
+        plugins.append(_build_csp_plugin(csp))
 
     if not use_recipes:
         plugins.append(
@@ -833,7 +851,7 @@ def main(
                     else None
                 )
 
-                is_testing_passed, error_msg, merged_values = calc_convergence_and_performance(
+                is_testing_passed, error_msg, merged_values = _calc_convergence_and_performance(
                     model_family_name=model_family_name,
                     model_recipe_name=model_recipe_name,
                     assets_dir=os.path.join(job_dir, exp_name),

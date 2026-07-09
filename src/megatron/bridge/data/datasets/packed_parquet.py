@@ -327,6 +327,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
         tokenizer: "MegatronTokenizer",
         return_cu_seqlen: bool = True,
         pad_cu_seqlens: bool = False,
+        pad_seq_to_mult: int = 1,
         pack_metadata_file_path: str | None = None,
         **kwargs,
     ):
@@ -340,6 +341,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             tokenizer: The tokenizer to use.
             return_cu_seqlen: Whether to return cu_seqlen for THD attention kernel.
             pad_cu_seqlens: Whether to pad cu_seqlens for cudagraphs compatibility.
+            pad_seq_to_mult: The multiple used for padding sequences during packing.
             pack_metadata_file_path: Path to the metadata JSON file for pad_cu_seqlens.
             **kwargs: Additional arguments passed to parent class.
         """
@@ -364,6 +366,7 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
             tokenizer=tokenizer,
             return_cu_seqlen=return_cu_seqlen,
             pad_cu_seqlens=pad_cu_seqlens,
+            pad_seq_to_mult=pad_seq_to_mult,
             pack_metadata_file_path=pack_metadata_file_path,
             **kwargs,
         )
@@ -603,14 +606,16 @@ class GPTSFTPackedParquetDataset(GPTSFTPackedDataset):
                 - seq_boundaries: list[int] - Sequence boundaries (derived from seq_start_id)
                 - loss_mask: list[int] - Per-token loss mask
         """
+        is_padding_sample = idx < 0
+
         # Apply sample mapping if exists
         if self.samples_mapping is not None:
             idx = self.samples_mapping[idx]
 
         # Handle negative indices (padding samples)
         # Use wrap-around semantics matching parent GPTSFTPackedDataset behavior
-        is_padding_sample = idx < 0
-        if is_padding_sample:
+        if idx < 0:
+            is_padding_sample = True
             idx = self._num_rows + idx  # -1 -> last row, -N -> Nth from end
 
         # Locate the row across files and row groups

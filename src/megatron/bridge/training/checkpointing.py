@@ -90,6 +90,7 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
 )
 from megatron.bridge.utils.import_utils import safe_import
+from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
 
 
 _, HAVE_RESIL = safe_import("nvidia_resiliency_ext.checkpointing")
@@ -753,6 +754,11 @@ def create_checkpoint_manager(checkpoint_config: CheckpointConfig) -> Checkpoint
                 f"Invalid custom_manager_class format: '{checkpoint_config.custom_manager_class}'. "
                 f"Expected fully qualified class name like 'mypackage.module.ClassName'."
             ) from err
+
+        _validate_target_prefix(
+            target=checkpoint_config.custom_manager_class,
+            full_key="checkpoint.custom_manager_class",
+        )
 
         try:
             module = importlib.import_module(module_path)
@@ -1521,6 +1527,17 @@ def save_checkpoint(
         else:
             fire_callback()
 
+    # Do not remove the tracker-selected checkpoint until its async replacement is durable.
+    if ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+
+        def cleanup_old_checkpoints_finalize_fn() -> None:
+            cleanup_old_non_persistent_checkpoint(
+                save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
+            )
+
+        assert async_save_request is not None
+        async_save_request.add_finalize_fn(cleanup_old_checkpoints_finalize_fn)
+
     if ckpt_cfg.async_save:
         schedule_async_save(state, async_save_request)
         print_rank_0(f"  scheduled an async checkpoint save at iteration {train_state.step:7d} to {save_dir}")
@@ -1532,12 +1549,10 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
-    # keep only last k checkpoints
+    # Keep synchronous cleanup after the fault-tolerance checkpointing section.
     # Skip for LOCAL checkpoints — LocalCheckpointManager manages its own cleanup.
-    if ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
-        cleanup_old_non_persistent_checkpoint(
-            save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=ckpt_cfg.async_save
-        )
+    if not ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=False)
 
     # Wait so everyone is done (not necessary)
     if torch.distributed.is_initialized():
@@ -1568,9 +1583,16 @@ def cleanup_old_non_persistent_checkpoint(
     sorted_iter_ckpts = sorted(iter_ckpts, key=lambda ckpt_name: int(ckpt_name.name[len(iter_prefix) :]))
     if not sorted_iter_ckpts:
         return
-    rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+    # `leave_ckpt_num == 0` means keep none: slice with `[:-0]` would be `[:0]` (empty),
+    # so nothing would be removed. Guard it explicitly to remove all instead.
+    if leave_ckpt_num > 0:
+        rm_iter_ckpts = sorted_iter_ckpts[:-leave_ckpt_num]
+        keep_iter_ckpts = sorted_iter_ckpts[-leave_ckpt_num:]
+    else:
+        rm_iter_ckpts = sorted_iter_ckpts
+        keep_iter_ckpts = []
     print_rank_0(f"Non-persistent checkpoints scheduled for removal: {rm_iter_ckpts}")
-    print_rank_0(f"Non-persistent checkpoints to be kept: {sorted_iter_ckpts[-leave_ckpt_num:]}")
+    print_rank_0(f"Non-persistent checkpoints to be kept: {keep_iter_ckpts}")
 
     def remove_iter_ckpts(_iter_ckpts):
         for ckpt in _iter_ckpts:
@@ -1843,8 +1865,10 @@ def generate_state_dict(
         _generate_model_state_dict(model, model_sd_kwargs, ckpt_cfg.ckpt_format, pg_collection=pg_collection)
     )
 
-    # Optimizer stuff.
-    if ckpt_cfg.save_optim:
+    # Optimizer stuff. During load, optimizer sharded-state scaffolding is
+    # required even if the next checkpoint should not save optimizer state.
+    include_optimizer_state = ckpt_cfg.save_optim or bool((optim_sd_kwargs or {}).get("is_loading"))
+    if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
             if ckpt_cfg.ckpt_format == "torch_dist":
                 state_dict["optimizer"] = optimizer.sharded_state_dict(state_dict, **(optim_sd_kwargs or {}))

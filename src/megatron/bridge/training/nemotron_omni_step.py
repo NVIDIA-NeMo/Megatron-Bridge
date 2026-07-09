@@ -36,6 +36,10 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 logger = logging.getLogger(__name__)
 
+_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS)
+
 
 def get_batch_from_iterator(
     data_iterator: Iterable,
@@ -80,14 +84,9 @@ def get_batch_from_iterator(
     if "num_image_tiles" in batch:
         required_device_keys.add("num_image_tiles")
 
-    if "cu_seqlens" in batch:
-        required_device_keys.add("cu_seqlens")
-        if "cu_seqlens_unpadded" in batch:
-            required_device_keys.add("cu_seqlens_unpadded")
-        required_host_keys.add("cu_seqlens_argmin")
-        if "cu_seqlens_unpadded_argmin" in batch:
-            required_host_keys.add("cu_seqlens_unpadded_argmin")
-        required_host_keys.add("max_seqlen")
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
     if is_first_pp_stage:
         required_device_keys.update(("tokens", "input_ids", "position_ids"))
@@ -162,7 +161,7 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
     if (not is_first) and (not is_last):
-        return (None,) * 18
+        return (None,) * 14
 
     batch = get_batch_from_iterator(
         data_iterator,
@@ -197,11 +196,9 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
         batch.get("loss_mask"),
         batch.get("attention_mask"),
         batch.get("position_ids"),
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_unpadded"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("cu_seqlens_unpadded_argmin"),
-        batch.get("max_seqlen"),
+        {key: batch[key] for key in _PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+        if batch.get("cu_seqlens_q") is not None
+        else None,
         sound_clips,
         sound_length,
         imgs_sizes,
@@ -230,11 +227,7 @@ def forward_step(
             loss_mask,
             attention_mask,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_unpadded,
-            cu_seqlens_argmin,
-            cu_seqlens_unpadded_argmin,
-            max_seqlen,
+            packed_seq_params,
             sound_clips,
             sound_length,
             imgs_sizes,
@@ -272,16 +265,7 @@ def forward_step(
     if vision_packed_seq_params is not None:
         forward_args["vision_packed_seq_params"] = vision_packed_seq_params
 
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-            "max_seqlen": max_seqlen,
-        }
-        if cu_seqlens_unpadded is not None:
-            packed_seq_params["cu_seqlens_unpadded"] = cu_seqlens_unpadded
-        if cu_seqlens_unpadded_argmin is not None:
-            packed_seq_params["cu_seqlens_unpadded_argmin"] = cu_seqlens_unpadded_argmin
+    if packed_seq_params is not None:
         forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss

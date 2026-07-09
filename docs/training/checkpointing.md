@@ -58,7 +58,7 @@ Asynchronous saving allows training to continue while checkpoint data is persist
 
 ### Loading Specific Checkpoint Iterations
 
-By default, Megatron Bridge loads the **latest checkpoint** available in the specified directory by reading from the tracker file (`latest_train_state.pt`). However, you can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.
+By default, `checkpoint.load` loads the **latest checkpoint** available in the specified base directory by reading from the tracker file (`latest_train_state.pt`). You can explicitly load from a specific checkpoint iteration using the `ckpt_step` parameter.
 
 **Python API:**
 ```python
@@ -80,11 +80,42 @@ checkpoint = CheckpointConfig(
 The `load` parameter should always point to the base checkpoint directory (not the `iter_N` subdirectory). The `ckpt_step` parameter overrides which iteration is loaded from that directory.
 
 **Important:** If `ckpt_step` is specified but the checkpoint directory does not exist, training will **fail immediately** with a `FileNotFoundError`. This is intentional to prevent accidentally starting training from scratch when you meant to resume from a specific checkpoint.
+```
 
-**PEFT Note:** The `ckpt_step` parameter applies **only to the `load` path** (adapter checkpoints), not to `pretrained_checkpoint` (frozen base model). When resuming PEFT training:
-- `pretrained_checkpoint`: Always loads the latest/release checkpoint (base model)
-- `load` + `ckpt_step`: Can load a specific adapter checkpoint iteration
+### Default Recipe Resume Behavior
 
+Common recipes initialize both `checkpoint.save` and `checkpoint.load` to `./nemo_experiments/default/checkpoints`. If that directory already contains a checkpoint from a previous run, a new run with the same working directory may resume from it automatically.
+
+For a fresh run, set a new `checkpoint.save` path and clear `checkpoint.load`:
+
+```python
+cfg.checkpoint.save = "/checkpoints/my_new_run"
+cfg.checkpoint.load = None
+```
+
+For a full resume, keep `checkpoint.load` pointed at the base checkpoint directory:
+
+```python
+cfg.checkpoint.load = "/checkpoints/my_existing_run"
+```
+
+For model-weight initialization without optimizer, RNG, dataloader, or scheduler state, use `checkpoint.pretrained_checkpoint` instead of `checkpoint.load`.
+
+## Fine-tuning and Initialization Configuration
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `pretrained_checkpoint` | `Optional[str]` | `None` | Directory containing a pretrained full-model checkpoint for initialization |
+
+`checkpoint.pretrained_checkpoint` is used for model-weight initialization before a new training or fine-tuning run. It can point to:
+
+- A native Megatron base checkpoint directory containing tracker files such as `latest_train_state.pt` and `iter_*` subdirectories.
+- A native Megatron iteration directory such as `/checkpoints/my_model/iter_0001000/` that directly contains the checkpoint payload.
+- A local Hugging Face full-model directory containing `config.json` and model weight files. Remote Hugging Face model IDs are not accepted as checkpoint paths.
+
+`checkpoint.pretrained_checkpoint` does not load optimizer, RNG, dataloader, or scheduler state. Use `checkpoint.load` for full native Megatron resume.
+
+**PEFT note:** The `ckpt_step` parameter applies only to the `checkpoint.load` path, which is the adapter checkpoint when resuming PEFT. It does not select an iteration under `checkpoint.pretrained_checkpoint`. To use a specific frozen base checkpoint for PEFT, point `checkpoint.pretrained_checkpoint` directly at that `iter_N` directory.
 
 ### Checkpoint Loading Strictness
 
@@ -98,12 +129,6 @@ When loading distributed checkpoints, there may be mismatches between the keys i
 - **`return_unexpected`**: Return information about unexpected keys
 - **`return_all`**: Return information about all key mismatches
 - **`ignore_all`**: Ignore all key mismatches completely
-
-## Fine-tuning Configuration
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `pretrained_checkpoint` | `Optional[str]` | `None` | Directory containing pretrained model checkpoint **in Megatron format** for fine-tuning |
 
 ## Checkpoint Format
 
@@ -217,7 +242,7 @@ By default, Megatron Bridge saves all tokenizer files to the checkpoint director
 - **Reproducibility**: Exact tokenizer state is preserved
 
 The tokenizer files saved depend on the tokenizer type:
-- **HuggingFace tokenizers**: `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, and vocab files
+- **Hugging Face tokenizers**: `tokenizer.json`, `tokenizer_config.json`, `special_tokens_map.json`, and vocab files
 - **SentencePiece tokenizers**: `tokenizer.model` file
 - **GPT2 BPE tokenizers**: `vocab.json` and `merges.txt`
 - **BERT tokenizers**: `vocab.txt`
@@ -408,9 +433,9 @@ The save and load methods receive context dataclasses that bundle all required p
 
 The custom checkpoint manager is designed for customizing the save/load **operations** during training. The following limitations apply:
 
-**Checkpoint format compatibility**: Custom managers that change the checkpoint directory structure or metadata files (e.g., `latest_train_state.pt`, `run_config.yaml`) are not well supported. Many utilities in Megatron Bridge assume the standard Megatron checkpoint format. For instance, HuggingFace ↔ custom format conversion is not supported.
+**Checkpoint format compatibility**: Custom managers that change the checkpoint directory structure or metadata files (e.g., `latest_train_state.pt`, `run_config.yaml`) are not well supported. Many utilities in Megatron Bridge assume the standard Megatron checkpoint format. For instance, Hugging Face ↔ custom format conversion is not supported.
 
-**PEFT with custom checkpoints**: When using PEFT (Parameter-Efficient Fine-Tuning), the `pretrained_checkpoint` path must point to a Megatron-format checkpoint. The custom manager only applies to the training save/load flow (the `save` and `load` configuration paths), not to base model loading for PEFT.
+**PEFT with custom checkpoints**: The custom manager only applies to the training save/load flow (the `save` and `load` configuration paths), not to base model loading for PEFT. `checkpoint.pretrained_checkpoint` is still loaded by the built-in base-model initialization path and should point to a native Megatron checkpoint or a local Hugging Face full-model directory.
 
 **Inference loading**: Loading checkpoints for inference via `model_load_save.py` utilities is undefined behavior with custom checkpoint formats. Use your custom format's loading utilities instead.
 

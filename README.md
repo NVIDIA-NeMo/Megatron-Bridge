@@ -11,6 +11,10 @@
 </div>
 
 ## 📣 News
+- [06/22/2026] **Megatron Bridge 0.5.0 released!** Highlights include expanded LLM and multimodal support (Qwen3.5, DeepSeek V4, Ernie 4.5, GLM-5/4.7, StepFun Step-3.5/3.7, MiMo-V2, Gemma 4, Falcon H1, Ling MoE V2, Nemotron-3 Nano Omni, Qwen3-Omni, Qwen3-ASR, and Nemotron Diffusion), MegatronMIMO and Energon v7 training updates, evaluator backend integration, eval-time context parallelism, deterministic recipes, quantized FP8/MXFP4 export, CUDA graph/performance improvements, and Megatron Inference/tokenizer unification with Megatron-LM. Huge thanks to our community contributors: [@HowardZorn](https://github.com/HowardZorn), [@hy2826](https://github.com/hy2826), [@bo-ke](https://github.com/bo-ke), [@beccohov](https://github.com/beccohov), [@dhiaEddineRhaiem](https://github.com/dhiaEddineRhaiem), [@pavelgein](https://github.com/pavelgein), [@ccclyu](https://github.com/ccclyu), [@hbhflw2000](https://github.com/hbhflw2000), and [@HollowMan6](https://github.com/HollowMan6)! See the [full release notes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases/tag/v0.5.0).
+
+- [06/16/2026] NVIDIA topped [MLPerf Training v6.0](https://developer.nvidia.com/blog/nvidia-blackwell-tops-mlperf-training-6-0-with-industry-leading-scale-and-performance/) across every benchmark, including the new DeepSeek-V3 and GPT-OSS MoE training workloads. Megatron Bridge serves as the packaging layer for the NeMo 26.06 training stack that integrates full-iteration CUDA graphs, HybridEP/router optimizations, all-to-all overlap, MXFP8 attention, and pipeline-layout balancing; the blog highlights [DeepSeek-V3 training](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/perf_recipes/deepseek) at **1,648 TFLOPS/GPU** (**6,338 tokens/sec/GPU**) on GB300. To try related runs, start from the [performance recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/scripts/performance); the corresponding container is expected with the NeMo 26.06 release soon.
+
 - [06/04/2026] [**NVIDIA Nemotron 3 Ultra**](https://huggingface.co/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16) is now public! Day-0 support for the 550B-A55B hybrid Mamba-Transformer MoE model is available on the [`nemotron_3_ultra`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/nemotron_3_ultra) branch, including checkpoint conversion, inference, SFT, PEFT (LoRA), and pretraining examples. Read the [NVIDIA Technical Blog](https://developer.nvidia.com/blog/nvidia-nemotron-3-ultra-powers-faster-more-efficient-reasoning-for-long-running-agents/) and see the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/nemotron_3_ultra/examples/models/nemotron/nemotron_3/ultra/README.md) for the full walkthrough.
 
 - [05/28/2026] [**Step-3.7-Flash**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37) is now merged on **main**! See the [examples README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/stepfun/step37/README.md) for sft training details.
@@ -60,6 +64,13 @@ On top of the bridge, NeMo Megatron Bridge provides a performant and scalable Py
 NeMo Megatron Bridge is a refactor of the [previous NeMo](https://github.com/NVIDIA/NeMo) training stack that adopts a PyTorch-native training loop to provide greater flexibility and customizability for developers.
 
 ![image](Repo-Mbridge.png)
+### Broad functional support matrix
+
+||Pretrain|SFT|SFT LoRA|RL|RL LoRA|Notes|
+|-|-|-|-|-|-|-|
+|[Megatron-Bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge)|Y|Y|Y|N|N|Megatron based *pretraining* library|
+|[AutoModel](https://github.com/NVIDIA-NeMo/Automodel)|Y|Y|Y|N|N| PyT DTensor based *pretraining* library|
+|[NeMo RL](https://github.com/NVIDIA-NeMo/RL)|N|Y|Y|Y|Y| *Post-training* library with both Megatron and Automodel backends|
 
 ## 🔧 Installation
 
@@ -129,13 +140,26 @@ for name, weight in bridge.export_hf_weights(model, cpu=True):
 Training quickstart using pre-configured recipes:
 
 ```python
-from megatron.bridge.recipes.llama import llama32_1b_pretrain_config
+from megatron.bridge import AutoBridge
+from megatron.bridge.recipes.llama.h100 import llama32_1b_pretrain_1gpu_h100_bf16_config
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
 
 if __name__ == "__main__":
-    # The recipe uses the Llama 3.2 1B model configuration from HuggingFace
-    cfg = llama32_1b_pretrain_config()
+    # The recipe uses the Llama 3.2 1B architecture from Hugging Face.
+    # This is random-init pretraining and does not require a converted Megatron checkpoint.
+    cfg = llama32_1b_pretrain_1gpu_h100_bf16_config()
+
+    # The recipe already sets cfg.model internally using this pattern.
+    # Override cfg.model to choose a different Hugging Face model ID as the architecture source.
+    # cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B").to_megatron_provider(load_weights=False)
+
+    # Optional: use a local Hugging Face model/config directory instead.
+    # cfg.model = AutoBridge.from_hf_pretrained("/path/to/local/hf_model").to_megatron_provider(load_weights=False)
+
+    # Optional: initialize weights from a converted Megatron checkpoint for SFT/PEFT
+    # or other pretrained-weight workflows.
+    # cfg.checkpoint.pretrained_checkpoint = "/path/to/megatron/checkpoint"
 
     # Override training parameters
     cfg.train.train_iters = 10
@@ -151,6 +175,14 @@ You can launch the above script with:
 ```sh
 uv run python -m torch.distributed.run --nproc-per-node=<num devices> /path/to/script.py
 ```
+
+HF → Megatron conversion is workflow-specific. Use it when you need pretrained HF weights as a Megatron checkpoint,
+such as for finetuning from converted weights or for checkpoint round-trip workflows. It is not required for
+random-init pretraining from an HF architecture, where `AutoBridge.from_hf_pretrained(...).to_megatron_provider(load_weights=False)`
+only reads the architecture configuration.
+
+For runnable recipe, data preparation, and training examples, see the repository
+[`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
 
 More examples:
 
@@ -182,23 +214,25 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 | Family | Supported variants |
 |----------------|--------------------|
-| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 (Bailing) |
-| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 |
+| [**Bailing**](docs/models/bailing/index.md) | Ling 2.0 / Ling MoE V2 (Bailing) |
+| [**DeepSeek**](docs/models/deepseek/index.md) | DeepSeek V2 / V2 Lite, DeepSeek V3, DeepSeek V4 / V4 Flash |
+| [**Diffusion**](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/diffusion/models) | FLUX, LLaDA 1.5, Nemotron-Labs Diffusion, WAN |
+| **Ernie** | [Ernie 4.5 MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie), [Ernie 4.5 VL MoE](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models/ernie_vl) |
 | [**Falcon**](docs/models/falcon/index.md) | Falcon H1 |
-| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4-VL (26B-A4B MoE) |
+| [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
 | [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
 | [**Mistral**](docs/models/mistral/index.md) | Mistral, Ministral 3 (3B/8B/14B) |
-| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo |
+| [**Xiaomi-MiMo**](docs/models/mimo/index.md) | Xiaomi-MiMo, MiMo-V2-Flash |
 | [**Moonlight**](docs/models/moonlight/index.md) | Moonlight |
 | [**Nemotron**](docs/models/nemotron/index.md) | Nemotron H, Nemotron Nano v2, Nemotron-3 Nano, Nemotron-3 Super, Llama Nemotron, Nemotron Nano v2 VL, Nemotron-3 Nano Omni |
 | [**OLMoE**](docs/models/olmoe/index.md) | OLMoE |
-| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
+| [**Qwen**](docs/models/qwen/index.md) | Qwen2 / Qwen2.5, Qwen3, Qwen3-MoE, Qwen3 Next, Qwen3.5 (dense/MoE), Qwen2.5-VL, Qwen3-VL, Qwen3.5-VL, Qwen3.6-VL, Qwen2 Audio, Qwen2.5-Omni, Qwen3-Omni, Qwen3-ASR |
 | [**Sarvam**](docs/models/sarvam/index.md) | Sarvam |
-| [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash |
+| [**StepFun**](docs/models/stepfun/index.md) | Step-3.5-Flash, Step-3.7-Flash |
 
 ### Launching Recipes
 

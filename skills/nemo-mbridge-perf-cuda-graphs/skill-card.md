@@ -9,10 +9,16 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers reducing host-driver overhead in Megatron Bridge training workloads via CUDA graph capture, or diagnosing crashes and regressions related to CUDA graph configuration changes. <br>
+Developers and engineers reducing host-driver overhead via CUDA graphs in Megatron Bridge GPU training workloads, or tracing crashes and regressions to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
@@ -21,10 +27,11 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
+**Output Type(s):** [Configuration instructions, Analysis, Shell commands] <br>
 **Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -36,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (1 positive activation case, 0 negative) with 2 attempts per task; pass threshold 50%. NVSkills-Eval profile: external. <br>
+Evaluated against 1 task in the NVSkills-Eval external profile (astra-sandbox environment, 1 attempt per task, 50% pass threshold). Overall verdict: PASS. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -60,14 +67,14 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 100% (+0%) | 88% (+0%) |
-| Discoverability | 2 | 100% (+0%) | 62% (+0%) |
-| Effectiveness | 2 | 94% (-4%) | 91% (-2%) |
-| Efficiency | 2 | 92% (-0%) | 60% (-0%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+90%) | 97% (+25%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+60%) |
+| Effectiveness | 1 | 98% (+88%) | 92% (+2%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+53%) |
 
 ## Skill Version(s): <br>
-b0f64d72 (source: git SHA, committed 2026-06-02) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

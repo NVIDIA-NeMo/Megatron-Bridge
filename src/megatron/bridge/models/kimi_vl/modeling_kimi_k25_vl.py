@@ -16,17 +16,80 @@ import logging
 from typing import List, Optional
 
 import torch
+from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
+from transformers.utils import is_flash_attn_2_available
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 logger = logging.getLogger(__name__)
+
+
+def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim: int) -> Optional[Tensor]:
+    """Slice a tensor along ``seq_dim`` into this context-parallel rank's zigzag chunks.
+
+    The image merge runs on the full sequence because every ``<|media_pad|>`` placeholder must
+    align with its image features across the whole batch. Kimi VL therefore slices embeddings,
+    labels, and loss masks for CP only after the merge.
+    """
+    if val is None or cp_size <= 1:
+        return val
+    seq_len = val.shape[seq_dim]
+    if seq_len % (2 * cp_size) != 0:
+        raise ValueError(
+            f"Cannot split sequence dimension {seq_dim} with length {seq_len} across context parallel size "
+            f"{cp_size}; length must be divisible by {2 * cp_size}."
+        )
+    val = val.view(
+        *val.shape[:seq_dim],
+        2 * cp_size,
+        seq_len // (2 * cp_size),
+        *val.shape[seq_dim + 1 :],
+    )
+    index = torch.tensor([cp_rank, 2 * cp_size - cp_rank - 1], device=val.device)
+    val = val.index_select(seq_dim, index)
+    return val.view(*val.shape[:seq_dim], -1, *val.shape[seq_dim + 2 :])
+
+
+def _split_attention_mask_on_cp_rank(
+    attention_mask: Optional[Tensor],
+    cp_size: int,
+    cp_rank: int,
+) -> Optional[Tensor]:
+    """Slice a 2D or 4D attention mask into this context-parallel rank's zigzag chunks."""
+    if attention_mask is None or cp_size <= 1:
+        return attention_mask
+    if attention_mask.dim() == 2:
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=1)
+    if attention_mask.dim() == 4:
+        attention_mask = _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=2)
+        return _split_on_cp_rank(attention_mask, cp_size, cp_rank, seq_dim=3)
+    raise ValueError(f"attention_mask must be 2D or 4D for CP slicing, got shape {tuple(attention_mask.shape)}.")
+
+
+def _configure_kimi_vision_attention(vision_tower_config, vision_tower_cls) -> None:
+    """Use flash attention for Kimi vision when available.
+
+    Kimi's remote MoonViT code supports ``flash_attention_2`` through its own
+    attention dispatch table, but older remote metadata only advertises
+    ``_supports_flash_attn_2``. Transformers 5.6 checks ``_supports_flash_attn``
+    before allowing the model to initialize with flash attention.
+    """
+    if is_flash_attn_2_available():
+        vision_tower_config._attn_implementation = "flash_attention_2"
+        if getattr(vision_tower_cls, "_supports_flash_attn_2", False):
+            vision_tower_cls._supports_flash_attn = True
+        return
+
+    if getattr(vision_tower_config, "_attn_implementation", None) == "flash_attention_2":
+        logger.warning("flash-attn is not available; falling back to eager attention for Kimi K2.5 vision tower.")
+        vision_tower_config._attn_implementation = "eager"
 
 
 class KimiK25VLModel(MegatronModule):
@@ -83,10 +146,18 @@ class KimiK25VLModel(MegatronModule):
             raise ValueError("hf_model_path must be set.")
 
         if pre_process:
+            trust_remote_code = bool(getattr(config, "trust_remote_code", False))
+            if not trust_remote_code:
+                raise ValueError(
+                    "Kimi K2.5 VL vision components require loading custom HuggingFace model code. "
+                    "Pass trust_remote_code=True only for trusted model repositories."
+                )
+
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
             import importlib
@@ -106,21 +177,24 @@ class KimiK25VLModel(MegatronModule):
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             ProjectorConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.ProjectorConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             VisionTowerConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.VisionTowerConfig",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
 
             # load vision config from hf model path
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
             config.vision_config = safe_load_config_with_retry(
-                config.hf_model_path, trust_remote_code=True
+                config.hf_model_path, trust_remote_code=trust_remote_code
             ).vision_config
 
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
@@ -132,15 +206,12 @@ class KimiK25VLModel(MegatronModule):
             MoonViT3dEncoder = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dEncoder",
                 config.hf_model_path,
+                trust_remote_code=trust_remote_code,
             )
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
                 MoonViT3dEncoder.use_deterministic_attn = False
 
-            # transformers >=5.5 strictly validates `attn_implementation` at
-            # __init__ and selects `flash_attention_2` by default when flash-attn
-            # is installed. MoonViT3dPretrainedModel doesn't declare flash-attn-2
-            # support, so force eager attention before construction.
-            self.vision_tower_config._attn_implementation = "eager"
+            _configure_kimi_vision_attention(self.vision_tower_config, MoonViT3dPretrainedModel)
             self.vision_tower = MoonViT3dPretrainedModel(self.vision_tower_config)
             self.mm_projector = PatchMergerMLP(self.projector_config)  # TODO: support different types of mm projector
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
@@ -356,6 +427,8 @@ class KimiK25VLModel(MegatronModule):
                where N = number of image features. Does simple 1:1 replacement.
             2. Dynamic expansion: input_ids has 1 placeholder per image, expands to N tokens.
         """
+        cp_size = parallel_state.get_context_parallel_world_size()
+        cp_rank = parallel_state.get_context_parallel_rank() if cp_size > 1 else 0
         if self.pre_process:
             if inputs_embeds is None:
                 inputs_embeds = self.language_model.embedding(
@@ -395,8 +468,18 @@ class KimiK25VLModel(MegatronModule):
             # Transpose back to (T, B, D) for Megatron language model
             inputs_embeds = inputs_embeds.transpose(1, 0).contiguous()  # (B, T, D) -> (T, B, D)
 
+            if cp_size > 1:
+                inputs_embeds = _split_on_cp_rank(inputs_embeds, cp_size, cp_rank, seq_dim=0)
+
             if self.config.sequence_parallel:
-                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds)
+                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
+
+        if cp_size > 1:
+            labels = _split_on_cp_rank(labels, cp_size, cp_rank, seq_dim=1)
+            loss_mask = _split_on_cp_rank(loss_mask, cp_size, cp_rank, seq_dim=1)
+            position_ids = _split_on_cp_rank(position_ids, cp_size, cp_rank, seq_dim=1)
+            attention_mask = _split_attention_mask_on_cp_rank(attention_mask, cp_size, cp_rank)
 
         outputs = self.language_model.forward(
             input_ids=None,
@@ -408,6 +491,8 @@ class KimiK25VLModel(MegatronModule):
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=packed_seq_params,
         )
+        if cp_size > 1:
+            return outputs, loss_mask
         return outputs
 
     def freeze(self, freeze_language_model: bool, freeze_vision_model: bool, freeze_vision_projection: bool):

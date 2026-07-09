@@ -22,7 +22,7 @@ from transformers import GenerationConfig, SiglipVisionConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     pretrained.generation_config = GenerationConfig()
     return pretrained
@@ -166,6 +166,7 @@ class TestGemma3VLBridgeProviderBridge:
 
         # Check vision config
         assert isinstance(provider.vision_config, SiglipVisionConfig)
+        assert provider.vision_config.vision_use_head is False
         assert provider.mm_tokens_per_image == 256
 
     def test_provider_bridge_vision_projector_config(self, gemma3_vl_bridge, mock_hf_pretrained):
@@ -263,20 +264,31 @@ class TestGemma3VLBridgeMappingRegistry:
         """Test mapping_registry handles vision tower parameters correctly."""
         registry = gemma3_vl_bridge.mapping_registry()
 
-        # Should contain vision tower parameter mappings
-        mappings = registry.mappings
-        mapping_names = []
-        for mapping in mappings:
-            if hasattr(mapping, "megatron_param"):
-                mapping_names.append(str(getattr(mapping, "megatron_param")))
-            hf = getattr(mapping, "hf_param", None)
-            if isinstance(hf, dict):
-                mapping_names.extend([str(v) for v in hf.values()])
-            elif isinstance(hf, str):
-                mapping_names.append(hf)
+        # Find the ReplicatedMapping for vision_tower
+        from megatron.bridge.models.conversion.param_mapping import ReplicatedMapping
 
-        has_vision_tower = any("vision_tower" in name for name in mapping_names)
-        assert has_vision_tower, "Should contain vision tower parameter mappings"
+        vision_mappings = [
+            m
+            for m in registry.mappings
+            if isinstance(m, ReplicatedMapping) and "vision_tower" in str(getattr(m, "megatron_param", ""))
+        ]
+        assert len(vision_mappings) == 1, "Should have exactly one ReplicatedMapping for vision_tower"
+
+        vt_mapping = vision_mappings[0]
+        assert str(vt_mapping.megatron_param) == "vision_tower.**", "Megatron vision_tower param should use wildcard"
+        assert str(vt_mapping.hf_param) == "vision_tower.**", (
+            "HF param must match the current Gemma3 checkpoint namespace"
+        )
+
+    def test_mapping_registry_accepts_current_transformers_vision_tower_keys(self, gemma3_vl_bridge):
+        """Test mapping_registry accepts current transformers Gemma3 vision tower keys."""
+        registry = gemma3_vl_bridge.mapping_registry()
+
+        mapping = registry.hf_to_megatron_lookup("vision_tower.embeddings.patch_embedding.bias")
+
+        assert mapping is not None
+        assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
+        assert str(mapping.hf_param) == "vision_tower.embeddings.patch_embedding.bias"
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""
@@ -360,7 +372,7 @@ class TestGemma3VLBridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, gemma3_vl_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config

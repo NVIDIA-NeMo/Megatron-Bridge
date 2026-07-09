@@ -120,6 +120,8 @@ class WeightConversionTask(Generic[MappingT]):
             sub-module that owns the parameter (required for loads).
         param_weight (Optional[torch.Tensor]): The actual parameter tensor that will
             receive the converted weight (required for loads).
+        weight_dtype (Optional[torch.dtype]): Export only. Cast float weights to this
+            dtype; bridges that requantize on export skip it (no scale companions).
 
     """
 
@@ -130,6 +132,7 @@ class WeightConversionTask(Generic[MappingT]):
     vp_stage: Optional[int] = None
     megatron_module: Optional[torch.nn.Module] = None
     param_weight: Optional[torch.Tensor] = None
+    weight_dtype: Optional[torch.dtype] = None
 
 
 class _HFNameSuffixMapping:
@@ -896,6 +899,18 @@ class MegatronModelBridge(
         """
         return converted_weights_dict
 
+    @staticmethod
+    def _cast_export_weight_dtype(
+        weights: Dict[str, torch.Tensor], weight_dtype: Optional[torch.dtype]
+    ) -> Dict[str, torch.Tensor]:
+        """Cast float export weights to ``weight_dtype`` (no-op if None; ints untouched)."""
+        if weight_dtype is None:
+            return weights
+        return {
+            name: (weight.to(weight_dtype) if weight.is_floating_point() else weight)
+            for name, weight in weights.items()
+        }
+
     def _accumulate_grouped_export(
         self,
         task: "WeightConversionTask",
@@ -1184,6 +1199,7 @@ class MegatronModelBridge(
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
+    @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
         megatron_model: Union[MegatronModel, List[MegatronModel]],
@@ -1192,6 +1208,7 @@ class MegatronModelBridge(
         show_progress: bool = True,
         conversion_tasks: Optional[List[WeightConversionTask]] = None,
         merge_adapter_weights: bool = True,
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> Iterable[HFWeightTuple]:
         """Export Megatron weights to HuggingFace format.
 
@@ -1250,7 +1267,16 @@ class MegatronModelBridge(
         unwrapped_model_list = unwrap_model(megatron_model)
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
-            conversion_tasks = self.build_conversion_tasks(hf_pretrained, unwrapped_model_list)
+            conversion_tasks = self.build_conversion_tasks(
+                hf_pretrained, unwrapped_model_list, weight_dtype=weight_dtype
+            )
+        elif weight_dtype is not None:
+            # Prebuilt tasks bypass build_conversion_tasks (where weight_dtype is recorded);
+            # fail loudly instead of silently dropping it (this also rejects the fp8-tasks combo).
+            raise ValueError(
+                "weight_dtype is not supported with caller-supplied conversion_tasks; "
+                "omit conversion_tasks so the dtype can be recorded at task-build time."
+            )
 
         # Collect adapter conversion tasks when merge is requested
         adapter_tasks_by_base: Dict[str, List[AdapterWeightConversionTask]] = {}
@@ -1305,8 +1331,9 @@ class MegatronModelBridge(
                     task, converted_weights_dict, model_config, _grouped_buffers, hf_state_dict
                 )
                 if merged_result is not None:
+                    merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
-                        yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
+                        yield HFWeightTuple(hf_name, tensor.detach().cpu() if cpu else tensor.detach())
                 continue
 
             # --- Standard export path ---
@@ -1329,8 +1356,10 @@ class MegatronModelBridge(
                     adapter_weights,
                 )
 
+            converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
+
             for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.cpu() if cpu else tensor
+                final_tensor = tensor.detach().cpu() if cpu else tensor.detach()
 
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
@@ -1461,7 +1490,7 @@ class MegatronModelBridge(
         model_config: TransformerConfig,
     ) -> bool:
         """Shared embedding setting."""
-        return getattr(model_config, "share_embeddings_and_output_weights")
+        return getattr(model_config, "share_embeddings_and_output_weights", False)
 
     def _unwrap_name(self, name: str) -> str:
         """Unwrap name from DDP or other wrappers.
@@ -1492,17 +1521,24 @@ class MegatronModelBridge(
         Args:
             megatron_model: Megatron model instance or list of model instances.
         """
-        unwrapped_model = unwrap_model(megatron_model)[0]
+        pp_group = _get_pp_group(megatron_model)
+        is_first_pp_stage = is_pp_first_stage(pp_group)
+        is_last_pp_stage = is_pp_last_stage(pp_group)
+
+        unwrapped_models = unwrap_model(megatron_model)
+        if not isinstance(unwrapped_models, list):
+            unwrapped_models = [unwrapped_models]
+        # VPP chunk 0 owns the input embedding; the final chunk owns the output layer.
+        unwrapped_model = unwrapped_models[-1] if is_last_pp_stage else unwrapped_models[0]
+
         # hack for vlm to work properly
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
         share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
-        # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
-        pp_group = _get_pp_group(megatron_model)
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
-            is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
+            is_first_pp_stage or is_last_pp_stage
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
             embd_group = _get_embedding_group(megatron_model)
@@ -1547,8 +1583,12 @@ class MegatronModelBridge(
         self,
         hf_pretrained: HFPreTrained,
         megatron_model: List[MegatronModel],
+        weight_dtype: Optional[torch.dtype] = None,
     ) -> List[None | WeightConversionTask]:
         """Construct the conversion tasks between HF and megatron.
+
+        Args:
+            weight_dtype: Export dtype recorded on each task. Overrides must forward it.
 
         The algorithm walks over every parameter of every destination model,
         asks the :class:`MegatronMappingRegistry` whether it has a mapping for that
@@ -1632,6 +1672,7 @@ class MegatronModelBridge(
                     megatron_module=local_module,
                     param_weight=local_weights,
                     mapping=mapping,
+                    weight_dtype=weight_dtype,
                 )
 
         # Fill the remaining ones for pp communications
@@ -1652,6 +1693,7 @@ class MegatronModelBridge(
                     megatron_module=None,
                     param_weight=None,
                     mapping=mapping,
+                    weight_dtype=weight_dtype,
                 )
 
         return tasks
@@ -2018,6 +2060,7 @@ def stream_adapter_weights_megatron_to_hf(
     megatron_model: Union[MegatronModel, List[MegatronModel]],
     cpu: bool = True,
     show_progress: bool = True,
+    exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
 ) -> Iterable[HFWeightTuple]:
     """Bridge only adapter weights from Megatron to HuggingFace format."""
     ...
@@ -2109,12 +2152,14 @@ def register_bridge_implementation(
         megatron_model: Union[MegatronModel, List[MegatronModel]],
         cpu: bool = True,
         show_progress: bool = True,
+        exclude_adapter_base_prefixes: Optional[Iterable[str]] = None,
     ) -> Iterable[HFWeightTuple]:
         bridge = bridge_class()
         return bridge.stream_adapter_weights_megatron_to_hf(
             megatron_model,
             cpu=cpu,
             show_progress=show_progress,
+            exclude_adapter_base_prefixes=exclude_adapter_base_prefixes,
         )
 
     # Set meaningful names for debugging

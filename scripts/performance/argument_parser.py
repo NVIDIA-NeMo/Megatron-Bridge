@@ -268,7 +268,7 @@ def parse_cli_args():
     training_args = parser.add_argument_group("Training arguments")
     training_args.add_argument(
         "--task",
-        choices=["pretrain", "sft", "lora"],
+        choices=["pretrain", "sft", "peft"],
         help="Task to run. Defaults to 'pretrain'",
         default="pretrain",
     )
@@ -292,6 +292,15 @@ def parse_cli_args():
         "-sl",
         "--seq_length",
         type=int,
+    )
+    training_args.add_argument(
+        "--distributed_timeout_minutes",
+        type=int,
+        help=(
+            "Process-group init timeout in minutes (dist.distributed_timeout_minutes). "
+            "Widen above the 10-minute default when a one-time dataset index build on rank 0 "
+            "can outlast the NCCL collective watchdog while other ranks wait at the setup barrier."
+        ),
     )
 
     # Optimizer
@@ -896,8 +905,10 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant to use (e.g., 'v1', 'v2'). Defaults to 'v2' ('v1' if 'v2' doens't exist). Use --list_config_variants to see available options.",
-        default="v2",
+        help=(
+            "Flat perf recipe variant for setup_experiment.py. Omit to use the suffix-less canonical recipe. "
+            "Named variants such as large_scale are supported when a matching recipe exists."
+        ),
     )
     config_variant_args.add_argument(
         "--list_config_variants",

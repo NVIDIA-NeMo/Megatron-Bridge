@@ -133,7 +133,7 @@ CLI_OVERRIDES="\
     logger.tensorboard_dir=$OUTPUT_DIR/tb_logs \
     dataset.path=$ENERGON_PATH \
     dataset.seq_length=$SEQ_LENGTH \
-    dataset.pack_sequences_in_batch=$PACKED_SEQ \
+    dataset.enable_in_batch_packing=$PACKED_SEQ \
     model.seq_length=$SEQ_LENGTH \
     model.tensor_model_parallel_size=$TP \
     model.expert_model_parallel_size=$EP \
@@ -155,7 +155,6 @@ CLI_OVERRIDES="\
 
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --hf_path $HF_MODEL_ID \
     --step_func nemotron_omni_step \
     $CLI_OVERRIDES"
 

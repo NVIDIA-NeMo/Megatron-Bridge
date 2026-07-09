@@ -24,7 +24,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 import packaging
 import torch
 import torch.nn as nn
-from megatron.core import ModelParallelConfig, dist_checkpointing
+from megatron.core import ModelParallelConfig, dist_checkpointing, parallel_state
 from megatron.core.dist_checkpointing.mapping import ShardedStateDict, ShardedTensor, ShardedTensorFactory
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear, set_tensor_model_parallel_attributes
@@ -32,6 +32,7 @@ from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
 )
+from megatron.core.tensor_parallel.random import is_checkpointing
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
@@ -159,6 +160,36 @@ def _legacy_shared_expert_adapter_key(factory: ShardedTensorFactory) -> str | No
     return None
 
 
+def _legacy_shared_expert_adapter_matches(
+    adapters_by_name: Mapping[str, "ParallelLinearAdapter"], adapter_key: str
+) -> list["ParallelLinearAdapter"]:
+    """Return adapter modules matching a legacy shared-expert checkpoint key."""
+
+    adapter = adapters_by_name.get(adapter_key)
+    if adapter is not None:
+        return [adapter]
+
+    adapter_base_key = adapter_key.removesuffix(".adapter")
+    matched_adapters = []
+    for module_name, module in adapters_by_name.items():
+        module_base_key = module_name.removesuffix(".adapter")
+        base_linear_name = module.base_linear_name
+        if (
+            adapter_key.endswith(module_name)
+            or module_name.endswith(adapter_key)
+            or adapter_base_key.endswith(module_base_key)
+            or module_base_key.endswith(adapter_base_key)
+            or adapter_base_key.endswith(base_linear_name)
+            or base_linear_name.endswith(adapter_base_key)
+        ):
+            matched_adapters.append(module)
+
+    if matched_adapters:
+        return matched_adapters
+
+    return list(adapters_by_name.values())
+
+
 def enable_legacy_shared_expert_adapter_loading(
     megatron_model: list[nn.Module] | nn.Module,
     sharded_state_dict: ShardedStateDict,
@@ -194,16 +225,14 @@ def enable_legacy_shared_expert_adapter_loading(
         adapter_key = _legacy_shared_expert_adapter_key(factory)
         if adapter_key is None:
             continue
-        adapter = adapters_by_name.get(adapter_key)
-        if adapter is None:
-            continue
         built = factory.build()
         shards = built if isinstance(built, list) else [built]
         expected_shape = tuple(shards[0].global_shape)
         legacy_shape = expected_shape[1:]
         if _checkpoint_tensor_shape(checkpoint_metadata, factory.key) == legacy_shape:
-            setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
-            enabled = True
+            for adapter in _legacy_shared_expert_adapter_matches(adapters_by_name, adapter_key):
+                setattr(adapter, _LEGACY_SHARED_EXPERT_ADAPTER_CHECKPOINT_ATTR, True)
+                enabled = True
 
     return enabled
 
@@ -466,6 +495,7 @@ def get_adapter_attributes_from_linear(
     m: nn.Module,
     is_expert: bool = False,
     pg_collection: ProcessGroupCollection | None = None,
+    sequence_parallel_input_regather: bool = False,
 ) -> AdapterAttributes:
     """Returns attributes from the base layer as an AdapterAttributes dataclass.
 
@@ -477,6 +507,9 @@ def get_adapter_attributes_from_linear(
 
     Args:
         m: The linear module to analyze (should have a config attribute).
+        is_expert: Whether the linear belongs to an expert module.
+        pg_collection: Optional process-group collection associated with the module.
+        sequence_parallel_input_regather: Whether LoRA-A should re-gather its sequence-parallel input in backward.
 
     Returns:
         AdapterAttributes containing:
@@ -545,11 +578,17 @@ def get_adapter_attributes_from_linear(
             else:
                 ub_overlap_ag = False
             if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
-                m.return_layernorm_output_gathered = True
+                # The adapter's MCore SP linear must own the gather so it can retain the local shard.
+                # Preserve the existing TE optimization for the default path.
+                m.return_layernorm_output_gathered = not sequence_parallel_input_regather
                 te_version = packaging.version.Version(version("transformer-engine"))
-                if te_version >= packaging.version.Version("1.5.0dev") and (
-                    not getattr(m.config, "tp_comm_overlap", False)
-                    or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                if (
+                    not sequence_parallel_input_regather
+                    and te_version >= packaging.version.Version("1.5.0dev")
+                    and (
+                        not getattr(m.config, "tp_comm_overlap", False)
+                        or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                    )
                 ):
                     # TE 1.5 introduces the option `return_layernorm_output_gathered`, so the all gather
                     # in the forward method is not needed, so disable sp communications
@@ -857,6 +896,8 @@ class ParallelLinearAdapter(nn.Module):
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
         base_linear_is_parallel: Whether the base linear layer uses parallelization (default: True).
+        sequence_parallel_input_regather: Whether eligible LoRA-A projections retain the sequence-local input and
+            re-gather it in backward using MCore's sequence-parallel linear path (default: False).
     """
 
     def __init__(
@@ -879,6 +920,7 @@ class ParallelLinearAdapter(nn.Module):
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        sequence_parallel_input_regather: bool = False,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -899,7 +941,7 @@ class ParallelLinearAdapter(nn.Module):
             is_expert: Whether for expert layers in MoE.
             disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
-            dropout_recompute: Use recomputation for dropout.
+            sequence_parallel_input_regather: Re-gather eligible LoRA-A sequence-parallel inputs in backward.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -911,6 +953,8 @@ class ParallelLinearAdapter(nn.Module):
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
         self.base_linear_is_parallel = base_linear_is_parallel
+        self.sequence_parallel_input_regather = sequence_parallel_input_regather
+        self._sequence_parallel_input_regather_fallback_logged = False
         self.use_legacy_shared_expert_adapter_checkpoint = False
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
@@ -1010,6 +1054,58 @@ class ParallelLinearAdapter(nn.Module):
         if not base_linear_is_parallel:
             self.disable_sequence_parallel_comm = True
 
+    def _sequence_parallel_input_regather_eligibility(self, x: torch.Tensor) -> tuple[bool, str | None]:
+        """Return whether the targeted sequence-parallel linear path is safe."""
+        if not self.sequence_parallel_input_regather:
+            return False, None
+        if not self.training or not torch.is_grad_enabled():
+            return False, None
+        if is_checkpointing():
+            return False, None
+        if not self.linear_in.weight.requires_grad:
+            return False, "the LoRA-A weight is frozen"
+        if self.input_is_parallel:
+            return False, "the adapter is row-parallel"
+        if self.disable_sequence_parallel_comm:
+            return False, "sequence-parallel communication is disabled"
+        if _process_group_size(self.tp_group, self.config.tensor_model_parallel_size or 1) <= 1:
+            return False, "tensor parallel size is one"
+        if self.is_expert:
+            return False, "expert adapters use a separate path"
+        if self.use_a2a:
+            return False, "all-to-all adapters use a separate path"
+        if not isinstance(self.activation, nn.Identity):
+            return False, "the adapter activation is not identity"
+        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+            return False, "CPU activation offload is enabled"
+
+        surface = self.base_linear_name.rsplit(".", maxsplit=1)[-1]
+        if surface not in {"linear_qkv", "linear_fc1"}:
+            return False, f"{surface} is not an eligible column-parallel LoRA surface"
+
+        cuda_graph_impl = getattr(self.config, "cuda_graph_impl", "none")
+        if cuda_graph_impl not in (None, "none"):
+            return False, "CUDA graphs are enabled"
+
+        recompute_granularity = getattr(self.config, "recompute_granularity", None)
+        if recompute_granularity == "full":
+            return False, "full-layer activation recompute already covers the adapter"
+        recompute_modules = getattr(self.config, "recompute_modules", None) or []
+        if recompute_granularity == "selective" and surface == "linear_fc1" and "mlp" in recompute_modules:
+            return False, "selective MLP recompute already covers linear_fc1"
+        return True, None
+
+    def _log_sequence_parallel_input_regather_fallback(self, reason: str | None) -> None:
+        """Log the first static fallback reason at debug level."""
+        if reason is None or self._sequence_parallel_input_regather_fallback_logged:
+            return
+        logger.debug(
+            "LoRA sequence-parallel input re-gather requested for %s but using the existing path: %s",
+            self.base_linear_name,
+            reason,
+        )
+        self._sequence_parallel_input_regather_fallback_logged = True
+
     def _get_activation_fn(self, activation: str) -> nn.Module:
         """Get activation function by name.
 
@@ -1078,16 +1174,28 @@ class ParallelLinearAdapter(nn.Module):
         if self.is_expert:
             x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
 
-        if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
-            # for attention_qkv and linear_fc1
-            # layernorm before lora is impacted by sequence parallel,
-            # hence seq dim need to be gathered right before lora linear layers
-            # this function also handles the backward pass correctly
-            x = gather_from_sequence_parallel_region(x, group=self.tp_group)
+        use_sequence_parallel_input_regather, fallback_reason = self._sequence_parallel_input_regather_eligibility(x)
+        if not self.input_is_parallel:
+            # MCore's SP linear keeps the local input in ctx, launches the
+            # backward all-gather asynchronously before dgrad, and waits only
+            # before wgrad. The baseline path keeps communication external.
+            self.linear_in.sequence_parallel = use_sequence_parallel_input_regather
+        if use_sequence_parallel_input_regather:
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
+        else:
+            self._log_sequence_parallel_input_regather_fallback(fallback_reason)
+            if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
+                # for attention_qkv and linear_fc1
+                # layernorm before lora is impacted by sequence parallel,
+                # hence seq dim need to be gathered right before lora linear layers
+                # this function also handles the backward pass correctly
+                x = gather_from_sequence_parallel_region(x, group=self.tp_group)
 
-        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
-            x.activation_offloading = True
-        x, _ = self.linear_in(x)  # (@adithyare) ColumnLinear returns output and bias, we are ignoring the bias term.
+            if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+                x.activation_offloading = True
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
 
         x = self.activation(x)
 
@@ -2115,6 +2223,295 @@ class GroupedExpertLinearAdapter(nn.Module):
                 singleton_local_shards,
             )
 
+        sharded_state_dict.update(linear_in_sd)
+        sharded_state_dict.update(linear_out_sd)
+        return sharded_state_dict
+
+
+def _make_cross_ep_replicated(weight: nn.Parameter) -> None:
+    """Mark a weight as logically replicated across the intra-PP-stage group.
+
+    Megatron's DDP routes ``is_expert=True`` parameters through the expert
+    data-parallel group only, which does not span the EP axis. A weight
+    that must stay bit-identical across all EP ranks (e.g., the shared
+    side of :class:`SharedOuterGroupedExpertAdapter`, which a serving
+    engine consumes as a single global LoRA tensor) is otherwise left
+    unsynced. This helper closes that gap with two primitives:
+
+      * a one-shot broadcast from group rank 0 so every rank starts with
+        bit-identical values despite per-rank RNG forks;
+      * a backward hook that SUM all-reduces the gradient across the group
+        so the optimizer step on every rank applies the same update.
+
+    SUM is the correct reduction: each rank's local gradient is the partial
+    loss gradient over its (token, expert) subset, and the total gradient
+    is the sum of those partials. AVG would train at 1/N the intended rate.
+
+    The intra-PP-stage group is ``tensor_and_data_parallel_group`` with
+    context parallel included, which by Megatron's construction equals
+    ETP × EP × EDP — all ranks within the current pipeline stage.
+
+    Args:
+        weight: The parameter to keep replicated across the group. Must
+            be a leaf parameter so the backward hook fires when its
+            gradient is computed.
+    """
+
+    if not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+        return
+    try:
+        group = parallel_state.get_tensor_and_data_parallel_group(with_context_parallel=True)
+    except AssertionError:
+        return
+    if torch.distributed.get_world_size(group=group) <= 1:
+        return
+
+    if weight.is_cuda:
+        # NCCL requires CUDA tensors; pre-GPU construction relies on
+        # deterministic init matching across ranks.
+        src_rank = torch.distributed.get_global_rank(group, 0)
+        with torch.no_grad():
+            torch.distributed.broadcast(weight.data, src=src_rank, group=group)
+
+    def _all_reduce_grad(grad: torch.Tensor) -> torch.Tensor:
+        grad = grad.contiguous()
+        torch.distributed.all_reduce(grad, op=torch.distributed.ReduceOp.SUM, group=group)
+        return grad
+
+    weight.register_hook(_all_reduce_grad)
+
+
+class PackedPerExpertLinear(nn.Module):
+    """Per-expert linear with a packed 3D weight ``[N_local, out, in]``.
+
+    Used as the per-expert side of :class:`SharedOuterGroupedExpertAdapter`.
+    Stores one ``nn.Parameter`` (3D) so Bridge's adapter export sees a single
+    ``.weight`` per side, matching the ``linear_in.weight`` / ``linear_out.weight``
+    convention in :mod:`megatron.bridge.models.conversion.peft_bridge`. Forward
+    dispatches to :func:`torch._grouped_mm` (the same grouped GEMM kernel TE's
+    :class:`te.pytorch.GroupedLinear` calls) via a single fused op with native
+    autograd, which keeps rank kernel launch counts in lockstep so CP's ring
+    P2P does not deadlock.
+    """
+
+    def __init__(
+        self,
+        num_local_experts: int,
+        in_features: int,
+        out_features: int,
+        *,
+        init_method: Optional[Callable] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
+    ):
+        super().__init__()
+        if not hasattr(torch, "_grouped_mm"):
+            raise RuntimeError("PackedPerExpertLinear requires torch._grouped_mm (torch >= 2.9).")
+        self.num_local_experts = num_local_experts
+        self.in_features = in_features
+        self.out_features = out_features
+        weight = torch.empty(num_local_experts, out_features, in_features, dtype=dtype, device=device)
+        if init_method is not None:
+            for e in range(num_local_experts):
+                init_method(weight[e])
+        else:
+            nn.init.zeros_(weight)
+        self.weight = nn.Parameter(weight)
+        # DDP routes ``is_expert`` weights through the EDP group; the cross-EP
+        # axis is naturally distinct here (different experts on each EP rank).
+        setattr(self.weight, "allreduce", False)
+
+    def forward(self, x: torch.Tensor, m_splits) -> Tuple[torch.Tensor, None]:
+        # torch._grouped_mm expects mat2 as [num_groups, K, N]; our weight is
+        # [N_local, out, in] so transpose the last two dims.
+        if isinstance(m_splits, torch.Tensor):
+            m_splits_i32 = m_splits.to(device=x.device, dtype=torch.int32)
+        else:
+            m_splits_i32 = torch.tensor(m_splits, device=x.device, dtype=torch.int32)
+        offs = torch.cumsum(m_splits_i32, dim=0, dtype=torch.int32)
+        out = torch._grouped_mm(x, self.weight.transpose(1, 2), offs=offs)
+        return out, None
+
+    def sharded_state_dict(
+        self, prefix: str = "", sharded_offsets: Tuple = (), metadata: Optional[Dict] = None
+    ) -> ShardedStateDict:
+        """Shard the packed 3D weight along dim 0 (experts) across EP ranks."""
+        key = f"{prefix}weight"
+        return {
+            key: _make_grouped_expert_sharded_tensor(
+                self.weight.data, key, tp_axis=None, sharded_offsets=sharded_offsets
+            )
+        }
+
+
+class SharedOuterGroupedExpertAdapter(nn.Module):
+    """LoRA adapter for grouped expert MLP with shared-outer semantics.
+
+    Matches SGLang PR #21466's ``experts_shared_outer_loras=True`` contract:
+
+    * fc1 (gate_up):  linear_in  = SHARED     (hidden -> rank)
+                      linear_out = PER-EXPERT (rank -> 2*intermediate)
+    * fc2 (down):     linear_in  = PER-EXPERT (intermediate -> rank)
+                      linear_out = SHARED     (rank -> hidden)
+
+    The shared side is an ``is_expert=True`` ``ColumnParallelLinear`` (fc1)
+    or ``RowParallelLinear`` (fc2): the TP group is ETP (ETP=1 → local
+    forward), DDP routes the weight through the EDP group, and the
+    logically-replicated cross-EP axis is covered by
+    :func:`_make_cross_ep_replicated`.
+
+    The per-expert side is :class:`PackedPerExpertLinear` (packed 3D weight
+    + :func:`torch._grouped_mm`) — kept as a single ``.weight`` Parameter so
+    Bridge's adapter-export materializer (which reads ``linear_in.weight`` /
+    ``linear_out.weight``) sees a standard single-weight linear per side.
+
+    Differs from ``ParallelLinearAdapter`` in ``__init__`` and ``forward``;
+    ``sharded_state_dict`` is specialized for the packed 3D per-expert side.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        dim: int,
+        *,
+        num_local_experts: int,
+        base_linear_name: str,
+        activation: str = "swish",
+        column_init_method: str = "xavier",
+        row_init_method: str = "zero",
+        input_is_parallel: bool = False,
+        dropout: float = 0.0,
+        model_parallel_config: Optional[ModelParallelConfig] = None,
+        alpha: Optional[float] = None,
+        dropout_position: str = "pre",
+        base_linear_is_parallel: bool = True,
+        params_device: Optional[torch.device] = None,
+        params_dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Initialize shared-outer LoRA weights with one shared and one per-expert side."""
+
+        super().__init__()
+        self.base_linear_name = base_linear_name
+        self.activation = ParallelLinearAdapter._get_activation_fn(self, activation)
+        self.dim = dim
+        self.alpha = alpha if alpha is not None else self.dim
+        self.dropout_position = dropout_position
+        self.num_local_experts = num_local_experts
+        self.base_linear_is_parallel = base_linear_is_parallel
+        # ``is_expert=True`` is observed by param_mapping.py and by inherited
+        # checkpoint helpers; the per-expert side's grad routing is set on its
+        # 3D weight directly inside :class:`PackedPerExpertLinear`.
+        self.is_expert = True
+
+        if model_parallel_config is None:
+            model_parallel_config = ModelParallelConfig()
+        model_parallel_config.perform_initialization = True
+        self.config = model_parallel_config
+
+        # ``input_is_parallel`` selects fc1 (column-parallel base) vs fc2
+        # (row-parallel base). Mirrors :class:`ParallelLinearAdapter` and
+        # :class:`GroupedExpertLinearAdapter`.
+        self._is_fc1 = not input_is_parallel
+
+        column_init = ParallelLinearAdapter._get_init_fn(self, column_init_method)
+        row_init = ParallelLinearAdapter._get_init_fn(self, row_init_method)
+        if self._is_fc1:
+            # Shared A (hidden → rank); per-expert B (rank → 2*intermediate).
+            self.linear_in = ColumnParallelLinear(
+                in_features,
+                dim,
+                config=model_parallel_config,
+                bias=False,
+                gather_output=True,
+                init_method=column_init,
+                is_expert=True,
+            )
+            self.linear_out = PackedPerExpertLinear(
+                num_local_experts,
+                dim,
+                out_features,
+                init_method=row_init,
+                device=params_device,
+                dtype=params_dtype,
+            )
+        else:
+            # Per-expert A (intermediate → rank); shared B (rank → hidden).
+            self.linear_in = PackedPerExpertLinear(
+                num_local_experts,
+                in_features,
+                dim,
+                init_method=column_init,
+                device=params_device,
+                dtype=params_dtype,
+            )
+            self.linear_out = RowParallelLinear(
+                dim,
+                out_features,
+                config=model_parallel_config,
+                bias=False,
+                input_is_parallel=True,
+                skip_bias_add=True,
+                init_method=row_init,
+                is_expert=True,
+            )
+
+        self.dropout = nn.Dropout(dropout) if dropout > 0.0 else nn.Identity()
+
+        if model_parallel_config.bf16:
+            self.bfloat16()
+        elif model_parallel_config.fp16:
+            self.half()
+
+        # The shared weight is logically replicated across EP; close the gap
+        # that Megatron's expert-DDP routing leaves open.
+        shared_weight = self.linear_in.weight if self._is_fc1 else self.linear_out.weight
+        _make_cross_ep_replicated(shared_weight)
+
+    def forward(self, x: torch.Tensor, m_splits=None) -> torch.Tensor:
+        """Forward. ``m_splits`` is the tokens-per-expert split passed through
+        from the base TEGroupedLinear; required for the per-expert side.
+        """
+        if self.dropout_position == "pre":
+            x = self.dropout(x)
+
+        if self._is_fc1:
+            # Shared A → activation → per-expert B.
+            x, _ = self.linear_in(x)
+            x = self.activation(x)
+            x, _ = self.linear_out(x, m_splits)
+        else:
+            # Per-expert A → activation → shared B.
+            x, _ = self.linear_in(x, m_splits)
+            x = self.activation(x)
+            x, _ = self.linear_out(x)
+
+        if self.dropout_position == "post":
+            x = self.dropout(x)
+
+        return x * (self.alpha / self.dim)
+
+    def sharded_state_dict(
+        self,
+        prefix: str = "",
+        sharded_offsets: Tuple = (),
+        metadata: Optional[Dict] = None,
+    ) -> ShardedStateDict:
+        """Create sharded state dictionary for mixed shared/per-expert adapter weights."""
+
+        linear_in_sd = self.linear_in.sharded_state_dict(f"{prefix}linear_in.", sharded_offsets, metadata)
+        linear_out_sd = self.linear_out.sharded_state_dict(f"{prefix}linear_out.", sharded_offsets, metadata)
+
+        if self._is_fc1:
+            singleton_local_shards = (metadata or {}).get("singleton_local_shards", False)
+            linear_out_key = f"{prefix}linear_out.weight"
+            linear_out_sd[linear_out_key] = _apply_grouped_expert_swiglu_sharded_factory(
+                linear_out_sd[linear_out_key],
+                sharded_offsets,
+                singleton_local_shards,
+            )
+
+        sharded_state_dict = {}
         sharded_state_dict.update(linear_in_sd)
         sharded_state_dict.update(linear_out_sd)
         return sharded_state_dict

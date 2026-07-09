@@ -19,19 +19,19 @@ For the end-to-end overview of how recipes are structured, overridden, and launc
 ### Pretrain (single-GPU)
 
 ```bash
-uv run python run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python run_recipe.py --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
 ```
 
 ### Pretrain (multi-GPU)
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
 ```
 
 ### Finetune
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_1gpu_h100_bf16_config
 ```
 
 ## Usage with Different Models
@@ -40,17 +40,31 @@ Same scripts work across all model families:
 
 ```bash
 # Llama
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
 
 # Gemma
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gemma3_1b_pretrain_1gpu_h100_bf16_config
 
 # Qwen
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config
 
 # GPT
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe gpt_126m_pretrain_config
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config
 ```
+
+## Loading a HuggingFace Model Directly (`--hf_path`)
+
+Some recipes accept `--hf_path` to initialize from a HuggingFace model ID (or local
+path) without a separate offline checkpoint conversion step:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
+    --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config \
+    --hf_path meta-llama/Llama-3.1-8B
+```
+
+`--hf_path` is optional and model-specific: `run_recipe.py` only forwards it to recipes
+that accept an `hf_path` argument, and ignores it otherwise.
 
 ## CLI Overrides
 
@@ -58,7 +72,7 @@ Override any config field using dot notation:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     train.train_iters=5000 \
     optimizer.lr=0.0002 \
     model.tensor_model_parallel_size=2
@@ -71,7 +85,7 @@ Configuration priority:
 2. Recipe defaults (lowest)
 
 Mode is inferred from the recipe name. If your recipe name doesn't include
-`pretrain`, `finetune`, `sft`, or `peft`, pass `--mode` explicitly.
+`pretrain`, `finetune`, `sft`, or `peft`, pass `--dataset` so the launcher can infer the mode from the dataset type.
 
 ## Step Function Selection
 
@@ -83,7 +97,7 @@ Use `--step_func` to control the step function used during training. Available o
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py \
-    --recipe qwen25_vl_pretrain_config \
+    --recipe qwen25_vl_7b_sft_2gpu_h100_bf16_config \
     --step_func vlm_step
 ```
 
@@ -105,7 +119,7 @@ Before launching on Slurm, test your configuration locally:
 uv run python launch_with_nemo_run.py \
     --local \
     --script run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --devices 2 \
     --dry-run \
     train.train_iters=10
@@ -121,7 +135,7 @@ Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
 # From the cluster (LocalTunnel)
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --nodes 2 \
     --devices 8 \
     --partition gpu \
@@ -130,7 +144,7 @@ uv run python launch_with_nemo_run.py \
 # From your local machine (SSHTunnel)
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --nodes 2 \
     --devices 8 \
     --partition gpu \
@@ -148,7 +162,7 @@ When using containers, scripts are automatically packaged using `PatternPackager
 ```bash
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe qwen3_8b_pretrain_config \
+    --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config \
     --nodes 4 \
     --devices 8 \
     --partition gpu \
@@ -164,7 +178,7 @@ uv run python launch_with_nemo_run.py \
 ```bash
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --nodes 2 \
     --partition gpu \
     --account my_account \
@@ -182,7 +196,7 @@ For git-based packaging:
 ```bash
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe llama3_8b_pretrain_config \
+    --recipe llama3_8b_pretrain_2gpu_h100_bf16_config \
     --nodes 2 \
     --partition gpu \
     --account my_account \
@@ -197,7 +211,7 @@ Use the fault-tolerant launcher for better resiliency:
 ```bash
 uv run python launch_with_nemo_run.py \
     --script run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --launcher ft \
     --nodes 2 \
     --partition gpu \
@@ -215,7 +229,7 @@ Edit the configuration section in `launch_with_sbatch.sh`:
 TRAINING_SCRIPT="run_recipe.py"
 
 # Recipe name
-RECIPE="llama32_1b_pretrain_config"
+RECIPE="llama32_1b_pretrain_1gpu_h100_bf16_config"
 
 # Step function (controls the step function: gpt_step, vlm_step, or llava_step)
 STEP_TYPE="gpt_step"

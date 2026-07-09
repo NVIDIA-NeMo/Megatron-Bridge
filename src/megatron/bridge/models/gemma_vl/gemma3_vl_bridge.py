@@ -32,7 +32,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
 )
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(
@@ -55,7 +55,7 @@ class Gemma3VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Gemma3VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3VLModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config
@@ -80,7 +80,10 @@ class Gemma3VLBridge(MegatronModelBridge):
         provider.autocast_dtype = torch.bfloat16
         provider.make_vocab_size_divisible_by = 128
 
-        # Vision configuration
+        # Vision configuration — always disable the pooling head so the checkpoint
+        # and the reconstructed model are consistent (vision_use_head is absent in
+        # the default SiglipVisionConfig, which would otherwise default to True).
+        vision_config.vision_use_head = False
         provider.vision_config = vision_config
         provider.mm_tokens_per_image = hf_config.mm_tokens_per_image
 
