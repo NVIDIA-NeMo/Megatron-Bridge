@@ -135,38 +135,6 @@ class WorkloadBaseConfig:
         return self.global_batch_size / self.num_gpus
 
 
-def get_hybridep_environment_defaults(gpu: str, expert_model_parallel_size: int) -> dict[str, str]:
-    """Return topology-consistent HybridEP environment defaults.
-
-    Explicit launcher or shell values are applied separately and retain higher
-    precedence than these defaults.
-    """
-    if (
-        not isinstance(expert_model_parallel_size, int)
-        or isinstance(expert_model_parallel_size, bool)
-        or expert_model_parallel_size <= 0
-    ):
-        raise ValueError("HybridEP expert parallel size must be a positive integer.")
-
-    normalized_gpu = gpu.lower()
-    if normalized_gpu in {"h100", "b200", "b300"}:
-        return {
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": str(min(expert_model_parallel_size, 8)),
-            "NVLINK_DOMAIN_SIZE": "8",
-            "USE_MNNVL": "0",
-        }
-
-    if normalized_gpu not in {"gb200", "gb300", "vr200", "r100"}:
-        raise ValueError(f"Unsupported GPU type for HybridEP topology: {gpu!r}.")
-    if expert_model_parallel_size > 72:
-        raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
-    return {
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": str(expert_model_parallel_size),
-        "NVLINK_DOMAIN_SIZE": "72",
-        "USE_MNNVL": "1",
-    }
-
-
 def explicit_environment_override_names(
     cli_overrides: list[str], base_env_vars: dict, effective_env_vars: dict
 ) -> set[str]:
@@ -193,6 +161,57 @@ def explicit_environment_override_names(
         elif key.startswith("env_vars."):
             names.add(key.removeprefix("env_vars.").split(".", 1)[0])
     return names
+
+
+def apply_library_environment_overrides(config: Any, args: Any) -> Any:
+    """Apply argparse values that affect library recipe environment composition.
+
+    Both the worker pre-exec wrapper and the final library runner call this
+    helper before Hydra overrides. Keeping that order shared prevents the
+    exported process environment from diverging from the training config.
+    """
+    if getattr(args, "nccl_ub", False):
+        config.ddp.nccl_ub = True
+
+    expert_model_parallel_size = getattr(args, "expert_model_parallel_size", None)
+    if expert_model_parallel_size is not None:
+        config.model.expert_model_parallel_size = expert_model_parallel_size
+
+    dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_flex_dispatcher_backend = dispatcher_backend
+    elif dispatcher_backend in {"deepep", "hybridep"}:
+        logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
+    elif dispatcher_backend is None:
+        config.model.moe_flex_dispatcher_backend = None
+
+    return config
+
+
+def finalize_library_environment_overrides(config: Any) -> Any:
+    """Reconcile config invariants after argparse and Hydra overrides.
+
+    Hydra has final precedence over primary fields such as ``ddp.nccl_ub`` and
+    ``model.moe_flex_dispatcher_backend``. Dependent fields are therefore
+    normalized only after both override layers have completed.
+    """
+    if getattr(config.ddp, "nccl_ub", False):
+        config.ddp.average_in_collective = False
+        if getattr(config.ddp, "use_megatron_fsdp", False):
+            config.ddp.fsdp_manual_registration = True
+    elif getattr(config.ddp, "fsdp_manual_registration", False):
+        config.ddp.fsdp_manual_registration = False
+
+    dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_token_dispatcher_type = "flex"
+        config.model.moe_shared_expert_overlap = False
+    elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
+        config.model.moe_token_dispatcher_type = "alltoall"
+
+    return config
 
 
 def _normalize_precision_name(precision: str) -> str:
@@ -646,37 +665,25 @@ def add_library_recipe_environment_variables(
     custom_env_vars: MutableMapping[str, str],
     config: Any,
     gpu: str,
-    expert_model_parallel_size: int | None = None,
     protected_env_names: set[str] | None = None,
 ) -> None:
-    """Add library recipe environment defaults inside the worker container.
+    """Finalize a library recipe and copy its process defaults into the worker environment.
 
     Args:
         custom_env_vars: Existing user or cluster environment values to preserve.
         config: Resolved library recipe configuration.
         gpu: Target GPU architecture name.
-        expert_model_parallel_size: Optional launcher override for expert parallelism.
         protected_env_names: Recipe environment names explicitly overridden by the user.
 
     Raises:
         TypeError: If a recipe environment value is not a supported scalar.
         ValueError: If an environment name is invalid or HybridEP exceeds the NVLink domain.
     """
-    model_config = config.model
-    env_vars = dict(config.env_vars)
+    from megatron.bridge.recipes.utils.environment_utils import apply_library_recipe_environment
 
-    if getattr(model_config, "moe_flex_dispatcher_backend", None) == "hybridep":
-        effective_ep_size = (
-            expert_model_parallel_size
-            if expert_model_parallel_size is not None
-            else getattr(model_config, "expert_model_parallel_size", 1)
-        )
-        protected_env_names = protected_env_names or set()
-        for name, value in get_hybridep_environment_defaults(gpu, effective_ep_size).items():
-            if name not in protected_env_names:
-                env_vars[name] = value
+    apply_library_recipe_environment(config, gpu=gpu, protected_env_names=protected_env_names)
 
-    for name, value in env_vars.items():
+    for name, value in config.env_vars.items():
         if not isinstance(name, str) or not name:
             raise ValueError("Environment variable names must be non-empty strings.")
         if not isinstance(value, (str, int, float, bool)):

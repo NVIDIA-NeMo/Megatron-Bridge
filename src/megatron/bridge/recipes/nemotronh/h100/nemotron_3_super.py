@@ -19,6 +19,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.config import ConfigContainer
 
@@ -26,6 +27,7 @@ from megatron.bridge.training.config import ConfigContainer
 NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Super (120B-A12B LatentMoE).
 
@@ -138,6 +140,7 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3 Super (120B-A12B LatentMoE).
 
@@ -230,6 +233,7 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:

@@ -16,10 +16,12 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
 
+@library_recipe_environment(model_family_name="stepfun")
 def step35_196b_a11b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for stepfun-ai/Step-3.5-Flash.
 

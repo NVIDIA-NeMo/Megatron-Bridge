@@ -23,6 +23,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
 
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 _QWEN3_OMNI_HF_PATH = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
 
+@library_recipe_environment(model_family_name="qwen_omni")
 def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     """Return a minimal thinker-only SFT config for Qwen3-Omni 30B-A3B."""
 
@@ -89,6 +91,7 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen_omni")
 def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer":
     """Return a thinker-only SFT config backed by preloaded local JSON/JSONL data."""
 

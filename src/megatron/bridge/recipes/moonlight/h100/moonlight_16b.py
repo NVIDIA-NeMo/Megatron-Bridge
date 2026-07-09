@@ -20,6 +20,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -47,6 +48,7 @@ def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
+@library_recipe_environment(model_family_name="moonlight")
 def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Moonlight-16B.
 
@@ -186,6 +188,7 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="moonlight")
 def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Moonlight-16B.
 
@@ -394,6 +397,7 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="moonlight")
 def moonlight_16b_peft_2gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
