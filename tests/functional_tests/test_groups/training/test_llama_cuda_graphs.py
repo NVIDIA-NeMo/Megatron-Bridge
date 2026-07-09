@@ -12,21 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for LLaMA recipe configurations."""
+"""Focused functional tests for Llama CUDA Graph training modes."""
 
 import pytest
 
-from megatron.bridge.recipes.llama import (
-    llama32_1b_pretrain_config as llama32_1b_config,
+from megatron.bridge.recipes.llama.h100 import (
+    llama32_1b_pretrain_1gpu_h100_bf16_config,
 )
-from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_perf_test
+from tests.functional_tests.test_groups.recipes.utils import run_pretrain_feature_test
 
 
-LLAMA_PRETRAIN_RECIPES = [
+LLAMA_CUDA_GRAPH_CASES = [
     # (config_func, name, config_overrides)
     (
-        llama32_1b_config,
-        "llama32_1b",
+        llama32_1b_pretrain_1gpu_h100_bf16_config,
+        "llama32_1b_local_full_iteration_cuda_graph",
         {
             "model": {
                 "num_layers": 2,
@@ -39,8 +39,8 @@ LLAMA_PRETRAIN_RECIPES = [
         },
     ),
     (
-        llama32_1b_config,
-        "llama32_1b",
+        llama32_1b_pretrain_1gpu_h100_bf16_config,
+        "llama32_1b_transformer_engine_attention_cuda_graph",
         {
             "model": {
                 "num_layers": 2,
@@ -55,15 +55,15 @@ LLAMA_PRETRAIN_RECIPES = [
 ]
 
 
-class TestLlamaCudaGraphRecipes:
-    """Test class for LLaMA recipe functional tests."""
+class TestLlamaCudaGraphs:
+    """Exercise CUDA Graph modes that are not standalone performance recipes."""
 
     @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize("config_func,recipe_name,config_overrides", LLAMA_PRETRAIN_RECIPES)
-    def test_llama_pretrain_recipes(self, config_func, recipe_name, config_overrides):
-        """Functional test for LLaMA recipes with appropriate parallelism configurations."""
-        run_pretrain_recipe_perf_test(
+    @pytest.mark.parametrize("config_func,test_name,config_overrides", LLAMA_CUDA_GRAPH_CASES)
+    def test_llama_cuda_graph_training(self, config_func, test_name, config_overrides):
+        """Run short training with each explicitly selected CUDA Graph implementation."""
+        run_pretrain_feature_test(
             config_func,
-            recipe_name,
+            test_name,
             config_overrides=config_overrides,
         )

@@ -23,12 +23,15 @@ from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_256gpu_gb
 from megatron.bridge.training.config import ConfigContainer
 from tests.functional_tests.test_groups.recipes.utils import (
     configure_ci_pretraining_dataset,
-    run_pretrain_recipe_perf_test,
+    run_perf_recipe_proxy_test,
 )
 
 
 def _deepseek_v3_gb200_proxy() -> ConfigContainer:
     """Reduce model scale while preserving PP, MTP, and the production MoE path."""
+    assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "2"
+    assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
+
     config = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
 
     config.model.num_layers = 4
@@ -84,4 +87,4 @@ class TestDeepSeekV3PerfProxy:
             configure_ci_pretraining_dataset(config, ensure_test_data)
             return config
 
-        run_pretrain_recipe_perf_test(proxy_config, "deepseek_v3_gb200_fp8mx_proxy")
+        run_perf_recipe_proxy_test(proxy_config, "deepseek_v3_gb200_fp8mx_proxy")
