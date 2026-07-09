@@ -135,6 +135,10 @@ Optional overrides:
 
 - `WORKSPACE` (default: `${PWD}/.cache/qwen3_omni_train`)
 - `RESULTS_DIR` / `LOG_DIR` (default: under `WORKSPACE`)
+- `VALID_JSONL` / `TEST_JSONL` for explicit local validation and test sources; unset values disable those splits
+- `RECIPE` (default: `qwen3_omni_30b_a3b_sft_local_config`)
+
+The local recipe uses `DirectHFSFTDatasetConfig` with `LocalConversationDatasetSourceConfig`. It follows the same processor, collator, assistant loss-mask, and padding path as hosted Direct-HF data. If your JSONL stores relative media paths, set the corresponding source `media_root` through a recipe or CLI override.
 
 To apply the 4-node TP2/PP2/EP8/SP preset used in our 32-GPU validation:
 

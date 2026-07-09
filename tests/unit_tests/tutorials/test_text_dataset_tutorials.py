@@ -68,3 +68,12 @@ def test_direct_hf_sft_tutorial_documents_hosted_native_messages_source():
     assert "HuggingFaceH4/ultrachat_200k" in readme
     assert 'split="train_sft"' in readme
     assert "schema_adapter" in readme
+
+
+def test_direct_hf_sft_tutorial_documents_unified_local_conversation_source():
+    readme = (DIRECT_HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+
+    assert "LocalConversationDatasetSourceConfig" in readme
+    assert 'media_root="/data/vlm/media"' in readme
+    assert "vlm-local" in readme
+    assert "vlm-preloaded" in readme  # Migration guidance names the removed selector.

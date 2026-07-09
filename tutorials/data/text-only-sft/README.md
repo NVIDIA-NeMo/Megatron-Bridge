@@ -1,6 +1,6 @@
 # Text-only SFT Dataset Tutorial
 
-Choose this path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It also supports offline sequence packing and finite `num_epochs` training. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct Hugging Face SFT.
+Choose this transitional path when you have local text JSONL, or when you want to normalize a Hugging Face text source into reusable JSONL before SFT or PEFT. It also supports offline packed-Parquet processing and finite `num_epochs` training. The planned prepared `.bin`/`.idx` SFT workflow tracked by Issue #4664 will replace packed Parquet as the recommended scalable prepared-data path. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) if you are deciding between this path and direct SFT.
 
 You configure the data with `GPTSFTDatasetConfig`; the training framework uses `GPTSFTDatasetBuilder` to bind the tokenizer, materialize sources when needed, prepare offline packing, and construct `GPTSFTDataset` splits.
 

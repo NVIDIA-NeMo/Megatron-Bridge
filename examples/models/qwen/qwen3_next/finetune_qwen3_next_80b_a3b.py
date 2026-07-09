@@ -102,7 +102,7 @@ def parse_cli_args() -> Tuple[argparse.Namespace, list[str]]:
         "--data-path",
         type=str,
         default=None,
-        help="Path to JSON/JSONL dataset (preloaded conversation or legacy messages format).",
+        help="Path to a local JSON/JSONL conversation or legacy messages dataset.",
     )
     parser.add_argument(
         "--pretrained-checkpoint",
