@@ -16,7 +16,12 @@ import re
 
 import torch
 
-from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping, QKVMapping, ReplicatedMapping
+from megatron.bridge.models.conversion.param_mapping import (
+    MegatronParamMapping,
+    QKVGMapping,
+    QKVMapping,
+    ReplicatedMapping,
+)
 
 
 class AmaxMapping(ReplicatedMapping):
@@ -313,7 +318,7 @@ def derive_kv_bmm_amax_map(mappings: list[MegatronParamMapping]) -> list[Megatro
     derived_mappings = []
 
     for mapping in mappings:
-        if not isinstance(mapping, QKVMapping):
+        if not isinstance(mapping, (QKVGMapping, QKVMapping)):
             continue
         if mapping.allow_hf_name_mismatch:
             # Shared/tied-KV bridges may intentionally omit an HF projection.
