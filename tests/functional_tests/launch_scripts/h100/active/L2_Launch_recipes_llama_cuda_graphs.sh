@@ -16,6 +16,7 @@
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1"
+export NCCL_GRAPH_REGISTER=0
 
 # Run focused Llama CUDA Graph training tests on 2 GPUs. These are training
 # feature tests rather than performance recipe proxies.

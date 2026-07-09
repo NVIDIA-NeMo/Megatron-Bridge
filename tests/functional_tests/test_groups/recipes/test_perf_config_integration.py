@@ -80,7 +80,7 @@ def test_perf_recipe_precision_variants():
     fp8_config = llama3_8b_pretrain_8gpu_h100_fp8cs_config()
 
     assert bf16_config.mixed_precision.fp8 is None
-    assert fp8_config.mixed_precision.fp8 == "e4m3"
+    assert fp8_config.mixed_precision.fp8 == "hybrid"
     assert fp8_config.mixed_precision.fp8_recipe == "tensorwise"
 
 

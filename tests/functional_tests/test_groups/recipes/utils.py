@@ -36,7 +36,12 @@ def configure_ci_pretraining_dataset(config: ConfigContainer, test_data_root: Pa
     MoE performance proxies, so the production ``GPTDatasetConfig`` path can be
     exercised without adding a model-specific tokenizer or online dependency.
     """
-    data_prefix = Path(test_data_root) / "datasets" / "fim" / "fim_text_document"
+    # torchrun starts one independent pytest process per rank, so each process
+    # receives a different tmp_path_factory directory. MCore builds dataset
+    # indices on rank 0 only; all ranks therefore need to use rank 0's copy of
+    # the downloaded corpus and its shared index cache.
+    shared_test_data_root = Path(broadcast_path(test_data_root))
+    data_prefix = shared_test_data_root / "datasets" / "fim" / "fim_text_document"
     for suffix in (".bin", ".idx"):
         data_file = data_prefix.with_suffix(suffix)
         if not data_file.is_file():
@@ -45,6 +50,7 @@ def configure_ci_pretraining_dataset(config: ConfigContainer, test_data_root: Pa
     config.dataset.blend = None
     config.dataset.blend_per_split = None
     config.dataset.data_path = str(data_prefix)
+    config.dataset.split = "100,0,0"
     config.dataset.num_workers = 0
 
 
@@ -190,6 +196,9 @@ def _run_pretrain_without_checkpoint(
 
     # Pretrain configs use parameterless API - call without arguments
     config: ConfigContainer = config_func()
+    config.checkpoint.save = None
+    config.checkpoint.load = None
+    config.checkpoint.pretrained_checkpoint = None
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
     config.validation.eval_interval = 5
