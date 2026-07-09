@@ -139,6 +139,7 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.sequence_parallel is False
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False

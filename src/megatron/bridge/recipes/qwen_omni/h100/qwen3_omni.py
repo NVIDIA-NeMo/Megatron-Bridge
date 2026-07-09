@@ -33,8 +33,11 @@ if TYPE_CHECKING:
 _QWEN3_OMNI_HF_PATH = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
 
-def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
-    """Return a minimal thinker-only SFT config for Qwen3-Omni 30B-A3B."""
+def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
+    """Return an 8-GPU thinker-only SFT config for Qwen3-Omni 30B-A3B.
+
+    Recommended parallelism: TP=1, PP=1, EP=8.
+    """
 
     cfg = _sft_common_vlm()
 
@@ -45,7 +48,7 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
 
@@ -89,10 +92,10 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     return cfg
 
 
-def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
-    """Return a thinker-only SFT config for JSONL loaded through Hugging Face datasets."""
+def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
+    """Return an 8-GPU SFT config for JSONL loaded through Hugging Face datasets."""
 
-    cfg = qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config()
+    cfg = qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config()
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=cfg.model.seq_length,
         preprocessing=ChatSFTPreprocessingConfig(),
@@ -120,6 +123,6 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
 
 
 __all__ = [
-    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config",
-    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_hf_json_config",
+    "qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config",
+    "qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config",
 ]

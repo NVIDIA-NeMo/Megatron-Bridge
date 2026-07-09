@@ -137,10 +137,11 @@ Optional overrides:
 
 - `WORKSPACE` (default: `${PWD}/.cache/qwen3_omni_train`)
 - `RESULTS_DIR` / `LOG_DIR` (default: under `WORKSPACE`)
+- `NUM_GPUS` (default: `8`) and `EXPERT_MODEL_PARALLEL_SIZE` (default: `8`)
 - `VALID_JSONL` / `TEST_JSONL` for explicit local validation and test sources; unset values disable those splits
 - `RECIPE` (default: `qwen3_omni_30b_a3b_sft_hf_json_config`)
 
-The recipe uses `DirectHFSFTDatasetConfig` with `HFDatasetSourceConfig(path_or_dataset="json")`. Hugging Face datasets loads each JSONL split, after which the normal Direct SFT processor, collator, assistant loss-mask, and padding path applies. Media paths written into the rows must be resolvable by every worker.
+The full-SFT recipe defaults to an 8-GPU H100 topology (TP1/PP1/EP8); it is not a single-GPU full-SFT recipe. It uses `DirectHFSFTDatasetConfig` with `HFDatasetSourceConfig(path_or_dataset="json")`. Hugging Face datasets loads each JSONL split, after which the normal Direct SFT processor, collator, assistant loss-mask, and padding path applies. Media paths written into the rows must be resolvable by every worker.
 
 To apply the 4-node TP2/PP2/EP8/SP preset used in our 32-GPU validation:
 
