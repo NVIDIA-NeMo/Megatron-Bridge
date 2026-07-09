@@ -40,6 +40,7 @@ if HAS_NEMO_RUN:
     from utils.executors import (
         KUBEFLOW_NUMA_BINDING_ENV,
         PERF_ENV_VARS,
+        RECIPE_OWNED_PERF_ENV_NAMES,
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
         kubeflow_executor,
@@ -140,6 +141,23 @@ def test_kubeflow_numa_binding_is_disabled_by_default():
     """Normal Kubeflow jobs must retain the unmodified Torchrun launcher."""
     assert not _kubeflow_numa_binding_enabled({})
     assert not _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "0"})
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_flat_recipe_launch_removes_legacy_process_defaults(tmp_path):
+    """Flat recipes should supply managed process settings without executor shadowing."""
+    executor = slurm_executor(
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
+        recipe_owned_environment=True,
+    )
+
+    assert RECIPE_OWNED_PERF_ENV_NAMES.isdisjoint(executor.env_vars)
+    assert "TORCH_NCCL_HIGH_PRIORITY" in executor.env_vars
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

@@ -97,6 +97,17 @@ PERF_ENV_VARS = {
     "NCCL_GRAPH_REGISTER": "0",
 }
 
+# Flat performance recipes own these process settings. Library-recipe launches
+# retain the legacy executor defaults until their builders are migrated too.
+RECIPE_OWNED_PERF_ENV_NAMES = {
+    "NCCL_GRAPH_REGISTER",
+    "NCCL_NVLS_ENABLE",
+    "NVTE_NORM_BWD_USE_CUDNN",
+    "NVTE_NORM_FWD_USE_CUDNN",
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+}
+
 
 def slurm_executor(
     gpu: str,
@@ -120,6 +131,7 @@ def slurm_executor(
     gres: Optional[str] = None,
     packager: str = "git",
     enable_pct_binding: bool = True,
+    recipe_owned_environment: bool = False,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -131,6 +143,8 @@ def slurm_executor(
             Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
+        recipe_owned_environment: Remove process settings now composed by flat
+            performance recipes. Library recipes retain the legacy defaults.
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
@@ -151,6 +165,9 @@ def slurm_executor(
             )
 
     perf_env = PERF_ENV_VARS.copy()
+    if recipe_owned_environment:
+        for name in RECIPE_OWNED_PERF_ENV_NAMES:
+            perf_env.pop(name, None)
 
     if wandb_key is not None:
         perf_env["WANDB_API_KEY"] = wandb_key
