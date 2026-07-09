@@ -19,14 +19,14 @@ from megatron.bridge.training.config import ConfigContainer
 
 def set_common_recipe_environment_defaults(config: ConfigContainer) -> None:
     """Set common Transformer Engine and compilation environment defaults."""
-    config.env_vars.update(
-        {
-            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
-            "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
-            "TORCHINDUCTOR_WORKER_START": "fork",
-            "QUANTIZATION_TYPE_DEBUG": 1,
-        }
-    )
+    defaults = {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+        "QUANTIZATION_TYPE_DEBUG": 1,
+    }
+    for name, value in defaults.items():
+        config.env_vars.setdefault(name, value)
 
 
 def set_hybridep_environment_defaults(
@@ -42,9 +42,10 @@ def set_hybridep_environment_defaults(
         ranks_per_nvlink_domain: Number of HybridEP ranks in each NVLink domain.
         use_mnnvl: Whether the workload uses a multi-node NVLink domain.
     """
-    config.env_vars.update(
-        {
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": ranks_per_nvlink_domain,
-            "USE_MNNVL": int(use_mnnvl),
-        }
-    )
+    defaults = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": ranks_per_nvlink_domain,
+        "NVLINK_DOMAIN_SIZE": 72 if use_mnnvl else 8,
+        "USE_MNNVL": int(use_mnnvl),
+    }
+    for name, value in defaults.items():
+        config.env_vars.setdefault(name, value)
