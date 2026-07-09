@@ -36,12 +36,18 @@ except ImportError:
 
 if HAS_NEMO_RUN:
     from utils import executors as executors_module
-    from utils.executors import (
-        PERF_ENV_VARS,
-        RECIPE_OWNED_PERF_ENV_NAMES,
-        kubeflow_executor,
-        slurm_executor,
-    )
+    from utils.executors import PERF_ENV_VARS, kubeflow_executor, slurm_executor
+
+
+RECIPE_PROCESS_ENV_NAMES = {
+    "NCCL_GRAPH_REGISTER",
+    "NCCL_NVLS_ENABLE",
+    "NVTE_NORM_BWD_USE_CUDNN",
+    "NVTE_NORM_FWD_USE_CUDNN",
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+    "TORCH_NCCL_HIGH_PRIORITY",
+}
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -76,8 +82,8 @@ def test_custom_env_vars_in_container_env(tmp_path):
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-def test_flat_recipe_launch_removes_legacy_process_defaults(tmp_path):
-    """Flat recipes should supply managed process settings without executor shadowing."""
+def test_executor_never_supplies_recipe_process_defaults(tmp_path):
+    """Flat and library recipes should supply process settings without executor shadowing."""
     executor = slurm_executor(
         gpu="h100",
         account="test",
@@ -85,11 +91,10 @@ def test_flat_recipe_launch_removes_legacy_process_defaults(tmp_path):
         log_dir=str(tmp_path),
         nodes=1,
         num_gpus_per_node=8,
-        recipe_owned_environment=True,
     )
 
-    assert RECIPE_OWNED_PERF_ENV_NAMES.isdisjoint(executor.env_vars)
-    assert "TORCH_NCCL_HIGH_PRIORITY" in executor.env_vars
+    assert RECIPE_PROCESS_ENV_NAMES.isdisjoint(executor.env_vars)
+    assert "TRANSFORMERS_OFFLINE" in executor.env_vars
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

@@ -450,7 +450,6 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
-    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
     num_gpus: int,
@@ -604,9 +603,6 @@ def main(
         ]
     )
 
-    if nccl_ub and use_recipes:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
-
     if kubeflow_namespace:
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
@@ -661,7 +657,6 @@ def main(
             wandb_key=wandb_key,
             packager=packager,
             enable_pct_binding=enable_pct_binding,
-            recipe_owned_environment=not use_recipes,
         )
 
     plugins = []
@@ -1004,7 +999,6 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
-        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,

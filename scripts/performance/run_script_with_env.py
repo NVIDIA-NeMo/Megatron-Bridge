@@ -28,7 +28,9 @@ from perf_plugins import PerfEnvPlugin
 from utils.utils import (
     _workload_base_config_from_recipe,
     add_library_recipe_environment_variables,
+    apply_library_environment_overrides,
     explicit_environment_override_names,
+    finalize_library_environment_overrides,
     get_library_recipe,
     get_perf_recipe_by_name,
 )
@@ -49,12 +51,11 @@ def _process_library_hydra_overrides(recipe, cli_overrides: list[str]):
 
 
 def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
-    """Mirror run_recipe's user-then-Hydra override order for environment derivation."""
-    if args.expert_model_parallel_size:
-        recipe.model.expert_model_parallel_size = args.expert_model_parallel_size
-    if not cli_overrides:
-        return recipe
-    return _process_library_hydra_overrides(recipe, cli_overrides)
+    """Mirror env-relevant user overrides before applying Hydra overrides."""
+    recipe = apply_library_environment_overrides(recipe, args)
+    if cli_overrides:
+        recipe = _process_library_hydra_overrides(recipe, cli_overrides)
+    return finalize_library_environment_overrides(recipe)
 
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
