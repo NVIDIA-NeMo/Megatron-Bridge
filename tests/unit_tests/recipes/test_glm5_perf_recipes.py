@@ -89,6 +89,9 @@ def _build_recipe(recipe_func: Callable[[], ConfigContainer], monkeypatch: pytes
 
 def _dsa_source_layer_id(layer_id: int, *, skip_topk_offset: int, topk_freq: int) -> int:
     """Return the local layer ID that computes the shared DSA top-k indices."""
+    # Mirror the MCore DSA sharing contract without importing its private helper:
+    # layers before the sharing offset compute their own top-k indices, and later
+    # layers share with the first layer in their topk_freq group.
     layer_number = layer_id + 1
     sharing_offset = max(skip_topk_offset, 1)
     if layer_number <= sharing_offset:

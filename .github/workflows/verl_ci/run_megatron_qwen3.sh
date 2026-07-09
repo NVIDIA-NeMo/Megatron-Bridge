@@ -39,6 +39,20 @@ python3 examples/data_preprocess/gsm8k.py --local_dataset_path "${HOME}/models/h
 cleanup
 
 ray stop --force
+ALL_OFFLOAD=True \
+VAL_BEFORE_TRAIN=True \
+TEST_FREQ=1 \
+SAVE_FREQ=1 \
+LR_WARMUP_STEPS=1 \
+TOTAL_TRAIN_STEPS=2 \
+COMMON_VPP=2 \
+MODEL_ID=Qwen/Qwen3-0.6B \
+USE_MBRIDGE=True \
+VANILLA_MBRIDGE=False \
+VALUE_VANILLA_MBRIDGE=False \
+bash "${TRAINER_SCRIPT}"
+
+ray stop --force
 ALL_OFFLOAD=False \
 USE_MBRIDGE=True \
 VANILLA_MBRIDGE=False \
