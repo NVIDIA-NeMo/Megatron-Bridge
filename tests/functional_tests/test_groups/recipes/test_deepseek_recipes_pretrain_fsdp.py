@@ -25,13 +25,14 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config
+from megatron.bridge.training.config import ConfigContainer
 from tests.functional_tests.test_groups.recipes.utils import (
     configure_ci_pretraining_dataset,
     run_perf_recipe_proxy_test,
 )
 
 
-def _deepseek_v3_fsdp_4gpu_compat_config():
+def _deepseek_v3_fsdp_4gpu_compat_config() -> ConfigContainer:
     config = deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config()
 
     # Compact-only overrides: retain the production FSDP, MXFP8, HybridEP,
@@ -75,7 +76,7 @@ class TestDeepSeekFSDPPerfProxy:
         os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
         os.environ["NCCL_ALGO"] = "Ring"
 
-        def proxy_config():
+        def proxy_config() -> ConfigContainer:
             config = _deepseek_v3_fsdp_4gpu_compat_config()
             configure_ci_pretraining_dataset(config, ensure_test_data)
             return config
@@ -86,7 +87,6 @@ class TestDeepSeekFSDPPerfProxy:
             config_overrides={
                 "model": {"seq_length": 4096},
                 "train": {"train_iters": 50, "global_batch_size": 4},
-                "validation": {"eval_global_batch_size": 4, "eval_interval": 10, "eval_iters": 2},
                 "dataset": {"seq_length": 4096},
             },
         )
