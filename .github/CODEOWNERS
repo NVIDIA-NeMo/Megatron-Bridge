@@ -9,5 +9,3 @@ scripts/performance/argument_parser.py @nvidia-nemo/automation @malay-nagda @erh
 scripts/performance/setup_experiment.py @nvidia-nemo/automation @malay-nagda @erhoo82
 scripts/performance/run_script.py @nvidia-nemo/automation @malay-nagda @erhoo82
 scripts/performance/run_recipe.py @nvidia-nemo/automation @malay-nagda @erhoo82
-scripts/training/recipe_runner.py @nvidia-nemo/automation @malay-nagda @erhoo82
-scripts/training/run_recipe.py @nvidia-nemo/automation @malay-nagda @erhoo82
