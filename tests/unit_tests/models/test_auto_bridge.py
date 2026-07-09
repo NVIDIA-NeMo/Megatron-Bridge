@@ -121,6 +121,7 @@ class TestAutoBridge:
         config.hidden_size = 2048
         config.num_hidden_layers = 16
         config.num_attention_heads = 32
+        config.auto_map = None
         return config
 
     @pytest.fixture
@@ -349,14 +350,20 @@ class TestAutoBridge:
 
             assert AutoBridge.can_handle("bert-base-uncased") is False
 
-    def test_can_handle_masked_lm_architecture(self, bert_masked_lm_config):
-        """Test can_handle returns True for '*ForMaskedLM' architectures."""
+    def test_can_handle_masked_lm_architecture_and_no_registered_bridge(self, bert_masked_lm_config):
+        """'*ForMaskedLM' passes the allowlist, but can_handle still returns False without a registered bridge.
+
+        BERT has no registered MegatronModelBridge yet, so even though the architecture is
+        allowlisted (see SUPPORTED_HF_ARCHITECTURES), can_handle must not report True for a model
+        that from_hf_pretrained would then fail to load. Once a BERT bridge is registered, this
+        should be updated to assert True.
+        """
         with patch(
             "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
         ) as mock_safe_load_config:
             mock_safe_load_config.return_value = bert_masked_lm_config
 
-            assert AutoBridge.can_handle("bert-base-uncased") is True
+            assert AutoBridge.can_handle("bert-base-uncased") is False
 
     def test_can_handle_invalid_path(self):
         """Test can_handle returns False for invalid paths."""

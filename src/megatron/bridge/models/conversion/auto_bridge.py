@@ -539,7 +539,11 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         try:
             config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code)
-            return cls.supports(config)
+            # Reuse the same registry check as from_hf_pretrained (allowlisted
+            # architecture suffix *and* a registered MegatronModelBridge) so this
+            # preflight can't report True for a model that would then fail to load.
+            cls._validate_config(config, str(path))
+            return True
         except Exception:
             return False
 
