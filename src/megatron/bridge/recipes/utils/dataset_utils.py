@@ -169,7 +169,8 @@ def apply_dataset_override(
         packed_sequence: Whether to enable packed sequences.
         seq_length: Explicit sequence length (None = use model's or default 4096).
         cli_overrides: Mutable list of Hydra-style CLI overrides. For ``llm-finetune``,
-            ``dataset.hf_dataset.dataset_name`` is extracted and consumed here to select the preset.
+            ``dataset.hf_dataset.dataset_name`` is extracted to select the preset. For ``vlm-local``,
+            local split paths and media roots are extracted to construct source configs before remaining overrides.
 
     Returns:
         The modified ConfigContainer.
@@ -269,13 +270,37 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "vlm-local":
+        train_path = extract_and_remove_override(cli_overrides, "dataset.source.path")
+        if not train_path:
+            raise ValueError("vlm-local requires dataset.source.path=<json-or-jsonl-path>.")
+        media_root = extract_and_remove_override(cli_overrides, "dataset.source.media_root")
+        validation_path = extract_and_remove_override(cli_overrides, "dataset.validation_source.path")
+        validation_media_root = extract_and_remove_override(
+            cli_overrides,
+            "dataset.validation_source.media_root",
+            default=media_root,
+        )
+        test_path = extract_and_remove_override(cli_overrides, "dataset.test_source.path")
+        test_media_root = extract_and_remove_override(
+            cli_overrides,
+            "dataset.test_source.media_root",
+            default=media_root,
+        )
         config.dataset = DirectHFSFTDatasetConfig(
             seq_length=resolved_seq_length,
             preprocessing=ChatSFTPreprocessingConfig(),
             hf_processor_path=None,
-            source=LocalConversationDatasetSourceConfig(path=None),
-            do_validation=False,
-            do_test=False,
+            source=LocalConversationDatasetSourceConfig(path=train_path, media_root=media_root),
+            validation_source=(
+                LocalConversationDatasetSourceConfig(path=validation_path, media_root=validation_media_root)
+                if validation_path
+                else None
+            ),
+            test_source=(
+                LocalConversationDatasetSourceConfig(path=test_path, media_root=test_media_root) if test_path else None
+            ),
+            do_validation=validation_path is not None,
+            do_test=test_path is not None,
             dataloader_type="single",
             num_workers=2,
             data_sharding=True,

@@ -427,11 +427,31 @@ class TestApplyDatasetOverride:
         from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, LocalConversationDatasetSourceConfig
 
         config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-local", seq_length=2048)
+        overrides = [
+            "dataset.source.path=/data/train.jsonl",
+            "dataset.source.media_root=/data/media",
+            "dataset.validation_source.path=/data/validation.json",
+            "train.train_iters=10",
+        ]
+        result = apply_dataset_override(config, "vlm-local", seq_length=2048, cli_overrides=overrides)
         assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
         assert isinstance(result.dataset.source, LocalConversationDatasetSourceConfig)
-        assert result.dataset.source.path is None
+        assert isinstance(result.dataset.validation_source, LocalConversationDatasetSourceConfig)
+        assert result.dataset.source.path == "/data/train.jsonl"
+        assert result.dataset.source.media_root == "/data/media"
+        assert result.dataset.validation_source.path == "/data/validation.json"
+        assert result.dataset.validation_source.media_root == "/data/media"
+        assert result.dataset.test_source is None
+        assert result.dataset.do_validation is True
+        assert result.dataset.do_test is False
         assert result.dataset.seq_length == 2048
+        assert overrides == ["train.train_iters=10"]
+
+    def test_vlm_local_requires_train_source(self):
+        config = _make_mock_config()
+
+        with pytest.raises(ValueError, match="requires dataset.source.path"):
+            apply_dataset_override(config, "vlm-local", seq_length=2048)
 
     # -- Unknown type ---------------------------------------------------------
 
