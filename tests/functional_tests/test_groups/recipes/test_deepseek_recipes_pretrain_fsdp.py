@@ -25,7 +25,10 @@ import pytest
 import torch
 
 from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config
-from tests.functional_tests.test_groups.recipes.utils import run_perf_recipe_proxy_test
+from tests.functional_tests.test_groups.recipes.utils import (
+    configure_ci_pretraining_dataset,
+    run_perf_recipe_proxy_test,
+)
 
 
 def _deepseek_v3_fsdp_4gpu_compat_config():
@@ -56,7 +59,7 @@ class TestDeepSeekFSDPPerfProxy:
     """Exercise the canonical DeepSeek FSDP performance recipe on compact CI topology."""
 
     @pytest.mark.run_only_on("GPU")
-    def test_gb300_recipe_on_gb200_compat_proxy(self):
+    def test_gb300_recipe_on_gb200_compat_proxy(self, ensure_test_data):
         if torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("The DeepSeek FSDP MXFP8 compatibility proxy requires Blackwell GPUs.")
 
@@ -72,8 +75,13 @@ class TestDeepSeekFSDPPerfProxy:
         os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
         os.environ["NCCL_ALGO"] = "Ring"
 
+        def proxy_config():
+            config = _deepseek_v3_fsdp_4gpu_compat_config()
+            configure_ci_pretraining_dataset(config, ensure_test_data)
+            return config
+
         run_perf_recipe_proxy_test(
-            _deepseek_v3_fsdp_4gpu_compat_config,
+            proxy_config,
             "deepseek_v3_gb300_fsdp_on_gb200_compat_proxy",
             config_overrides={
                 "model": {"seq_length": 4096},
