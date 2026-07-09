@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -29,6 +30,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 8× GB200, NVFP4."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -54,6 +56,7 @@ def gpt_oss_20b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 72× GB200, NVFP4."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -79,6 +82,7 @@ def gpt_oss_20b_pretrain_72gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 20B pretrain: 512× GB200, MXFP8."""
     cfg = gpt_oss_20b_pretrain_config()
@@ -106,6 +110,7 @@ def gpt_oss_20b_pretrain_512gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× GB200, BF16, GBS=1280."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -131,6 +136,7 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× GB200, FP8-MX."""
     cfg = gpt_oss_120b_pretrain_config()

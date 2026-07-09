@@ -20,7 +20,9 @@ credentials, cache locations, and scheduler settings remain executor-owned.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, MutableMapping, Set
+import re
+from collections.abc import Callable, Mapping, MutableMapping, Set
+from functools import wraps
 
 from megatron.bridge.training.config import ConfigContainer
 
@@ -31,6 +33,81 @@ _HYBRIDEP_ENV_NAMES = {
     "NVLINK_DOMAIN_SIZE",
     "USE_MNNVL",
 }
+_MANAGED_PERF_ENV_NAMES = _HYBRIDEP_ENV_NAMES | {
+    "CUDA_DEVICE_MAX_CONNECTIONS",
+    "CUDNNFE_CLUSTER_OVERLAP_MARGIN",
+    "NCCL_CTA_POLICY",
+    "NCCL_GRAPH_REGISTER",
+    "NCCL_IGNORE_CPU_AFFINITY",
+    "NCCL_NVLS_ENABLE",
+    "NCCL_P2P_NET_CHUNKSIZE",
+    "NVTE_ALLOW_NONDETERMINISTIC_ALGO",
+    "NVTE_BWD_LAYERNORM_SM_MARGIN",
+    "NVTE_CPU_OFFLOAD_V1",
+    "NVTE_CUTEDSL_FUSED_GROUPED_MLP",
+    "NVTE_FWD_LAYERNORM_SM_MARGIN",
+    "NVTE_NORM_BWD_USE_CUDNN",
+    "NVTE_NORM_FWD_USE_CUDNN",
+    "NVTE_USE_FAST_MATH",
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+}
+
+_PERF_RECIPE_NAME_PATTERN = re.compile(
+    r"^(?P<model_recipe_name>.+)_(?P<train_task>pretrain|sft|peft)_\d+gpu_"
+    r"(?P<gpu>[a-z0-9]+)_(?P<precision>bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config$"
+)
+_PRECISION_NAMES = {
+    "bf16": "bf16",
+    "fp8cs": "fp8_cs",
+    "fp8mx": "fp8_mx",
+    "fp8sc": "fp8_sc",
+    "nvfp4": "nvfp4",
+}
+
+
+def perf_recipe_environment(
+    *, model_family_name: str
+) -> Callable[[Callable[[], ConfigContainer]], Callable[[], ConfigContainer]]:
+    """Finalize process environment settings on a flat recipe builder.
+
+    Canonical flat recipe function names already encode the model recipe,
+    task, GPU, and precision. Parsing that metadata here keeps each decorated
+    builder self-describing without duplicating those literals in a raw env
+    dictionary. Launchers reapply the same composition after CLI overrides.
+
+    Args:
+        model_family_name: Family package containing the recipe builder.
+
+    Returns:
+        A decorator that finalizes ``ConfigContainer.env_vars``.
+
+    Raises:
+        ValueError: If a decorated function does not use the canonical flat
+            performance recipe naming convention.
+    """
+
+    def decorate(recipe_fn: Callable[[], ConfigContainer]) -> Callable[[], ConfigContainer]:
+        match = _PERF_RECIPE_NAME_PATTERN.fullmatch(recipe_fn.__name__)
+        if match is None:
+            raise ValueError(f"Invalid flat performance recipe name: {recipe_fn.__name__!r}.")
+
+        @wraps(recipe_fn)
+        def wrapped() -> ConfigContainer:
+            config = recipe_fn()
+            apply_perf_recipe_environment(
+                config,
+                model_family_name=model_family_name,
+                model_recipe_name=match["model_recipe_name"],
+                gpu=match["gpu"],
+                compute_dtype=_PRECISION_NAMES[match["precision"]],
+                train_task=match["train_task"],
+            )
+            return config
+
+        return wrapped
+
+    return decorate
 
 
 def _set_derived(
@@ -116,6 +193,11 @@ def apply_perf_recipe_environment(
     model = config.model
     ddp = config.ddp
     comm_overlap = getattr(config, "comm_overlap", None)
+
+    # Builders are finalized once when called directly and again after runner
+    # overrides. Clear prior derived values so a topology, precision, graph,
+    # or feature override cannot leave stale environment settings behind.
+    _remove_derived(env_vars, _MANAGED_PERF_ENV_NAMES, protected)
 
     backend = getattr(model, "moe_flex_dispatcher_backend", None)
     tp_size = getattr(model, "tensor_model_parallel_size", 1) or 1

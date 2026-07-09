@@ -15,11 +15,13 @@
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
 
+@perf_recipe_environment(model_family_name="glm_moe_dsa")
 def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.1 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()
@@ -92,6 +94,7 @@ def glm51_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="glm_moe_dsa")
 def glm52_sft_416gpu_h100_bf16_config() -> ConfigContainer:
     """GLM-5.2 SFT: 416x H100, BF16, 128K packed THD, TP=1, PP=13, CP=32."""
     cfg = _sft_common()

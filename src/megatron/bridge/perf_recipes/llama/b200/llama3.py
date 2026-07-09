@@ -13,6 +13,7 @@
 # limitations under the License.
 """B200 performance recipes for Llama 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -28,6 +29,7 @@ from megatron.bridge.perf_recipes.llama.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× B200, BF16, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -55,6 +57,7 @@ def llama3_8b_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× B200, FP8 current-scaling, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -82,6 +85,7 @@ def llama3_8b_pretrain_8gpu_b200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× B200, MXFP8, CUDA graph local."""
     cfg = llama3_8b_pretrain_config()
@@ -107,6 +111,7 @@ def llama3_8b_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× B200, NVFP4."""
     cfg = llama3_8b_pretrain_config()
@@ -128,6 +133,7 @@ def llama3_8b_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× B200, BF16, TP=2 PP=4 CP=2, CUDA graph local, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -156,6 +162,7 @@ def llama3_70b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× B200, FP8 current-scaling, FSDP, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -193,6 +200,7 @@ def llama3_70b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× B200, MXFP8, TP=2 PP=4, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -214,6 +222,7 @@ def llama3_70b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     """Llama3 70B pretrain: 64× B200, NVFP4, TP=2 PP=4, GBS=256."""
     cfg = llama3_70b_pretrain_config()
@@ -236,6 +245,7 @@ def llama3_70b_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_b200_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× B200, BF16, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -269,6 +279,7 @@ def llama3_70b_peft_8gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_b200_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× B200, FP8 current-scaling, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -304,6 +315,7 @@ def llama3_70b_peft_8gpu_b200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_peft_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× B200, MXFP8, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
@@ -337,11 +349,13 @@ def llama3_70b_peft_8gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 64× B200, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_b200_bf16_config(), 1024)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 64× B200, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(llama3_8b_pretrain_8gpu_b200_fp8cs_config(), 1024)

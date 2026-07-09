@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Llama 3.1."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
     _enable_overlap_param_gather_with_optimizer_step,
@@ -25,6 +26,7 @@ from megatron.bridge.perf_recipes.llama.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 1024× H100, BF16, TP=8 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
@@ -50,6 +52,7 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 1024× H100, FP8 current-scaling, TP=8 PP=8 CP=2."""
     cfg = llama31_405b_pretrain_config()
@@ -75,11 +78,13 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_bf16_config(), 768)
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama31_405b_pretrain_512gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_fp8cs_config(), 768)
