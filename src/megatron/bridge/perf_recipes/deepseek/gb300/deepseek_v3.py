@@ -24,8 +24,10 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, BF16."""
     cfg = deepseek_v3_pretrain_config()
@@ -56,6 +58,7 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -84,6 +87,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -112,6 +116,7 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
@@ -139,6 +144,7 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, BF16, Megatron FSDP."""
     cfg = deepseek_v3_pretrain_config()
@@ -147,6 +153,7 @@ def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× GB300, MXFP8, Megatron FSDP."""
     cfg = deepseek_v3_pretrain_config()
@@ -161,6 +168,7 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, MXFP8, large-scale proxy (BF16_V1 layout, GBS=256)."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_bf16_config()

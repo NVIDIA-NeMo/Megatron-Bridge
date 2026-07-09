@@ -13,6 +13,7 @@
 # limitations under the License.
 """R100 performance recipes for Llama 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -22,6 +23,7 @@ from megatron.bridge.perf_recipes.llama.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_r100_bf16_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, BF16."""
     cfg = llama3_8b_pretrain_config()
@@ -48,6 +50,7 @@ def llama3_8b_pretrain_8gpu_r100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_r100_fp8cs_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, FP8 current-scaling."""
     cfg = llama3_8b_pretrain_config()
@@ -74,6 +77,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_r100_fp8mx_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, MXFP8."""
     cfg = llama3_8b_pretrain_config()
@@ -100,6 +104,7 @@ def llama3_8b_pretrain_8gpu_r100_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_r100_nvfp4_config() -> ConfigContainer:
     """Llama3 8B pretrain: 8× R100, NVFP4."""
     cfg = llama3_8b_pretrain_config()

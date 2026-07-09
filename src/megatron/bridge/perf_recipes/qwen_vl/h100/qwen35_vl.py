@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Qwen3.5-VL."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.qwen_vl.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -27,6 +28,7 @@ from megatron.bridge.perf_recipes.qwen_vl.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, BF16, PP=2 VP=12 EP=8."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
@@ -61,6 +63,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 35B-A3B pretrain: 16× H100, FP8 current-scaling, PP=2 VP=12."""
     cfg = qwen35_vl_35b_a3b_pretrain_mock_config()
@@ -92,6 +95,7 @@ def qwen35_vl_35b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 128× H100, BF16, TP=2 PP=8 VP=2 EP=16."""
     cfg = qwen35_vl_122b_a10b_pretrain_mock_config()
@@ -123,6 +127,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 122B-A10B pretrain: 128× H100, FP8 current-scaling."""
     cfg = qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_config()
@@ -130,6 +135,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen35_vl_397b_a17b_pretrain_mock_config()
@@ -161,6 +167,7 @@ def qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_397b_a17b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3.5-VL 397B-A17B pretrain: 256× H100, FP8 current-scaling."""
     cfg = qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config()

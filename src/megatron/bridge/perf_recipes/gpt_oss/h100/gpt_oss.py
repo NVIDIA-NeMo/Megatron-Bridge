@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
     _benchmark_common,
@@ -21,6 +22,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× H100, BF16, PP=4 EP=8, GBS=1280."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -42,6 +44,7 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× H100, FP8-CS."""
     cfg = gpt_oss_120b_pretrain_config()

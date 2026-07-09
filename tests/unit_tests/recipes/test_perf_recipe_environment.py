@@ -14,11 +14,19 @@
 
 """Tests for feature-derived flat performance recipe environment settings."""
 
+import ast
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
+from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment, perf_recipe_environment
+
+
+_CANONICAL_RECIPE_NAME = re.compile(
+    r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
+)
 
 
 def _config(
@@ -187,6 +195,70 @@ def test_nccl_ub_environment_replaces_allocator_and_nvls_defaults():
     assert "NCCL_GRAPH_REGISTER" not in env
     assert env["NCCL_NVLS_ENABLE"] == 1
     assert env["NCCL_CTA_POLICY"] == 1
+
+
+def test_recipe_decorator_finalizes_a_direct_builder():
+    config = _config(backend="hybridep", ep=32)
+
+    @perf_recipe_environment(model_family_name="qwen")
+    def qwen3_30b_a3b_pretrain_32gpu_gb200_fp8mx_config():
+        return config
+
+    resolved = qwen3_30b_a3b_pretrain_32gpu_gb200_fp8mx_config()
+
+    assert resolved is config
+    assert resolved.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert resolved.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+
+
+def test_reapplying_environment_removes_stale_derived_values():
+    config = _config(
+        backend="hybridep",
+        ep=32,
+        cuda_graph_impl="full_iteration",
+        cutedsl=True,
+        moe_a2a_overlap=True,
+        nccl_ub=True,
+    )
+    _apply(config, gpu="gb200", dtype="nvfp4")
+
+    config.model.moe_flex_dispatcher_backend = None
+    config.model.cuda_graph_impl = None
+    config.model.use_transformer_engine_op_fuser = False
+    config.ddp.nccl_ub = False
+    env = _apply(config, gpu="h100", dtype="bf16")
+
+    assert "NVLINK_DOMAIN_SIZE" not in env
+    assert "NVTE_CUTEDSL_FUSED_GROUPED_MLP" not in env
+    assert "CUDNNFE_CLUSTER_OVERLAP_MARGIN" not in env
+    assert "NCCL_CTA_POLICY" not in env
+    assert "NVTE_USE_FAST_MATH" not in env
+    assert env["NCCL_NVLS_ENABLE"] == 0
+    assert env["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
+
+
+def test_every_flat_recipe_builder_is_explicitly_decorated():
+    recipe_root = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
+    undecorated = []
+    families = set()
+
+    for path in recipe_root.glob("*/*/*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
+                continue
+            families.add(path.relative_to(recipe_root).parts[0])
+            is_decorated = any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Name)
+                and decorator.func.id == "perf_recipe_environment"
+                for decorator in node.decorator_list
+            )
+            if not is_decorated:
+                undecorated.append(f"{path.relative_to(recipe_root)}:{node.name}")
+
+    assert not undecorated
+    assert families >= {"deepseek", "gpt_oss", "kimi", "llama", "nemotronh", "qwen", "qwen_vl", "wan"}
 
 
 @pytest.mark.parametrize(

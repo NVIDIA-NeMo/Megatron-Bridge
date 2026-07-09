@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB300 performance recipes for Qwen3 MoE."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -27,6 +28,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× GB300, BF16, EP=64."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -61,6 +63,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× GB300, FP8 current-scaling, EP=64."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -95,6 +98,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 64× GB300, MXFP8, EP=64."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -125,6 +129,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB300, BF16, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -159,6 +164,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB300, FP8 current-scaling, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -193,6 +199,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 8× GB300, MXFP8, EP=8."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -223,6 +230,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, BF16, PP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -257,6 +265,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, FP8 current-scaling, PP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -291,6 +300,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× GB300, MXFP8, PP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -321,6 +331,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB300, FP8-MX, large-scale proxy (GBS=512)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config()
@@ -328,6 +339,7 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigCo
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 64× GB300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_64gpu_gb300_fp8cs_config()
@@ -335,6 +347,7 @@ def qwen3_235b_a22b_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× GB300, NVFP4 (same layout as FP8-CS)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8cs_config()
@@ -342,16 +355,19 @@ def qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32× GB300, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config(), 2048)
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32× GB300, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config(), 2048)
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB300, BF16, PP=2 VP=4 EP=32, hybridep."""
     cfg = qwen3_next_80b_a3b_pretrain_config()
@@ -387,6 +403,7 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 64× GB300, MXFP8 (same layout as BF16)."""
     cfg = qwen3_next_80b_a3b_pretrain_64gpu_gb300_bf16_config()

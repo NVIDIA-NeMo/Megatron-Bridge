@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Qwen3 MoE."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
@@ -26,6 +27,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× H100, BF16, EP=16."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -61,6 +63,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× H100, FP8 current-scaling, EP=16."""
     cfg = qwen3_30b_a3b_pretrain_config()
@@ -93,6 +96,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -131,6 +135,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× H100, FP8 current-scaling, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()
@@ -169,6 +174,7 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config() -> ConfigContainer:
     """Qwen3 235B A22B pretrain: 256× H100, FP8-CS, large-scale proxy (GBS=512)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_config()
@@ -176,16 +182,19 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config() -> ConfigCon
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 64× H100, BF16, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config(), 4096)
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_30b_a3b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 64× H100, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config(), 4096)
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 128× H100, BF16, EP=128, MBS=1."""
     cfg = qwen3_next_80b_a3b_pretrain_config()
@@ -214,6 +223,7 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="qwen")
 def qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
     """Qwen3 Next 80B-A3B pretrain: 128× H100, FP8-CS (same layout as BF16)."""
     cfg = qwen3_next_80b_a3b_pretrain_128gpu_h100_bf16_config()
