@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for NemotronH and Nemotron 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
     _benchmark_common,
@@ -22,6 +23,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× H100, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -42,6 +44,7 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -71,6 +74,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, FP8 current-scaling, recompute."""
     cfg = nemotron_3_nano_pretrain_config()

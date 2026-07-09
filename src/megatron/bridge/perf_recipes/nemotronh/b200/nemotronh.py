@@ -13,6 +13,7 @@
 # limitations under the License.
 """B200 performance recipes for NemotronH and Nemotron 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
     ConfigContainer,
@@ -28,6 +29,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× B200, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -48,6 +50,7 @@ def nemotronh_56b_pretrain_64gpu_b200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, BF16."""
     cfg = nemotron_3_super_pretrain_config()
@@ -75,6 +78,7 @@ def nemotron_3_super_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, MXFP8."""
     cfg = nemotron_3_super_pretrain_config()
@@ -103,6 +107,7 @@ def nemotron_3_super_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× B200, NVFP4."""
     cfg = nemotron_3_super_pretrain_config()
@@ -132,6 +137,7 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -159,6 +165,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, MXFP8."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -186,6 +193,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× B200, NVFP4."""
     cfg = nemotron_3_nano_pretrain_config()
@@ -213,6 +221,7 @@ def nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 256× B200, BF16 (same layout as FP8-CS)."""
     cfg = nemotronh_56b_pretrain_64gpu_b200_fp8cs_config()
@@ -220,6 +229,7 @@ def nemotronh_56b_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 256× B200, FP8 current-scaling, legacy-scaled GBS."""
     return _with_global_batch_size(nemotronh_56b_pretrain_64gpu_b200_fp8cs_config(), 768)

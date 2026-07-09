@@ -29,8 +29,10 @@ from megatron.bridge.perf_recipes.deepseek.gb300.deepseek_v3 import (
     deepseek_v3_pretrain_256gpu_gb300_fp8mx_config,
     deepseek_v3_pretrain_256gpu_gb300_nvfp4_config,
 )
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, BF16."""
     cfg = deepseek_v3_pretrain_config()
@@ -61,6 +63,7 @@ def deepseek_v3_pretrain_128gpu_vr200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -91,6 +94,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, MXFP8."""
     cfg = deepseek_v3_pretrain_config()
@@ -118,6 +122,7 @@ def deepseek_v3_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 128× VR200, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
@@ -147,21 +152,25 @@ def deepseek_v3_pretrain_128gpu_vr200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, BF16 (alias of GB300)."""
     return deepseek_v3_pretrain_256gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-CS (alias of GB300)."""
     return deepseek_v3_pretrain_256gpu_gb300_fp8cs_config()
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
     return deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_vr200_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× VR200, NVFP4 (alias of GB300)."""
     return deepseek_v3_pretrain_256gpu_gb300_nvfp4_config()

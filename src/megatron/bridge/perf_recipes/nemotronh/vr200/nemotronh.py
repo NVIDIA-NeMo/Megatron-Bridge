@@ -13,6 +13,7 @@
 # limitations under the License.
 """VR200 performance recipes for NemotronH and Nemotron 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
 )
@@ -26,31 +27,37 @@ from megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh import (
 )
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, BF16 (alias of GB300)."""
     return nemotron_3_nano_pretrain_8gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     return nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× VR200, NVFP4 (alias of GB300)."""
     return nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config()
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, BF16 (alias of GB300)."""
     return nemotron_3_super_pretrain_64gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, FP8-MX (alias of GB300)."""
     return nemotron_3_super_pretrain_64gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="nemotronh")
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 (alias of GB300)."""
     return nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config()

@@ -149,38 +149,6 @@ def test_workload_base_config_copies_recipe_environment():
     assert workload_config.env_vars is not recipe_env
 
 
-def test_flat_recipe_resolver_applies_package_environment(monkeypatch):
-    """Resolved flat recipes should carry package-owned env settings by default."""
-    recipe = SimpleNamespace(env_vars={})
-
-    def recipe_fn():
-        return recipe
-
-    recipe_fn.__module__ = "megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe"
-    calls = []
-
-    def apply_environment(config, **kwargs):
-        calls.append((config, kwargs))
-        config.env_vars["ENV_APPLIED"] = 1
-        return config
-
-    monkeypatch.setattr(utils, "find_perf_recipe", lambda name: recipe_fn)
-    monkeypatch.setattr(utils, "_apply_flat_perf_recipe_environment", apply_environment)
-
-    resolved = utils.get_perf_recipe_by_name(
-        model_recipe_name="qwen3_30b_a3b",
-        task="pretrain",
-        num_gpus=8,
-        gpu="gb200",
-        precision="bf16",
-    )
-
-    assert resolved is recipe
-    assert resolved.env_vars["ENV_APPLIED"] == 1
-    assert calls[0][1]["model_recipe_name"] == "qwen3_30b_a3b"
-    assert calls[0][1]["gpu"] == "gb200"
-
-
 def test_explicit_environment_map_protects_values_equal_to_recipe_defaults():
     """Explicit same-valued topology settings must still beat derived topology."""
     base_env = {"NVLINK_DOMAIN_SIZE": 8, "USE_MNNVL": 0}

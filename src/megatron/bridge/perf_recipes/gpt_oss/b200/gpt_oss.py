@@ -13,6 +13,7 @@
 # limitations under the License.
 """B200 performance recipes for GPT-OSS."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     ConfigContainer,
     _benchmark_common,
@@ -21,6 +22,7 @@ from megatron.bridge.perf_recipes.gpt_oss.common import (
 )
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B200, BF16, GBS=1280."""
     cfg = gpt_oss_120b_pretrain_config()
@@ -42,6 +44,7 @@ def gpt_oss_120b_pretrain_64gpu_b200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     """GPT-OSS 120B pretrain: 64× B200, FP8-MX."""
     cfg = gpt_oss_120b_pretrain_config()

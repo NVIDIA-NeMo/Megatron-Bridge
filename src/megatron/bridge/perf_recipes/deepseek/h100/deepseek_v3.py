@@ -22,8 +22,10 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     deepseek_v3_pretrain_config,
     set_deepseek_v3_pipeline_model_parallel_layout,
 )
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, BF16."""
     cfg = deepseek_v3_pretrain_config()
@@ -51,6 +53,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -78,6 +81,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8-SC (VP=2, auto-applied default PP layout)."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_fp8cs_config()
@@ -93,6 +97,7 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× H100, BF16 (1024-GPU layout with legacy-scaled GBS)."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_bf16_config()
@@ -100,6 +105,7 @@ def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 64× H100, FP8 current-scaling (standard tensorwise)."""
     cfg = deepseek_v3_pretrain_config()
@@ -128,6 +134,7 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+@perf_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 1024× H100, FP8-SC, large-scale proxy (GBS=1024)."""
     cfg = deepseek_v3_pretrain_1024gpu_h100_fp8sc_config()

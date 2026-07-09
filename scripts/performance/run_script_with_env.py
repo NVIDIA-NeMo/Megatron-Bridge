@@ -111,7 +111,6 @@ def main() -> None:
             gpu=args.gpu,
             precision=args.compute_dtype,
             config_variant=args.config_variant,
-            apply_environment=False,
         )
         base_env_vars = dict(recipe.env_vars)
         recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)

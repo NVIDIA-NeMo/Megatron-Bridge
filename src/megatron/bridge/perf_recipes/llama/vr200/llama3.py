@@ -13,6 +13,7 @@
 # limitations under the License.
 """VR200 performance recipes for Llama 3."""
 
+from megatron.bridge.perf_recipes.environment import perf_recipe_environment
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
 )
@@ -27,36 +28,43 @@ from megatron.bridge.perf_recipes.llama.gb300.llama3 import (
 )
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_vr200_bf16_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VR200, BF16 (alias of GB300)."""
     return llama3_8b_pretrain_8gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_vr200_fp8cs_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VR200, FP8-CS (alias of GB300)."""
     return llama3_8b_pretrain_8gpu_gb300_fp8cs_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VR200, FP8-MX (alias of GB300)."""
     return llama3_8b_pretrain_8gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_8b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
     """LLaMA 3 8B pretrain: 8× VR200, NVFP4 (alias of GB300)."""
     return llama3_8b_pretrain_8gpu_gb300_nvfp4_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_vr200_bf16_config() -> ConfigContainer:
     """LLaMA 3 70B pretrain: 64× VR200, BF16 (alias of GB300)."""
     return llama3_70b_pretrain_64gpu_gb300_bf16_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     """LLaMA 3 70B pretrain: 64× VR200, FP8-MX (alias of GB300)."""
     return llama3_70b_pretrain_64gpu_gb300_fp8mx_config()
 
 
+@perf_recipe_environment(model_family_name="llama")
 def llama3_70b_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """LLaMA 3 70B pretrain: 64× VR200, NVFP4 (alias of GB300)."""
     return llama3_70b_pretrain_64gpu_gb300_nvfp4_config()
