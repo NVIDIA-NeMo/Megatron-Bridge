@@ -19,11 +19,9 @@ Public API re-exports:
 - Providers: VLM-specific mock and Energon dataset providers
 """
 
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
 
 
 __all__ = [
     "MockVLMConversationProvider",
-    "EnergonProvider",
 ]

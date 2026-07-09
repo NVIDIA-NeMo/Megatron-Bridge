@@ -20,11 +20,11 @@ from typing import Callable, List, Optional, Tuple
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
@@ -237,20 +237,12 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "vlm-energon":
-        if isinstance(config.dataset, EnergonProvider):
-            logger.info("Recipe already provides EnergonProvider; keeping it (preserves task_encoder).")
-        else:
-            logger.warning(
-                "Creating bare EnergonProvider. task_encoder and image_processor are unset; "
-                "use a recipe that provides them or set via code."
+        if not isinstance(config.dataset, EnergonDatasetConfig):
+            raise ValueError(
+                "vlm-energon requires a recipe that defines EnergonDatasetConfig with a model-specific "
+                "task_encoder config; a generic runtime encoder cannot be inferred."
             )
-            config.dataset = EnergonProvider(
-                path="",
-                seq_length=resolved_seq_length,
-                micro_batch_size=config.train.micro_batch_size,
-                global_batch_size=config.train.global_batch_size,
-                num_workers=2,
-            )
+        logger.info("Recipe already provides EnergonDatasetConfig; keeping its task-encoder configuration.")
 
     elif dataset_type == "vlm-hf":
         config.dataset = DirectHFSFTDatasetConfig(

@@ -51,6 +51,7 @@ from megatron.bridge.data.base import (
     DatasetBuildContext as DatasetBuildContext,
 )
 from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.energon import EnergonDatasetConfig
 
 # Deprecated training.config import compatibility. New code imports dataset
 # Config + Builder APIs from megatron.bridge.data.builders.
@@ -953,7 +954,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | EnergonDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1117,10 +1118,18 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
-        # Validate declarative Direct-HF values before deriving runtime padding
+        # Validate declarative SFT values before deriving runtime padding
         # multiples so normalization cannot hide an invalid user value.
-        if isinstance(self.dataset, DirectHFSFTDatasetConfig):
+        if isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
             self.dataset.validate()
+
+        if isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.micro_batch_size != self.train.micro_batch_size
+        ):
+            raise ValueError(
+                "EnergonDatasetConfig.micro_batch_size must match train.micro_batch_size "
+                f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
+            )
 
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
@@ -1138,11 +1147,11 @@ class ConfigContainer(Container):
         sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
         collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
         if (
-            isinstance(self.dataset, DirectHFSFTDatasetConfig)
+            isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig))
             and self.dataset.seq_length % collate_padding_multiple != 0
         ):
             raise ValueError(
-                "DirectHFSFTDatasetConfig.seq_length must be divisible by the CP/SP collate padding multiple "
+                f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
                 f"({collate_padding_multiple})."
             )
 
@@ -1152,7 +1161,7 @@ class ConfigContainer(Container):
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
-        elif isinstance(self.dataset, DirectHFSFTDatasetConfig):
+        elif isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
             self.dataset.pad_to_multiple_of = math.lcm(
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
@@ -1207,6 +1216,13 @@ class ConfigContainer(Container):
                 "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
             )
             self.validation.eval_micro_batch_size = self.train.micro_batch_size
+        if isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.micro_batch_size != self.validation.eval_micro_batch_size
+        ):
+            raise ValueError(
+                "EnergonDatasetConfig.micro_batch_size must match validation.eval_micro_batch_size "
+                f"({self.dataset.micro_batch_size} != {self.validation.eval_micro_batch_size})."
+            )
 
         # Eval batch size divisibility check
         eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
@@ -1312,7 +1328,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
+            if isinstance(self.dataset, (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1358,7 +1374,10 @@ class ConfigContainer(Container):
         if self.dataset is not None:
             # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
+            if isinstance(
+                self.dataset,
+                (GPTDatasetConfig, GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig),
+            ):
                 data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (

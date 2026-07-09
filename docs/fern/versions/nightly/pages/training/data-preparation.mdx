@@ -11,7 +11,7 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
 | Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
 | Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | One `DirectHFSFTDatasetConfig` + `DirectHFSFTDatasetBuilder` path |
-| Large sharded multimodal training | Recommended | WebDataset/Energon | `EnergonProvider` |
+| Large sharded multimodal training | Recommended | WebDataset/Energon | `EnergonDatasetConfig` + `EnergonDatasetBuilder` |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
 
@@ -215,7 +215,7 @@ For Hub and file-backed Hugging Face datasets, text and multimodal schemas, spli
 
 VLM recipes use either the canonical Direct Hugging Face SFT Config + Builder path or Energon. No separate preloaded/local conversation provider is supported.
 
-For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
+For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to a recipe that already defines `EnergonDatasetConfig` with the appropriate task-encoder config:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
@@ -225,6 +225,8 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     dataset.path=/data/vlm_energon \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
+
+`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Qwen-VL, generic HF, and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig`, `HFEnergonTaskEncoderConfig`, and `NemotronOmniEnergonTaskEncoderConfig`, respectively. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`; `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
 
 For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations` plus worker-resolvable media paths:
 

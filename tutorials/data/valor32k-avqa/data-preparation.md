@@ -180,7 +180,7 @@ ships custom modeling code.
 ### Launch training
 
 ```shell
-uv run torchrun --nproc-per-node=8 scripts/training/run_recipe.py \
+uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe nemotron_omni_valor32k_sft_config \
   --step_func nemotron_omni_step \
   checkpoint.pretrained_checkpoint=/checkpoints/nemotron_omni \

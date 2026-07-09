@@ -19,16 +19,11 @@ This module provides pretrain, SFT, and PEFT configurations for Qwen3-VL models 
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import torch
-from transformers import AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.utils import DatasetBuildContext
+from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
-from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -183,52 +178,15 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
     return cfg
 
 
-@dataclass(kw_only=True)
-class QwenVLEnergonProvider(EnergonProvider):
-    """EnergonProvider subclass that exposes task-encoder knobs as CLI-overridable fields.
-
-    The task encoder is constructed eagerly (same as before), but build_datasets
-    syncs these fields onto it after CLI overrides have been applied.
-    """
-
-    min_pixels: int = 200704
-    max_pixels: int = 1003520
-    max_num_images: int | None = 10
-    max_num_frames: int | None = 60
-    max_visual_tokens: int | None = 16384
-    defer_in_batch_packing_to_step: bool = True
-
-    def build_datasets(self, context: DatasetBuildContext):
-        if self.task_encoder is not None:
-            self.task_encoder.seq_len = self.seq_length
-            self.task_encoder.min_pixels = self.min_pixels
-            self.task_encoder.max_pixels = self.max_pixels
-            self.task_encoder.max_num_images = self.max_num_images
-            self.task_encoder.max_num_frames = self.max_num_frames
-            self.task_encoder.max_visual_tokens = self.max_visual_tokens
-        return super().build_datasets(context)
-
-
-def _make_energon_dataset(
-    hf_path: str, seq_length: int, micro_batch_size: int, global_batch_size: int
-) -> QwenVLEnergonProvider:
-    """Create a QwenVLEnergonProvider dataset config for Qwen3-VL recipes."""
-    tokenizer = AutoTokenizer.from_pretrained(hf_path)
-    # Use Qwen3VLProcessor to match the HF flow (which uses AutoProcessor).
-    # This processor accepts both images and videos kwargs.
-    image_processor = Qwen3VLProcessor.from_pretrained(hf_path)
-    task_encoder = QwenVLTaskEncoder(
-        tokenizer=tokenizer,
-        image_processor=image_processor,
-        max_padding_length=seq_length,
-    )
-    return QwenVLEnergonProvider(
-        path="",  # Must be set via CLI override: dataset.path=<path>
+def _make_energon_dataset(hf_path: str, seq_length: int, micro_batch_size: int) -> EnergonDatasetConfig:
+    """Create a declarative Energon dataset config for Qwen3-VL recipes."""
+    return EnergonDatasetConfig(
+        path=None,  # Must be set via CLI override: dataset.path=<path>
         seq_length=seq_length,
         micro_batch_size=micro_batch_size,
-        global_batch_size=global_batch_size,
         num_workers=2,
-        task_encoder=task_encoder,
+        task_encoder=QwenVLEnergonTaskEncoderConfig(hf_processor_path=hf_path),
+        defer_in_batch_packing_to_step=True,
     )
 
 
@@ -1085,14 +1043,12 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
 def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT (LoRA/DoRA) config for Qwen3-VL 8B with Energon dataset.
 
-    Same as qwen3_vl_8b_peft_config but uses EnergonProvider instead of HF dataset.
+    Same as qwen3_vl_8b_peft_config but uses declarative Energon data instead of HF data.
     Set the dataset path via CLI override: dataset.path=/path/to/energon/dataset
     """
     cfg = qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.dataset = _make_energon_dataset(
-        hf_path, cfg.model.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
-    )
+    cfg.dataset = _make_energon_dataset(hf_path, cfg.model.seq_length, cfg.train.micro_batch_size)
     return cfg
 
 

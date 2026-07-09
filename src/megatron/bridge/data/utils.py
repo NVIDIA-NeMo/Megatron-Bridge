@@ -25,6 +25,7 @@ from megatron.bridge.data.builders.direct_hf_sft import (
     DirectHFSFTDatasetConfig,
     direct_hf_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.energon import EnergonDatasetConfig, energon_train_valid_test_datasets_provider
 from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
@@ -90,11 +91,18 @@ _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTSFTDatasetConfig: gpt_sft_train_valid_test_datasets_provider,
     DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
+    EnergonDatasetConfig: energon_train_valid_test_datasets_provider,
 }
 
 
 def get_dataset_provider(
-    dataset_config: BlendedMegatronDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | DatasetProvider,
+    dataset_config: (
+        BlendedMegatronDatasetConfig
+        | GPTSFTDatasetConfig
+        | DirectHFSFTDatasetConfig
+        | EnergonDatasetConfig
+        | DatasetProvider
+    ),
 ) -> Callable[..., Any]:
     """Get the appropriate dataset provider function based on the config type.
 
@@ -110,6 +118,8 @@ def get_dataset_provider(
         return gpt_sft_train_valid_test_datasets_provider
     if isinstance(dataset_config, DirectHFSFTDatasetConfig):
         return direct_hf_sft_train_valid_test_datasets_provider
+    if isinstance(dataset_config, EnergonDatasetConfig):
+        return energon_train_valid_test_datasets_provider
 
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):

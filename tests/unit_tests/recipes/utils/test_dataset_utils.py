@@ -391,24 +391,24 @@ class TestApplyDatasetOverride:
 
     # -- VLM energon ----------------------------------------------------------
 
-    def test_vlm_energon_keeps_existing_provider(self):
-        from megatron.bridge.data.energon.energon_provider import EnergonProvider
+    def test_vlm_energon_keeps_existing_declarative_config(self):
+        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
 
-        existing = MagicMock(spec=EnergonProvider)
+        existing = EnergonDatasetConfig(
+            path="/data/shards",
+            seq_length=4096,
+            micro_batch_size=2,
+            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+        )
         config = _make_mock_config(dataset=existing)
         result = apply_dataset_override(config, "vlm-energon")
         assert result.dataset is existing
 
-    def test_vlm_energon_creates_bare_provider_when_missing(self):
-        from megatron.bridge.data.energon.energon_provider import EnergonProvider
-
+    def test_vlm_energon_requires_recipe_specific_task_encoder_config(self):
         config = _make_mock_config(dataset=None, micro_batch_size=4, global_batch_size=64)
-        result = apply_dataset_override(config, "vlm-energon", seq_length=4096)
-        assert isinstance(result.dataset, EnergonProvider)
-        assert result.dataset.path == ""
-        assert result.dataset.seq_length == 4096
-        assert result.dataset.micro_batch_size == 4
-        assert result.dataset.global_batch_size == 64
+
+        with pytest.raises(ValueError, match="model-specific task_encoder"):
+            apply_dataset_override(config, "vlm-energon", seq_length=4096)
 
     # -- VLM HF ---------------------------------------------------------------
 
